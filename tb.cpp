@@ -9,7 +9,7 @@
 // 你產生的 header 檔
 // ===============================
 // 權重（若你的 DUT 需要在 TB 端初始化/載入權重就用得到）
-#include "weights.h"
+//#include "weights.h"
 
 // Trace (.pt) 轉出的 .h：
 // - trace_input_y_step0_tensor            : [NUM_SAMPLES, Y_LEN]
@@ -98,29 +98,42 @@ int main() {
     int total_mis = 0;
 
     for (int s = s_begin; s < s_end; ++s) {
+        // Make fresh channels per sample (avoids any leftover tokens if something goes wrong)
+        ac_channel<PreprocEmbedSPE::y_t>   y_in_ch;
+        ac_channel<PreprocEmbedSPE::out_t> out_ch;
+
         // 4.1 取得 y 指標：flat array -> (s, :)
         const double* y_ptr = &trace_input_y_step0_tensor[s * Y_LEN];
 
         // 4.2 float -> ac_fixed (會量化/截位，誤差大小與你的 ac_fixed 設定有關)
+		//留這部分是給debug用的，可以觀察量化後的值
 		for (int i = 0; i < Y_LEN; ++i) { //不同型態矩陣不能直接 memcpy, 只能一個一個轉
-			y_buf[i] = ac_fixed<32, 16, true, AC_RND_CONV, AC_SAT_SYM>(y_ptr[i]); //data quantization
+            y_buf[i] = ac_fixed<32, 16, true, AC_RND_CONV, AC_SAT_SYM>(y_ptr[i]); //data quantization
         }
-        if (s == 1020) {
-            std::printf("y_ptr[0]=%.9g  y_buf[0]=%.9g\n", y_ptr[0], y_buf[0].to_double());
+
+        // Push inputs into channel (order i=0..Y_LEN-1)
+        for (int i = 0; i < Y_LEN; ++i) {
+            y_in_ch.write(y_buf[i]);
         }
+
         // 4.3 取得 expected out 指標：flat array -> (s, :, :)
         const double* exp_ptr = &trace_embed_plus_SPE_step0_tensor[s * OUT_LEN];
 
         // 4.4 呼叫 DUT
         // 目前假設：dut.run(const float* y_in, float* out)
-        dut.run(y_buf, out_buf);
+        dut.run(y_in_ch, out_ch);
+
+        // Pop all outputs from channel into flat buffer
+        for (int j = 0; j < OUT_LEN; ++j) {
+            out_buf[j] = out_ch.read();
+        }
 
         // 4.5 比對
         char name[64];
 		// 產生 tensor name 字串
         std::snprintf(name, sizeof(name), "embed_plus_SPE_out(sample=%d)", s);
 
-		int mis = compare_array_abs<double, ac_fixed<32, 16, true>>( // Q3.5
+		int mis = compare_array_abs<double, PreprocEmbedSPE::out_t>( // Q3.5
             exp_ptr,
             out_buf,
             OUT_LEN,

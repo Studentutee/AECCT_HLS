@@ -1,4 +1,5 @@
 #pragma once
+#include "ac_channel.h"
 #include "ac_fixed.h"
 #include "ac_int.h"
 #include "weights.h"
@@ -25,47 +26,68 @@ public:
         return (x < 0) ? ac_fixed<32, 16, false>(-x) : ac_fixed<32, 16, false>(x);
     }
 
-    void run(const y_t y_in[CODE_N], out_t out_layer0_in[N_NODES * D_MODEL]){
-        // hard bits 打包（第 i bit 代表 y_in[i] 是否為負）
+    // ============================================================
+    // Channel-based DUT I/O
+    //  - y_in_ch  : stream CODE_N samples (order i=0..CODE_N-1)
+    //  - out_ch   : stream N_NODES*D_MODEL features in the same
+    //               flattened order as the original out_layer0_in[]
+    //               (node-major, then feature-major)
+    // ============================================================
+    void run(ac_channel<y_t>& y_in_ch, ac_channel<out_t>& out_ch) {
         hb_t hb_pack[CODE_N];
 
-        // ---- Step1: 前 63 個 nodes：abs(y) + hardbits + embedding ----
+        // ---- Step1: first CODE_N nodes: abs(y) + hardbits + embedding ----
         Yabs_Embed: for (int i = 0; i < CODE_N; ++i) {
-            y_t yv = y_in[i];
+            y_t yv = y_in_ch.read();
             hb_pack[i] = (yv < 0) ? bit_t(1) : bit_t(0);
 
-            feat_t s = feat_t(abs_fx(yv));  // abs 是 unsigned，但 feature 用 signed 承接也OK（值是正的）
+            feat_t s = feat_t(abs_fx(yv));
 
-            // left 24 dims: x_embed_y = s * src_embed
-            XembedY: for (int d = 0; d < D_EMBED; ++d) {
-                // ★強烈建議：w_src_embed 在 weights.h 內就用 ac_fixed 常數存，避免 float->fixed 在綜合路徑出現
-                out_layer0_in[i * D_MODEL + d] = s * w_src_embed[i * D_EMBED + d];
-            }
+            // left D_EMBED dims: x_embed_y = s * src_embed
+            // right D_SPE  dims: SPE token
+            // 合併成 single loop：每個 node(i) 連續輸出 D_MODEL = D_EMBED + D_SPE 個元素
+            XembedYSPE: for (int d = 0; d < D_MODEL; ++d) {
+                out_t v;
 
-            // right 8 dims: SPE token
-            SPETwitter: for (int k = 0; k < D_SPE; ++k) {
-                out_layer0_in[i * D_MODEL + (D_EMBED + k)] = w_lpe_token[i * D_SPE + k];
+                if (d < D_EMBED) {
+                    // 前半段：s * src_embed
+                    v = out_t(s * w_src_embed[i * D_EMBED + d]);
+                }
+                else {
+                    // 後半段：SPE token
+                    v = out_t(w_lpe_token[i * D_SPE + (d - D_EMBED)]);
+                }
+                out_ch.write(v);
             }
         }
 
-        // ---- Step2: 後 12 個 nodes：syndrome(列(Row) r) + embedding ----
+        // ---- Step2: remaining CODE_C nodes: syndrome(Row=列 r) + embedding ----
         Syndrome_Embed: for (int r = 0; r < CODE_C; ++r) {
             bit_t parity = 0;
-            // H 的第 r 列(Row) 與 hardbits 做 XOR parity
+
+            // XOR across columns(Colume=行 c) of H row r
             Syndrome_COL: for (int c = 0; c < CODE_N; ++c) {
-                bit_t h = h_H[r * CODE_N + c];       // 0/1
-                parity ^= (h & bit_t(hb_pack[c]));   // hb_pack[c] 取出 bit
+                bit_t h = h_H[r * CODE_N + c];
+                parity ^= (h & bit_t(hb_pack[c]));
             }
+
             // syndrome_pm1: 0 -> +1, 1 -> -1
             feat_t s = (parity == 0) ? feat_t(1) : feat_t(-1);
-
             const int i = CODE_N + r;
 
-            XembedS: for (int d = 0; d < D_EMBED; ++d) {
-                out_layer0_in[i * D_MODEL + d] = s * w_src_embed[i * D_EMBED + d];
-            }
-            SPETwitter2: for (int k = 0; k < D_SPE; ++k) {
-                out_layer0_in[i * D_MODEL + (D_EMBED + k)] = w_lpe_token[i * D_SPE + k];
+            Xembed_all: for (int d = 0; d < D_MODEL; ++d) {
+                out_t v;
+
+                if (d < D_EMBED) {
+                    // 前半段：src_embed * s
+                    v = out_t(s * w_src_embed[i * D_EMBED + d]);
+                }
+                else {
+                    // 後半段：lpe_token
+                    v = out_t(w_lpe_token[i * D_SPE + (d - D_EMBED)]);
+                }
+
+                out_ch.write(v);
             }
         }
     }
