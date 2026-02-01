@@ -239,7 +239,7 @@ constexpr int h_H_numel = 756;
 // WEIGHTS
 // =========================
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_src_embed[1800] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_src_embed[1800] = {
   -0.31684762239456177, -0.03732537850737572, -1.0737618207931519, -1.0208539962768555,
   -0.35437634587287903, 0.42034560441970825, 1.0360980033874512, 0.3216798007488251,
   0.6418846845626831, -0.7648782730102539, -0.041842225939035416, 0.9661195278167725,
@@ -871,7 +871,7 @@ static const ac_int<1,false> w_src_mask[5625] = {
   0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_lpe[11250] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_lpe[11250] = {
   34.22065734863281, -0.007549406494945288, 29.014394760131836, 0.009857556782662868,
   28.982563018798828, 0.013302492909133434, 28.91636848449707, -0.015243017114698887,
   28.768220901489258, 0.004467511083930731, 28.710067749023438, -0.007042796351015568,
@@ -3687,7 +3687,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_lpe[11250] = {
   5.999999523162842, 7.577997962471272e-07
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_weight[1024] = {
   1.0, -1.0, 1.0, -1.0,
   1.0, -1.0, -0.0, 1.0,
   -0.0, 1.0, 1.0, 1.0,
@@ -3946,7 +3946,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   -1.0, -1.0, 1.0, 0.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_bias[32] = {
   -0.11415419727563858, -0.4849295914173126, 0.5745771527290344, -0.6304656267166138,
   -0.6178632974624634, 0.9580950140953064, -0.4955950975418091, -0.8836060166358948,
   -0.9745693206787109, 0.9269318580627441, -0.6975552439689636, 0.9374257326126099,
@@ -3957,15 +3957,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   -0.3716292083263397, -0.23974931240081787, 0.04014662280678749, 0.16608721017837524
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_delta[1] = {
   1.1681848764419556
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_0_s_w[1] = {
   3.4775071144104004
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_weight[1024] = {
   -0.0, -1.0, -1.0, 1.0,
   -1.0, 1.0, -0.0, 1.0,
   1.0, 0.0, -0.0, -0.0,
@@ -4224,7 +4224,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   1.0, -1.0, -1.0, -1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_bias[32] = {
   0.09677273035049438, -0.020256206393241882, 0.06944333761930466, -0.09671827405691147,
   0.04799487814307213, -0.1669800728559494, 0.1116032674908638, 0.008231423795223236,
   0.09029743820428848, -0.23572923243045807, 0.12365914136171341, 0.07790543138980865,
@@ -4235,15 +4235,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   -0.11381904035806656, -0.08406325429677963, 0.1736115664243698, 0.011152422055602074
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_delta[1] = {
   1.0831072330474854
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_1_s_w[1] = {
   3.2122509479522705
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_weight[1024] = {
   1.0, -1.0, -0.0, -1.0,
   1.0, 1.0, -1.0, 1.0,
   -1.0, -1.0, 1.0, 0.0,
@@ -4502,7 +4502,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   0.0, -0.0, -1.0, 0.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_bias[32] = {
   0.11322814226150513, -0.0322781540453434, 0.006398005411028862, 0.19404996931552887,
   0.20675481855869293, -0.04498840123414993, -0.11476150900125504, -0.055268626660108566,
   0.060889143496751785, -0.2991997003555298, 0.1057213693857193, 0.03268583118915558,
@@ -4513,15 +4513,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   0.05080417916178703, -0.05226786434650421, 0.11333250999450684, 0.11181484162807465
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_delta[1] = {
   0.59521484375
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_2_s_w[1] = {
   8.15131664276123
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_weight[1024] = {
   1.0, 0.0, -1.0, -1.0,
   1.0, 1.0, -1.0, 1.0,
   1.0, -1.0, 1.0, -1.0,
@@ -4780,7 +4780,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   1.0, -1.0, 1.0, -1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_bias[32] = {
   0.013991539366543293, 0.021420642733573914, 0.07722809910774231, -0.1244395300745964,
   0.04963956028223038, -0.1464669406414032, 0.09330559521913528, -0.08061806857585907,
   -0.011394284665584564, 0.06748431921005249, -0.0046904743649065495, -0.013736793771386147,
@@ -4791,15 +4791,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self
   -0.012595140375196934, 0.12784944474697113, -0.1086508184671402, 0.02095857821404934
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_delta[1] = {
   0.5773855447769165
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_self_attn_linears_3_s_w[1] = {
   10.102375984191895
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_weight[4096] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_weight[4096] = {
   1.0, -1.0, 1.0, 1.0,
   -1.0, -1.0, -1.0, -1.0,
   -1.0, 1.0, 1.0, 1.0,
@@ -5826,7 +5826,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed
   0.0, 0.0, -1.0, -1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_bias[128] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_bias[128] = {
   -0.29543089866638184, -0.30970296263694763, -0.1709582805633545, -0.1639847755432129,
   -0.21312840282917023, -0.3969680666923523, -0.34492063522338867, -0.14944319427013397,
   -0.09338285773992538, -0.13600274920463562, -0.2724563181400299, -0.3255936801433563,
@@ -5861,15 +5861,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed
   -0.46576863527297974, -0.6790449619293213, 0.055746063590049744, -0.10319781303405762
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_delta[1] = {
   0.590933084487915
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_1_s_w[1] = {
   8.694713592529297
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_weight[4096] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_weight[4096] = {
   -1.0, 1.0, -1.0, -1.0,
   -0.0, 0.0, 0.0, -1.0,
   0.0, 1.0, -1.0, -1.0,
@@ -6896,7 +6896,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed
   1.0, -1.0, 1.0, -1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_bias[32] = {
   -0.11584721505641937, 0.1251872032880783, 0.09275981038808823, 0.17584635317325592,
   0.15681353211402893, -0.1719822883605957, 0.24395011365413666, -0.046385716646909714,
   -0.002256951527670026, 0.013449601829051971, -0.08895942568778992, -0.13555477559566498,
@@ -6907,15 +6907,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed
   0.004435517825186253, -0.22721314430236816, -0.19068408012390137, -0.5803853273391724
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_delta[1] = {
   0.9050882458686829
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_feed_forward_w_2_s_w[1] = {
   4.8022541999816895
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_0_norm_weight[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_0_norm_weight[32] = {
   0.9436132311820984, 1.0459010601043701, 0.9382278323173523, 0.8253769278526306,
   1.1379010677337646, 0.7285889387130737, 0.7677978277206421, 0.9861985445022583,
   0.9578917026519775, 0.9511145949363708, 1.0966447591781616, 0.7600471377372742,
@@ -6926,7 +6926,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_subl
   0.8911335468292236, 1.2037839889526367, 0.9707229733467102, 0.757970929145813
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_0_norm_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_0_norm_bias[32] = {
   0.0922958254814148, 0.007188668008893728, 0.1057991310954094, -0.0011412298772484064,
   -0.061346862465143204, -0.18677978217601776, 0.07002174109220505, 0.02492414601147175,
   -0.14966319501399994, 0.20065264403820038, 0.12982304394245148, -0.058985572308301926,
@@ -6937,7 +6937,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_subl
   0.5029818415641785, 0.6543002724647522, -0.5560407638549805, 0.4549506902694702
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_1_norm_weight[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_1_norm_weight[32] = {
   0.9050668478012085, 1.0476890802383423, 1.241829514503479, 0.8812951445579529,
   0.9330054521560669, 1.0021225214004517, 1.1848489046096802, 0.732428252696991,
   1.0290676355361938, 0.7059697508811951, 0.9852188229560852, 0.9065814018249512,
@@ -6948,7 +6948,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_subl
   0.8545591831207275, 1.1957961320877075, 1.1001209020614624, 1.9150419235229492
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_1_norm_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_sublayer_1_norm_bias[32] = {
   0.08157578110694885, -0.01993403770029545, -0.016688790172338486, -0.014103926718235016,
   0.1447463482618332, -0.16359159350395203, -0.024249153211712837, 0.19692674279212952,
   0.15671803057193756, -0.10349875688552856, -0.12145493179559708, -0.05095616355538368,
@@ -6959,7 +6959,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_0_subl
   0.02023232728242874, -0.08095160871744156, -0.12032243609428406, -0.4433828592300415
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_weight[1024] = {
   1.0, -1.0, 0.0, -1.0,
   -0.0, 1.0, 1.0, 0.0,
   -1.0, 1.0, -1.0, -1.0,
@@ -7218,7 +7218,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   0.0, 0.0, -1.0, -1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_bias[32] = {
   1.0095032453536987, -0.05549388378858566, 0.7400554418563843, -0.6772610545158386,
   0.6001439094543457, -0.31444790959358215, 0.07802513986825943, -1.02615225315094,
   -0.08056709170341492, -0.3788009285926819, -0.7585285902023315, -0.5370659828186035,
@@ -7229,15 +7229,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   -0.013303744606673717, -0.5103257894515991, -0.5200881361961365, -0.552405059337616
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_delta[1] = {
   0.5682626962661743
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_0_s_w[1] = {
   6.836551666259766
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_weight[1024] = {
   1.0, -1.0, 1.0, 1.0,
   -0.0, -1.0, -0.0, -1.0,
   -1.0, 1.0, 1.0, 0.0,
@@ -7496,7 +7496,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   1.0, -1.0, 1.0, 1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_bias[32] = {
   0.1412137746810913, 0.009100758470594883, 0.048208463937044144, -0.10929732769727707,
   0.028202859684824944, -0.10730607062578201, 0.08814817667007446, -0.07858844101428986,
   -0.04596027359366417, -0.1530894935131073, 0.002576957456767559, 0.17108584940433502,
@@ -7507,15 +7507,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   -0.1129903569817543, -0.0848221480846405, 0.1675804704427719, -0.000609323033131659
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_delta[1] = {
   0.7504215836524963
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_1_s_w[1] = {
   4.195373058319092
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_weight[1024] = {
   -1.0, 1.0, -1.0, 1.0,
   -1.0, 1.0, -1.0, -1.0,
   -1.0, 1.0, 1.0, -1.0,
@@ -7774,7 +7774,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   -1.0, 1.0, 1.0, -1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_bias[32] = {
   -0.056296028196811676, -0.017960112541913986, 0.13908539712429047, -0.12121528387069702,
   0.15350013971328735, -0.11244839429855347, 0.20321860909461975, -0.16856065392494202,
   0.13854478299617767, 0.03720410540699959, 0.05324983596801758, 0.14810031652450562,
@@ -7785,15 +7785,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   -0.38433369994163513, -0.4464362859725952, -0.1847081184387207, 0.0013076061150059104
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_delta[1] = {
   0.6088122725486755
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_2_s_w[1] = {
   6.026825904846191
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_weight[1024] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_weight[1024] = {
   -1.0, -1.0, 1.0, -1.0,
   -1.0, 1.0, 1.0, 1.0,
   1.0, -1.0, -1.0, 1.0,
@@ -8052,7 +8052,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   -1.0, -0.0, -1.0, -1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_bias[32] = {
   -0.005822268780320883, 0.537894606590271, -0.17945793271064758, -0.25697141885757446,
   -0.013097994029521942, -0.02030176855623722, 0.20529431104660034, -0.22159983217716217,
   -0.318153440952301, -0.23707488179206848, -0.3533848524093628, 0.2585231065750122,
@@ -8063,15 +8063,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self
   0.008571834303438663, -0.24568849802017212, -0.04301512613892555, 0.14409001171588898
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_delta[1] = {
   0.6006746292114258
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_self_attn_linears_3_s_w[1] = {
   6.375063896179199
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_weight[4096] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_weight[4096] = {
   1.0, 1.0, 1.0, 1.0,
   -1.0, -1.0, -1.0, 1.0,
   1.0, -0.0, 1.0, -1.0,
@@ -9098,7 +9098,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed
   -1.0, -1.0, 1.0, 1.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_bias[128] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_bias[128] = {
   -0.3633892238140106, -0.2603444457054138, 0.07054770737886429, -0.3393081724643707,
   -0.1532236784696579, -0.20992256700992584, -0.28950679302215576, -0.2578323483467102,
   -0.42495936155319214, -0.24342700839042664, -0.2307732254266739, -0.30324992537498474,
@@ -9133,15 +9133,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed
   -0.6606810092926025, -0.6508647799491882, -0.7112796902656555, -0.06858488917350769
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_delta[1] = {
   0.579562246799469
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_1_s_w[1] = {
   10.22591781616211
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_weight[4096] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_weight[4096] = {
   -1.0, -0.0, -0.0, 1.0,
   -0.0, 0.0, 0.0, 1.0,
   -1.0, -1.0, -1.0, -1.0,
@@ -10168,7 +10168,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed
   1.0, 1.0, 0.0, 0.0
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_bias[32] = {
   0.007429059129208326, -0.05297936126589775, -0.0765407606959343, 0.048954665660858154,
   -0.11259014159440994, -0.04569029435515404, 0.08878465741872787, -0.15080556273460388,
   0.040820106863975525, 0.18904000520706177, -0.16896288096904755, -0.18814216554164886,
@@ -10179,15 +10179,15 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed
   -0.044484443962574005, -0.04934748634696007, 0.06517516076564789, -0.06291341036558151
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_delta[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_delta[1] = {
   1.7681750059127808
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_s_w[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_feed_forward_w_2_s_w[1] = {
   2.703691005706787
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_0_norm_weight[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_0_norm_weight[32] = {
   0.7868205904960632, 0.8666834831237793, 0.822059690952301, 0.9503076076507568,
   1.2200696468353271, 1.1485852003097534, 0.8128936886787415, 1.2287060022354126,
   0.667975664138794, 1.0586738586425781, 0.9451437592506409, 0.6153810024261475,
@@ -10198,7 +10198,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_subl
   0.8134440183639526, 0.5452315807342529, 1.097432017326355, 0.7088611721992493
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_0_norm_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_0_norm_bias[32] = {
   0.12414052337408066, -0.18208597600460052, -0.1505524218082428, 0.2698659598827362,
   0.04257592186331749, 0.12389317154884338, -0.26269760727882385, -0.1498870700597763,
   0.11890120059251785, 0.16959871351718903, 0.3079560697078705, 0.13850939273834229,
@@ -10209,7 +10209,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_subl
   0.19533568620681763, 0.1815355271100998, -0.19240739941596985, -0.06325587630271912
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_1_norm_weight[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_1_norm_weight[32] = {
   0.4859630763530731, 0.3039587736129761, 2.166065216064453, 0.32487279176712036,
   0.5294966101646423, 0.11019818484783173, 0.6487843990325928, 0.5979510545730591,
   0.2976374924182892, 0.42422571778297424, 0.43908995389938354, 1.7250909805297852,
@@ -10220,7 +10220,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_subl
   0.4323303997516632, 0.19808322191238403, 0.9313372373580933, 0.22328241169452667
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_1_norm_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_sublayer_1_norm_bias[32] = {
   -0.15175853669643402, 0.09970291703939438, -2.2876381874084473, -0.12525799870491028,
   0.013099039904773235, -0.17016272246837616, -0.08739541471004486, 0.028299549594521523,
   -0.11518219858407974, -0.15565986931324005, 0.09020734578371048, -0.8300730586051941,
@@ -10231,7 +10231,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_layers_1_subl
   0.10254917293787003, 0.1363382637500763, 0.10038141906261444, 0.14546607434749603
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm_weight[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm_weight[32] = {
   1.4912757873535156, 1.5472791194915771, 0.9968245029449463, 1.5827075242996216,
   1.1960475444793701, 1.3672280311584473, 1.2011317014694214, 1.2042996883392334,
   1.4338544607162476, 1.3239150047302246, 1.2422716617584229, 0.9660642743110657,
@@ -10242,7 +10242,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm_weight[3
   1.340512752532959, 1.5290050506591797, 1.0570358037948608, 1.7824491262435913
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm_bias[32] = {
   -0.09012039750814438, 0.09803923219442368, 0.1623130738735199, -0.08871272951364517,
   0.11058284342288971, -0.08904038369655609, -0.10212554782629013, 0.10499388724565506,
   -0.08932942897081375, -0.0870375856757164, 0.10435649752616882, 0.1314883977174759,
@@ -10253,7 +10253,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm_bias[32]
   0.10159918665885925, 0.09984622150659561, -0.12098813056945801, 0.09783419966697693
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm2_weight[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm2_weight[32] = {
   0.9849905371665955, 0.9560006260871887, 0.8139231204986572, 1.1260617971420288,
   0.933763325214386, 1.187170147895813, 0.7794536352157593, 0.9916955828666687,
   1.264417290687561, 1.1791651248931885, 1.0915281772613525, 1.1406587362289429,
@@ -10264,7 +10264,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm2_weight[
   1.416123628616333, 1.1629544496536255, 0.8045859336853027, 0.5088830590248108
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm2_bias[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm2_bias[32] = {
   -0.10493667423725128, -0.5267754793167114, 0.5505017042160034, 0.05971354991197586,
   -0.17493750154972076, -0.00278280396014452, -0.25124114751815796, 0.022122440859675407,
   -0.1421220749616623, 0.2093755304813385, 0.29288655519485474, -0.10638907551765442,
@@ -10275,7 +10275,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_decoder_norm2_bias[32
   -0.3184041976928711, 0.16620980203151703, 0.014015466906130314, 0.8746594190597534
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_oned_final_embed_0_weight[32] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_oned_final_embed_0_weight[32] = {
   -0.6000316143035889, 0.9541690349578857, 0.12768219411373138, -0.8359639048576355,
   0.35514798760414124, -0.7550681233406067, -0.5782720446586609, 0.5551801919937134,
   -0.6483725905418396, -0.5878531336784363, 0.5086947083473206, 0.12960274517536163,
@@ -10286,11 +10286,11 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_oned_final_embed_0_we
   0.7746930122375488, 0.9909112453460693, -0.14897127449512482, 1.2216742038726807
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_oned_final_embed_0_bias[1] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_oned_final_embed_0_bias[1] = {
   0.03348756581544876
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_out_fc_weight[4725] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_out_fc_weight[4725] = {
   2.563535451889038, -0.02220325358211994, 0.06735242903232574, -0.024671928957104683,
   -0.05097021907567978, -0.03102921135723591, -0.004779997747391462, 0.03829650208353996,
   -0.03850346431136131, 0.04615906998515129, -0.04184602573513985, 0.0805862545967102,
@@ -11475,7 +11475,7 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_out_fc_weight[4725] =
   -0.24597445130348206
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_out_fc_bias[63] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_out_fc_bias[63] = {
   0.17588628828525543, 0.2267581820487976, -0.07649565488100052, -0.05165762081742287,
   -0.007842431776225567, -0.03883308172225952, -0.7642297744750977, -0.0010046691168099642,
   -0.13369464874267578, -0.06200021877884865, -0.02805379219353199, 0.06820246577262878,
@@ -11494,19 +11494,19 @@ static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_out_fc_bias[63] = {
   0.3643736243247986, -0.6753430962562561, -0.6379997730255127
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_lpe_proj_weight[16] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_lpe_proj_weight[16] = {
   0.01829415000975132, 2.4645042419433594, -0.017451295629143715, 2.232257843017578,
   -0.08232279121875763, -0.2046961486339569, -0.003964541479945183, -1.9577372074127197,
   -0.02017964795231819, -1.2650734186172485, -0.057242657989263535, -0.010621077381074429,
   0.1453365832567215, -4.10713529586792, -0.005597478244453669, 3.0368075370788574
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_lpe_proj_bias[8] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_lpe_proj_bias[8] = {
   0.21704930067062378, -0.42419305443763733, 0.4419827163219452, 0.19192464649677277,
   0.16361930966377258, 0.1529192179441452, -1.146087884902954, -0.38433659076690674
 };
 
-static const ac_fixed<64,32,true,AC_RND_CONV,AC_SAT_SYM> w_lpe_token[600] = {
+static const ac_fixed<32,16,true,AC_RND_CONV,AC_SAT_SYM> w_lpe_token[600] = {
   0.18383584916591644, -0.40813568234443665, -0.32808810472488403, -0.03831145912408829,
   -0.18809685111045837, -0.3391924798488617, 0.40760406851768494, -0.3611072301864624,
   0.24006861448287964, -0.35326477885246277, -0.3301515579223633, -0.10462713241577148,
