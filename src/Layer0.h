@@ -256,12 +256,19 @@ public:
           denom += fx_exp::denom_t(e);
         }
 
-        fx_exp::ufx_t inv_denom = (denom == fx_utils::uacc_t(0)) ? fx_exp::ufx_t(0) : fx_exp::ufx_t(fx_exp::ufx_t(1) / fx_exp::ufx_t(denom));
+        fx_utils::fx_t inv_denom;
+
+        if (denom == fx_exp::denom_t(0)) {
+            inv_denom = fx_utils::fx_t(0);
+        } else {
+            // 注意：/ 的回傳型別很寬，最後要明確轉回 fx_t
+            inv_denom = fx_utils::fx_t( fx_utils::fx_t(1) / fx_utils::fx_t(denom) );
+        }
 
         for (int dh=0; dh<D_H; ++dh) {
           fx_utils::acc_t acc = 0;
           for (int j=0;j<N_NODES;++j) {
-            fx_exp::ufx_t w = fx_exp::ufx_t(expv[j] * inv_denom);
+            fx_utils::fx_t w = fx_utils::fx_t(expv[j]) * inv_denom;
             int d = h*D_H + dh;
             acc += fx_utils::acc_t(fx_utils::fx_t(w)) * fx_utils::acc_t(V[j][d]);
           }
