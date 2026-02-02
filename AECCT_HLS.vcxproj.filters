@@ -15,37 +15,64 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="tb.cpp">
-      <Filter>來源檔案</Filter>
-    </ClCompile>
+    <ClInclude Include="tb\compare_array_abs.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\ac_types\ac_fixed.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\input_y_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\ac_types\ac_channel.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\PreprocEmbedSPE.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\ac_types\ac_int.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\embed_plus_SPE_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Layer0_QKVProj.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\weights\weights.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\norm_mid_out_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Layer0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ExpApproxUtils.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\LayerNormUtils.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\layer0_attn_K_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\layer0_attn_Q_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\layer0_attn_V_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\embed_node_embed_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="data\trace\layer0_attn_post_concat_step0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="compare_array_abs.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="ac_fixed.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="embed_node_embed_step0.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="input_y_step0.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="weights.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="ac_channel.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="PreprocEmbedSPE.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="ac_int.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="embed_plus_SPE_step0.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
+    <ClCompile Include="tb\tb_L0_AttnCore.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

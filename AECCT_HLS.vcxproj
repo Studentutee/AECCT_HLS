@@ -105,6 +105,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
+      <AdditionalIncludeDirectories>$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;$(ProjectDir)src</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -127,18 +128,27 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="tb.cpp" />
+    <ClInclude Include="data\trace\embed_node_embed_step0.h" />
+    <ClInclude Include="data\trace\layer0_attn_K_step0.h" />
+    <ClInclude Include="data\trace\layer0_attn_post_concat_step0.h" />
+    <ClInclude Include="data\trace\layer0_attn_Q_step0.h" />
+    <ClInclude Include="data\trace\layer0_attn_V_step0.h" />
+    <ClInclude Include="third_party\ac_types\ac_channel.h" />
+    <ClInclude Include="third_party\ac_types\ac_fixed.h" />
+    <ClInclude Include="third_party\ac_types\ac_int.h" />
+    <ClInclude Include="tb\compare_array_abs.h" />
+    <ClInclude Include="data\trace\embed_plus_SPE_step0.h" />
+    <ClInclude Include="src\ExpApproxUtils.h" />
+    <ClInclude Include="data\trace\input_y_step0.h" />
+    <ClInclude Include="src\Layer0.h" />
+    <ClInclude Include="src\Layer0_QKVProj.h" />
+    <ClInclude Include="src\LayerNormUtils.h" />
+    <ClInclude Include="data\trace\norm_mid_out_step0.h" />
+    <ClInclude Include="src\PreprocEmbedSPE.h" />
+    <ClInclude Include="data\weights\weights.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ac_channel.h" />
-    <ClInclude Include="ac_fixed.h" />
-    <ClInclude Include="ac_int.h" />
-    <ClInclude Include="compare_array_abs.h" />
-    <ClInclude Include="embed_node_embed_step0.h" />
-    <ClInclude Include="embed_plus_SPE_step0.h" />
-    <ClInclude Include="input_y_step0.h" />
-    <ClInclude Include="PreprocEmbedSPE.h" />
-    <ClInclude Include="weights.h" />
+    <ClCompile Include="tb\tb_L0_AttnCore.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

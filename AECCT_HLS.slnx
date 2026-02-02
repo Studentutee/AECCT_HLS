@@ -3,5 +3,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Folder Name="/方案項目/" />
   <Project Path="AECCT_HLS.vcxproj" Id="e3af4e0e-3fd6-4001-880f-763451628925" />
 </Solution>
