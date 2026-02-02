@@ -361,3 +361,9 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/trace/layer0_attn_K_step0.h
+/trace/layer0_attn_Q_step0.h
+/trace/layer0_attn_V_step0.h
+/trace/embed_node_embed_step0.h
+/trace/norm_mid_out_step0.h
+/data/trace
