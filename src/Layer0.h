@@ -110,7 +110,7 @@ public:
 //  - StreamFork<N,T>: fork stream
 //  - StreamAdd<N>: elementwise add
 //  - StreamLayerNorm<N_NODES,D_MODEL>: LayerNorm per node
-//  - L0_AttnCore: Q,K,V + mask + LPE -> concat head output (32)
+//  - L0_AttnCore: Q,K,V + mask -> concat head output (32)
 //  - L0_OutProj: 32->32 quant linear (int8 weights)
 //  - L0_FFN1: 32->128 quant linear
 //  - StreamReLU<N>: ReLU
@@ -198,8 +198,8 @@ public:
     fx_utils::fx_t K[N_NODES][D_MODEL];
     fx_utils::fx_t V[N_NODES][D_MODEL];
 
-    for (int n=0;n<N_NODES;++n) {
-      for (int d=0; d<D_MODEL; ++d) {
+    for (int n = 0; n < N_NODES; ++n) {
+      for (int d = 0; d < D_MODEL; ++d) {
         Q[n][d] = q_in.read();
         K[n][d] = k_in.read();
         V[n][d] = v_in.read();
@@ -208,75 +208,98 @@ public:
 
     const fx_utils::fx_t inv_sqrt_dh = fx_utils::fx_t(0.5); // 1/sqrt(4)
 
-    for (int i=0;i<N_NODES;++i) {
+    for (int i = 0; i < N_NODES; ++i) {
       fx_utils::fx_t out_vec[D_MODEL];
 
-      for (int h=0; h<N_HEADS; ++h) {
+      for (int h = 0; h < N_HEADS; ++h) {
         fx_utils::fx_t score[N_NODES];
+        ac_int<1,false> maskv[N_NODES];          // <<< store mask per j
         fx_utils::fx_t row_max = fx_utils::fx_t(-64);
 
-        for (int j=0;j<N_NODES;++j) {
+        // -----------------------------
+        // score + row_max, and store maskv[]
+        // -----------------------------
+        for (int j = 0; j < N_NODES; ++j) {
 
-          ac_int<1,false> src_m = (w_src_mask[i*N_NODES + j] != 0) ? ac_int<1,false>(1) : ac_int<1,false>(0);
+          ac_int<1,false> src_m = (w_src_mask[i * N_NODES + j] != 0)
+                                  ? ac_int<1,false>(1)
+                                  : ac_int<1,false>(0);
 
-          ac_int<1,false> isVV = ((i < CODE_N) && (j < CODE_N)) ? ac_int<1,false>(1) : ac_int<1,false>(0);
+          ac_int<1,false> isVV = ((i < CODE_N)  && (j < CODE_N))  ? ac_int<1,false>(1) : ac_int<1,false>(0);
           ac_int<1,false> isCC = ((i >= CODE_N) && (j >= CODE_N)) ? ac_int<1,false>(1) : ac_int<1,false>(0);
-          ac_int<1,false> isVC = ((i < CODE_N) && (j >= CODE_N)) ? ac_int<1,false>(1) : ac_int<1,false>(0);
-          ac_int<1,false> isCV = ((i >= CODE_N) && (j < CODE_N)) ? ac_int<1,false>(1) : ac_int<1,false>(0);
+          ac_int<1,false> isVC = ((i < CODE_N)  && (j >= CODE_N)) ? ac_int<1,false>(1) : ac_int<1,false>(0);
+          ac_int<1,false> isCV = ((i >= CODE_N) && (j < CODE_N))  ? ac_int<1,false>(1) : ac_int<1,false>(0);
 
           ac_int<1,false> m_one    = ((isVV != 0) || (isCC != 0)) ? ac_int<1,false>(1) : src_m;
           ac_int<1,false> m_second = ((isVC != 0) || (isCV != 0)) ? ac_int<1,false>(1) : src_m;
-          ac_int<1,false> masked   = (h < 4) ? m_one : m_second;
+
+          ac_int<1,false> masked = (h < 4) ? m_one : m_second;
+
+          maskv[j] = masked;                     // <<< IMPORTANT
 
           if (masked != 0) {
             score[j] = fx_utils::fx_t(-64);
           } else {
             fx_utils::acc_t dot = 0;
-            for (int dh=0; dh<D_H; ++dh) {
-              int d = h*D_H + dh;
+            for (int dh = 0; dh < D_H; ++dh) {
+              int d = h * D_H + dh;
               dot += fx_utils::acc_t(Q[i][d]) * fx_utils::acc_t(K[j][d]);
             }
             fx_utils::fx_t s = fx_utils::fx_t(dot) * inv_sqrt_dh;
-
-            int lpe_c = (h < 4) ? 0 : 1;
-            fx_utils::fx_t lpe = w_lpe[(i*N_NODES + j)*2 + lpe_c];
-            s = fx_utils::fx_t(s + lpe);
 
             score[j] = s;
             if (s > row_max) row_max = s;
           }
         }
 
+        // -----------------------------
+        // softmax: exp + denom (masked => exp=0, no denom add)
+        // -----------------------------
         fx_exp::ufx_t expv[N_NODES];
         fx_exp::denom_t denom = 0;
-        for (int j=0;j<N_NODES;++j) {
+
+        for (int j = 0; j < N_NODES; ++j) {
+          if (maskv[j] != 0) {
+            expv[j] = fx_exp::ufx_t(0);
+            continue;
+          }
           fx_utils::fx_t diff = fx_utils::fx_t(score[j] - row_max);
           fx_exp::ufx_t e = fx_exp::exp_neg_approx(diff);
           expv[j] = e;
           denom += fx_exp::denom_t(e);
         }
 
+        // inv_denom in fx_utils::fx_t (avoid casting denom into ufx_t)
         fx_utils::fx_t inv_denom;
-
         if (denom == fx_exp::denom_t(0)) {
-            inv_denom = fx_utils::fx_t(0);
+          inv_denom = fx_utils::fx_t(0);
         } else {
-            // 注意：/ 的回傳型別很寬，最後要明確轉回 fx_t
-            inv_denom = fx_utils::fx_t( fx_utils::fx_t(1) / fx_utils::fx_t(denom) );
+          inv_denom = fx_utils::fx_t( fx_utils::fx_t(1) / fx_utils::fx_t(denom) );
         }
 
-        for (int dh=0; dh<D_H; ++dh) {
+        // -----------------------------
+        // weighted sum: w = exp * inv_denom
+        // use "*=" to avoid ambiguous operator* on some compilers
+        // and skip masked entries (expv==0)
+        // -----------------------------
+        for (int dh = 0; dh < D_H; ++dh) {
           fx_utils::acc_t acc = 0;
-          for (int j=0;j<N_NODES;++j) {
-            fx_utils::fx_t w = fx_utils::fx_t(expv[j]) * inv_denom;
-            int d = h*D_H + dh;
-            acc += fx_utils::acc_t(fx_utils::fx_t(w)) * fx_utils::acc_t(V[j][d]);
+          for (int j = 0; j < N_NODES; ++j) {
+            if (expv[j] == fx_exp::ufx_t(0)) continue;
+
+            ac_fixed<32, 4, true, AC_RND_CONV, AC_SAT_SYM> w = fx_utils::fx_t(expv[j]);
+            w *= inv_denom;                      // <<< avoids ambiguous operator*
+
+            int d = h * D_H + dh;
+            acc += fx_utils::acc_t(w) * fx_utils::acc_t(V[j][d]);
           }
-          out_vec[h*D_H + dh] = fx_utils::fx_t(acc);
+          out_vec[h * D_H + dh] = fx_utils::fx_t(acc);
         }
       }
 
-      for (int d=0; d<D_MODEL; ++d) attn_concat_out.write(out_vec[d]);
+      for (int d = 0; d < D_MODEL; ++d) {
+        attn_concat_out.write(out_vec[d]);
+      }
     }
   }
 };

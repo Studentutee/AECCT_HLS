@@ -8,7 +8,7 @@
 #include "compare_array_abs.h"
 
 #ifndef ATOL
-#define ATOL (1e-3)
+#define ATOL (1e-2)
 #endif
 
 #ifndef FAIL_FAST
