@@ -69,9 +69,27 @@
     <ClInclude Include="data\trace\layer0_attn_post_concat_step0.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="include\AecctUtil.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\AecctProtocol.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\AecctTypes.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Top.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\SramMapBringup.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ModelDescBringup.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="tb\tb_L0_AttnCore.cpp">
+    <ClCompile Include="tb\tb_top_m3.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
   </ItemGroup>
