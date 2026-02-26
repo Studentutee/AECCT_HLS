@@ -160,7 +160,10 @@
     <ClInclude Include="include\ModelShapes.h" />
     <ClInclude Include="include\PreprocDescBringup.h" />
     <ClInclude Include="include\SoftmaxApprox.h" />
+    <ClInclude Include="include\SoftmaxDesc.h" />
     <ClInclude Include="include\SoftmaxApproxLutData.h" />
+    <ClInclude Include="include\QuantDesc.h" />
+    <ClInclude Include="include\VerifyTolerance.h" />
     <ClInclude Include="include\SramMap.h" />
     <ClInclude Include="include\weights_streamer.h" />
     <ClInclude Include="include\WeightStreamOrder.h" />
@@ -248,6 +251,12 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="tb\tb_regress_m14.cpp" />
+    <ClCompile Include="tb\tb_softmax_m15a.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

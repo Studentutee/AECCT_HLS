@@ -7,6 +7,7 @@
 
 #include "AecctTypes.h"
 #include "LayerNormDesc.h"
+#include "QuantDesc.h"
 
 namespace aecct {
 
@@ -56,16 +57,16 @@ namespace aecct {
             uint32_t row_out_base = x_out_base + t * d_model;
 
             // pass1：計算 mean / var
-            float sum = 0.0f;
-            float sq_sum = 0.0f;
+            quant_acc_t sum = 0;
+            quant_acc_t sq_sum = 0;
             for (uint32_t c = 0; c < d_model; ++c) {
-                float x = ln_bits_to_f32(sram[row_in_base + c]);
+                quant_act_t x = quant_act_from_bits(sram[row_in_base + c]);
                 sum += x;
-                sq_sum += (x * x);
+                sq_sum += (quant_acc_t(x) * quant_acc_t(x));
             }
             float inv_n = 1.0f / (float)d_model;
-            float mean = sum * inv_n;
-            float var = sq_sum * inv_n - mean * mean;
+            float mean = (float)sum.to_double() * inv_n;
+            float var = (float)sq_sum.to_double() * inv_n - mean * mean;
             float inv_std = 1.0f / std::sqrt(var + eps);
 
             // pass2：normalize + affine，寫到 x_out（non in-place）

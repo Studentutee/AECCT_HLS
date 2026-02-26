@@ -11,6 +11,7 @@
 #include "ModelShapes.h"
 #include "SramMap.h"
 #include "Top.h"
+#include "VerifyTolerance.h"
 #include "input_y_step0.h"
 #include "output_logits_step0.h"
 #include "output_x_pred_step0.h"
@@ -473,7 +474,7 @@ static void case9_end_to_end_all_outmodes() {
         trace_output_logits_step0_tensor,
         0u,
         (uint32_t)EXP_LEN_OUT_LOGITS_WORDS,
-        1.0e-5
+        EPS_LOGITS
     ) != 0) {
         std::exit(1);
     }
@@ -494,7 +495,7 @@ static void case9_end_to_end_all_outmodes() {
         trace_output_x_pred_step0_tensor,
         0u,
         (uint32_t)EXP_LEN_OUT_XPRED_WORDS,
-        1.0e-5
+        EPS_LOGITS
     ) != 0) {
         std::exit(1);
     }

@@ -1,10 +1,13 @@
 #pragma once
 // AttnLayer0.h
 // M9 Layer0 attention bring-up staged checkpoint path
+#include <cmath>
 #include <cstdint>
 
 #include "AecctTypes.h"
 #include "AttnDescBringup.h"
+#include "SoftmaxApprox.h"
+#include "QuantDesc.h"
 
 #ifdef AECCT_ATTN_TRACE_MODE
 #include "layer0_norm_attn_out_step0.h"
@@ -186,7 +189,6 @@ namespace aecct {
             }
         }
 #else
-        // TODO(M9b-2): replace with synthesizable LUT softmax + reciprocal path.
         uint32_t x_in_base = (uint32_t)x_in_base_word.to_uint();
         uint32_t q_base = (uint32_t)sc.q_base_word.to_uint();
         uint32_t k_base = (uint32_t)sc.k_base_word.to_uint();
@@ -196,6 +198,11 @@ namespace aecct {
         uint32_t pre_base = (uint32_t)sc.pre_concat_base_word.to_uint();
         uint32_t post_base = (uint32_t)sc.post_concat_base_word.to_uint();
         uint32_t out_base = (uint32_t)attn_out_base_word.to_uint();
+        uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
+        uint32_t d_head = (uint32_t)cfg.d_head.to_uint();
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (d_head == 0u) { d_head = d_model / n_heads; }
+        quant_acc_t inv_sqrt_d_head = quant_acc_t(1.0 / std::sqrt((double)d_head));
 
         if constexpr (STAGE_MODE == ATTN_STAGE_QKV || STAGE_MODE == ATTN_STAGE_FULL) {
             for (uint32_t i = 0; i < tensor_words; ++i) {
@@ -211,10 +218,47 @@ namespace aecct {
         }
 
         if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
+            softmax_score_t score_row[N_NODES];
+            softmax_prob_t prob_row[N_NODES];
+            for (uint32_t t = 0; t < token_count; ++t) {
+                for (uint32_t h = 0; h < n_heads; ++h) {
+                    uint32_t head_col_base = h * d_head;
+
+                    for (uint32_t j = 0; j < token_count; ++j) {
+                        quant_acc_t dot = 0;
+                        uint32_t q_row = q_base + t * d_model + head_col_base;
+                        uint32_t k_row = k_base + j * d_model + head_col_base;
+                        for (uint32_t d = 0; d < d_head; ++d) {
+                            quant_act_t qv = quant_act_from_bits(sram[q_row + d]);
+                            quant_act_t kv = quant_act_from_bits(sram[k_row + d]);
+                            dot += quant_acc_t(qv) * quant_acc_t(kv);
+                        }
+                        score_row[j] = softmax_score_t(dot * inv_sqrt_d_head);
+                    }
+
+                    SoftmaxApprox<N_NODES>(score_row, prob_row, token_count);
+
+                    if (t == 0u && h == 0u) {
+                        for (uint32_t j = 0; j < token_count; ++j) {
+                            sram[score_base + j] = quant_f32_to_bits((float)score_row[j].to_double());
+                            sram[softmax_base + j] = quant_f32_to_bits((float)prob_row[j].to_double());
+                        }
+                    }
+
+                    for (uint32_t d = 0; d < d_head; ++d) {
+                        quant_acc_t acc = 0;
+                        for (uint32_t j = 0; j < token_count; ++j) {
+                            uint32_t v_idx = v_base + j * d_model + head_col_base + d;
+                            quant_act_t vv = quant_act_from_bits(sram[v_idx]);
+                            acc += quant_acc_t(prob_row[j]) * quant_acc_t(vv);
+                        }
+                        uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
+                        sram[out_idx] = quant_bits_from_acc(acc);
+                    }
+                }
+            }
+
             for (uint32_t i = 0; i < tensor_words; ++i) {
-                sram[score_base + i] = (u32_t)0u;
-                sram[softmax_base + i] = (u32_t)0u;
-                sram[pre_base + i] = sram[q_base + i];
                 sram[post_base + i] = sram[pre_base + i];
             }
         }

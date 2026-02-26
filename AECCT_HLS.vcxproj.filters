@@ -102,7 +102,16 @@
     <ClInclude Include="include\SoftmaxApprox.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="include\SoftmaxDesc.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
     <ClInclude Include="include\SoftmaxApproxLutData.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\QuantDesc.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\VerifyTolerance.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
     <ClInclude Include="include\SramMap.h">
@@ -171,6 +180,9 @@
       <Filter>來源檔案</Filter>
     </ClCompile>
     <ClCompile Include="tb\tb_regress_m14.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_softmax_m15a.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
   </ItemGroup>

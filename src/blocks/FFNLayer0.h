@@ -6,6 +6,7 @@
 
 #include "AecctTypes.h"
 #include "FfnDescBringup.h"
+#include "QuantDesc.h"
 #include "weights.h"
 
 #ifdef AECCT_FFN_TRACE_MODE
@@ -135,18 +136,18 @@ namespace aecct {
                 uint32_t x_row = x_in_base + t * d_model;
                 uint32_t h_row = w1_base + t * d_ffn;
                 for (uint32_t j = 0; j < d_ffn; ++j) {
-                    float acc = use_layer1
-                        ? (float)w_decoder_layers_1_feed_forward_w_1_bias[j]
-                        : (float)w_decoder_layers_0_feed_forward_w_1_bias[j];
+                    quant_acc_t acc = use_layer1
+                        ? quant_acc_t((float)w_decoder_layers_1_feed_forward_w_1_bias[j])
+                        : quant_acc_t((float)w_decoder_layers_0_feed_forward_w_1_bias[j]);
                     uint32_t w_row = j * d_model;
                     for (uint32_t i = 0; i < d_model; ++i) {
-                        float x = ffn_bits_to_f32(sram[x_row + i]);
-                        float w = use_layer1
-                            ? (float)w_decoder_layers_1_feed_forward_w_1_weight[w_row + i]
-                            : (float)w_decoder_layers_0_feed_forward_w_1_weight[w_row + i];
-                        acc += x * w;
+                        quant_act_t x = quant_act_from_bits(sram[x_row + i]);
+                        quant_w_t w = use_layer1
+                            ? quant_w_t((float)w_decoder_layers_1_feed_forward_w_1_weight[w_row + i])
+                            : quant_w_t((float)w_decoder_layers_0_feed_forward_w_1_weight[w_row + i]);
+                        acc += quant_acc_t(x) * quant_acc_t(w);
                     }
-                    sram[h_row + j] = ffn_f32_to_bits(acc);
+                    sram[h_row + j] = quant_bits_from_acc(acc);
                 }
             }
         }
@@ -156,9 +157,9 @@ namespace aecct {
                 uint32_t h_row = w1_base + t * d_ffn;
                 uint32_t a_row = relu_base + t * d_ffn;
                 for (uint32_t j = 0; j < d_ffn; ++j) {
-                    float v = ffn_bits_to_f32(sram[h_row + j]);
-                    float y = (v > 0.0f) ? v : 0.0f;
-                    sram[a_row + j] = ffn_f32_to_bits(y);
+                    quant_act_t v = quant_act_from_bits(sram[h_row + j]);
+                    quant_act_t y = (v > quant_act_t(0)) ? v : quant_act_t(0);
+                    sram[a_row + j] = quant_bits_from_act(y);
                 }
             }
         }
@@ -168,18 +169,18 @@ namespace aecct {
                 uint32_t a_row = relu_base + t * d_ffn;
                 uint32_t y_row = w2_base + t * d_model;
                 for (uint32_t i = 0; i < d_model; ++i) {
-                    float acc = use_layer1
-                        ? (float)w_decoder_layers_1_feed_forward_w_2_bias[i]
-                        : (float)w_decoder_layers_0_feed_forward_w_2_bias[i];
+                    quant_acc_t acc = use_layer1
+                        ? quant_acc_t((float)w_decoder_layers_1_feed_forward_w_2_bias[i])
+                        : quant_acc_t((float)w_decoder_layers_0_feed_forward_w_2_bias[i]);
                     uint32_t w_row = i * d_ffn;
                     for (uint32_t j = 0; j < d_ffn; ++j) {
-                        float a = ffn_bits_to_f32(sram[a_row + j]);
-                        float w = use_layer1
-                            ? (float)w_decoder_layers_1_feed_forward_w_2_weight[w_row + j]
-                            : (float)w_decoder_layers_0_feed_forward_w_2_weight[w_row + j];
-                        acc += a * w;
+                        quant_act_t a = quant_act_from_bits(sram[a_row + j]);
+                        quant_w_t w = use_layer1
+                            ? quant_w_t((float)w_decoder_layers_1_feed_forward_w_2_weight[w_row + j])
+                            : quant_w_t((float)w_decoder_layers_0_feed_forward_w_2_weight[w_row + j]);
+                        acc += quant_acc_t(a) * quant_acc_t(w);
                     }
-                    sram[y_row + i] = ffn_f32_to_bits(acc);
+                    sram[y_row + i] = quant_bits_from_acc(acc);
                 }
             }
         }
