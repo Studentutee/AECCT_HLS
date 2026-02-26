@@ -1,14 +1,13 @@
-// tb_top_m4.cpp
-// M4 TB：驗證 SET_W_BASE + LOAD_W(PARAM_RX) + SRAM 寫入/錯誤碼
-
+﻿// tb_top_m4.cpp
+// M4 TB嚗?霅?SET_W_BASE + LOAD_W(PARAM_RX) + SRAM 撖怠/?航炊蝣?
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "SramMap.h"
-#include "WeightStreamOrder.h"
+#include "gen/SramMap.h"
+#include "gen/WeightStreamOrder.h"
 #include "Top.h"
 
 static const uint32_t PARAM_WORDS_EXPECTED = (uint32_t)EXP_LEN_PARAM_WORDS;
@@ -136,8 +135,7 @@ int main() {
     const uint32_t good_base = (uint32_t)sram_map::W_REGION_BASE;
     const uint32_t pattern_hi = 0xA0000000u;
 
-    // Case 1：SET_W_BASE 正常 + LOAD_W 正常 + READ_MEM 讀回比對
-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+    // Case 1嚗ET_W_BASE 甇?虜 + LOAD_W 甇?虜 + READ_MEM 霈??撠?    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
@@ -160,7 +158,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_READ_MEM);
     expect_state(aecct::ST_IDLE);
 
-    // Case 2：SET_W_BASE 越界
+    // Case 2嚗ET_W_BASE 頞?
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -172,8 +170,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_PARAM_BASE_RANGE);
     expect_state(aecct::ST_IDLE);
 
-    // Case 3：SET_W_BASE 對齊錯誤（M4 採用 W_LANES 對齊）
-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+    // Case 3嚗ET_W_BASE 撠??航炊嚗4 ?∠ W_LANES 撠?嚗?    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
@@ -185,7 +182,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_PARAM_BASE_ALIGN);
     expect_state(aecct::ST_IDLE);
 
-    // Case 4：LOAD_W 未設 base
+    // Case 4嚗OAD_W ?芾身 base
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -194,8 +191,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
     expect_state(aecct::ST_IDLE);
 
-    // Case 5：LOAD_W 會越界（base near end）
-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+    // Case 5嚗OAD_W ????base near end嚗?    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
@@ -214,3 +210,4 @@ int main() {
     std::printf("PASS: tb_top_m4 (SET_W_BASE + LOAD_W PARAM_RX)\n");
     return 0;
 }
+

@@ -1,11 +1,11 @@
-#include <cmath>
+﻿#include <cmath>
 #include <cstdint>
 #include <cstdio>
 
 #include "AecctTypes.h"
 #include "FfnDescBringup.h"
 #include "LayerNormDesc.h"
-#include "SramMap.h"
+#include "gen/SramMap.h"
 #include "blocks/LayerNormBlock.h"
 #include "layer0_ffn_w2_out_step0.h"
 #include "layer0_norm_attn_out_step0.h"
@@ -133,3 +133,4 @@ int main() {
     std::printf("PASS: tb_ffn_m10d_norm\n");
     return 0;
 }
+

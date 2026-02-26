@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 // SoftmaxDesc.h
 // M15a softmax approximation single source of truth
 
 #include <ac_fixed.h>
-#include "ModelShapes.h"
+#include "gen/ModelShapes.h"
 
 struct SoftmaxApproxCfg {
   // x = score - max(score), then clamp to [-SOFTMAX_NEG_T, 0]
@@ -32,3 +32,4 @@ static const softmax_x_t SOFTMAX_EXP_IDX_SCALE = softmax_x_t(21.25);
 
 // RCP index: (RCP_LUT_SIZE-1) / (SOFTMAX_SUMEXP_MAX-1) = 255/255 = 1.0
 static const softmax_sum_t SOFTMAX_RCP_IDX_SCALE = softmax_sum_t(1.0);
+

@@ -1,5 +1,5 @@
-// tb_top_m5.cpp
-// M5 TB：驗證 DEBUG_CFG + HALTED(meta0/meta1) + READ_MEM + RESUME
+﻿// tb_top_m5.cpp
+// M5 TB嚗?霅?DEBUG_CFG + HALTED(meta0/meta1) + READ_MEM + RESUME
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,8 +7,8 @@
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "SramMap.h"
-#include "WeightStreamOrder.h"
+#include "gen/SramMap.h"
+#include "gen/WeightStreamOrder.h"
 #include "Top.h"
 
 static const uint32_t PARAM_WORDS_EXPECTED = (uint32_t)EXP_LEN_PARAM_WORDS;
@@ -126,7 +126,7 @@ int main() {
     const uint32_t good_base = (uint32_t)sram_map::W_REGION_BASE;
     const uint32_t halt_k = 4u;
 
-    // Case 1：LOAD_W 期間 halt + meta + READ_MEM + RESUME + 最終 DONE
+    // Case 1嚗OAD_W ?? halt + meta + READ_MEM + RESUME + ?蝯?DONE
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
 
@@ -203,7 +203,7 @@ int main() {
     }
     expect_state(aecct::ST_IDLE);
 
-    // Case 2：HALTED 狀態下非法命令
+    // Case 2嚗ALTED ??????賭誘
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     drive_set_w_base(ctrl_cmd, ctrl_rsp, data_in, data_out, good_base);
@@ -238,8 +238,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
-    // Case 3：RESUME 在非 HALTED（要求 ERR_BAD_ARG）
-    drive_debug_cfg(
+    // Case 3嚗ESUME ?券? HALTED嚗?瘙?ERR_BAD_ARG嚗?    drive_debug_cfg(
         ctrl_cmd, ctrl_rsp, data_in, data_out,
         make_dbg_word(2u, 0u, 0u) // RESUME in IDLE
     );
@@ -249,3 +248,4 @@ int main() {
     std::printf("PASS: tb_top_m5 (DEBUG_CFG + HALTED + RESUME)\n");
     return 0;
 }
+

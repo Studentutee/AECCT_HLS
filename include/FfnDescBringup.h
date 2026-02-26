@@ -1,12 +1,12 @@
-#pragma once
+﻿#pragma once
 // FfnDescBringup.h
 // M10 Layer0 FFN shape and SRAM layout (single source of truth)
 
 #include "AecctTypes.h"
 #include "AttnDescBringup.h"
 #include "LayerNormDesc.h"
-#include "ModelShapes.h"
-#include "SramMap.h"
+#include "gen/ModelShapes.h"
+#include "gen/SramMap.h"
 
 namespace aecct {
 
@@ -43,7 +43,7 @@ namespace aecct {
 
     static const unsigned FFN_X_IN_BASE_WORD_DEFAULT = (unsigned)ATTN_OUT_BASE_WORD_DEFAULT;
 
-    // W1/relu 需要 9600 words，放在 W_REGION；w2/add2 放在 SCRATCH；LN output 放 X_PAGE1
+    // W1/relu ?閬?9600 words嚗??W_REGION嚗2/add2 ?曉 SCRATCH嚗N output ??X_PAGE1
     static const unsigned FFN_W1_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::W_REGION_BASE;
     static const unsigned FFN_RELU_OUT_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + FFN_W1_OUT_WORDS);
     static const unsigned FFN_W2_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::BASE_SCR_K_W;
@@ -66,3 +66,4 @@ namespace aecct {
     }
 
 } // namespace aecct
+

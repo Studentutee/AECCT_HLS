@@ -3,7 +3,7 @@
 // M9: Layer0 Attention shape / SRAM layout / stage switch（single source of truth）
 #include "AecctTypes.h"
 #include "LayerNormDesc.h"
-#include "SramMap.h"
+#include "gen/SramMap.h"
 
 namespace aecct {
 
@@ -80,3 +80,4 @@ namespace aecct {
     }
 
 } // namespace aecct
+

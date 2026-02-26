@@ -1,4 +1,4 @@
-#define AECCT_FINAL_TRACE_MODE 1
+﻿#define AECCT_FINAL_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -7,8 +7,8 @@
 
 #include "AecctProtocol.h"
 #include "AecctTypes.h"
-#include "ModelDesc.h"
-#include "ModelShapes.h"
+#include "gen/ModelDesc.h"
+#include "gen/ModelShapes.h"
 #include "Top.h"
 #include "input_y_step0.h"
 #include "output_logits_step0.h"
@@ -317,3 +317,4 @@ int main() {
     std::printf("PASS: tb_top_end2end_m13\n");
     return 0;
 }
+

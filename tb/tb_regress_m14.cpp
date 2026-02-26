@@ -1,4 +1,4 @@
-#define AECCT_FINAL_TRACE_MODE 1
+﻿#define AECCT_FINAL_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -7,9 +7,9 @@
 
 #include "AecctProtocol.h"
 #include "AecctTypes.h"
-#include "ModelDesc.h"
-#include "ModelShapes.h"
-#include "SramMap.h"
+#include "gen/ModelDesc.h"
+#include "gen/ModelShapes.h"
+#include "gen/SramMap.h"
 #include "Top.h"
 #include "VerifyTolerance.h"
 #include "input_y_step0.h"
@@ -737,3 +737,4 @@ int main() {
     std::printf("PASS: tb_regress_m14\n");
     return 0;
 }
+

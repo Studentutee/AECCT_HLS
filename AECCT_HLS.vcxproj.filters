@@ -123,6 +123,30 @@
     <ClInclude Include="include\WeightStreamOrder.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="gen\ModelDesc.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\ModelShapes.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\SramMap.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\WeightStreamOrder.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\include\ModelDesc.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\include\ModelShapes.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\include\SramMap.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="gen\include\WeightStreamOrder.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
     <ClInclude Include="src\Top.h">
       <Filter>標頭檔</Filter>
     </ClInclude>

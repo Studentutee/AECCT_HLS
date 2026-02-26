@@ -1,4 +1,4 @@
-#define AECCT_ATTN_TRACE_MODE 1
+﻿#define AECCT_ATTN_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -6,7 +6,7 @@
 
 #include "AecctTypes.h"
 #include "AttnDescBringup.h"
-#include "SramMap.h"
+#include "gen/SramMap.h"
 #include "blocks/AttnLayer0.h"
 #include "layer0_norm_attn_out_step0.h"
 #include "layer0_attn_Q_step0.h"

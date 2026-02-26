@@ -1,4 +1,4 @@
-#define AECCT_ATTN_TRACE_MODE 1
+﻿#define AECCT_ATTN_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -7,8 +7,8 @@
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "ModelDesc.h"
-#include "ModelShapes.h"
+#include "gen/ModelDesc.h"
+#include "gen/ModelShapes.h"
 #include "AttnDescBringup.h"
 #include "Top.h"
 #include "input_y_step0.h"

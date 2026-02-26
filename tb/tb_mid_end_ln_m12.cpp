@@ -1,4 +1,4 @@
-#define AECCT_FFN_TRACE_MODE 1
+﻿#define AECCT_FFN_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -8,9 +8,9 @@
 #include "AecctProtocol.h"
 #include "AecctTypes.h"
 #include "LayerNormDesc.h"
-#include "ModelDesc.h"
-#include "ModelShapes.h"
-#include "SramMap.h"
+#include "gen/ModelDesc.h"
+#include "gen/ModelShapes.h"
+#include "gen/SramMap.h"
 #include "Top.h"
 #include "encoder_norm_end_out_step0.h"
 #include "encoder_norm_mid_out_step0.h"
@@ -309,3 +309,4 @@ int main() {
     std::printf("PASS: tb_mid_end_ln_m12\n");
     return 0;
 }
+

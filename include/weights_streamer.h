@@ -1,13 +1,10 @@
-// weights_streamer.h
+﻿// weights_streamer.h
 #pragma once
 
 // ============================================================
 // TB helper: stream unified PARAM payload (v11.4)
 // ------------------------------------------------------------
-// - 這是 testbench 用的「送參數/權重」工具，不是要被 HLS 合成。
-// - 依 WeightStreamOrder.h 的順序，把 weights.h 內的參數轉成 u32 raw words，送進 data_in。
-// - v11.4：先 SET_W_BASE（設定 param_base_word），再 LOAD_W（送 PARAM：bias + weights + bitpack）。
-//
+// - ? testbench ?函?????甈??極?瘀?銝閬◤ HLS ????// - 靘?WeightStreamOrder.h ??摨???weights.h ?抒??頧? u32 raw words嚗?data_in??// - v11.4嚗? SET_W_BASE嚗身摰?param_base_word嚗???LOAD_W嚗?PARAM嚗ias + weights + bitpack嚗?//
 // English:
 // - Testbench-only payload streamer for v11.4 unified PARAM.
 // - Converts weights.h tensors to u32 raw stream following WeightStreamOrder.h.
@@ -23,9 +20,9 @@
 #include "ac_channel.h"
 #include "ac_int.h"
 
-#include "ModelShapes.h"
-#include "SramMap.h"
-#include "WeightStreamOrder.h"
+#include "gen/ModelShapes.h"
+#include "gen/SramMap.h"
+#include "gen/WeightStreamOrder.h"
 #include "weights.h"
 
 // ------------------------------------------------------------
@@ -344,3 +341,4 @@ static inline uint32_t tb_default_param_base_word() {
 }
 
 #endif // __SYNTHESIS__
+

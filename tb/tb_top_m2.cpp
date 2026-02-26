@@ -1,12 +1,12 @@
-// tb_top_m2.cpp
-// M2 TB：驗證單一 SRAM + READ_MEM（讀回/越界/狀態限制）
+﻿// tb_top_m2.cpp
+// M2 TB嚗?霅銝 SRAM + READ_MEM嚗???頞?/????塚?
 
 #include <cstdio>
 #include <cstdlib>
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "SramMap.h"
+#include "gen/SramMap.h"
 #include "Top.h"
 
 static void expect_rsp(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_kind, uint8_t expect_payload) {
@@ -91,12 +91,12 @@ int main() {
     aecct::data_ch_t data_in;
     aecct::data_ch_t data_out;
 
-    // 先 reset，確保 SRAM pattern 初始化
+    // ??reset嚗Ⅱ靽?SRAM pattern ????
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
-    // Case 1：基本讀回（IDLE）
+    // Case 1嚗?祈???IDLE嚗?
     drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 8);
     for (uint32_t i = 0; i < 8; ++i) {
         expect_data_word(data_out, make_pattern(0u, i));
@@ -104,7 +104,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_READ_MEM);
     expect_state(aecct::ST_IDLE);
 
-    // Case 3：越界錯誤
+    // Case 3嚗??隤?
     drive_read_mem(
         ctrl_cmd, ctrl_rsp, data_in, data_out,
         (uint32_t)(sram_map::SRAM_WORDS_TOTAL - 4u), 8u
@@ -113,18 +113,18 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_MEM_RANGE);
     expect_state(aecct::ST_IDLE);
 
-    // Case 4：狀態限制（BAD_STATE）
+    // Case 4嚗????塚?BAD_STATE嚗?
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_state(aecct::ST_CFG_RX);
 
-    // 依要求在 BAD_STATE case 也塞 READ_MEM args
+    // 靘?瘙 BAD_STATE case 銋? READ_MEM args
     drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 2u);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
     expect_no_data(data_out);
     expect_state(aecct::ST_CFG_RX);
 
-    // 驗證 BAD_STATE 路徑不會消耗 data_in 參數
+    // 撽? BAD_STATE 頝臬?銝?瘨?data_in ?
     aecct::u32_t sink;
     if (!data_in.nb_read(sink) || !data_in.nb_read(sink)) {
         std::printf("ERROR: READ_MEM args unexpectedly consumed in BAD_STATE path.\n");
@@ -142,3 +142,4 @@ int main() {
     std::printf("PASS: tb_top_m2 (single SRAM + READ_MEM)\n");
     return 0;
 }
+

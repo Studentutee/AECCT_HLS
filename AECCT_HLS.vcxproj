@@ -85,7 +85,7 @@
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -102,7 +102,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -117,7 +117,7 @@
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -134,7 +134,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);$(ProjectDir)include;$(ProjectDir)src;$(ProjectDir)third_party\ac_types;$(ProjectDir)data\trace;$(ProjectDir)data\weights;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
@@ -167,6 +167,14 @@
     <ClInclude Include="include\SramMap.h" />
     <ClInclude Include="include\weights_streamer.h" />
     <ClInclude Include="include\WeightStreamOrder.h" />
+    <ClInclude Include="gen\ModelDesc.h" />
+    <ClInclude Include="gen\ModelShapes.h" />
+    <ClInclude Include="gen\SramMap.h" />
+    <ClInclude Include="gen\WeightStreamOrder.h" />
+    <ClInclude Include="gen\include\ModelDesc.h" />
+    <ClInclude Include="gen\include\ModelShapes.h" />
+    <ClInclude Include="gen\include\SramMap.h" />
+    <ClInclude Include="gen\include\WeightStreamOrder.h" />
     <ClInclude Include="src\Top.h" />
     <ClInclude Include="src\blocks\PreprocEmbedSPE.h" />
     <ClInclude Include="src\blocks\LayerNormBlock.h" />

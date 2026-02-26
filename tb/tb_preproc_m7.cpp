@@ -1,11 +1,11 @@
-// tb_preproc_m7.cpp
-// M7 block TB：直接驗證 PreprocEmbedSPE 的 SRAM checkpoint
+﻿// tb_preproc_m7.cpp
+// M7 block TB嚗?仿?霅?PreprocEmbedSPE ??SRAM checkpoint
 
 #include <cstdio>
 #include <cstdint>
 
 #include "AecctTypes.h"
-#include "SramMap.h"
+#include "gen/SramMap.h"
 #include "PreprocDescBringup.h"
 #include "blocks/PreprocEmbedSPE.h"
 
@@ -57,3 +57,4 @@ int main() {
     std::printf("PASS: tb_preproc_m7 (SRAM checkpoint match trace)\n");
     return 0;
 }
+

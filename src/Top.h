@@ -1,24 +1,19 @@
-#pragma once
-// Top.h（header-only）
-// M6：Top-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
-// 1) one-command-per-call：每次呼叫最多處理 1 筆 ctrl_cmd
-// 2) ST_CFG_RX 在無 ctrl_cmd 時會接收 1 個 cfg word（from data_in）
-// 3) ST_PARAM_RX 在無 ctrl_cmd 時會接收 1 個 param word（from data_in）
-// 4) ST_INFER_RX 在無 ctrl_cmd 時會接收 1 個 input word（from data_in）
-// 5) HALTED：先回 ctrl ERR，再吐 meta0/meta1 到 data_out
-// 6) READ_MEM 維持 M2 行為（IDLE/HALTED 可讀）
-
+﻿#pragma once
+// Top.h嚗eader-only嚗?// M6嚗op-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
+// 1) one-command-per-call嚗?甈∪?急?憭???1 蝑?ctrl_cmd
+// 2) ST_CFG_RX ?函 ctrl_cmd ???交 1 ??cfg word嚗rom data_in嚗?// 3) ST_PARAM_RX ?函 ctrl_cmd ???交 1 ??param word嚗rom data_in嚗?// 4) ST_INFER_RX ?函 ctrl_cmd ???交 1 ??input word嚗rom data_in嚗?// 5) HALTED嚗???ctrl ERR嚗???meta0/meta1 ??data_out
+// 6) READ_MEM 蝬剜? M2 銵嚗DLE/HALTED ?航?嚗?
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "SramMap.h"
-#include "ModelDesc.h"
+#include "gen/SramMap.h"
+#include "gen/ModelDesc.h"
 #include "PreprocDescBringup.h"
 #include "LayerNormDesc.h"
 #include "AttnDescBringup.h"
 #include "FfnDescBringup.h"
 #include "LayerScratchDesc.h"
 #include "LayerParamBringup.h"
-#include "WeightStreamOrder.h"
+#include "gen/WeightStreamOrder.h"
 #include "blocks/PreprocEmbedSPE.h"
 #include "blocks/LayerNormBlock.h"
 #include "blocks/TransformerLayer.h"
@@ -99,7 +94,7 @@ namespace aecct {
         }
     };
 
-    // M1/M2/M3/M4/M5 內部暫存器（internal regs）
+    // Persistent top-level internal registers.
     struct TopRegs {
         TopState state;
         bool w_base_set;
@@ -114,14 +109,14 @@ namespace aecct {
         u32_t infer_xpred_base_word;
         u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
 
-        // M5：debug/halt 控制
+        // M5嚗ebug/halt ?批
         bool debug_armed;
         u32_t dbg_trigger_sel;
         u32_t dbg_k_value;
         bool halt_active;
         HaltInfo halt_info;
 
-        // M3：cfg 接收與落地
+        // M3嚗fg ?交???
         u32_t cfg_words[CFG_WORDS_EXPECTED];
         u32_t cfg_count;
         bool cfg_ready;
@@ -185,13 +180,13 @@ namespace aecct {
         return regs;
     }
 
-    // M2：單一實體 SRAM（single physical SRAM）
+    // Single physical SRAM backing store.
     static inline u32_t* top_sram() {
         static u32_t sram[sram_map::SRAM_WORDS_TOTAL];
         return sram;
     }
 
-    // TB 用 debug helper（不影響 top 介面）
+    // TB ??debug helper嚗?敶梢 top 隞嚗?
     static inline TopState top_peek_state() { return top_regs().state; }
     static inline unsigned top_peek_cfg_count() { return (unsigned)top_regs().cfg_count.to_uint(); }
     static inline bool top_peek_cfg_ready() { return top_regs().cfg_ready; }
@@ -319,7 +314,7 @@ namespace aecct {
         regs.halt_info.meta1_len_words = (u32_t)DBG_META1_LEN_WORDS;
         regs.state = ST_HALTED;
 
-        // M5 規格：先 ctrl_rsp ERR，再吐 meta0/meta1。
+        // Emit ERR response and metadata words for HALTED debug state.
         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_DBG_HALT));
         data_out.write(regs.halt_info.meta0_word_addr);
         data_out.write(regs.halt_info.meta1_len_words);
@@ -478,17 +473,17 @@ namespace aecct {
         sram[addr] = w;
         regs.param_count = regs.param_count + 1;
 
-        // M5：當收到第 k 個 LOAD_W word（k 從 0 起算）時觸發 HALTED。
+        // HALT when debug trigger matches the k-th LOAD_W word.
         if (regs.debug_armed &&
             ((uint32_t)regs.dbg_trigger_sel.to_uint() == (uint32_t)DBG_TRIGGER_ON_LOADW_COUNT) &&
             (idx == (unsigned)regs.dbg_k_value.to_uint())) {
-            regs.debug_armed = false; // 觸發一次後自動解除，避免 RESUME 後立即再停。
+            regs.debug_armed = false; // One-shot trigger; re-arm via DEBUG_CFG.
             enter_halted_and_emit(regs, ctrl_rsp, data_out);
             return;
         }
 
         if ((unsigned)regs.param_count.to_uint() == PARAM_WORDS_EXPECTED) {
-            // M4 bring-up：bitpack padding 檢查延後到 M4.1（此處先直接完成）
+            // LOAD_W transaction complete.
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
         }
@@ -744,7 +739,7 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_out,
         u32_t* sram
     ) {
-        // READ_MEM 參數：addr_word、len_words（依序）
+        // READ_MEM ?嚗ddr_word?en_words嚗?摨?
         u32_t addr_word_in = data_in.read();
         u32_t len_words_in = data_in.read();
 
@@ -769,7 +764,7 @@ namespace aecct {
         ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_READ_MEM));
     }
 
-    // Top 函式介面（固定，不可擅改）
+    // Top ?賢?隞嚗摰?銝?嚗?
     static inline void top(
         ac_channel<ac_int<16, false> >& ctrl_cmd,
         ac_channel<ac_int<16, false> >& ctrl_rsp,
@@ -866,11 +861,11 @@ namespace aecct {
             else if (regs.state == ST_CFG_RX) {
                 if (op == (uint8_t)OP_CFG_COMMIT) {
                     if (!regs.cfg_ready) {
-                        // M3 釘死語意：長度不足報錯，留在 ST_CFG_RX 允許補送
+                        // M3 ?香隤?嚗摨虫?頞喳?荔?? ST_CFG_RX ?迂鋆?
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_LEN_MISMATCH));
                     }
                     else if (!cfg_validate_minimal(regs)) {
-                        // M3 釘死語意：非法 cfg 回 IDLE，需重新 begin
+                        // M3 ?香隤?嚗?瘜?cfg ??IDLE嚗?? begin
                         regs.state = ST_IDLE;
                         cfg_session_clear(regs);
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_ILLEGAL));
@@ -939,7 +934,7 @@ namespace aecct {
             }
         }
         else {
-            // 無控制命令時，在接收態各收 1 個資料字
+            // ?⊥?嗅隞斗?嚗?交????1 ????
             if (regs.state == ST_CFG_RX && !regs.cfg_ready) {
                 cfg_ingest_one_word(regs, data_in);
             }
@@ -953,3 +948,4 @@ namespace aecct {
     }
 
 } // namespace aecct
+

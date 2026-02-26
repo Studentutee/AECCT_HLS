@@ -1,0 +1,75 @@
+{
+  "generated_headers": [
+    "ModelDesc.h",
+    "ModelShapes.h",
+    "SramMap.h",
+    "WeightStreamOrder.h"
+  ],
+  "generator": "tools/gen_headers.py",
+  "input_hash": "ba15cc4d9cb9b643393ee146dd5c7e936ab627e448afcace5419df905fe7ae7c",
+  "inputs": [
+    {
+      "bytes": 2138,
+      "path": "include/ModelDesc.h",
+      "sha256": "e24a6befe08c0d92663066c6cfbf42b28f0e0c85fe05a8f1448b2d4c020c515f"
+    },
+    {
+      "bytes": 4456,
+      "path": "include/ModelShapes.h",
+      "sha256": "5197ca4048361b1628a75e85688c4352467331a272157d81f4c0a78aefd1bc1d"
+    },
+    {
+      "bytes": 5290,
+      "path": "include/SramMap.h",
+      "sha256": "592877db897a7c44d8e2f7c3a254dee68a8d3f7f25f76258630b1ea31dfb3bc2"
+    },
+    {
+      "bytes": 26159,
+      "path": "include/WeightStreamOrder.h",
+      "sha256": "ed311d406f5bb91e2060c4f19d4ccd26c99b1d7751ec8c748a9041ce0126784d"
+    }
+  ],
+  "outputs": [
+    {
+      "bytes": 2267,
+      "path": "gen/include/ModelDesc.h",
+      "sha256": "ee08107b18c34570c8384c0a22f0fdbff01b8a2e67a6308ad4cc6ce913a0dcb2"
+    },
+    {
+      "bytes": 104,
+      "path": "gen/ModelDesc.h",
+      "sha256": "414892d1d89654bc3835a757825c0ed5c9414834db442159a33e955800469f4a"
+    },
+    {
+      "bytes": 4587,
+      "path": "gen/include/ModelShapes.h",
+      "sha256": "62bad1180e786576a77aca5454568308a50765994e82795faedb221d6b698466"
+    },
+    {
+      "bytes": 106,
+      "path": "gen/ModelShapes.h",
+      "sha256": "991e1b3c0b233d9b36dd1dca75ad0400b5fddeb71d7268827e913da8404b6ef6"
+    },
+    {
+      "bytes": 5421,
+      "path": "gen/include/SramMap.h",
+      "sha256": "8c19b08606666cc0883f3e50876276fc7142c2b24811e4debfe4c1e1ebbbfe4e"
+    },
+    {
+      "bytes": 102,
+      "path": "gen/SramMap.h",
+      "sha256": "701fec37abec18cc189f30c7c66310d9b4bc0d2ba8351208f9ce5c2bf4fb18ae"
+    },
+    {
+      "bytes": 26304,
+      "path": "gen/include/WeightStreamOrder.h",
+      "sha256": "91666eabc7fb29934e3114a55955381de6d2be83db3343f471fbd05ededf4e34"
+    },
+    {
+      "bytes": 112,
+      "path": "gen/WeightStreamOrder.h",
+      "sha256": "2da8a5daef89bb7e73c7edca9577588af47bed61f2aa2bc3de750fc93b9957ea"
+    }
+  ],
+  "version_tag": "v11.5+14cd882"
+}

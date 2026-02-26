@@ -1,12 +1,12 @@
-// tb_top_m3.cpp
-// M3 TB：驗證 CFG_RX expected_len / 合法性 / 狀態機
+﻿// tb_top_m3.cpp
+// M3 TB嚗?霅?CFG_RX expected_len / ????/ ???
 
 #include <cstdio>
 #include <cstdlib>
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "ModelDesc.h"
+#include "gen/ModelDesc.h"
 #include "Top.h"
 
 static const unsigned CFG_WORDS_EXPECTED = (unsigned)EXP_LEN_CFG_WORDS;
@@ -109,7 +109,7 @@ int main() {
 
     uint32_t cfg[CFG_WORDS_EXPECTED];
 
-    // Case 1：正常 cfg 流程
+    // Case 1嚗迤撣?cfg 瘚?
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -137,7 +137,7 @@ int main() {
         return 1;
     }
 
-    // Case 2：少送 cfg（len mismatch）
+    // Case 2嚗???cfg嚗en mismatch嚗?
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -157,7 +157,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_state(aecct::ST_IDLE);
 
-    // Case 3：非法 cfg（d_model % n_heads != 0）
+    // Case 3嚗?瘜?cfg嚗_model % n_heads != 0嚗?
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -175,7 +175,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_CFG_ILLEGAL);
     expect_state(aecct::ST_IDLE);
 
-    // Case 4：狀態限制（ST_CFG_RX 禁止 INFER/LOAD_W）
+    // Case 4嚗????塚?ST_CFG_RX 蝳迫 INFER/LOAD_W嚗?
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
 
@@ -194,3 +194,4 @@ int main() {
     std::printf("PASS: tb_top_m3 (CFG_RX expected_len + legality)\n");
     return 0;
 }
+

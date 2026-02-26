@@ -1,4 +1,4 @@
-#define AECCT_FFN_TRACE_MODE 1
+﻿#define AECCT_FFN_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -6,7 +6,7 @@
 
 #include "AecctTypes.h"
 #include "FfnDescBringup.h"
-#include "SramMap.h"
+#include "gen/SramMap.h"
 #include "blocks/FFNLayer0.h"
 #include "layer0_ffn_relu_out_step0.h"
 #include "layer0_norm_attn_out_step0.h"
@@ -112,3 +112,4 @@ int main() {
     std::printf("PASS: tb_ffn_m10b_relu\n");
     return 0;
 }
+

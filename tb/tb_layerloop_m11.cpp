@@ -1,4 +1,4 @@
-#define AECCT_FFN_TRACE_MODE 1
+﻿#define AECCT_FFN_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -7,9 +7,9 @@
 
 #include "AecctProtocol.h"
 #include "AecctTypes.h"
-#include "ModelDesc.h"
-#include "ModelShapes.h"
-#include "SramMap.h"
+#include "gen/ModelDesc.h"
+#include "gen/ModelShapes.h"
+#include "gen/SramMap.h"
 #include "Top.h"
 #include "input_y_step0.h"
 #include "layer0_norm_ffn_out_step0.h"
@@ -345,3 +345,4 @@ int main() {
     std::printf("PASS: tb_layerloop_m11\n");
     return 0;
 }
+

@@ -1,13 +1,13 @@
-#pragma once
+﻿#pragma once
 // FinalHead.h
 // M13 FinalHead: logits + x_pred
 
 #include <cstdint>
 
 #include "AecctTypes.h"
-#include "ModelShapes.h"
+#include "gen/ModelShapes.h"
 #include "TransformerLayer.h"
-#include "WeightStreamOrder.h"
+#include "gen/WeightStreamOrder.h"
 #include "weights.h"
 
 #ifdef AECCT_FINAL_TRACE_MODE
@@ -163,3 +163,4 @@ namespace aecct {
     }
 
 } // namespace aecct
+

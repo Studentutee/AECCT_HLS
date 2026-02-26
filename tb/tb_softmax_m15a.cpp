@@ -1,8 +1,8 @@
-#include <cmath>
+﻿#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
-#include "ModelShapes.h"
+#include "gen/ModelShapes.h"
 #include "SoftmaxApprox.h"
 #include "VerifyTolerance.h"
 
@@ -95,3 +95,4 @@ int main() {
     std::printf("PASS: tb_softmax_m15a\n");
     return 0;
 }
+
