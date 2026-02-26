@@ -22,6 +22,7 @@
 #include "blocks/PreprocEmbedSPE.h"
 #include "blocks/LayerNormBlock.h"
 #include "blocks/TransformerLayer.h"
+#include "blocks/FinalHead.h"
 #include "weights.h"
 #include <cstdint>
 
@@ -43,6 +44,8 @@ namespace aecct {
     static const unsigned ATTN_X_IN_BASE_WORD = (unsigned)ATTN_X_IN_BASE_WORD_DEFAULT;
     static const unsigned ATTN_OUT_BASE_WORD = (unsigned)ATTN_OUT_BASE_WORD_DEFAULT;
     static const unsigned FFN_X_IN_BASE_WORD = (unsigned)FFN_X_IN_BASE_WORD_DEFAULT;
+    static const unsigned FINAL_LOGITS_BASE_WORD = (unsigned)sram_map::BASE_SCRATCH_W;
+    static const unsigned FINAL_XPRED_BASE_WORD = (unsigned)(sram_map::BASE_SCRATCH_W + OUT_WORDS_LOGITS);
     static const unsigned INIT_WORDS = 64;
     static const unsigned DBG_META1_LEN_WORDS = 16u;
 
@@ -107,6 +110,9 @@ namespace aecct {
         u32_t infer_final_x_base_word;
         u32_t infer_mid_dump_base_word;
         bool infer_mid_valid;
+        u32_t infer_logits_base_word;
+        u32_t infer_xpred_base_word;
+        u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
 
         // M5：debug/halt 控制
         bool debug_armed;
@@ -142,6 +148,11 @@ namespace aecct {
             infer_final_x_base_word = 0;
             infer_mid_dump_base_word = 0;
             infer_mid_valid = false;
+            infer_logits_base_word = (u32_t)FINAL_LOGITS_BASE_WORD;
+            infer_xpred_base_word = (u32_t)FINAL_XPRED_BASE_WORD;
+            for (unsigned i = 0; i < INFER_IN_WORDS_EXPECTED; ++i) {
+                infer_input_shadow[i] = 0;
+            }
 
             debug_armed = false;
             dbg_trigger_sel = 0;
@@ -201,6 +212,8 @@ namespace aecct {
     static inline u32_t top_peek_infer_final_x_base_word() { return top_regs().infer_final_x_base_word; }
     static inline u32_t top_peek_infer_mid_dump_base_word() { return top_regs().infer_mid_dump_base_word; }
     static inline bool top_peek_infer_mid_valid() { return top_regs().infer_mid_valid; }
+    static inline u32_t top_peek_infer_logits_base_word() { return top_regs().infer_logits_base_word; }
+    static inline u32_t top_peek_infer_xpred_base_word() { return top_regs().infer_xpred_base_word; }
 
     static inline RegionId decode_region(const u32_t& addr_word) {
         unsigned a = (unsigned)addr_word.to_uint();
@@ -656,9 +669,20 @@ namespace aecct {
         }
 #endif
         run_transformer_layer_loop(regs, sram);
+
+        HeadParamBase hp = make_head_param_base(regs.w_base_word);
+        FinalHead(
+            sram,
+            build_layer_cfg(regs),
+            regs.infer_final_x_base_word,
+            regs.infer_input_shadow,
+            regs.infer_logits_base_word,
+            regs.infer_xpred_base_word,
+            hp
+        );
     }
 
-    static inline void infer_emit_stub(
+    static inline void infer_emit_outmode_payload(
         const TopRegs& regs,
         ac_channel<ac_int<32, false> >& data_out,
         const u32_t* sram
@@ -668,17 +692,16 @@ namespace aecct {
             return;
         }
         if (mode == 0u) {
+            uint32_t base = (uint32_t)regs.infer_xpred_base_word.to_uint();
             for (unsigned i = 0; i < OUT_WORDS_X_PRED; ++i) {
-                uint32_t inw = (uint32_t)sram[IN_BASE_WORD + (i % INFER_IN_WORDS_EXPECTED)].to_uint();
-                uint32_t outw = inw ^ 0x5A5A5A5Au;
-                data_out.write((u32_t)outw);
+                data_out.write(sram[base + i]);
             }
             return;
         }
         if (mode == 1u) {
+            uint32_t base = (uint32_t)regs.infer_logits_base_word.to_uint();
             for (unsigned i = 0; i < OUT_WORDS_LOGITS; ++i) {
-                uint32_t outw = 0xC0000000u | i;
-                data_out.write((u32_t)outw);
+                data_out.write(sram[base + i]);
             }
             return;
         }
@@ -694,7 +717,7 @@ namespace aecct {
         unsigned idx = (unsigned)regs.input_count.to_uint();
         if (idx >= INFER_IN_WORDS_EXPECTED) {
             run_infer_pipeline(regs, sram);
-            infer_emit_stub(regs, data_out, sram);
+            infer_emit_outmode_payload(regs, data_out, sram);
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
             return;
@@ -704,11 +727,12 @@ namespace aecct {
         if (!data_in.nb_read(w)) { return; }
 
         sram[IN_BASE_WORD + idx] = w;
+        regs.infer_input_shadow[idx] = w;
         regs.input_count = regs.input_count + 1;
 
         if ((unsigned)regs.input_count.to_uint() == INFER_IN_WORDS_EXPECTED) {
             run_infer_pipeline(regs, sram);
-            infer_emit_stub(regs, data_out, sram);
+            infer_emit_outmode_payload(regs, data_out, sram);
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
         }

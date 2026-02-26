@@ -129,6 +129,9 @@
     <ClInclude Include="src\blocks\FFNLayer0.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="src\blocks\FinalHead.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
     <ClInclude Include="src\blocks\TransformerLayer.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
@@ -162,6 +165,9 @@
       <Filter>來源檔案</Filter>
     </ClCompile>
     <ClCompile Include="tb\tb_mid_end_ln_m12.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_top_end2end_m13.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
   </ItemGroup>

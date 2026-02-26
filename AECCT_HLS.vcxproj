@@ -169,6 +169,7 @@
     <ClInclude Include="src\blocks\LayerNormBlock.h" />
     <ClInclude Include="src\blocks\AttnLayer0.h" />
     <ClInclude Include="src\blocks\FFNLayer0.h" />
+    <ClInclude Include="src\blocks\FinalHead.h" />
     <ClInclude Include="src\blocks\TransformerLayer.h" />
     <ClInclude Include="third_party\ac_types\ac_channel.h" />
     <ClInclude Include="third_party\ac_types\ac_fixed.h" />
@@ -234,7 +235,13 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="tb\tb_mid_end_ln_m12.cpp" />
+    <ClCompile Include="tb\tb_mid_end_ln_m12.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="tb\tb_top_end2end_m13.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
