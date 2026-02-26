@@ -170,5 +170,8 @@
     <ClCompile Include="tb\tb_top_end2end_m13.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
+    <ClCompile Include="tb\tb_regress_m14.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>
