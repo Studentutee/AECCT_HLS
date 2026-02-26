@@ -104,6 +104,9 @@ namespace aecct {
         u32_t param_count;
         u32_t input_count;
         u32_t outmode;
+        u32_t infer_final_x_base_word;
+        u32_t infer_mid_dump_base_word;
+        bool infer_mid_valid;
 
         // M5：debug/halt 控制
         bool debug_armed;
@@ -136,6 +139,9 @@ namespace aecct {
             param_count = 0;
             input_count = 0;
             outmode = 0;
+            infer_final_x_base_word = 0;
+            infer_mid_dump_base_word = 0;
+            infer_mid_valid = false;
 
             debug_armed = false;
             dbg_trigger_sel = 0;
@@ -192,6 +198,9 @@ namespace aecct {
     static inline u32_t top_peek_cfg_d_model() { return top_regs().cfg_d_model; }
     static inline u32_t top_peek_cfg_n_heads() { return top_regs().cfg_n_heads; }
     static inline u32_t top_peek_cfg_n_layers() { return top_regs().cfg_n_layers; }
+    static inline u32_t top_peek_infer_final_x_base_word() { return top_regs().infer_final_x_base_word; }
+    static inline u32_t top_peek_infer_mid_dump_base_word() { return top_regs().infer_mid_dump_base_word; }
+    static inline bool top_peek_infer_mid_valid() { return top_regs().infer_mid_valid; }
 
     static inline RegionId decode_region(const u32_t& addr_word) {
         unsigned a = (unsigned)addr_word.to_uint();
@@ -522,12 +531,76 @@ namespace aecct {
         return (u32_t)sram_map::X_PAGE0_BASE_W;
     }
 
-    static inline void run_transformer_layer_loop(const TopRegs& regs, u32_t* sram) {
+    static inline void copy_x_words(u32_t* dst, const u32_t* src, uint32_t words) {
+        for (uint32_t i = 0; i < words; ++i) {
+            dst[i] = src[i];
+        }
+    }
+
+    static inline void load_mid_or_end_norm_params(
+        bool is_mid_norm,
+        u32_t* sram,
+        uint32_t gamma_base,
+        uint32_t beta_base,
+        uint32_t d_model
+    ) {
+        for (uint32_t c = 0; c < d_model; ++c) {
+            float g = is_mid_norm
+                ? (float)w_decoder_norm2_weight[c]
+                : (float)w_decoder_norm_weight[c];
+            float b = is_mid_norm
+                ? (float)w_decoder_norm2_bias[c]
+                : (float)w_decoder_norm_bias[c];
+
+            union {
+                float f;
+                uint32_t u;
+            } gcvt, bcvt;
+            gcvt.f = g;
+            bcvt.f = b;
+            sram[gamma_base + c] = (u32_t)gcvt.u;
+            sram[beta_base + c] = (u32_t)bcvt.u;
+        }
+    }
+
+    static inline void run_mid_or_end_layernorm(
+        bool is_mid_norm,
+        const CfgRegs& cfg_regs,
+        u32_t* sram,
+        u32_t x_in_base_word,
+        u32_t x_out_base_word
+    ) {
+        uint32_t d_model = (uint32_t)cfg_regs.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
+
+        uint32_t gamma_base = (uint32_t)LN_GAMMA_BASE_WORD;
+        uint32_t beta_base = (uint32_t)LN_BETA_BASE_WORD;
+        load_mid_or_end_norm_params(is_mid_norm, sram, gamma_base, beta_base, d_model);
+
+        LayerNormCfg ln_cfg;
+        ln_cfg.token_count = (u32_t)LN_TOKEN_COUNT;
+        ln_cfg.d_model = (u32_t)d_model;
+        ln_cfg.eps = LN_EPS;
+
+        LayerNormBlock(
+            sram,
+            ln_cfg,
+            x_in_base_word,
+            x_out_base_word,
+            (u32_t)gamma_base,
+            (u32_t)beta_base
+        );
+    }
+
+    static inline void run_transformer_layer_loop(TopRegs& regs, u32_t* sram) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
+        int mid_index = (int)(n_layers / 2u) - 1;
 
         u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
         u32_t x_out_base = alternate_x_page(x_in_base);
+        bool mid_valid = false;
+        static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
 
         for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
@@ -545,10 +618,36 @@ namespace aecct {
 
             x_in_base = x_out_base;
             x_out_base = alternate_x_page(x_in_base);
+
+            if ((int)lid == mid_index) {
+                // mid LN must be out-of-place: current_x -> other_x
+                run_mid_or_end_layernorm(true, cfg, sram, x_in_base, x_out_base);
+                x_in_base = x_out_base;
+                x_out_base = alternate_x_page(x_in_base);
+
+                copy_x_words(mid_snapshot, &sram[(uint32_t)x_in_base.to_uint()], (uint32_t)LN_X_TOTAL_WORDS);
+                mid_valid = true;
+            }
+        }
+
+        // end LN must be out-of-place and always runs before FinalHead.
+        run_mid_or_end_layernorm(false, cfg, sram, x_in_base, x_out_base);
+        x_in_base = x_out_base;
+        x_out_base = alternate_x_page(x_in_base);
+
+        regs.infer_final_x_base_word = x_in_base;
+        if (mid_valid) {
+            regs.infer_mid_valid = true;
+            regs.infer_mid_dump_base_word = x_out_base;
+            copy_x_words(&sram[(uint32_t)x_out_base.to_uint()], mid_snapshot, (uint32_t)LN_X_TOTAL_WORDS);
+        }
+        else {
+            regs.infer_mid_valid = false;
+            regs.infer_mid_dump_base_word = 0;
         }
     }
 
-    static inline void run_infer_pipeline(const TopRegs& regs, u32_t* sram) {
+    static inline void run_infer_pipeline(TopRegs& regs, u32_t* sram) {
         run_preproc_block(sram);
         run_layernorm_block(sram);
 #ifdef AECCT_FFN_TRACE_MODE

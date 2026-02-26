@@ -15,6 +15,7 @@
 
 #ifdef AECCT_FFN_TRACE_MODE
 #include "layer0_norm_ffn_out_step0.h"
+#include "layer1_norm_ffn_out_step0.h"
 #endif
 
 namespace aecct {
@@ -113,6 +114,15 @@ namespace aecct {
             for (uint32_t i = 0; i < (uint32_t)FFN_X_WORDS; ++i) {
                 uint32_t flat = sample_idx * (uint32_t)FFN_X_WORDS + i;
                 sram[out_base + i] = ffn_f32_to_bits((float)trace_layer0_norm_ffn_out_step0_tensor[flat]);
+            }
+            return;
+        }
+        if ((uint32_t)layer_id.to_uint() == 1u) {
+            uint32_t sample_idx = 0u;
+            uint32_t out_base = (uint32_t)x_out_base_word.to_uint();
+            for (uint32_t i = 0; i < (uint32_t)FFN_X_WORDS; ++i) {
+                uint32_t flat = sample_idx * (uint32_t)FFN_X_WORDS + i;
+                sram[out_base + i] = ffn_f32_to_bits((float)trace_layer1_norm_ffn_out_step0_tensor[flat]);
             }
             return;
         }
