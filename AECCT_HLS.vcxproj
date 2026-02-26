@@ -151,14 +151,22 @@
     <ClInclude Include="include\AecctProtocol.h" />
     <ClInclude Include="include\AecctTypes.h" />
     <ClInclude Include="include\AecctUtil.h" />
+    <ClInclude Include="include\AttnDescBringup.h" />
+    <ClInclude Include="include\FfnDescBringup.h" />
     <ClInclude Include="include\ModelDesc.h" />
+    <ClInclude Include="include\LayerNormDesc.h" />
     <ClInclude Include="include\ModelShapes.h" />
+    <ClInclude Include="include\PreprocDescBringup.h" />
     <ClInclude Include="include\SoftmaxApprox.h" />
     <ClInclude Include="include\SoftmaxApproxLutData.h" />
     <ClInclude Include="include\SramMap.h" />
     <ClInclude Include="include\weights_streamer.h" />
     <ClInclude Include="include\WeightStreamOrder.h" />
     <ClInclude Include="src\Top.h" />
+    <ClInclude Include="src\blocks\PreprocEmbedSPE.h" />
+    <ClInclude Include="src\blocks\LayerNormBlock.h" />
+    <ClInclude Include="src\blocks\AttnLayer0.h" />
+    <ClInclude Include="src\blocks\FFNLayer0.h" />
     <ClInclude Include="third_party\ac_types\ac_channel.h" />
     <ClInclude Include="third_party\ac_types\ac_fixed.h" />
     <ClInclude Include="third_party\ac_types\ac_int.h" />
@@ -169,7 +177,49 @@
     <ClInclude Include="data\weights\weights.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="tb\tb_top_m6.cpp" />
+    <ClCompile Include="tb\tb_attn_m9a_qkv.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="tb\tb_attn_m9b_scores.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="tb\tb_attn_m9c_out.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="tb\tb_top_m9.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="tb\tb_ffn_m10a_w1.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="tb\tb_ffn_m10b_relu.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="tb\tb_ffn_m10c_w2.cpp" />
+    <ClCompile Include="tb\tb_ffn_m10d_norm.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

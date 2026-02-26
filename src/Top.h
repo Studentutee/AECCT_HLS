@@ -12,7 +12,16 @@
 #include "AecctProtocol.h"
 #include "SramMap.h"
 #include "ModelDesc.h"
+#include "PreprocDescBringup.h"
+#include "LayerNormDesc.h"
+#include "AttnDescBringup.h"
+#include "FfnDescBringup.h"
 #include "WeightStreamOrder.h"
+#include "blocks/PreprocEmbedSPE.h"
+#include "blocks/LayerNormBlock.h"
+#include "blocks/AttnLayer0.h"
+#include "blocks/FFNLayer0.h"
+#include "weights.h"
 #include <cstdint>
 
 namespace aecct {
@@ -20,10 +29,19 @@ namespace aecct {
     static const unsigned CFG_WORDS_EXPECTED = (unsigned)EXP_LEN_CFG_WORDS;
     static const unsigned PARAM_WORDS_EXPECTED = (unsigned)EXP_LEN_PARAM_WORDS;
     static const unsigned PARAM_ALIGN_WORDS = (unsigned)W_LANES;
-    static const unsigned INFER_IN_WORDS_EXPECTED = (unsigned)EXP_LEN_INFER_IN_WORDS;
+    static const unsigned INFER_IN_WORDS_EXPECTED = (unsigned)PREPROC_IN_WORDS_EXPECTED;
+    static const unsigned X_OUT_WORDS_EXPECTED = (unsigned)PREPROC_X_OUT_WORDS_EXPECTED;
     static const unsigned OUT_WORDS_X_PRED = (unsigned)EXP_LEN_OUT_XPRED_WORDS;
     static const unsigned OUT_WORDS_LOGITS = (unsigned)EXP_LEN_OUT_LOGITS_WORDS;
-    static const unsigned IN_BASE_WORD = (unsigned)sram_map::BASE_SCRATCH_W;
+    static const unsigned IN_BASE_WORD = (unsigned)PREPROC_IN_BASE_WORD_DEFAULT;
+    static const unsigned X_OUT_BASE_WORD = (unsigned)PREPROC_X_OUT_BASE_WORD_DEFAULT;
+    static const unsigned LN_X_IN_BASE_WORD = (unsigned)LN_X_IN_BASE_WORD_DEFAULT;
+    static const unsigned LN_X_OUT_BASE_WORD = (unsigned)LN_X_OUT_BASE_WORD_DEFAULT;
+    static const unsigned LN_GAMMA_BASE_WORD = (unsigned)LN_GAMMA_BASE_WORD_DEFAULT;
+    static const unsigned LN_BETA_BASE_WORD = (unsigned)LN_BETA_BASE_WORD_DEFAULT;
+    static const unsigned ATTN_X_IN_BASE_WORD = (unsigned)ATTN_X_IN_BASE_WORD_DEFAULT;
+    static const unsigned ATTN_OUT_BASE_WORD = (unsigned)ATTN_OUT_BASE_WORD_DEFAULT;
+    static const unsigned FFN_X_IN_BASE_WORD = (unsigned)FFN_X_IN_BASE_WORD_DEFAULT;
     static const unsigned INIT_WORDS = 64;
     static const unsigned DBG_META1_LEN_WORDS = 16u;
 
@@ -453,6 +471,112 @@ namespace aecct {
         }
     }
 
+    static inline void run_preproc_block(u32_t* sram) {
+        PreprocCfg cfg;
+        cfg.infer_in_words = (u32_t)INFER_IN_WORDS_EXPECTED;
+        cfg.x_out_words = (u32_t)X_OUT_WORDS_EXPECTED;
+        PreprocEmbedSPE(
+            sram,
+            cfg,
+            (u32_t)IN_BASE_WORD,
+            (u32_t)X_OUT_BASE_WORD
+        );
+    }
+
+    static inline void run_layernorm_block(u32_t* sram) {
+        LayerNormCfg cfg;
+        cfg.token_count = (u32_t)LN_TOKEN_COUNT;
+        cfg.d_model = (u32_t)LN_D_MODEL;
+        cfg.eps = LN_EPS;
+
+        LayerNormBlock(
+            sram,
+            cfg,
+            (u32_t)LN_X_IN_BASE_WORD,
+            (u32_t)LN_X_OUT_BASE_WORD,
+            (u32_t)LN_GAMMA_BASE_WORD,
+            (u32_t)LN_BETA_BASE_WORD
+        );
+    }
+
+    static inline void run_attn_layer0_block(u32_t* sram) {
+        AttnCfg cfg;
+        cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        cfg.d_model = (u32_t)ATTN_D_MODEL;
+        cfg.n_heads = (u32_t)ATTN_N_HEADS;
+        cfg.d_head = (u32_t)ATTN_D_HEAD;
+
+        AttnScratch sc = default_attn_scratch();
+        AttnLayer0<ATTN_STAGE_FULL>(
+            sram,
+            cfg,
+            (u32_t)ATTN_X_IN_BASE_WORD,
+            (u32_t)ATTN_OUT_BASE_WORD,
+            sc
+        );
+    }
+
+    static inline void run_ffn_layer0_block(u32_t* sram) {
+        FfnCfg cfg;
+        cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
+        cfg.d_model = (u32_t)FFN_D_MODEL;
+        cfg.d_ffn = (u32_t)FFN_D_FFN;
+
+        FfnScratch sc = default_ffn_scratch();
+        FFNLayer0<FFN_STAGE_FULL>(
+            sram,
+            cfg,
+            (u32_t)FFN_X_IN_BASE_WORD,
+            sc
+        );
+    }
+
+    static inline void run_ffn_add2_and_norm_block(u32_t* sram) {
+        FfnScratch sc = default_ffn_scratch();
+        uint32_t x_in_base = (uint32_t)FFN_X_IN_BASE_WORD;
+        uint32_t w2_base = (uint32_t)sc.w2_out_base_word.to_uint();
+        uint32_t add2_base = (uint32_t)sc.add2_base_word.to_uint();
+        uint32_t gamma_base = (uint32_t)sc.ln_gamma_base_word.to_uint();
+        uint32_t beta_base = (uint32_t)sc.ln_beta_base_word.to_uint();
+        uint32_t ln_out_base = (uint32_t)sc.ln_out_base_word.to_uint();
+
+        for (uint32_t i = 0; i < (uint32_t)FFN_X_WORDS; ++i) {
+            union {
+                uint32_t u;
+                float f;
+            } x_cvt, w2_cvt, y_cvt;
+            x_cvt.u = (uint32_t)sram[x_in_base + i].to_uint();
+            w2_cvt.u = (uint32_t)sram[w2_base + i].to_uint();
+            y_cvt.f = x_cvt.f + w2_cvt.f;
+            sram[add2_base + i] = (u32_t)y_cvt.u;
+        }
+
+        for (uint32_t c = 0; c < (uint32_t)FFN_D_MODEL; ++c) {
+            union {
+                uint32_t u;
+                float f;
+            } g_cvt, b_cvt;
+            g_cvt.f = (float)w_decoder_layers_0_sublayer_1_norm_weight[c];
+            b_cvt.f = (float)w_decoder_layers_0_sublayer_1_norm_bias[c];
+            sram[gamma_base + c] = (u32_t)g_cvt.u;
+            sram[beta_base + c] = (u32_t)b_cvt.u;
+        }
+
+        LayerNormCfg cfg;
+        cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
+        cfg.d_model = (u32_t)FFN_D_MODEL;
+        cfg.eps = LN_EPS;
+
+        LayerNormBlock(
+            sram,
+            cfg,
+            (u32_t)add2_base,
+            (u32_t)ln_out_base,
+            (u32_t)gamma_base,
+            (u32_t)beta_base
+        );
+    }
+
     static inline void infer_emit_stub(
         const TopRegs& regs,
         ac_channel<ac_int<32, false> >& data_out,
@@ -488,6 +612,11 @@ namespace aecct {
     ) {
         unsigned idx = (unsigned)regs.input_count.to_uint();
         if (idx >= INFER_IN_WORDS_EXPECTED) {
+            run_preproc_block(sram);
+            run_layernorm_block(sram);
+            run_attn_layer0_block(sram);
+            run_ffn_layer0_block(sram);
+            run_ffn_add2_and_norm_block(sram);
             infer_emit_stub(regs, data_out, sram);
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
@@ -501,6 +630,11 @@ namespace aecct {
         regs.input_count = regs.input_count + 1;
 
         if ((unsigned)regs.input_count.to_uint() == INFER_IN_WORDS_EXPECTED) {
+            run_preproc_block(sram);
+            run_layernorm_block(sram);
+            run_attn_layer0_block(sram);
+            run_ffn_layer0_block(sram);
+            run_ffn_add2_and_norm_block(sram);
             infer_emit_stub(regs, data_out, sram);
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));

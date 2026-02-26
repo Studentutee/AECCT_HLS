@@ -27,9 +27,6 @@
     <ClInclude Include="third_party\ac_types\ac_channel.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
-    <ClInclude Include="src\PreprocEmbedSPE.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
     <ClInclude Include="third_party\ac_types\ac_int.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
@@ -78,10 +75,22 @@
     <ClInclude Include="include\AecctTypes.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="include\AttnDescBringup.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\FfnDescBringup.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
     <ClInclude Include="include\ModelDesc.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="include\LayerNormDesc.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
     <ClInclude Include="include\ModelShapes.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\PreprocDescBringup.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
     <ClInclude Include="include\SoftmaxApprox.h">
@@ -102,9 +111,42 @@
     <ClInclude Include="src\Top.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="src\blocks\PreprocEmbedSPE.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\blocks\LayerNormBlock.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\blocks\AttnLayer0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="src\blocks\FFNLayer0.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="tb\tb_top_m6.cpp">
+    <ClCompile Include="tb\tb_attn_m9a_qkv.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_attn_m9b_scores.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_attn_m9c_out.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_top_m9.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_ffn_m10a_w1.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_ffn_m10b_relu.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_ffn_m10c_w2.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_ffn_m10d_norm.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
   </ItemGroup>
