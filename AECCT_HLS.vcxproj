@@ -153,6 +153,8 @@
     <ClInclude Include="include\AecctUtil.h" />
     <ClInclude Include="include\AttnDescBringup.h" />
     <ClInclude Include="include\FfnDescBringup.h" />
+    <ClInclude Include="include\LayerParamBringup.h" />
+    <ClInclude Include="include\LayerScratchDesc.h" />
     <ClInclude Include="include\ModelDesc.h" />
     <ClInclude Include="include\LayerNormDesc.h" />
     <ClInclude Include="include\ModelShapes.h" />
@@ -167,6 +169,7 @@
     <ClInclude Include="src\blocks\LayerNormBlock.h" />
     <ClInclude Include="src\blocks\AttnLayer0.h" />
     <ClInclude Include="src\blocks\FFNLayer0.h" />
+    <ClInclude Include="src\blocks\TransformerLayer.h" />
     <ClInclude Include="third_party\ac_types\ac_channel.h" />
     <ClInclude Include="third_party\ac_types\ac_fixed.h" />
     <ClInclude Include="third_party\ac_types\ac_int.h" />
@@ -213,13 +216,19 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="tb\tb_ffn_m10c_w2.cpp" />
+    <ClCompile Include="tb\tb_ffn_m10c_w2.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="tb\tb_ffn_m10d_norm.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
+    <ClCompile Include="tb\tb_layerloop_m11.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

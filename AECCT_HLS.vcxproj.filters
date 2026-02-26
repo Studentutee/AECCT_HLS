@@ -81,6 +81,12 @@
     <ClInclude Include="include\FfnDescBringup.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="include\LayerParamBringup.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\LayerScratchDesc.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
     <ClInclude Include="include\ModelDesc.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
@@ -123,6 +129,9 @@
     <ClInclude Include="src\blocks\FFNLayer0.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="src\blocks\TransformerLayer.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="tb\tb_attn_m9a_qkv.cpp">
@@ -147,6 +156,9 @@
       <Filter>來源檔案</Filter>
     </ClCompile>
     <ClCompile Include="tb\tb_ffn_m10d_norm.cpp">
+      <Filter>來源檔案</Filter>
+    </ClCompile>
+    <ClCompile Include="tb\tb_layerloop_m11.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
   </ItemGroup>

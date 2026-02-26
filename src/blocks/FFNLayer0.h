@@ -90,11 +90,13 @@ namespace aecct {
         u32_t* sram,
         const FfnCfg& cfg,
         u32_t x_in_base_word,
-        const FfnScratch& sc
+        const FfnScratch& sc,
+        u32_t layer_id = (u32_t)0
     ) {
         uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
         uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
         uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
+        bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
 
         uint32_t x_in_base = (uint32_t)x_in_base_word.to_uint();
         uint32_t w1_base = (uint32_t)sc.w1_out_base_word.to_uint();
@@ -133,11 +135,15 @@ namespace aecct {
                 uint32_t x_row = x_in_base + t * d_model;
                 uint32_t h_row = w1_base + t * d_ffn;
                 for (uint32_t j = 0; j < d_ffn; ++j) {
-                    float acc = (float)w_decoder_layers_0_feed_forward_w_1_bias[j];
+                    float acc = use_layer1
+                        ? (float)w_decoder_layers_1_feed_forward_w_1_bias[j]
+                        : (float)w_decoder_layers_0_feed_forward_w_1_bias[j];
                     uint32_t w_row = j * d_model;
                     for (uint32_t i = 0; i < d_model; ++i) {
                         float x = ffn_bits_to_f32(sram[x_row + i]);
-                        float w = (float)w_decoder_layers_0_feed_forward_w_1_weight[w_row + i];
+                        float w = use_layer1
+                            ? (float)w_decoder_layers_1_feed_forward_w_1_weight[w_row + i]
+                            : (float)w_decoder_layers_0_feed_forward_w_1_weight[w_row + i];
                         acc += x * w;
                     }
                     sram[h_row + j] = ffn_f32_to_bits(acc);
@@ -162,11 +168,15 @@ namespace aecct {
                 uint32_t a_row = relu_base + t * d_ffn;
                 uint32_t y_row = w2_base + t * d_model;
                 for (uint32_t i = 0; i < d_model; ++i) {
-                    float acc = (float)w_decoder_layers_0_feed_forward_w_2_bias[i];
+                    float acc = use_layer1
+                        ? (float)w_decoder_layers_1_feed_forward_w_2_bias[i]
+                        : (float)w_decoder_layers_0_feed_forward_w_2_bias[i];
                     uint32_t w_row = i * d_ffn;
                     for (uint32_t j = 0; j < d_ffn; ++j) {
                         float a = ffn_bits_to_f32(sram[a_row + j]);
-                        float w = (float)w_decoder_layers_0_feed_forward_w_2_weight[w_row + j];
+                        float w = use_layer1
+                            ? (float)w_decoder_layers_1_feed_forward_w_2_weight[w_row + j]
+                            : (float)w_decoder_layers_0_feed_forward_w_2_weight[w_row + j];
                         acc += a * w;
                     }
                     sram[y_row + i] = ffn_f32_to_bits(acc);

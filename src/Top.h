@@ -16,11 +16,12 @@
 #include "LayerNormDesc.h"
 #include "AttnDescBringup.h"
 #include "FfnDescBringup.h"
+#include "LayerScratchDesc.h"
+#include "LayerParamBringup.h"
 #include "WeightStreamOrder.h"
 #include "blocks/PreprocEmbedSPE.h"
 #include "blocks/LayerNormBlock.h"
-#include "blocks/AttnLayer0.h"
-#include "blocks/FFNLayer0.h"
+#include "blocks/TransformerLayer.h"
 #include "weights.h"
 #include <cstdint>
 
@@ -499,82 +500,63 @@ namespace aecct {
         );
     }
 
-    static inline void run_attn_layer0_block(u32_t* sram) {
-        AttnCfg cfg;
-        cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
-        cfg.d_model = (u32_t)ATTN_D_MODEL;
-        cfg.n_heads = (u32_t)ATTN_N_HEADS;
-        cfg.d_head = (u32_t)ATTN_D_HEAD;
+    static inline CfgRegs build_layer_cfg(const TopRegs& regs) {
+        CfgRegs cfg;
+        cfg.d_model = regs.cfg_d_model;
+        cfg.n_heads = regs.cfg_n_heads;
+        cfg.d_ffn = regs.cfg_d_ffn;
+        cfg.n_layers = regs.cfg_n_layers;
 
-        AttnScratch sc = default_attn_scratch();
-        AttnLayer0<ATTN_STAGE_FULL>(
-            sram,
-            cfg,
-            (u32_t)ATTN_X_IN_BASE_WORD,
-            (u32_t)ATTN_OUT_BASE_WORD,
-            sc
-        );
+        if ((uint32_t)cfg.d_model.to_uint() == 0u) { cfg.d_model = (u32_t)D_MODEL; }
+        if ((uint32_t)cfg.n_heads.to_uint() == 0u) { cfg.n_heads = (u32_t)N_HEAD; }
+        if ((uint32_t)cfg.d_ffn.to_uint() == 0u) { cfg.d_ffn = (u32_t)D_FFN; }
+        if ((uint32_t)cfg.n_layers.to_uint() == 0u) { cfg.n_layers = (u32_t)N_LAYERS; }
+        return cfg;
     }
 
-    static inline void run_ffn_layer0_block(u32_t* sram) {
-        FfnCfg cfg;
-        cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
-        cfg.d_model = (u32_t)FFN_D_MODEL;
-        cfg.d_ffn = (u32_t)FFN_D_FFN;
-
-        FfnScratch sc = default_ffn_scratch();
-        FFNLayer0<FFN_STAGE_FULL>(
-            sram,
-            cfg,
-            (u32_t)FFN_X_IN_BASE_WORD,
-            sc
-        );
+    static inline u32_t alternate_x_page(u32_t x_base_word) {
+        uint32_t x = (uint32_t)x_base_word.to_uint();
+        if (x == (uint32_t)sram_map::X_PAGE0_BASE_W) {
+            return (u32_t)sram_map::X_PAGE1_BASE_W;
+        }
+        return (u32_t)sram_map::X_PAGE0_BASE_W;
     }
 
-    static inline void run_ffn_add2_and_norm_block(u32_t* sram) {
-        FfnScratch sc = default_ffn_scratch();
-        uint32_t x_in_base = (uint32_t)FFN_X_IN_BASE_WORD;
-        uint32_t w2_base = (uint32_t)sc.w2_out_base_word.to_uint();
-        uint32_t add2_base = (uint32_t)sc.add2_base_word.to_uint();
-        uint32_t gamma_base = (uint32_t)sc.ln_gamma_base_word.to_uint();
-        uint32_t beta_base = (uint32_t)sc.ln_beta_base_word.to_uint();
-        uint32_t ln_out_base = (uint32_t)sc.ln_out_base_word.to_uint();
+    static inline void run_transformer_layer_loop(const TopRegs& regs, u32_t* sram) {
+        CfgRegs cfg = build_layer_cfg(regs);
+        uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
 
+        u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
+        u32_t x_out_base = alternate_x_page(x_in_base);
+
+        for (uint32_t lid = 0; lid < n_layers; ++lid) {
+            LayerScratch sc = make_layer_scratch(x_in_base);
+            LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
+
+            TransformerLayer(
+                sram,
+                cfg,
+                (u32_t)lid,
+                x_in_base,
+                x_out_base,
+                sc,
+                pb
+            );
+
+            x_in_base = x_out_base;
+            x_out_base = alternate_x_page(x_in_base);
+        }
+    }
+
+    static inline void run_infer_pipeline(const TopRegs& regs, u32_t* sram) {
+        run_preproc_block(sram);
+        run_layernorm_block(sram);
+#ifdef AECCT_FFN_TRACE_MODE
         for (uint32_t i = 0; i < (uint32_t)FFN_X_WORDS; ++i) {
-            union {
-                uint32_t u;
-                float f;
-            } x_cvt, w2_cvt, y_cvt;
-            x_cvt.u = (uint32_t)sram[x_in_base + i].to_uint();
-            w2_cvt.u = (uint32_t)sram[w2_base + i].to_uint();
-            y_cvt.f = x_cvt.f + w2_cvt.f;
-            sram[add2_base + i] = (u32_t)y_cvt.u;
+            sram[(uint32_t)LN_X_OUT_BASE_WORD + i] = (u32_t)ffn_trace_x_word(0u, i);
         }
-
-        for (uint32_t c = 0; c < (uint32_t)FFN_D_MODEL; ++c) {
-            union {
-                uint32_t u;
-                float f;
-            } g_cvt, b_cvt;
-            g_cvt.f = (float)w_decoder_layers_0_sublayer_1_norm_weight[c];
-            b_cvt.f = (float)w_decoder_layers_0_sublayer_1_norm_bias[c];
-            sram[gamma_base + c] = (u32_t)g_cvt.u;
-            sram[beta_base + c] = (u32_t)b_cvt.u;
-        }
-
-        LayerNormCfg cfg;
-        cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
-        cfg.d_model = (u32_t)FFN_D_MODEL;
-        cfg.eps = LN_EPS;
-
-        LayerNormBlock(
-            sram,
-            cfg,
-            (u32_t)add2_base,
-            (u32_t)ln_out_base,
-            (u32_t)gamma_base,
-            (u32_t)beta_base
-        );
+#endif
+        run_transformer_layer_loop(regs, sram);
     }
 
     static inline void infer_emit_stub(
@@ -612,11 +594,7 @@ namespace aecct {
     ) {
         unsigned idx = (unsigned)regs.input_count.to_uint();
         if (idx >= INFER_IN_WORDS_EXPECTED) {
-            run_preproc_block(sram);
-            run_layernorm_block(sram);
-            run_attn_layer0_block(sram);
-            run_ffn_layer0_block(sram);
-            run_ffn_add2_and_norm_block(sram);
+            run_infer_pipeline(regs, sram);
             infer_emit_stub(regs, data_out, sram);
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
@@ -630,11 +608,7 @@ namespace aecct {
         regs.input_count = regs.input_count + 1;
 
         if ((unsigned)regs.input_count.to_uint() == INFER_IN_WORDS_EXPECTED) {
-            run_preproc_block(sram);
-            run_layernorm_block(sram);
-            run_attn_layer0_block(sram);
-            run_ffn_layer0_block(sram);
-            run_ffn_add2_and_norm_block(sram);
+            run_infer_pipeline(regs, sram);
             infer_emit_stub(regs, data_out, sram);
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
