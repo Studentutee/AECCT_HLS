@@ -1,0 +1,80 @@
+// ModelDesc.h
+#pragma once
+#include <cstdint>
+
+// ============================================================
+// ModelDesc.h (CFG_RX payload definition)
+// ------------------------------------------------------------
+// - In v8 flow, CFG_RX payload is a sequence of u32 words.
+// - Top/TB MUST use the same field order below.
+// - All fields are u32 for hardware-friendly streaming.
+// ============================================================
+
+enum CfgFieldOrder : uint32_t {
+  // BCH code parameters
+  CFG_CODE_N = 0,        // BCH n
+  CFG_CODE_K = 1,        // BCH k
+  CFG_CODE_C = 2,        // parity bits = n-k
+  CFG_N_NODES = 3,       // nodes = CODE_N + CODE_C   (列(Row)=node)
+
+  // Transformer dimensions
+  CFG_D_MODEL = 4,       // feature dim              (行(Colume)=d_model)
+  CFG_N_HEAD  = 5,       // attention heads
+  CFG_N_LAYERS= 6,       // decoder layers
+  CFG_D_FFN   = 7,       // FFN hidden dim
+
+  // Feature flags
+  CFG_ENABLE_LPE = 8,        // 0/1 enable LPE
+  CFG_ENABLE_LPE_TOKEN = 9,  // 0/1 enable LPE token
+
+  // Output mode
+  // NOTE: Must match SET_OUTMODE semantic in the spell/spec.
+  // 0: x_pred only, 1: logits only, 2: none (suppress normal infer outputs)
+  CFG_OUT_MODE = 10,
+
+  // Reserved (future compatibility)
+  CFG_RESERVED0 = 11,
+};
+
+static const uint32_t EXP_LEN_CFG_WORDS = 12;
+
+struct ModelDescRegs {
+  uint32_t code_n;
+  uint32_t code_k;
+  uint32_t code_c;
+  uint32_t n_nodes;
+
+  uint32_t d_model;
+  uint32_t n_head;
+  uint32_t n_layers;
+  uint32_t d_ffn;
+
+  uint32_t enable_lpe;
+  uint32_t enable_lpe_token;
+
+  uint32_t out_mode;
+  uint32_t reserved0;
+};
+
+// Preset derived from provided files:
+// - BCH_N63_K51.txt => CODE_N=63, CODE_K=51 => CODE_C=12
+// - .pth => Ndec2, d32, h8, d_ffn=128
+static inline ModelDescRegs modeldesc_preset_bch_n63_k51_ndec2_d32_h8() {
+  ModelDescRegs r;
+  r.code_n = 63;
+  r.code_k = 51;
+  r.code_c = 12;
+  r.n_nodes = 75;
+
+  r.d_model = 32;
+  r.n_head  = 8;
+  r.n_layers= 2;
+  r.d_ffn   = 128;
+
+  r.enable_lpe = 1;
+  r.enable_lpe_token = 1;
+
+  r.out_mode = 0; // default: x_pred only (can override via SET_OUTMODE)
+  r.reserved0 = 0;
+  return r;
+}

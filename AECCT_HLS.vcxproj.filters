@@ -78,18 +78,33 @@
     <ClInclude Include="include\AecctTypes.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
+    <ClInclude Include="include\ModelDesc.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\ModelShapes.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\SoftmaxApprox.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\SoftmaxApproxLutData.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\SramMap.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\weights_streamer.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
+    <ClInclude Include="include\WeightStreamOrder.h">
+      <Filter>標頭檔</Filter>
+    </ClInclude>
     <ClInclude Include="src\Top.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="include\SramMapBringup.h">
-      <Filter>標頭檔</Filter>
-    </ClInclude>
-    <ClInclude Include="include\ModelDescBringup.h">
       <Filter>標頭檔</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="tb\tb_top_m3.cpp">
+    <ClCompile Include="tb\tb_top_m6.cpp">
       <Filter>來源檔案</Filter>
     </ClCompile>
   </ItemGroup>

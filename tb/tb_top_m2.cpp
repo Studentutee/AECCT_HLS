@@ -6,7 +6,7 @@
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "SramMapBringup.h"
+#include "SramMap.h"
 #include "Top.h"
 
 static void expect_rsp(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_kind, uint8_t expect_payload) {
@@ -97,7 +97,7 @@ int main() {
     expect_state(aecct::ST_IDLE);
 
     // Case 1：基本讀回（IDLE）
-    drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, aecct::X0_BASE_WORD, 8);
+    drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 8);
     for (uint32_t i = 0; i < 8; ++i) {
         expect_data_word(data_out, make_pattern(0u, i));
     }
@@ -107,7 +107,7 @@ int main() {
     // Case 3：越界錯誤
     drive_read_mem(
         ctrl_cmd, ctrl_rsp, data_in, data_out,
-        (uint32_t)(aecct::SRAM_TOTAL_WORDS - 4u), 8u
+        (uint32_t)(sram_map::SRAM_WORDS_TOTAL - 4u), 8u
     );
     expect_no_data(data_out);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_MEM_RANGE);
@@ -119,7 +119,7 @@ int main() {
     expect_state(aecct::ST_CFG_RX);
 
     // 依要求在 BAD_STATE case 也塞 READ_MEM args
-    drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, aecct::X0_BASE_WORD, 2u);
+    drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 2u);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
     expect_no_data(data_out);
     expect_state(aecct::ST_CFG_RX);

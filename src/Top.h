@@ -1,17 +1,57 @@
 #pragma once
 // Top.h（header-only）
-// M3：Top-FSM + 單一 SRAM + CFG_RX expected_len 嚴格驗證
+// M6：Top-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
 // 1) one-command-per-call：每次呼叫最多處理 1 筆 ctrl_cmd
 // 2) ST_CFG_RX 在無 ctrl_cmd 時會接收 1 個 cfg word（from data_in）
-// 3) READ_MEM 維持 M2 行為（IDLE/HALTED 可讀）
+// 3) ST_PARAM_RX 在無 ctrl_cmd 時會接收 1 個 param word（from data_in）
+// 4) ST_INFER_RX 在無 ctrl_cmd 時會接收 1 個 input word（from data_in）
+// 5) HALTED：先回 ctrl ERR，再吐 meta0/meta1 到 data_out
+// 6) READ_MEM 維持 M2 行為（IDLE/HALTED 可讀）
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "SramMapBringup.h"
-#include "ModelDescBringup.h"
+#include "SramMap.h"
+#include "ModelDesc.h"
+#include "WeightStreamOrder.h"
 #include <cstdint>
 
 namespace aecct {
+
+    static const unsigned CFG_WORDS_EXPECTED = (unsigned)EXP_LEN_CFG_WORDS;
+    static const unsigned PARAM_WORDS_EXPECTED = (unsigned)EXP_LEN_PARAM_WORDS;
+    static const unsigned PARAM_ALIGN_WORDS = (unsigned)W_LANES;
+    static const unsigned INFER_IN_WORDS_EXPECTED = (unsigned)EXP_LEN_INFER_IN_WORDS;
+    static const unsigned OUT_WORDS_X_PRED = (unsigned)EXP_LEN_OUT_XPRED_WORDS;
+    static const unsigned OUT_WORDS_LOGITS = (unsigned)EXP_LEN_OUT_LOGITS_WORDS;
+    static const unsigned IN_BASE_WORD = (unsigned)sram_map::BASE_SCRATCH_W;
+    static const unsigned INIT_WORDS = 64;
+    static const unsigned DBG_META1_LEN_WORDS = 16u;
+
+    enum DebugAction : unsigned {
+        DBG_ACTION_CLEAR = 0u,
+        DBG_ACTION_ARM = 1u,
+        DBG_ACTION_RESUME = 2u
+    };
+
+    enum DebugTriggerSel : unsigned {
+        DBG_TRIGGER_DISABLED = 0u,
+        DBG_TRIGGER_ON_LOADW_COUNT = 1u
+    };
+
+    enum CfgIndexCompat : unsigned {
+        CFG_IDX_CODE_N = (unsigned)CFG_CODE_N,
+        CFG_IDX_CODE_K = (unsigned)CFG_CODE_K,
+        CFG_IDX_CODE_C = (unsigned)CFG_CODE_C,
+        CFG_IDX_N_NODES = (unsigned)CFG_N_NODES,
+        CFG_IDX_D_MODEL = (unsigned)CFG_D_MODEL,
+        CFG_IDX_N_HEAD = (unsigned)CFG_N_HEAD,
+        CFG_IDX_N_LAYERS = (unsigned)CFG_N_LAYERS,
+        CFG_IDX_D_FFN = (unsigned)CFG_D_FFN,
+        CFG_IDX_ENABLE_LPE = (unsigned)CFG_ENABLE_LPE,
+        CFG_IDX_ENABLE_LPE_TOKEN = (unsigned)CFG_ENABLE_LPE_TOKEN,
+        CFG_IDX_OUT_MODE = (unsigned)CFG_OUT_MODE,
+        CFG_IDX_RESERVED0 = (unsigned)CFG_RESERVED0
+    };
 
     enum RegionId : unsigned {
         REG_X0 = 0,
@@ -21,12 +61,37 @@ namespace aecct {
         REG_OOR = 255
     };
 
-    // M1/M2/M3 內部暫存器（internal regs）
+    struct HaltInfo {
+        bool valid;
+        u32_t halt_reason;
+        TopState prev_state;
+        u32_t meta0_word_addr;
+        u32_t meta1_len_words;
+
+        void clear() {
+            valid = false;
+            halt_reason = 0;
+            prev_state = ST_IDLE;
+            meta0_word_addr = 0;
+            meta1_len_words = 0;
+        }
+    };
+
+    // M1/M2/M3/M4/M5 內部暫存器（internal regs）
     struct TopRegs {
         TopState state;
         bool w_base_set;
         u32_t w_base_word;
+        u32_t param_count;
+        u32_t input_count;
         u32_t outmode;
+
+        // M5：debug/halt 控制
+        bool debug_armed;
+        u32_t dbg_trigger_sel;
+        u32_t dbg_k_value;
+        bool halt_active;
+        HaltInfo halt_info;
 
         // M3：cfg 接收與落地
         u32_t cfg_words[CFG_WORDS_EXPECTED];
@@ -49,7 +114,15 @@ namespace aecct {
             state = ST_IDLE;
             w_base_set = false;
             w_base_word = 0;
+            param_count = 0;
+            input_count = 0;
             outmode = 0;
+
+            debug_armed = false;
+            dbg_trigger_sel = 0;
+            dbg_k_value = 0;
+            halt_active = false;
+            halt_info.clear();
 
             cfg_count = 0;
             cfg_ready = false;
@@ -78,7 +151,7 @@ namespace aecct {
 
     // M2：單一實體 SRAM（single physical SRAM）
     static inline u32_t* top_sram() {
-        static u32_t sram[SRAM_TOTAL_WORDS];
+        static u32_t sram[sram_map::SRAM_WORDS_TOTAL];
         return sram;
     }
 
@@ -86,6 +159,12 @@ namespace aecct {
     static inline TopState top_peek_state() { return top_regs().state; }
     static inline unsigned top_peek_cfg_count() { return (unsigned)top_regs().cfg_count.to_uint(); }
     static inline bool top_peek_cfg_ready() { return top_regs().cfg_ready; }
+    static inline unsigned top_peek_param_count() { return (unsigned)top_regs().param_count.to_uint(); }
+    static inline unsigned top_peek_input_count() { return (unsigned)top_regs().input_count.to_uint(); }
+    static inline u32_t top_peek_w_base_word() { return top_regs().w_base_word; }
+    static inline bool top_peek_halt_active() { return top_regs().halt_active; }
+    static inline u32_t top_peek_dbg_k_value() { return top_regs().dbg_k_value; }
+    static inline u32_t top_peek_outmode() { return top_regs().outmode; }
     static inline u32_t top_peek_cfg_word(unsigned idx) {
         if (idx >= CFG_WORDS_EXPECTED) { return (u32_t)0; }
         return top_regs().cfg_words[idx];
@@ -97,10 +176,10 @@ namespace aecct {
 
     static inline RegionId decode_region(const u32_t& addr_word) {
         unsigned a = (unsigned)addr_word.to_uint();
-        if (a >= X0_BASE_WORD && a < (X0_BASE_WORD + X0_WORDS)) { return REG_X0; }
-        if (a >= X1_BASE_WORD && a < (X1_BASE_WORD + X1_WORDS)) { return REG_X1; }
-        if (a >= SCR_BASE_WORD && a < (SCR_BASE_WORD + SCR_WORDS)) { return REG_SCR; }
-        if (a >= W_BASE_WORD && a < (W_BASE_WORD + W_WORDS)) { return REG_W; }
+        if (a >= sram_map::X_PAGE0_BASE_W && a < (sram_map::X_PAGE0_BASE_W + sram_map::X_PAGE0_WORDS)) { return REG_X0; }
+        if (a >= sram_map::X_PAGE1_BASE_W && a < (sram_map::X_PAGE1_BASE_W + sram_map::X_PAGE1_WORDS)) { return REG_X1; }
+        if (a >= sram_map::BASE_SCRATCH_W && a < (sram_map::BASE_SCRATCH_W + sram_map::SIZE_SCRATCH_W)) { return REG_SCR; }
+        if (a >= sram_map::W_REGION_BASE && a < (sram_map::W_REGION_BASE + sram_map::W_REGION_WORDS)) { return REG_W; }
         return REG_OOR;
     }
 
@@ -133,32 +212,173 @@ namespace aecct {
         }
     }
 
+    static inline void param_session_clear(TopRegs& regs) {
+        regs.param_count = 0;
+    }
+
+    static inline void infer_session_clear(TopRegs& regs) {
+        regs.input_count = 0;
+    }
+
+    static inline bool is_param_base_in_w_region(uint32_t w_base_word) {
+        return (w_base_word >= sram_map::W_REGION_BASE) &&
+            (w_base_word < (sram_map::W_REGION_BASE + sram_map::W_REGION_WORDS));
+    }
+
+    static inline bool is_param_base_aligned(uint32_t w_base_word) {
+        return ((w_base_word % PARAM_ALIGN_WORDS) == 0u);
+    }
+
+    static inline bool is_param_span_in_w_region(uint32_t w_base_word) {
+        unsigned long long begin = (unsigned long long)w_base_word;
+        unsigned long long end_excl = begin + (unsigned long long)PARAM_WORDS_EXPECTED;
+        unsigned long long region_begin = (unsigned long long)sram_map::W_REGION_BASE;
+        unsigned long long region_end = region_begin + (unsigned long long)sram_map::W_REGION_WORDS;
+        return (begin >= region_begin) && (end_excl <= region_end);
+    }
+
+    static inline bool is_valid_outmode(uint32_t outmode) {
+        return (outmode <= 2u);
+    }
+
+    static inline uint32_t dbg_get_action(uint32_t dbg_word) {
+        return (dbg_word & 0x3u);
+    }
+
+    static inline uint32_t dbg_get_trigger_sel(uint32_t dbg_word) {
+        return ((dbg_word >> 8) & 0xFFu);
+    }
+
+    static inline uint32_t dbg_get_k_value(uint32_t dbg_word) {
+        return ((dbg_word >> 16) & 0xFFFFu);
+    }
+
+    static inline void debug_clear(TopRegs& regs) {
+        regs.debug_armed = false;
+        regs.dbg_trigger_sel = (u32_t)DBG_TRIGGER_DISABLED;
+        regs.dbg_k_value = 0;
+    }
+
+    static inline void debug_arm(TopRegs& regs, uint32_t trigger_sel, uint32_t k_value) {
+        regs.debug_armed = true;
+        regs.dbg_trigger_sel = (u32_t)trigger_sel;
+        regs.dbg_k_value = (u32_t)k_value;
+    }
+
+    static inline void enter_halted_and_emit(
+        TopRegs& regs,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        regs.halt_active = true;
+        regs.halt_info.valid = true;
+        regs.halt_info.halt_reason = (u32_t)ERR_DBG_HALT;
+        regs.halt_info.prev_state = ST_PARAM_RX;
+        regs.halt_info.meta0_word_addr = regs.w_base_word;
+        regs.halt_info.meta1_len_words = (u32_t)DBG_META1_LEN_WORDS;
+        regs.state = ST_HALTED;
+
+        // M5 規格：先 ctrl_rsp ERR，再吐 meta0/meta1。
+        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_DBG_HALT));
+        data_out.write(regs.halt_info.meta0_word_addr);
+        data_out.write(regs.halt_info.meta1_len_words);
+    }
+
+    static inline bool handle_debug_cfg_idle(
+        TopRegs& regs,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_in
+    ) {
+        u32_t dbg_word_in = data_in.read();
+        uint32_t dbg_word = (uint32_t)dbg_word_in.to_uint();
+        uint32_t action = dbg_get_action(dbg_word);
+        uint32_t trigger_sel = dbg_get_trigger_sel(dbg_word);
+        uint32_t k_value = dbg_get_k_value(dbg_word);
+
+        if (action == DBG_ACTION_CLEAR) {
+            debug_clear(regs);
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+            return true;
+        }
+        if (action == DBG_ACTION_ARM) {
+            if (trigger_sel == DBG_TRIGGER_DISABLED) {
+                debug_clear(regs);
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+                return true;
+            }
+            if (trigger_sel == DBG_TRIGGER_ON_LOADW_COUNT) {
+                debug_arm(regs, trigger_sel, k_value);
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+                return true;
+            }
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+            return true;
+        }
+        if (action == DBG_ACTION_RESUME) {
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+            return true;
+        }
+
+        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+        return true;
+    }
+
+    static inline bool handle_debug_cfg_halted(
+        TopRegs& regs,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_in
+    ) {
+        u32_t dbg_word_in = data_in.read();
+        uint32_t dbg_word = (uint32_t)dbg_word_in.to_uint();
+        uint32_t action = dbg_get_action(dbg_word);
+
+        if (action == DBG_ACTION_CLEAR) {
+            debug_clear(regs);
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+            return true;
+        }
+        if (action == DBG_ACTION_RESUME) {
+            regs.halt_active = false;
+            regs.state = regs.halt_info.prev_state;
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+            return true;
+        }
+        if (action == DBG_ACTION_ARM) {
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+            return true;
+        }
+
+        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+        return true;
+    }
+
     static inline void soft_reset_all(TopRegs& regs, u32_t* sram) {
         regs.clear();
-        init_region_prefix(sram, X0_BASE_WORD, X0_WORDS, (unsigned)REG_X0);
-        init_region_prefix(sram, X1_BASE_WORD, X1_WORDS, (unsigned)REG_X1);
-        init_region_prefix(sram, SCR_BASE_WORD, SCR_WORDS, (unsigned)REG_SCR);
-        init_region_prefix(sram, W_BASE_WORD, W_WORDS, (unsigned)REG_W);
+        init_region_prefix(sram, sram_map::X_PAGE0_BASE_W, sram_map::X_PAGE0_WORDS, (unsigned)REG_X0);
+        init_region_prefix(sram, sram_map::X_PAGE1_BASE_W, sram_map::X_PAGE1_WORDS, (unsigned)REG_X1);
+        init_region_prefix(sram, sram_map::BASE_SCRATCH_W, sram_map::SIZE_SCRATCH_W, (unsigned)REG_SCR);
+        init_region_prefix(sram, sram_map::W_REGION_BASE, sram_map::W_REGION_WORDS, (unsigned)REG_W);
     }
 
     static inline bool cfg_validate_minimal(const TopRegs& regs) {
         uint32_t code_n = (uint32_t)regs.cfg_words[CFG_IDX_CODE_N].to_uint();
+        uint32_t code_k = (uint32_t)regs.cfg_words[CFG_IDX_CODE_K].to_uint();
         uint32_t code_c = (uint32_t)regs.cfg_words[CFG_IDX_CODE_C].to_uint();
         uint32_t d_model = (uint32_t)regs.cfg_words[CFG_IDX_D_MODEL].to_uint();
-        uint32_t n_heads = (uint32_t)regs.cfg_words[CFG_IDX_N_HEADS].to_uint();
-        uint32_t d_head = (uint32_t)regs.cfg_words[CFG_IDX_D_HEAD].to_uint();
+        uint32_t n_heads = (uint32_t)regs.cfg_words[CFG_IDX_N_HEAD].to_uint();
         uint32_t d_ffn = (uint32_t)regs.cfg_words[CFG_IDX_D_FFN].to_uint();
         uint32_t n_layers = (uint32_t)regs.cfg_words[CFG_IDX_N_LAYERS].to_uint();
 
         if (code_n == 0u) { return false; }
+        if (code_k == 0u) { return false; }
+        if (code_k > code_n) { return false; }
         if (code_c == 0u) { return false; }
         if (code_c > code_n) { return false; }
+        if ((code_k + code_c) != code_n) { return false; }
 
         if (d_model == 0u) { return false; }
         if (n_heads == 0u) { return false; }
         if ((d_model % n_heads) != 0u) { return false; }
-        if (d_head == 0u) { return false; }
-        if (d_head != (d_model / n_heads)) { return false; }
 
         if (d_ffn == 0u) { return false; }
         if (n_layers == 0u) { return false; }
@@ -167,17 +387,17 @@ namespace aecct {
     }
 
     static inline void cfg_apply_to_regs(TopRegs& regs) {
-        regs.cfg_magic = regs.cfg_words[CFG_IDX_MAGIC];
+        regs.cfg_magic = 0;
         regs.cfg_code_n = regs.cfg_words[CFG_IDX_CODE_N];
         regs.cfg_code_c = regs.cfg_words[CFG_IDX_CODE_C];
         regs.cfg_d_model = regs.cfg_words[CFG_IDX_D_MODEL];
-        regs.cfg_n_heads = regs.cfg_words[CFG_IDX_N_HEADS];
-        regs.cfg_d_head = regs.cfg_words[CFG_IDX_D_HEAD];
+        regs.cfg_n_heads = regs.cfg_words[CFG_IDX_N_HEAD];
+        regs.cfg_d_head = regs.cfg_words[CFG_IDX_D_MODEL] / regs.cfg_words[CFG_IDX_N_HEAD];
         regs.cfg_d_ffn = regs.cfg_words[CFG_IDX_D_FFN];
-        regs.cfg_d_lpe = regs.cfg_words[CFG_IDX_D_LPE];
+        regs.cfg_d_lpe = regs.cfg_words[CFG_IDX_ENABLE_LPE];
         regs.cfg_n_layers = regs.cfg_words[CFG_IDX_N_LAYERS];
-        regs.cfg_out_len_x_pred = regs.cfg_words[CFG_IDX_OUT_LEN_X_PRED];
-        regs.cfg_out_len_logits = regs.cfg_words[CFG_IDX_OUT_LEN_LOGITS];
+        regs.cfg_out_len_x_pred = regs.cfg_words[CFG_IDX_OUT_MODE];
+        regs.cfg_out_len_logits = regs.cfg_words[CFG_IDX_RESERVED0];
     }
 
     static inline void cfg_ingest_one_word(TopRegs& regs, ac_channel<ac_int<32, false> >& data_in) {
@@ -192,6 +412,98 @@ namespace aecct {
             if ((unsigned)regs.cfg_count.to_uint() == CFG_WORDS_EXPECTED) {
                 regs.cfg_ready = true;
             }
+        }
+    }
+
+    static inline void param_ingest_one_word(
+        TopRegs& regs,
+        ac_channel<ac_int<32, false> >& data_in,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_out,
+        u32_t* sram
+    ) {
+        unsigned idx = (unsigned)regs.param_count.to_uint();
+        if (idx >= PARAM_WORDS_EXPECTED) {
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+            return;
+        }
+
+        u32_t w;
+        if (!data_in.nb_read(w)) { return; }
+
+        uint32_t base = (uint32_t)regs.w_base_word.to_uint();
+        uint32_t addr = base + idx;
+        sram[addr] = w;
+        regs.param_count = regs.param_count + 1;
+
+        // M5：當收到第 k 個 LOAD_W word（k 從 0 起算）時觸發 HALTED。
+        if (regs.debug_armed &&
+            ((uint32_t)regs.dbg_trigger_sel.to_uint() == (uint32_t)DBG_TRIGGER_ON_LOADW_COUNT) &&
+            (idx == (unsigned)regs.dbg_k_value.to_uint())) {
+            regs.debug_armed = false; // 觸發一次後自動解除，避免 RESUME 後立即再停。
+            enter_halted_and_emit(regs, ctrl_rsp, data_out);
+            return;
+        }
+
+        if ((unsigned)regs.param_count.to_uint() == PARAM_WORDS_EXPECTED) {
+            // M4 bring-up：bitpack padding 檢查延後到 M4.1（此處先直接完成）
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+        }
+    }
+
+    static inline void infer_emit_stub(
+        const TopRegs& regs,
+        ac_channel<ac_int<32, false> >& data_out,
+        const u32_t* sram
+    ) {
+        uint32_t mode = (uint32_t)regs.outmode.to_uint();
+        if (mode == 2u) {
+            return;
+        }
+        if (mode == 0u) {
+            for (unsigned i = 0; i < OUT_WORDS_X_PRED; ++i) {
+                uint32_t inw = (uint32_t)sram[IN_BASE_WORD + (i % INFER_IN_WORDS_EXPECTED)].to_uint();
+                uint32_t outw = inw ^ 0x5A5A5A5Au;
+                data_out.write((u32_t)outw);
+            }
+            return;
+        }
+        if (mode == 1u) {
+            for (unsigned i = 0; i < OUT_WORDS_LOGITS; ++i) {
+                uint32_t outw = 0xC0000000u | i;
+                data_out.write((u32_t)outw);
+            }
+            return;
+        }
+    }
+
+    static inline void infer_ingest_one_word(
+        TopRegs& regs,
+        ac_channel<ac_int<32, false> >& data_in,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_out,
+        u32_t* sram
+    ) {
+        unsigned idx = (unsigned)regs.input_count.to_uint();
+        if (idx >= INFER_IN_WORDS_EXPECTED) {
+            infer_emit_stub(regs, data_out, sram);
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
+            return;
+        }
+
+        u32_t w;
+        if (!data_in.nb_read(w)) { return; }
+
+        sram[IN_BASE_WORD + idx] = w;
+        regs.input_count = regs.input_count + 1;
+
+        if ((unsigned)regs.input_count.to_uint() == INFER_IN_WORDS_EXPECTED) {
+            infer_emit_stub(regs, data_out, sram);
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
         }
     }
 
@@ -213,8 +525,8 @@ namespace aecct {
             return;
         }
 
-        if (addr_word >= (unsigned long long)SRAM_TOTAL_WORDS ||
-            (addr_word + len_words) > (unsigned long long)SRAM_TOTAL_WORDS) {
+        if (addr_word >= (unsigned long long)sram_map::SRAM_WORDS_TOTAL ||
+            (addr_word + len_words) > (unsigned long long)sram_map::SRAM_WORDS_TOTAL) {
             ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
             return;
         }
@@ -261,32 +573,60 @@ namespace aecct {
                     ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
                 }
                 else if (op == (uint8_t)OP_SET_W_BASE) {
-                    regs.w_base_set = true;
-                    regs.w_base_word = 0; // M3 仍不讀 data_in arg
-                    ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_SET_W_BASE));
+                    u32_t w_base_in = data_in.read();
+                    uint32_t w_base_word = (uint32_t)w_base_in.to_uint();
+
+                    if (!is_param_base_in_w_region(w_base_word)) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_PARAM_BASE_RANGE));
+                    }
+                    else if (!is_param_base_aligned(w_base_word)) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_PARAM_BASE_ALIGN));
+                    }
+                    else {
+                        regs.w_base_set = true;
+                        regs.w_base_word = w_base_in;
+                        ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SET_W_BASE));
+                    }
                 }
                 else if (op == (uint8_t)OP_LOAD_W) {
                     if (!regs.w_base_set) {
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
                     }
+                    else if (!is_param_span_in_w_region((uint32_t)regs.w_base_word.to_uint())) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
+                    }
                     else {
                         regs.state = ST_PARAM_RX;
+                        param_session_clear(regs);
                         ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_LOAD_W));
                     }
                 }
                 else if (op == (uint8_t)OP_SET_OUTMODE) {
-                    regs.outmode = 0; // M3 仍不讀 data_in arg，先固定 0
-                    ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_SET_OUTMODE));
+                    u32_t outmode_in = data_in.read();
+                    uint32_t outmode = (uint32_t)outmode_in.to_uint();
+                    if (!is_valid_outmode(outmode)) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+                    }
+                    else {
+                        regs.outmode = outmode_in;
+                        ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SET_OUTMODE));
+                    }
                 }
                 else if (op == (uint8_t)OP_INFER) {
-                    regs.state = ST_INFER_RX;
-                    ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_INFER));
+                    if (!regs.cfg_ready) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                    }
+                    else {
+                        regs.state = ST_INFER_RX;
+                        infer_session_clear(regs);
+                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_INFER));
+                    }
                 }
                 else if (op == (uint8_t)OP_READ_MEM) {
                     handle_read_mem(ctrl_rsp, data_in, data_out, sram);
                 }
                 else if (op == (uint8_t)OP_DEBUG_CFG) {
-                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_UNIMPL));
+                    handle_debug_cfg_idle(regs, ctrl_rsp, data_in);
                 }
                 else {
                     ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_UNIMPL));
@@ -350,7 +690,7 @@ namespace aecct {
                     handle_read_mem(ctrl_rsp, data_in, data_out, sram);
                 }
                 else if (op == (uint8_t)OP_DEBUG_CFG) {
-                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_UNIMPL));
+                    handle_debug_cfg_halted(regs, ctrl_rsp, data_in);
                 }
                 else if (op == (uint8_t)OP_SOFT_RESET) {
                     soft_reset_all(regs, sram);
@@ -368,9 +708,15 @@ namespace aecct {
             }
         }
         else {
-            // 無控制命令時，僅在 CFG_RX 且未收滿時接收 1 個 cfg word
+            // 無控制命令時，在接收態各收 1 個資料字
             if (regs.state == ST_CFG_RX && !regs.cfg_ready) {
                 cfg_ingest_one_word(regs, data_in);
+            }
+            else if (regs.state == ST_PARAM_RX) {
+                param_ingest_one_word(regs, data_in, ctrl_rsp, data_out, sram);
+            }
+            else if (regs.state == ST_INFER_RX) {
+                infer_ingest_one_word(regs, data_in, ctrl_rsp, data_out, sram);
             }
         }
     }

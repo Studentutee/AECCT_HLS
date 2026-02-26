@@ -6,8 +6,10 @@
 
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
-#include "ModelDescBringup.h"
+#include "ModelDesc.h"
 #include "Top.h"
+
+static const unsigned CFG_WORDS_EXPECTED = (unsigned)EXP_LEN_CFG_WORDS;
 
 static void expect_rsp(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_kind, uint8_t expect_payload) {
     aecct::u16_t w;
@@ -81,21 +83,22 @@ static void send_cfg_words(
 }
 
 static void build_valid_cfg(uint32_t* cfg_words) {
-    for (unsigned i = 0; i < aecct::CFG_WORDS_EXPECTED; ++i) {
+    for (unsigned i = 0; i < CFG_WORDS_EXPECTED; ++i) {
         cfg_words[i] = 0u;
     }
 
-    cfg_words[aecct::CFG_IDX_MAGIC] = 0xABCD0001u;
-    cfg_words[aecct::CFG_IDX_CODE_N] = 16u;
-    cfg_words[aecct::CFG_IDX_CODE_C] = 8u;
-    cfg_words[aecct::CFG_IDX_D_MODEL] = 64u;
-    cfg_words[aecct::CFG_IDX_N_HEADS] = 8u;
-    cfg_words[aecct::CFG_IDX_D_HEAD] = 8u;
-    cfg_words[aecct::CFG_IDX_D_FFN] = 128u;
-    cfg_words[aecct::CFG_IDX_D_LPE] = 32u;
-    cfg_words[aecct::CFG_IDX_N_LAYERS] = 2u;
-    cfg_words[aecct::CFG_IDX_OUT_LEN_X_PRED] = 8u;
-    cfg_words[aecct::CFG_IDX_OUT_LEN_LOGITS] = 16u;
+    cfg_words[CFG_CODE_N] = 63u;
+    cfg_words[CFG_CODE_K] = 51u;
+    cfg_words[CFG_CODE_C] = 12u;
+    cfg_words[CFG_N_NODES] = 75u;
+    cfg_words[CFG_D_MODEL] = 64u;
+    cfg_words[CFG_N_HEAD] = 8u;
+    cfg_words[CFG_N_LAYERS] = 2u;
+    cfg_words[CFG_D_FFN] = 128u;
+    cfg_words[CFG_ENABLE_LPE] = 1u;
+    cfg_words[CFG_ENABLE_LPE_TOKEN] = 1u;
+    cfg_words[CFG_OUT_MODE] = 0u;
+    cfg_words[CFG_RESERVED0] = 0u;
 }
 
 int main() {
@@ -104,7 +107,7 @@ int main() {
     aecct::data_ch_t data_in;
     aecct::data_ch_t data_out;
 
-    uint32_t cfg[aecct::CFG_WORDS_EXPECTED];
+    uint32_t cfg[CFG_WORDS_EXPECTED];
 
     // Case 1：正常 cfg 流程
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
@@ -116,7 +119,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_state(aecct::ST_CFG_RX);
 
-    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, cfg, aecct::CFG_WORDS_EXPECTED);
+    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, cfg, CFG_WORDS_EXPECTED);
     if (!aecct::top_peek_cfg_ready()) {
         std::printf("ERROR: cfg_ready should be true after full cfg ingestion.\n");
         return 1;
@@ -126,10 +129,10 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_state(aecct::ST_IDLE);
 
-    if ((uint32_t)aecct::top_peek_cfg_code_n().to_uint() != cfg[aecct::CFG_IDX_CODE_N] ||
-        (uint32_t)aecct::top_peek_cfg_d_model().to_uint() != cfg[aecct::CFG_IDX_D_MODEL] ||
-        (uint32_t)aecct::top_peek_cfg_n_heads().to_uint() != cfg[aecct::CFG_IDX_N_HEADS] ||
-        (uint32_t)aecct::top_peek_cfg_n_layers().to_uint() != cfg[aecct::CFG_IDX_N_LAYERS]) {
+    if ((uint32_t)aecct::top_peek_cfg_code_n().to_uint() != cfg[CFG_CODE_N] ||
+        (uint32_t)aecct::top_peek_cfg_d_model().to_uint() != cfg[CFG_D_MODEL] ||
+        (uint32_t)aecct::top_peek_cfg_n_heads().to_uint() != cfg[CFG_N_HEAD] ||
+        (uint32_t)aecct::top_peek_cfg_n_layers().to_uint() != cfg[CFG_N_LAYERS]) {
         std::printf("ERROR: cfg regs not applied as expected.\n");
         return 1;
     }
@@ -144,12 +147,12 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_state(aecct::ST_CFG_RX);
 
-    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, cfg, aecct::CFG_WORDS_EXPECTED - 1u);
+    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, cfg, CFG_WORDS_EXPECTED - 1u);
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_CFG_LEN_MISMATCH);
     expect_state(aecct::ST_CFG_RX);
 
-    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, &cfg[aecct::CFG_WORDS_EXPECTED - 1u], 1u);
+    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, &cfg[CFG_WORDS_EXPECTED - 1u], 1u);
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_state(aecct::ST_IDLE);
@@ -160,15 +163,14 @@ int main() {
     expect_state(aecct::ST_IDLE);
 
     build_valid_cfg(cfg);
-    cfg[aecct::CFG_IDX_D_MODEL] = 63u;
-    cfg[aecct::CFG_IDX_N_HEADS] = 8u;
-    cfg[aecct::CFG_IDX_D_HEAD] = 8u;
+    cfg[CFG_D_MODEL] = 63u;
+    cfg[CFG_N_HEAD] = 8u;
 
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_state(aecct::ST_CFG_RX);
 
-    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, cfg, aecct::CFG_WORDS_EXPECTED);
+    send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, cfg, CFG_WORDS_EXPECTED);
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_CFG_ILLEGAL);
     expect_state(aecct::ST_IDLE);
