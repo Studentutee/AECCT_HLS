@@ -1,0 +1,1 @@
+PASS: P16 compliance gates pass and smoke TB passes; trace-dependent regression checks are explicitly skipped with AECCT_HAS_TRACE=0.

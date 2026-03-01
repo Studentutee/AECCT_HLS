@@ -1,4 +1,3 @@
-﻿#define AECCT_ATTN_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>

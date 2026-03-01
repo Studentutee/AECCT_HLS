@@ -1,4 +1,4 @@
-﻿// weights_streamer.h
+// weights_streamer.h
 #pragma once
 
 // ============================================================
@@ -20,6 +20,7 @@
 #include "ac_channel.h"
 #include "ac_int.h"
 
+#include "AecctUtil.h"
 #include "gen/ModelShapes.h"
 #include "gen/SramMap.h"
 #include "gen/WeightStreamOrder.h"
@@ -47,10 +48,7 @@ static const uint8_t RSP_KIND_ERR  = 2;
 // Bitcast helpers
 // ------------------------------------------------------------
 static inline uint32_t tb_fp32_bits_from_double(const double x) {
-  const float f = (float)x;
-  uint32_t u = 0u;
-  std::memcpy(&u, &f, sizeof(uint32_t));
-  return u;
+  return (uint32_t)aecct::fp32_bits_from_double(x).to_uint();
 }
 
 static inline uint32_t tb_u16_to_u32(const uint16_t x) {

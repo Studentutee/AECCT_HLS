@@ -1,9 +1,10 @@
-﻿#pragma once
+#pragma once
 // Top.h嚗eader-only嚗?// M6嚗op-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
 // 1) one-command-per-call嚗?甈∪?急?憭???1 蝑?ctrl_cmd
 // 2) ST_CFG_RX ?函 ctrl_cmd ???交 1 ??cfg word嚗rom data_in嚗?// 3) ST_PARAM_RX ?函 ctrl_cmd ???交 1 ??param word嚗rom data_in嚗?// 4) ST_INFER_RX ?函 ctrl_cmd ???交 1 ??input word嚗rom data_in嚗?// 5) HALTED嚗???ctrl ERR嚗???meta0/meta1 ??data_out
 // 6) READ_MEM 蝬剜? M2 銵嚗DLE/HALTED ?航?嚗?
 #include "AecctTypes.h"
+#include "AecctUtil.h"
 #include "AecctProtocol.h"
 #include "gen/SramMap.h"
 #include "gen/ModelDesc.h"
@@ -505,7 +506,7 @@ namespace aecct {
         LayerNormCfg cfg;
         cfg.token_count = (u32_t)LN_TOKEN_COUNT;
         cfg.d_model = (u32_t)LN_D_MODEL;
-        cfg.eps = LN_EPS;
+        cfg.eps_bits = LN_EPS_BITS;
 
         LayerNormBlock(
             sram,
@@ -553,21 +554,14 @@ namespace aecct {
         uint32_t d_model
     ) {
         for (uint32_t c = 0; c < d_model; ++c) {
-            float g = is_mid_norm
-                ? (float)w_decoder_norm2_weight[c]
-                : (float)w_decoder_norm_weight[c];
-            float b = is_mid_norm
-                ? (float)w_decoder_norm2_bias[c]
-                : (float)w_decoder_norm_bias[c];
-
-            union {
-                float f;
-                uint32_t u;
-            } gcvt, bcvt;
-            gcvt.f = g;
-            bcvt.f = b;
-            sram[gamma_base + c] = (u32_t)gcvt.u;
-            sram[beta_base + c] = (u32_t)bcvt.u;
+            fp32_t g = is_mid_norm
+                ? fp32_t(w_decoder_norm2_weight[c])
+                : fp32_t(w_decoder_norm_weight[c]);
+            fp32_t b = is_mid_norm
+                ? fp32_t(w_decoder_norm2_bias[c])
+                : fp32_t(w_decoder_norm_bias[c]);
+            sram[gamma_base + c] = bits_from_fp32(g);
+            sram[beta_base + c] = bits_from_fp32(b);
         }
     }
 
@@ -588,7 +582,7 @@ namespace aecct {
         LayerNormCfg ln_cfg;
         ln_cfg.token_count = (u32_t)LN_TOKEN_COUNT;
         ln_cfg.d_model = (u32_t)d_model;
-        ln_cfg.eps = LN_EPS;
+        ln_cfg.eps_bits = LN_EPS_BITS;
 
         LayerNormBlock(
             sram,
@@ -658,11 +652,6 @@ namespace aecct {
     static inline void run_infer_pipeline(TopRegs& regs, u32_t* sram) {
         run_preproc_block(sram);
         run_layernorm_block(sram);
-#ifdef AECCT_FFN_TRACE_MODE
-        for (uint32_t i = 0; i < (uint32_t)FFN_X_WORDS; ++i) {
-            sram[(uint32_t)LN_X_OUT_BASE_WORD + i] = (u32_t)ffn_trace_x_word(0u, i);
-        }
-#endif
         run_transformer_layer_loop(regs, sram);
 
         HeadParamBase hp = make_head_param_base(regs.w_base_word);

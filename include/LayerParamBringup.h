@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // LayerParamBringup.h
 // M11 bring-up per-layer param base mapping (single source of truth)
 

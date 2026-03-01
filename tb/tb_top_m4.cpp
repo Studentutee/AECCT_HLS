@@ -1,4 +1,4 @@
-﻿// tb_top_m4.cpp
+// tb_top_m4.cpp
 // M4 TB嚗?霅?SET_W_BASE + LOAD_W(PARAM_RX) + SRAM 撖怠/?航炊蝣?
 #include <cstdio>
 #include <cstdlib>

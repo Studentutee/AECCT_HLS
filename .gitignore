@@ -367,3 +367,19 @@ FodyWeavers.xsd
 /trace/embed_node_embed_step0.h
 /trace/norm_mid_out_step0.h
 /data/trace
+
+# P16 hygiene lock
+trace/
+dumps/
+build/
+out/
+dist/
+logs/
+reports/
+archives/
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+/.tmp.driveupload

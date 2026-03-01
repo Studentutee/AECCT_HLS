@@ -1,4 +1,4 @@
-﻿// tb_top_m6.cpp
+// tb_top_m6.cpp
 // M6 TB嚗?霅?SET_OUTMODE + INFER stub + ?????
 #include <cstdio>
 #include <cstdlib>

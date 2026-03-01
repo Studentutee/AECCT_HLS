@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // AttnDescBringup.h
 // M9: Layer0 Attention shape / SRAM layout / stage switch（single source of truth）
 #include "AecctTypes.h"

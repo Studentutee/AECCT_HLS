@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // FfnDescBringup.h
 // M10 Layer0 FFN shape and SRAM layout (single source of truth)
 

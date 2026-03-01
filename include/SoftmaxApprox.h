@@ -1,4 +1,4 @@
-﻿#ifndef SOFTMAX_APPROX_H
+#ifndef SOFTMAX_APPROX_H
 #define SOFTMAX_APPROX_H
 
 #include "SoftmaxDesc.h"

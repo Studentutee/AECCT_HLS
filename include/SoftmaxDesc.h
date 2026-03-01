@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 // SoftmaxDesc.h
 // M15a softmax approximation single source of truth
 

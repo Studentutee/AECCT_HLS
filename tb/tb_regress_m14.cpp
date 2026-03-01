@@ -1,4 +1,3 @@
-﻿#define AECCT_FINAL_TRACE_MODE 1
 
 #include <cmath>
 #include <cstdint>
@@ -12,9 +11,18 @@
 #include "gen/SramMap.h"
 #include "Top.h"
 #include "VerifyTolerance.h"
+
+#if defined(AECCT_HAS_TRACE) && (AECCT_HAS_TRACE == 1)
+#define TB_HAS_TRACE 1
+#else
+#define TB_HAS_TRACE 0
+#endif
+
+#if TB_HAS_TRACE
 #include "input_y_step0.h"
 #include "output_logits_step0.h"
 #include "output_x_pred_step0.h"
+#endif
 
 struct TopIo {
     aecct::ctrl_ch_t ctrl_cmd;
@@ -249,8 +257,12 @@ static void do_infer_sample0(TopIo& io, const char* tag) {
 
     const uint32_t in_words = (uint32_t)EXP_LEN_INFER_IN_WORDS;
     for (uint32_t i = 0; i < in_words; ++i) {
+#if TB_HAS_TRACE
         float v = (float)trace_input_y_step0_tensor[i];
         send_data_and_tick(io, f32_to_bits(v));
+#else
+        send_data_and_tick(io, 0u);
+#endif
         if (i + 1u < in_words) {
             recv_no_rsp(io, tag);
         }
@@ -444,6 +456,7 @@ static void case8_infer_bad_state() {
 }
 
 static void case9_end_to_end_all_outmodes() {
+#if TB_HAS_TRACE
     TopIo io;
     static uint32_t logits_got[EXP_LEN_OUT_LOGITS_WORDS];
     static uint32_t xpred_got[EXP_LEN_OUT_XPRED_WORDS];
@@ -512,9 +525,13 @@ static void case9_end_to_end_all_outmodes() {
     drain_no_data_out(io, "case9_none_no_data");
 
     std::printf("PASS: case9_end_to_end_all_outmodes\n");
+#else
+    std::printf("SKIPPED: case9_end_to_end_all_outmodes (AECCT_HAS_TRACE=0)\n");
+#endif
 }
 
 static void case10_determinism_endurance() {
+#if TB_HAS_TRACE
     TopIo io;
     static uint32_t logits_got[EXP_LEN_OUT_LOGITS_WORDS];
     const uint32_t runs = 10u;
@@ -558,6 +575,9 @@ static void case10_determinism_endurance() {
 
     std::printf("PASS: case10_determinism_endurance (runs=%u hash=0x%08X)\n",
         (unsigned)runs, (unsigned)ref_hash);
+#else
+    std::printf("SKIPPED: case10_determinism_endurance (AECCT_HAS_TRACE=0)\n");
+#endif
 }
 
 static void case11_debug_halt_read_resume() {

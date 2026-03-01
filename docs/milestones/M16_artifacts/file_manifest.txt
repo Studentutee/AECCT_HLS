@@ -1,0 +1,52 @@
+M .gitignore - Repository hygiene configuration update.
+M gen/ModelDesc.h - Generated model/map headers refreshed by pipeline.
+M gen/ModelShapes.h - Generated model/map headers refreshed by pipeline.
+M gen/SramMap.h - Generated model/map headers refreshed by pipeline.
+M gen/WeightStreamOrder.h - Generated model/map headers refreshed by pipeline.
+M gen/include/ModelDesc.h - Generated model/map headers refreshed by pipeline.
+M gen/include/ModelShapes.h - Generated model/map headers refreshed by pipeline.
+M gen/include/SramMap.h - Generated model/map headers refreshed by pipeline.
+M gen/include/WeightStreamOrder.h - Generated model/map headers refreshed by pipeline.
+M gen/manifest.json - Generated model/map headers refreshed by pipeline.
+M include/AecctTypes.h - Design boundary or HLS-safe refactor.
+M include/AecctUtil.h - Design boundary or HLS-safe refactor.
+M include/AttnDescBringup.h - Design boundary or HLS-safe refactor.
+M include/FfnDescBringup.h - Design boundary or HLS-safe refactor.
+M include/LayerNormDesc.h - Design boundary or HLS-safe refactor.
+M include/LayerParamBringup.h - Design boundary or HLS-safe refactor.
+M include/QuantDesc.h - Design boundary or HLS-safe refactor.
+M include/SoftmaxApprox.h - Design boundary or HLS-safe refactor.
+M include/SoftmaxDesc.h - Design boundary or HLS-safe refactor.
+M include/weights_streamer.h - Design boundary or HLS-safe refactor.
+M src/Top.h - Design boundary or HLS-safe refactor.
+M src/blocks/AttnLayer0.h - Design boundary or HLS-safe refactor.
+M src/blocks/FFNLayer0.h - Design boundary or HLS-safe refactor.
+M src/blocks/FinalHead.h - Design boundary or HLS-safe refactor.
+M src/blocks/LayerNormBlock.h - Design boundary or HLS-safe refactor.
+M src/blocks/PreprocEmbedSPE.h - Design boundary or HLS-safe refactor.
+M src/blocks/TransformerLayer.h - Design boundary or HLS-safe refactor.
+M tb/tb_attn_m9a_qkv.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_attn_m9b_scores.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_attn_m9c_out.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_ffn_m10a_w1.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_ffn_m10b_relu.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_ffn_m10c_w2.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_ffn_m10d_norm.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_layerloop_m11.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_mid_end_ln_m12.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_preproc_m7.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_regress_m14.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_softmax_m15a.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_top_end2end_m13.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_top_m2.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_top_m3.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_top_m4.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_top_m5.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_top_m6.cpp - Testbench boundary cleanup or smoke test update.
+M tb/tb_top_m9.cpp - Testbench boundary cleanup or smoke test update.
+A .editorconfig - Repository hygiene configuration update.
+A README.md - Governance README with Manual/Auto sections.
+A design/ - Design boundary or HLS-safe refactor.
+A docs/ - Milestone report or evidence artifact update.
+A scripts/ - Gate or utility script for compliance checks.
+A tb/tb_compliance_smoke_p16.cpp - Testbench boundary cleanup or smoke test update.
