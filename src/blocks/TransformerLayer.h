@@ -11,7 +11,7 @@
 #include "LayerNormDesc.h"
 #include "LayerParamBringup.h"
 #include "LayerScratchDesc.h"
-#include "weights.h"
+#include "gen/WeightStreamOrder.h"
 
 namespace aecct {
 
@@ -24,20 +24,20 @@ struct CfgRegs {
 
 static inline void load_layer_sublayer1_norm_params(
     u32_t* sram,
+    uint32_t param_base_word,
     uint32_t layer_id,
     uint32_t gamma_base,
     uint32_t beta_base,
     uint32_t d_model
 ) {
+    const uint32_t norm_w_id = (layer_id == 0u) ? 43u : 63u;
+    const uint32_t norm_b_id = (layer_id == 0u) ? 7u : 15u;
+    const uint32_t norm_w_base = param_base_word + kParamMeta[norm_w_id].offset_w;
+    const uint32_t norm_b_base = param_base_word + kParamMeta[norm_b_id].offset_w;
+
     for (uint32_t c = 0; c < d_model; ++c) {
-        fp32_t g = (layer_id == 0u)
-            ? fp32_t(w_decoder_layers_0_sublayer_1_norm_weight[c])
-            : fp32_t(w_decoder_layers_1_sublayer_1_norm_weight[c]);
-        fp32_t b = (layer_id == 0u)
-            ? fp32_t(w_decoder_layers_0_sublayer_1_norm_bias[c])
-            : fp32_t(w_decoder_layers_1_sublayer_1_norm_bias[c]);
-        sram[gamma_base + c] = bits_from_fp32(g);
-        sram[beta_base + c] = bits_from_fp32(b);
+        sram[gamma_base + c] = sram[norm_w_base + c];
+        sram[beta_base + c] = sram[norm_b_base + c];
     }
 }
 
@@ -50,8 +50,6 @@ static inline void TransformerLayer(
     const LayerScratch& sc,
     const LayerParamBase& pb
 ) {
-    (void)pb;
-
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
     uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
@@ -83,6 +81,7 @@ static inline void TransformerLayer(
         ffn_cfg,
         sc.attn_out_base_word,
         sc.ffn,
+        pb.param_base_word,
         layer_id
     );
 
@@ -98,7 +97,7 @@ static inline void TransformerLayer(
 
     uint32_t gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
     uint32_t beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
-    load_layer_sublayer1_norm_params(sram, (uint32_t)layer_id.to_uint(), gamma_base, beta_base, d_model);
+    load_layer_sublayer1_norm_params(sram, (uint32_t)pb.param_base_word.to_uint(), (uint32_t)layer_id.to_uint(), gamma_base, beta_base, d_model);
 
     LayerNormCfg ln_cfg;
     ln_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;

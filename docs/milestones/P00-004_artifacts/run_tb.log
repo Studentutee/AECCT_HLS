@@ -1,0 +1,10 @@
+﻿=== P00-004 Run Log ===
+Date: 2026-03-02
+WorkingDir: c:\Users\Peter\source\repos\AECCT_HLS
+
+Command: .\\build\\tmp_tb_top_m4_p004.exe
+PASS: tb_top_m4 (SET_W_BASE + LOAD_W PARAM_RX)
+ExitCode: 0
+
+SKIPPED: tb_top_m5 runtime not mandatory for P00-004 (build-only verification in this patch).
+SKIPPED: tb_top_m3 runtime not mandatory for P00-004 (build-only verification in this patch).

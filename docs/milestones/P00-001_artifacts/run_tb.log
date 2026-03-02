@@ -1,0 +1,32 @@
+=== BASELINE ===
+Date: 2026-03-02
+WorkingDir: c:\Users\Peter\source\repos\AECCT_HLS
+
+Command: .\build\tmp_tb_top_m0.exe
+ERROR: rsp mismatch. kind=0 payload=1 (expect ERR=2, err=1)
+ExitCode: 1
+
+Command: .\build\tmp_tb_top_m1.exe
+ERROR: rsp mismatch. kind=2 payload=6 (expect kind=1 payload=2)
+ExitCode: 1
+
+Command: .\build\tmp_tb_top_m2.exe
+ERROR: rsp mismatch. kind=2 payload=6 (expect kind=1 payload=2)
+ExitCode: 1
+
+=== PATCHED ===
+Date: 2026-03-02
+WorkingDir: c:\Users\Peter\source\repos\AECCT_HLS
+
+Command: .\build\tmp_tb_top_m0.exe
+PASS: tb_top_m0
+ExitCode: 0
+
+Command: .\build\tmp_tb_top_m1.exe
+PASS: tb_top_m1
+ExitCode: 0
+
+Command: .\build\tmp_tb_top_m2.exe
+PASS: tb_top_m2
+ExitCode: 0
+

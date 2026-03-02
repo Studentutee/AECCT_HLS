@@ -1,5 +1,5 @@
 // tb_top_m4.cpp
-// M4 TB嚗?霅?SET_W_BASE + LOAD_W(PARAM_RX) + SRAM 撖怠/?航炊蝣?
+// M4 TB: SET_W_BASE + LOAD_W (PARAM_RX) + SRAM readback via READ_MEM.
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -135,12 +135,13 @@ int main() {
     const uint32_t good_base = (uint32_t)sram_map::W_REGION_BASE;
     const uint32_t pattern_hi = 0xA0000000u;
 
-    // Case 1嚗ET_W_BASE 甇?虜 + LOAD_W 甇?虜 + READ_MEM 霈??撠?    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+    // Case 1: SET_W_BASE success + LOAD_W success + READ_MEM readback.
+    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
     drive_set_w_base(ctrl_cmd, ctrl_rsp, data_in, data_out, good_base);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_W_BASE);
+    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_SET_W_BASE);
     expect_state(aecct::ST_IDLE);
 
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_LOAD_W);
@@ -170,7 +171,8 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_PARAM_BASE_RANGE);
     expect_state(aecct::ST_IDLE);
 
-    // Case 3嚗ET_W_BASE 撠??航炊嚗4 ?∠ W_LANES 撠?嚗?    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+    // Case 3: SET_W_BASE alignment check (must be W_LANES aligned).
+    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
@@ -191,7 +193,8 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
     expect_state(aecct::ST_IDLE);
 
-    // Case 5嚗OAD_W ????base near end嚗?    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+    // Case 5: LOAD_W should fail if base+span crosses W_REGION.
+    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
@@ -200,7 +203,7 @@ int main() {
         near_end_base = near_end_base - (near_end_base % PARAM_ALIGN_WORDS);
     }
     drive_set_w_base(ctrl_cmd, ctrl_rsp, data_in, data_out, near_end_base);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_W_BASE);
+    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_SET_W_BASE);
     expect_state(aecct::ST_IDLE);
 
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_LOAD_W);

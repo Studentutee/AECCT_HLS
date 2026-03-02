@@ -1,5 +1,5 @@
 // tb_top_m3.cpp
-// M3 TB嚗?霅?CFG_RX expected_len / ????/ ???
+// M3 TB: CFG_RX expected_len, validation, and state checks.
 
 #include <cstdio>
 #include <cstdlib>
@@ -109,7 +109,7 @@ int main() {
 
     uint32_t cfg[CFG_WORDS_EXPECTED];
 
-    // Case 1嚗迤撣?cfg 瘚?
+    // Case 1?垮餈斗?cfg ?播?
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -126,7 +126,7 @@ int main() {
     }
 
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
+    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_state(aecct::ST_IDLE);
 
     if ((uint32_t)aecct::top_peek_cfg_code_n().to_uint() != cfg[CFG_CODE_N] ||
@@ -137,7 +137,7 @@ int main() {
         return 1;
     }
 
-    // Case 2嚗???cfg嚗en mismatch嚗?
+    // Case 2?城???cfg?en mismatch??
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -154,10 +154,10 @@ int main() {
 
     send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, &cfg[CFG_WORDS_EXPECTED - 1u], 1u);
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
+    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_state(aecct::ST_IDLE);
 
-    // Case 3嚗?瘜?cfg嚗_model % n_heads != 0嚗?
+    // Case 3?契???cfg?_model % n_heads != 0??
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
@@ -175,7 +175,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_CFG_ILLEGAL);
     expect_state(aecct::ST_IDLE);
 
-    // Case 4嚗????塚?ST_CFG_RX 蝳迫 INFER/LOAD_W嚗?
+    // Case 4?垓?????憛?ST_CFG_RX ?啾撮餈?INFER/LOAD_W??
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
 
@@ -194,4 +194,6 @@ int main() {
     std::printf("PASS: tb_top_m3 (CFG_RX expected_len + legality)\n");
     return 0;
 }
+
+
 

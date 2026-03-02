@@ -90,7 +90,6 @@ StyleCopReport.xml
 *.tmp
 *.tmp_proj
 *_wpftmp.csproj
-*.log
 *.vspscc
 *.vssscc
 .builds
@@ -374,8 +373,6 @@ dumps/
 build/
 out/
 dist/
-logs/
-reports/
 archives/
 *.zip
 *.tar
@@ -383,3 +380,15 @@ archives/
 *.tgz
 *.gz
 /.tmp.driveupload
+
+# =====================
+# Project policy update (2026-03-02): keep logs in git
+# - We intentionally DO NOT ignore *.log or logs/ so evidence can be shared via GitHub ZIP.
+# - We still ignore heavy artifacts like build/ outputs, archives, and trace datasets.
+# =====================
+
+# Trace remains ignored; do not commit step0/trace headers by default
+/data/trace/
+/trace/
+/traces/
+

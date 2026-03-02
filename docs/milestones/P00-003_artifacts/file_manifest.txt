@@ -1,0 +1,20 @@
+M src/Top.h - Change CFG_COMMIT success response from DONE to OK.
+M tb/tb_top_m3.cpp - Change CFG_COMMIT success expectations to RSP_OK and normalize header comment.
+M tb/tb_top_m6.cpp - Change CFG_COMMIT success expectation to RSP_OK and restore swallowed OP_SOFT_RESET call in Case 5.
+M tb/tb_top_m9.cpp - Change CFG_COMMIT success expectation to RSP_OK and add trace-optional guards.
+M tb/tb_layerloop_m11.cpp - Change CFG_COMMIT success expectation to RSP_OK and add trace-optional guards.
+M tb/tb_mid_end_ln_m12.cpp - Change CFG_COMMIT success expectation to RSP_OK and add trace-optional guards.
+M tb/tb_top_end2end_m13.cpp - Change CFG_COMMIT success expectation to RSP_OK and add trace-optional guards.
+M README.md - AUTO block updated with P00-003 build/run commands and validation stamp.
+A docs/milestones/P00-003_report.md - Patch-level report with repro and validation summary.
+A docs/milestones/P00-003_artifacts/build.log - Build and gate logs for P00-003.
+A docs/milestones/P00-003_artifacts/run_tb.log - Runtime log for m3 and SKIPPED entries for build-only TBs.
+A docs/milestones/P00-003_artifacts/verdict.txt - Single-line PASS/FAIL verdict for P00-003.
+A docs/milestones/P00-003_artifacts/diff.patch - Scoped diff for P00-003 tracked source/doc changes.
+A docs/milestones/P00-003_artifacts/file_manifest.txt - Manifest of P00-003 changed/generated files.
+A docs/milestones/M03_report.md - M03 milestone report generated in this patch.
+A docs/milestones/M03_artifacts/file_manifest.txt - M03 artifact manifest.
+A docs/milestones/M03_artifacts/diff.patch - M03 scoped diff.
+A docs/milestones/M03_artifacts/build.log - M03 build/gate logs.
+A docs/milestones/M03_artifacts/run_tb.log - M03 run log.
+A docs/milestones/M03_artifacts/verdict.txt - M03 verdict.

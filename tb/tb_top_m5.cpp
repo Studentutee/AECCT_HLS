@@ -1,5 +1,5 @@
 // tb_top_m5.cpp
-// M5 TB嚗?霅?DEBUG_CFG + HALTED(meta0/meta1) + READ_MEM + RESUME
+// M5 TB: DEBUG_CFG + HALTED(meta0/meta1) + READ_MEM + RESUME.
 
 #include <cstdio>
 #include <cstdlib>
@@ -131,7 +131,7 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
 
     drive_set_w_base(ctrl_cmd, ctrl_rsp, data_in, data_out, good_base);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_W_BASE);
+    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_SET_W_BASE);
     expect_state(aecct::ST_IDLE);
 
     drive_debug_cfg(
@@ -207,7 +207,7 @@ int main() {
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     drive_set_w_base(ctrl_cmd, ctrl_rsp, data_in, data_out, good_base);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_W_BASE);
+    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_SET_W_BASE);
     drive_debug_cfg(
         ctrl_cmd, ctrl_rsp, data_in, data_out,
         make_dbg_word(1u, 1u, 1u) // ARM + ON_LOADW_COUNT + k=1
@@ -238,7 +238,8 @@ int main() {
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     expect_state(aecct::ST_IDLE);
 
-    // Case 3嚗ESUME ?券? HALTED嚗?瘙?ERR_BAD_ARG嚗?    drive_debug_cfg(
+    // Case 3: RESUME outside HALTED must return ERR_BAD_ARG.
+    drive_debug_cfg(
         ctrl_cmd, ctrl_rsp, data_in, data_out,
         make_dbg_word(2u, 0u, 0u) // RESUME in IDLE
     );

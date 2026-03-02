@@ -1,8 +1,8 @@
 #pragma once
-// Top.h嚗eader-only嚗?// M6嚗op-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
-// 1) one-command-per-call嚗?甈∪?急?憭???1 蝑?ctrl_cmd
-// 2) ST_CFG_RX ?函 ctrl_cmd ???交 1 ??cfg word嚗rom data_in嚗?// 3) ST_PARAM_RX ?函 ctrl_cmd ???交 1 ??param word嚗rom data_in嚗?// 4) ST_INFER_RX ?函 ctrl_cmd ???交 1 ??input word嚗rom data_in嚗?// 5) HALTED嚗???ctrl ERR嚗???meta0/meta1 ??data_out
-// 6) READ_MEM 蝬剜? M2 銵嚗DLE/HALTED ?航?嚗?
+// Top.h?謅??eader-only??// M6?謅?op-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
+// 1) one-command-per-call?謅Ｗ??????????????1 ??ctrl_cmd
+// 2) ST_CFG_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??cfg word?謅?rom data_in??// 3) ST_PARAM_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??param word?謅?rom data_in??// 4) ST_INFER_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??input word?謅?rom data_in??// 5) HALTED?謅Ｗ????ctrl ERR?謅?ㄝ???meta0/meta1 ??data_out
+// 6) READ_MEM ???? M2 ??ㄟ頩????腿E/HALTED ?????
 #include "AecctTypes.h"
 #include "AecctUtil.h"
 #include "AecctProtocol.h"
@@ -19,7 +19,6 @@
 #include "blocks/LayerNormBlock.h"
 #include "blocks/TransformerLayer.h"
 #include "blocks/FinalHead.h"
-#include "weights.h"
 #include <cstdint>
 
 namespace aecct {
@@ -110,14 +109,14 @@ namespace aecct {
         u32_t infer_xpred_base_word;
         u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
 
-        // M5嚗ebug/halt ?批
+        // M5?謅?ebug/halt ??撠?
         bool debug_armed;
         u32_t dbg_trigger_sel;
         u32_t dbg_k_value;
         bool halt_active;
         HaltInfo halt_info;
 
-        // M3嚗fg ?交???
+        // M3?謅?fg ??剜迫???蝘???
         u32_t cfg_words[CFG_WORDS_EXPECTED];
         u32_t cfg_count;
         bool cfg_ready;
@@ -187,7 +186,7 @@ namespace aecct {
         return sram;
     }
 
-    // TB ??debug helper嚗?敶梢 top 隞嚗?
+    // TB ??debug helper?謅????鞎?top ?豯殉?鞊堆???
     static inline TopState top_peek_state() { return top_regs().state; }
     static inline unsigned top_peek_cfg_count() { return (unsigned)top_regs().cfg_count.to_uint(); }
     static inline bool top_peek_cfg_ready() { return top_regs().cfg_ready; }
@@ -549,19 +548,19 @@ namespace aecct {
     static inline void load_mid_or_end_norm_params(
         bool is_mid_norm,
         u32_t* sram,
+        uint32_t param_base_word,
         uint32_t gamma_base,
         uint32_t beta_base,
         uint32_t d_model
     ) {
+        const uint32_t norm_w_id = is_mid_norm ? 65u : 64u;
+        const uint32_t norm_b_id = is_mid_norm ? 17u : 16u;
+        const uint32_t norm_w_base = param_base_word + kParamMeta[norm_w_id].offset_w;
+        const uint32_t norm_b_base = param_base_word + kParamMeta[norm_b_id].offset_w;
+
         for (uint32_t c = 0; c < d_model; ++c) {
-            fp32_t g = is_mid_norm
-                ? fp32_t(w_decoder_norm2_weight[c])
-                : fp32_t(w_decoder_norm_weight[c]);
-            fp32_t b = is_mid_norm
-                ? fp32_t(w_decoder_norm2_bias[c])
-                : fp32_t(w_decoder_norm_bias[c]);
-            sram[gamma_base + c] = bits_from_fp32(g);
-            sram[beta_base + c] = bits_from_fp32(b);
+            sram[gamma_base + c] = sram[norm_w_base + c];
+            sram[beta_base + c] = sram[norm_b_base + c];
         }
     }
 
@@ -569,6 +568,7 @@ namespace aecct {
         bool is_mid_norm,
         const CfgRegs& cfg_regs,
         u32_t* sram,
+        u32_t param_base_word,
         u32_t x_in_base_word,
         u32_t x_out_base_word
     ) {
@@ -577,7 +577,7 @@ namespace aecct {
 
         uint32_t gamma_base = (uint32_t)LN_GAMMA_BASE_WORD;
         uint32_t beta_base = (uint32_t)LN_BETA_BASE_WORD;
-        load_mid_or_end_norm_params(is_mid_norm, sram, gamma_base, beta_base, d_model);
+        load_mid_or_end_norm_params(is_mid_norm, sram, (uint32_t)param_base_word.to_uint(), gamma_base, beta_base, d_model);
 
         LayerNormCfg ln_cfg;
         ln_cfg.token_count = (u32_t)LN_TOKEN_COUNT;
@@ -623,7 +623,7 @@ namespace aecct {
 
             if ((int)lid == mid_index) {
                 // mid LN must be out-of-place: current_x -> other_x
-                run_mid_or_end_layernorm(true, cfg, sram, x_in_base, x_out_base);
+                run_mid_or_end_layernorm(true, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
                 x_in_base = x_out_base;
                 x_out_base = alternate_x_page(x_in_base);
 
@@ -633,7 +633,7 @@ namespace aecct {
         }
 
         // end LN must be out-of-place and always runs before FinalHead.
-        run_mid_or_end_layernorm(false, cfg, sram, x_in_base, x_out_base);
+        run_mid_or_end_layernorm(false, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
         x_in_base = x_out_base;
         x_out_base = alternate_x_page(x_in_base);
 
@@ -728,7 +728,7 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_out,
         u32_t* sram
     ) {
-        // READ_MEM ?嚗ddr_word?en_words嚗?摨?
+        // READ_MEM ??憛敢?謅?ddr_word?頩?n_words?謅????塗?
         u32_t addr_word_in = data_in.read();
         u32_t len_words_in = data_in.read();
 
@@ -753,7 +753,7 @@ namespace aecct {
         ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_READ_MEM));
     }
 
-    // Top ?賢?隞嚗摰?銝?嚗?
+    // Top ????豯殉?鞊堆????翰??尿??豲????????
     static inline void top(
         ac_channel<ac_int<16, false> >& ctrl_cmd,
         ac_channel<ac_int<16, false> >& ctrl_rsp,
@@ -850,11 +850,11 @@ namespace aecct {
             else if (regs.state == ST_CFG_RX) {
                 if (op == (uint8_t)OP_CFG_COMMIT) {
                     if (!regs.cfg_ready) {
-                        // M3 ?香隤?嚗摨虫?頞喳?荔?? ST_CFG_RX ?迂鋆?
+                        // M3 ?雓Ｙ??甇Ｙ???謅Ｗ??????豯止?韏????雓蟡?ST_CFG_RX ?頩????嗾??
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_LEN_MISMATCH));
                     }
                     else if (!cfg_validate_minimal(regs)) {
-                        // M3 ?香隤?嚗?瘜?cfg ??IDLE嚗?? begin
+                        // M3 ?雓Ｙ??甇Ｙ???謅Ｗ????cfg ??IDLE?謅?ㄡ???謢? begin
                         regs.state = ST_IDLE;
                         cfg_session_clear(regs);
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_ILLEGAL));
@@ -862,7 +862,7 @@ namespace aecct {
                     else {
                         cfg_apply_to_regs(regs);
                         regs.state = ST_IDLE;
-                        ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_CFG_COMMIT));
+                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_CFG_COMMIT));
                     }
                 }
                 else if (op == (uint8_t)OP_SOFT_RESET) {
@@ -923,7 +923,7 @@ namespace aecct {
             }
         }
         else {
-            // ?⊥?嗅隞斗?嚗?交????1 ????
+            // ??隡??????豯???謅?ㄝ雓??剜迫??????1 ????雓?
             if (regs.state == ST_CFG_RX && !regs.cfg_ready) {
                 cfg_ingest_one_word(regs, data_in);
             }
@@ -937,4 +937,5 @@ namespace aecct {
     }
 
 } // namespace aecct
+
 

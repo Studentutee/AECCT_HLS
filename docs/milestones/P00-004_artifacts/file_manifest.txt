@@ -1,0 +1,14 @@
+M src/Top.h - Remove design-side weights.h include and switch mid/end norm param loading to SRAM via kParamMeta offsets.
+M src/blocks/FFNLayer0.h - Replace compile-time w_* accesses with SRAM parameter reads; add param_base_word input.
+M src/blocks/TransformerLayer.h - Replace sublayer1 norm compile-time arrays with SRAM parameter reads; pass param_base_word to FFN block.
+M src/blocks/FinalHead.h - Replace compile-time out_fc bias access with SRAM-based read.
+M include/weights_streamer.h - Convert to design-safe shim with no weights.h include.
+A tb/weights_streamer.h - Move TB-side weights streamer implementation out of design include root.
+M scripts/check_design_purity.py - Add fail rules for weights.h includes and data/weights include paths in design roots.
+M README.md - AUTO block updated with P00-004 commands and validation stamp.
+A docs/milestones/P00-004_report.md - Patch-level report for P00-004.
+A docs/milestones/P00-004_artifacts/build.log - Build and gate outputs for P00-004.
+A docs/milestones/P00-004_artifacts/run_tb.log - Runtime output for mandatory tb_top_m4 and SKIPPED entries.
+A docs/milestones/P00-004_artifacts/verdict.txt - Single-line PASS/FAIL verdict for P00-004.
+A docs/milestones/P00-004_artifacts/diff.patch - Scoped diff for P00-004 tracked changes.
+A docs/milestones/P00-004_artifacts/file_manifest.txt - Manifest of P00-004 changed/generated files.

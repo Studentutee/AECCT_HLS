@@ -1,0 +1,8 @@
+﻿=== M04 Run Log ===
+Date: 2026-03-02
+WorkingDir: c:\Users\Peter\source\repos\AECCT_HLS
+
+Command: .\\build\\tmp_tb_top_m4.exe
+PASS: tb_top_m4 (SET_W_BASE + LOAD_W PARAM_RX)
+ExitCode: 0
+

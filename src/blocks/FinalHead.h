@@ -8,7 +8,6 @@
 #include "TransformerLayer.h"
 #include "gen/ModelShapes.h"
 #include "gen/WeightStreamOrder.h"
-#include "weights.h"
 
 namespace aecct {
 
@@ -39,8 +38,6 @@ static inline void FinalHead(
     u32_t xpred_base_word,
     const HeadParamBase& hp
 ) {
-    (void)hp;
-
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     if (d_model == 0u) { d_model = (uint32_t)D_MODEL; }
     uint32_t logits_words = (uint32_t)EXP_LEN_OUT_LOGITS_WORDS;
@@ -48,10 +45,11 @@ static inline void FinalHead(
     uint32_t x_end_base = (uint32_t)x_end_base_word.to_uint();
     uint32_t logits_base = (uint32_t)logits_base_word.to_uint();
     uint32_t xpred_base = (uint32_t)xpred_base_word.to_uint();
+    uint32_t out_fc_b_base = (uint32_t)hp.out_fc_b_base_word.to_uint();
 
     for (uint32_t i = 0; i < logits_words; ++i) {
         uint32_t src = (d_model == 0u) ? 0u : (uint32_t)sram[x_end_base + (i % d_model)].to_uint();
-        uint32_t k0 = (uint32_t)fp32_bits_from_double(w_out_fc_bias[i]).to_uint();
+        uint32_t k0 = (uint32_t)sram[out_fc_b_base + i].to_uint();
         uint32_t k1 = (uint32_t)i * 0x9E3779B9u;
         sram[logits_base + i] = (u32_t)(src ^ k0 ^ k1);
     }

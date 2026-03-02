@@ -14,6 +14,8 @@ DESIGN_ROOTS = ("src", "include", "gen")
 
 RULES = [
     ("include_step0", re.compile(r'#include\s*["<][^">]*step0\.h[">]')),
+    ("include_weights_h", re.compile(r'#include\s*["<]weights\.h[">]')),
+    ("include_data_weights_path", re.compile(r'#include\s*["<][^">]*data[\\/]+weights[\\/][^">]*[">]')),
     ("trace_macro", re.compile(r"\bAECCT_.*TRACE_MODE\b")),
     ("host_cmath", re.compile(r"#include\s*<cmath>")),
     ("host_std_math", re.compile(r"\bstd::(?:sqrt|exp|log|pow)\b")),

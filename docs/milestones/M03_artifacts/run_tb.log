@@ -1,0 +1,13 @@
+﻿=== M03 Run Log ===
+Date: 2026-03-02
+WorkingDir: c:\Users\Peter\source\repos\AECCT_HLS
+
+Command: .\\build\\tmp_tb_top_m3.exe
+PASS: tb_top_m3 (CFG_RX expected_len + legality)
+ExitCode: 0
+
+SKIPPED: tb_top_m6 runtime not required by P00-003 repro (build-only check).
+SKIPPED: tb_top_m9 runtime not required by P00-003 repro (build-only check; trace compare guarded by AECCT_HAS_TRACE=0).
+SKIPPED: tb_layerloop_m11 runtime not required by P00-003 repro (build-only check; trace compare guarded by AECCT_HAS_TRACE=0).
+SKIPPED: tb_mid_end_ln_m12 runtime not required by P00-003 repro (build-only check; trace compare guarded by AECCT_HAS_TRACE=0).
+SKIPPED: tb_top_end2end_m13 runtime not required by P00-003 repro (build-only check; trace compare guarded by AECCT_HAS_TRACE=0).

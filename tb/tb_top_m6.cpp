@@ -1,5 +1,5 @@
 // tb_top_m6.cpp
-// M6 TB嚗?霅?SET_OUTMODE + INFER stub + ?????
+// M6 TB: SET_OUTMODE + INFER stub + state guards.
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -155,7 +155,7 @@ static void run_cfg_commit(
 
     send_cfg_words(ctrl_cmd, ctrl_rsp, data_in, data_out, cfg);
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
+    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_COMMIT);
     expect_state(aecct::ST_IDLE);
 }
 
@@ -188,7 +188,7 @@ int main() {
     aecct::data_ch_t data_in;
     aecct::data_ch_t data_out;
 
-    // Case 1嚗ET_OUTMODE=NONE嚗NFER 銝? data_out
+    // Case 1??ET_OUTMODE=NONE??NFER ??? data_out
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     run_cfg_commit(ctrl_cmd, ctrl_rsp, data_in, data_out);
@@ -198,7 +198,7 @@ int main() {
     run_infer_with_input(ctrl_cmd, ctrl_rsp, data_in, data_out);
     expect_no_data(data_out);
 
-    // Case 2嚗ET_OUTMODE=X_PRED嚗NFER ??OUT_WORDS_X_PRED
+    // Case 2??ET_OUTMODE=X_PRED??NFER ??OUT_WORDS_X_PRED
     drive_set_outmode(ctrl_cmd, ctrl_rsp, data_in, data_out, 0u);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_OUTMODE);
     run_infer_with_input(ctrl_cmd, ctrl_rsp, data_in, data_out);
@@ -214,7 +214,7 @@ int main() {
     }
     expect_no_data(data_out);
 
-    // Case 3嚗ET_OUTMODE=LOGITS嚗NFER ??OUT_WORDS_LOGITS
+    // Case 3??ET_OUTMODE=LOGITS??NFER ??OUT_WORDS_LOGITS
     drive_set_outmode(ctrl_cmd, ctrl_rsp, data_in, data_out, 1u);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_OUTMODE);
     run_infer_with_input(ctrl_cmd, ctrl_rsp, data_in, data_out);
@@ -229,11 +229,12 @@ int main() {
     }
     expect_no_data(data_out);
 
-    // Case 4嚗?瘜?outmode
+    // Case 4?契???outmode
     drive_set_outmode(ctrl_cmd, ctrl_rsp, data_in, data_out, 3u);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_ARG);
 
-    // Case 5嚗????塚?ST_CFG_RX / ST_PARAM_RX嚗?    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+    // Case 5: OP_INFER/OP_SET_OUTMODE must be rejected in ST_CFG_RX and ST_PARAM_RX.
+    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
@@ -260,4 +261,6 @@ int main() {
     std::printf("PASS: tb_top_m6 (INFER stub + SET_OUTMODE)\n");
     return 0;
 }
+
+
 
