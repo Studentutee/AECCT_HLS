@@ -33,9 +33,17 @@
   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\run_m16_pipeline.ps1`
 - Gate wrapper:
   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_gates.ps1`
+- Bring-up TB build commands (P00-001):
+  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m0.cpp /Fe:build\tmp_tb_top_m0.exe`
+  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m1.cpp /Fe:build\tmp_tb_top_m1.exe`
+  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m2.cpp /Fe:build\tmp_tb_top_m2.exe`
+- Bring-up TB run commands (P00-001):
+  - `.\build\tmp_tb_top_m0.exe`
+  - `.\build\tmp_tb_top_m1.exe`
+  - `.\build\tmp_tb_top_m2.exe`
 - Smoke TB build/run command:
   - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_compliance_smoke_p16.cpp /Fe:build\tmp_tb_compliance_smoke_p16.exe`
   - `.\build\tmp_tb_compliance_smoke_p16.exe`
 - Latest validation stamp:
-  - `2026-03-02`: gates PASS, smoke TB PASS, legacy trace-required regression cases SKIPPED with `AECCT_HAS_TRACE=0`.
+  - `2026-03-02 (P00-001)`: tb_top_m0 PASS, tb_top_m1 PASS, tb_top_m2 PASS, gates PASS.
 <!-- AUTO-GENERATED END -->

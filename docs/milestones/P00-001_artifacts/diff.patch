@@ -1,0 +1,843 @@
+diff --git a/README.md b/README.md
+index caf9f1c..b42ace5 100644
+--- a/README.md
++++ b/README.md
+@@ -33,9 +33,17 @@
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\run_m16_pipeline.ps1`
+ - Gate wrapper:
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_gates.ps1`
++- Bring-up TB build commands (P00-001):
++  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m0.cpp /Fe:build\tmp_tb_top_m0.exe`
++  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m1.cpp /Fe:build\tmp_tb_top_m1.exe`
++  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m2.cpp /Fe:build\tmp_tb_top_m2.exe`
++- Bring-up TB run commands (P00-001):
++  - `.\build\tmp_tb_top_m0.exe`
++  - `.\build\tmp_tb_top_m1.exe`
++  - `.\build\tmp_tb_top_m2.exe`
+ - Smoke TB build/run command:
+   - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_compliance_smoke_p16.cpp /Fe:build\tmp_tb_compliance_smoke_p16.exe`
+   - `.\build\tmp_tb_compliance_smoke_p16.exe`
+ - Latest validation stamp:
+-  - `2026-03-02`: gates PASS, smoke TB PASS, legacy trace-required regression cases SKIPPED with `AECCT_HAS_TRACE=0`.
++  - `2026-03-02 (P00-001)`: tb_top_m0 PASS, tb_top_m1 PASS, tb_top_m2 PASS, gates PASS.
+ <!-- AUTO-GENERATED END -->
+diff --git a/include/AecctProtocol.h b/include/AecctProtocol.h
+index 8d50e61..d39ec8e 100644
+--- a/include/AecctProtocol.h
++++ b/include/AecctProtocol.h
+@@ -1,114 +1,115 @@
+ #pragma once
+ // AecctProtocol.h
+-// ctrl_cmd / ctrl_rsp 編碼與 opcode / error code 定義（M0 釘死）
++// SSOT for ctrl_cmd/ctrl_rsp packing and opcode/errcode enums.
+ //
+-// ctrl_cmd  (16-bit): [7:0]=opcode, [15:8]=0
+-// ctrl_rsp  (16-bit): [3:0]=rsp_kind(0 OK,1 DONE,2 ERR), [7:4]=0, [15:8]=payload
++// ctrl_cmd (16-bit): [7:0]=opcode, [15:8]=0
++// ctrl_rsp (16-bit): [3:0]=rsp_kind(0 OK,1 DONE,2 ERR), [7:4]=0, [15:8]=payload
+ //   payload: OK/DONE -> opcode, ERR -> err_code
+ //
+-// 注意：M0 先把 enum 列完整；未實作的 opcode 先回 ERR_UNIMPL
++// NOTE:
++// - Unimplemented opcodes must return RSP_ERR(ERR_UNIMPL).
++// - Opcode values must match spell v11.7.2.
+ 
+ #include <ac_int.h>
+ 
+ namespace aecct {
+ 
+-	// -------------------- RSP kind --------------------
+-	enum RspKind : unsigned {
+-		RSP_OK = 0,
+-		RSP_DONE = 1,
+-		RSP_ERR = 2
+-	};
+-
+-	// -------------------- Opcode --------------------
+-	enum Opcode : unsigned {
+-		OP_NOOP = 0x00, // M0: implemented
+-		OP_CFG_BEGIN = 0x01,
+-		OP_CFG_COMMIT = 0x02,
+-
+-		OP_LOAD_W = 0x04, // LOAD_PARAM path -> M1+
+-		OP_SET_OUTMODE = 0x05,
+-		OP_INFER = 0x06,
+-		OP_READ_MEM = 0x07,
+-		OP_DEBUG_CFG = 0x08,
+-		OP_SET_W_BASE = 0x09,
+-
+-		OP_SOFT_RESET = 0x0F  // M0: implemented
+-	};
+-
+-	// -------------------- Top FSM state (M1) --------------------
+-	enum TopState : unsigned {
+-		ST_IDLE = 0,     // 只接受控制命令 (control command only)
+-		ST_CFG_RX,       // 組態接收階段 (cfg receive phase)
+-		ST_PARAM_RX,     // 參數接收階段 (param/weight receive phase)
+-		ST_INFER_RX,     // 推論輸入接收階段 (infer input receive phase)
+-		ST_HALTED        // 停機占位狀態 (debug halt placeholder)
+-	};
+-
+-	// -------------------- Error code --------------------
+-	enum ErrCode : unsigned {
+-		ERR_OK = 0,
+-		ERR_UNIMPL,
+-		ERR_BAD_STATE,
+-		ERR_BAD_ARG,
+-		ERR_BUSY,
+-		ERR_INTERNAL,
+-
+-		// placeholders for M3/M4+
+-		ERR_CFG_LEN_MISMATCH,
+-		ERR_CFG_ILLEGAL,
+-		ERR_PARAM_LEN_MISMATCH,
+-		ERR_PARAM_BASE_RANGE,
+-		ERR_PARAM_BASE_ALIGN,
+-		ERR_MEM_RANGE,
+-		ERR_BITPACK_PAD,
+-		ERR_DBG_HALT
+-	};
+-
+-	// -------------------- ctrl word pack/unpack helpers --------------------
+-	typedef ac_int<16, false> ctrl_word_t;
+-
+-	static inline ctrl_word_t pack_ctrl_cmd(uint8_t opcode_u8) {
+-		// [7:0]=opcode, [15:8]=0
+-		ctrl_word_t w = 0;
+-		w.set_slc(0, (ac_int<8, false>)opcode_u8);
+-		return w;
+-	}
+-
+-	static inline uint8_t unpack_ctrl_cmd_opcode(const ctrl_word_t& w) {
+-		ac_int<8, false> op = w.template slc<8>(0);
+-		return (uint8_t)op.to_uint();
+-	}
+-
+-	static inline ctrl_word_t pack_ctrl_rsp_done(uint8_t opcode_u8) {
+-		// rsp_kind=DONE, payload=opcode
+-		ctrl_word_t w = 0;
+-		w.set_slc(0, (ac_int<4, false>)RSP_DONE);         // [3:0]
+-		w.set_slc(8, (ac_int<8, false>)opcode_u8);        // [15:8]
+-		return w;
+-	}
+-
+-	static inline ctrl_word_t pack_ctrl_rsp_ok(uint8_t opcode_u8) {
+-		ctrl_word_t w = 0;
+-		w.set_slc(0, (ac_int<4, false>)RSP_OK);
+-		w.set_slc(8, (ac_int<8, false>)opcode_u8);
+-		return w;
+-	}
+-
+-	static inline ctrl_word_t pack_ctrl_rsp_err(uint8_t err_u8) {
+-		ctrl_word_t w = 0;
+-		w.set_slc(0, (ac_int<4, false>)RSP_ERR);
+-		w.set_slc(8, (ac_int<8, false>)err_u8);
+-		return w;
+-	}
+-
+-	static inline uint8_t unpack_ctrl_rsp_kind(const ctrl_word_t& w) {
+-		ac_int<4, false> k = w.template slc<4>(0);
+-		return (uint8_t)k.to_uint();
+-	}
+-
+-	static inline uint8_t unpack_ctrl_rsp_payload(const ctrl_word_t& w) {
+-		ac_int<8, false> p = w.template slc<8>(8);
+-		return (uint8_t)p.to_uint();
+-	}
++  // -------------------- RSP kind --------------------
++  enum RspKind : unsigned {
++    RSP_OK = 0,
++    RSP_DONE = 1,
++    RSP_ERR = 2
++  };
++
++  // -------------------- Opcode --------------------
++  enum Opcode : unsigned {
++    OP_NOOP       = 0x00, // implemented
++    OP_CFG_BEGIN  = 0x01,
++    OP_CFG_COMMIT = 0x02,
++
++    OP_LOAD_W      = 0x04, // LOAD_PARAM path -> M1+
++    OP_SET_OUTMODE = 0x05,
++    OP_INFER       = 0x06,
++    OP_READ_MEM    = 0x07,
++    OP_DEBUG_CFG   = 0x08,
++    OP_SET_W_BASE  = 0x09,
++
++    OP_SOFT_RESET  = 0x7F  // implemented (spell v11.7.2)
++  };
++
++  // -------------------- Top FSM state (M1) --------------------
++  enum TopState : unsigned {
++    ST_IDLE = 0,     // control command only
++    ST_CFG_RX,       // cfg receive phase
++    ST_PARAM_RX,     // param/weight receive phase
++    ST_INFER_RX,     // infer input receive phase
++    ST_HALTED        // debug halt placeholder
++  };
++
++  // -------------------- Error code --------------------
++  enum ErrCode : unsigned {
++    ERR_OK = 0,
++    ERR_UNIMPL,
++    ERR_BAD_STATE,
++    ERR_BAD_ARG,
++    ERR_BUSY,
++    ERR_INTERNAL,
++
++    // placeholders for M3/M4+
++    ERR_CFG_LEN_MISMATCH,
++    ERR_CFG_ILLEGAL,
++    ERR_PARAM_LEN_MISMATCH,
++    ERR_PARAM_BASE_RANGE,
++    ERR_PARAM_BASE_ALIGN,
++    ERR_MEM_RANGE,
++    ERR_BITPACK_PAD,
++    ERR_DBG_HALT
++  };
++
++  // -------------------- ctrl word pack/unpack helpers --------------------
++  typedef ac_int<16, false> ctrl_word_t;
++
++  static inline ctrl_word_t pack_ctrl_cmd(uint8_t opcode_u8) {
++    // [7:0]=opcode, [15:8]=0
++    ctrl_word_t w = 0;
++    w.set_slc(0, (ac_int<8, false>)opcode_u8);
++    return w;
++  }
++
++  static inline uint8_t unpack_ctrl_cmd_opcode(const ctrl_word_t& w) {
++    ac_int<8, false> op = w.template slc<8>(0);
++    return (uint8_t)op.to_uint();
++  }
++
++  static inline ctrl_word_t pack_ctrl_rsp_done(uint8_t opcode_u8) {
++    ctrl_word_t w = 0;
++    w.set_slc(0, (ac_int<4, false>)RSP_DONE);  // [3:0]
++    w.set_slc(8, (ac_int<8, false>)opcode_u8); // [15:8]
++    return w;
++  }
++
++  static inline ctrl_word_t pack_ctrl_rsp_ok(uint8_t opcode_u8) {
++    ctrl_word_t w = 0;
++    w.set_slc(0, (ac_int<4, false>)RSP_OK);
++    w.set_slc(8, (ac_int<8, false>)opcode_u8);
++    return w;
++  }
++
++  static inline ctrl_word_t pack_ctrl_rsp_err(uint8_t err_u8) {
++    ctrl_word_t w = 0;
++    w.set_slc(0, (ac_int<4, false>)RSP_ERR);
++    w.set_slc(8, (ac_int<8, false>)err_u8);
++    return w;
++  }
++
++  static inline uint8_t unpack_ctrl_rsp_kind(const ctrl_word_t& w) {
++    ac_int<4, false> k = w.template slc<4>(0);
++    return (uint8_t)k.to_uint();
++  }
++
++  static inline uint8_t unpack_ctrl_rsp_payload(const ctrl_word_t& w) {
++    ac_int<8, false> p = w.template slc<8>(8);
++    return (uint8_t)p.to_uint();
++  }
+ 
+ } // namespace aecct
+diff --git a/src/Top.h b/src/Top.h
+index 787f0a2..277451f 100644
+--- a/src/Top.h
++++ b/src/Top.h
+@@ -800,7 +800,7 @@ namespace aecct {
+                     else {
+                         regs.w_base_set = true;
+                         regs.w_base_word = w_base_in;
+-                        ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SET_W_BASE));
++                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_SET_W_BASE));
+                     }
+                 }
+                 else if (op == (uint8_t)OP_LOAD_W) {
+diff --git a/tb/tb_top_m0.cpp b/tb/tb_top_m0.cpp
+index 7cc03f9..9a5a554 100644
+--- a/tb/tb_top_m0.cpp
++++ b/tb/tb_top_m0.cpp
+@@ -1,5 +1,7 @@
+ // tb_top_m0.cpp
+-// M0 最小 TB：只驗證 ctrl_rsp（NOOP / SOFT_RESET / 未實作 opcode -> ERR_UNIMPL）
++// M0 minimal bring-up TB:
++// - Verify ctrl_rsp format with NOOP and SOFT_RESET.
++// - Verify unimplemented opcode returns ERR_UNIMPL.
+ 
+ #include <cstdio>
+ #include <cstdlib>
+@@ -8,61 +10,43 @@
+ #include "AecctProtocol.h"
+ #include "Top.h"
+ 
+-static void expect_rsp_done(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_op) {
+-    aecct::u16_t w;
+-    if (!ctrl_rsp.nb_read(w)) {
+-        std::printf("ERROR: expected ctrl_rsp but channel empty.\n");
+-        std::exit(1);
+-    }
+-    uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
+-    uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
+-
+-    if (kind != (uint8_t)aecct::RSP_DONE || payload != expect_op) {
+-        std::printf("ERROR: rsp mismatch. kind=%u payload=%u (expect DONE=%u, op=%u)\n",
+-            (unsigned)kind, (unsigned)payload,
+-            (unsigned)aecct::RSP_DONE, (unsigned)expect_op);
+-        std::exit(1);
+-    }
+-}
+-
+-static void expect_rsp_err(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_err) {
+-    aecct::u16_t w;
+-    if (!ctrl_rsp.nb_read(w)) {
+-        std::printf("ERROR: expected ctrl_rsp but channel empty.\n");
+-        std::exit(1);
+-    }
+-    uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
+-    uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
+-
+-    if (kind != (uint8_t)aecct::RSP_ERR || payload != expect_err) {
+-        std::printf("ERROR: rsp mismatch. kind=%u payload=%u (expect ERR=%u, err=%u)\n",
+-            (unsigned)kind, (unsigned)payload,
+-            (unsigned)aecct::RSP_ERR, (unsigned)expect_err);
+-        std::exit(1);
+-    }
++static void expect_rsp(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_kind, uint8_t expect_payload) {
++  aecct::u16_t w;
++  if (!ctrl_rsp.nb_read(w)) {
++    std::printf("ERROR: expected ctrl_rsp but channel empty.\n");
++    std::exit(1);
++  }
++  const uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
++  const uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
++  if (kind != expect_kind || payload != expect_payload) {
++    std::printf("ERROR: rsp mismatch. kind=%u payload=%u (expect kind=%u payload=%u)\n",
++                (unsigned)kind, (unsigned)payload, (unsigned)expect_kind, (unsigned)expect_payload);
++    std::exit(1);
++  }
+ }
+ 
+ int main() {
+-    aecct::ctrl_ch_t ctrl_cmd;
+-    aecct::ctrl_ch_t ctrl_rsp;
+-    aecct::data_ch_t data_in;
+-    aecct::data_ch_t data_out;
+-
+-    // 1) NOOP -> DONE(NOOP)
+-    ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_NOOP));
+-    aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
+-    expect_rsp_done(ctrl_rsp, (uint8_t)aecct::OP_NOOP);
+-
+-    // 2) SOFT_RESET -> DONE(SOFT_RESET)
+-    ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_SOFT_RESET));
+-    aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
+-    expect_rsp_done(ctrl_rsp, (uint8_t)aecct::OP_SOFT_RESET);
+-
+-    // 3) 未實作：CFG_BEGIN -> ERR(ERR_UNIMPL)
+-    ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_CFG_BEGIN));
+-    aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
+-    expect_rsp_err(ctrl_rsp, (uint8_t)aecct::ERR_UNIMPL);
+-
+-    std::printf("PASS: tb_top_m0 (NOOP, SOFT_RESET, CFG_BEGIN->ERR_UNIMPL)\n");
+-    return 0;
+-}
+\ No newline at end of file
++  aecct::ctrl_ch_t ctrl_cmd;
++  aecct::ctrl_ch_t ctrl_rsp;
++  aecct::data_ch_t data_in;
++  aecct::data_ch_t data_out;
++
++  // 1) NOOP -> DONE(NOOP)
++  ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_NOOP));
++  aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_NOOP);
++
++  // 2) SOFT_RESET -> DONE(SOFT_RESET)
++  ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_SOFT_RESET));
++  aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
++
++  // 3) Unknown opcode -> ERR(ERR_UNIMPL)
++  const uint8_t kUnknownOp = 0xEEu;
++  ctrl_cmd.write(aecct::pack_ctrl_cmd(kUnknownOp));
++  aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_UNIMPL);
++
++  std::printf("PASS: tb_top_m0\n");
++  return 0;
++}
+diff --git a/tb/tb_top_m1.cpp b/tb/tb_top_m1.cpp
+index 124b583..0cde7ad 100644
+--- a/tb/tb_top_m1.cpp
++++ b/tb/tb_top_m1.cpp
+@@ -1,117 +1,125 @@
+ // tb_top_m1.cpp
+-// M1 TB：驗證 Top-FSM 的 state x opcode 規則與回覆格式
++// M1 bring-up TB: verify Top-FSM "state x opcode" rules.
+ 
+ #include <cstdio>
+ #include <cstdlib>
+ 
+ #include "AecctTypes.h"
+ #include "AecctProtocol.h"
++#include "gen/SramMap.h"
+ #include "Top.h"
+ 
+ static void expect_rsp(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_kind, uint8_t expect_payload) {
+-    aecct::u16_t w;
+-    if (!ctrl_rsp.nb_read(w)) {
+-        std::printf("ERROR: expected ctrl_rsp but channel empty.\n");
+-        std::exit(1);
+-    }
+-
+-    uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
+-    uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
+-    if (kind != expect_kind || payload != expect_payload) {
+-        std::printf("ERROR: rsp mismatch. kind=%u payload=%u (expect kind=%u payload=%u)\n",
+-            (unsigned)kind, (unsigned)payload,
+-            (unsigned)expect_kind, (unsigned)expect_payload);
+-        std::exit(1);
+-    }
++  aecct::u16_t w;
++  if (!ctrl_rsp.nb_read(w)) {
++    std::printf("ERROR: expected ctrl_rsp but channel empty.\n");
++    std::exit(1);
++  }
++  const uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
++  const uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
++  if (kind != expect_kind || payload != expect_payload) {
++    std::printf("ERROR: rsp mismatch. kind=%u payload=%u (expect kind=%u payload=%u)\n",
++                (unsigned)kind, (unsigned)payload, (unsigned)expect_kind, (unsigned)expect_payload);
++    std::exit(1);
++  }
+ }
+ 
+-static void drive_cmd(
++static void expect_state(aecct::TopState expect_s) {
++  const aecct::TopState s = aecct::top_peek_state();
++  if ((unsigned)s != (unsigned)expect_s) {
++    std::printf("ERROR: state mismatch. state=%u expect=%u\n", (unsigned)s, (unsigned)expect_s);
++    std::exit(1);
++  }
++}
++
++static void drive_cmd0(
+     aecct::ctrl_ch_t& ctrl_cmd,
+     aecct::ctrl_ch_t& ctrl_rsp,
+     aecct::data_ch_t& data_in,
+     aecct::data_ch_t& data_out,
+-    uint8_t opcode
+-) {
+-    ctrl_cmd.write(aecct::pack_ctrl_cmd(opcode));
+-    aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
++    uint8_t opcode) {
++  ctrl_cmd.write(aecct::pack_ctrl_cmd(opcode));
++  aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
+ }
+ 
+-static void expect_state(aecct::TopState expect_s) {
+-    aecct::TopState s = aecct::top_peek_state();
+-    if ((unsigned)s != (unsigned)expect_s) {
+-        std::printf("ERROR: state mismatch. state=%u expect=%u\n",
+-            (unsigned)s, (unsigned)expect_s);
+-        std::exit(1);
+-    }
++static void drive_cmd1_u32(
++    aecct::ctrl_ch_t& ctrl_cmd,
++    aecct::ctrl_ch_t& ctrl_rsp,
++    aecct::data_ch_t& data_in,
++    aecct::data_ch_t& data_out,
++    uint8_t opcode,
++    uint32_t arg0_u32) {
++  // NOTE: All stimuli are queued BEFORE calling top().
++  ctrl_cmd.write(aecct::pack_ctrl_cmd(opcode));
++  data_in.write((aecct::u32_t)arg0_u32);
++  aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
+ }
+ 
+ int main() {
+-    aecct::ctrl_ch_t ctrl_cmd;
+-    aecct::ctrl_ch_t ctrl_rsp;
+-    aecct::data_ch_t data_in;
+-    aecct::data_ch_t data_out;
+-
+-    // 起始先 reset，避免跨 TB 執行殘留
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_state(aecct::ST_IDLE);
+-
+-    // Case 1: IDLE 基本命令
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_NOOP);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_NOOP);
+-    expect_state(aecct::ST_IDLE);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_state(aecct::ST_IDLE);
+-
+-    // Case 2: 狀態切換 + 非法命令
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
+-    expect_state(aecct::ST_CFG_RX);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_INFER);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
+-    expect_state(aecct::ST_CFG_RX);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
+-    expect_state(aecct::ST_IDLE);
+-
+-    // Case 3: LOAD_W 需要 base
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_LOAD_W);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
+-    expect_state(aecct::ST_IDLE);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SET_W_BASE);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_SET_W_BASE);
+-    expect_state(aecct::ST_IDLE);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_LOAD_W);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_LOAD_W);
+-    expect_state(aecct::ST_PARAM_RX);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
+-    expect_state(aecct::ST_PARAM_RX);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_state(aecct::ST_IDLE);
+-
+-    // Case 4: INFER 進入 data phase
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_INFER);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_INFER);
+-    expect_state(aecct::ST_INFER_RX);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
+-    expect_state(aecct::ST_INFER_RX);
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_state(aecct::ST_IDLE);
+-
+-    std::printf("PASS: tb_top_m1 (Top-FSM state x opcode)\n");
+-    return 0;
++  aecct::ctrl_ch_t ctrl_cmd;
++  aecct::ctrl_ch_t ctrl_rsp;
++  aecct::data_ch_t data_in;
++  aecct::data_ch_t data_out;
++
++  // Always start from a clean state.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_state(aecct::ST_IDLE);
++
++  // Case 1: IDLE basic commands.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_NOOP);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_NOOP);
++  expect_state(aecct::ST_IDLE);
++
++  // Case 2: Enter CFG_RX, then test illegal opcodes and early commit.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
++  expect_state(aecct::ST_CFG_RX);
++
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_INFER);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
++  expect_state(aecct::ST_CFG_RX);
++
++  // No cfg words provided => commit must fail with CFG_LEN_MISMATCH.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_CFG_LEN_MISMATCH);
++  expect_state(aecct::ST_CFG_RX);
++
++  // Exit CFG_RX via SOFT_RESET.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_state(aecct::ST_IDLE);
++
++  // Case 3: LOAD_W requires SET_W_BASE first.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_LOAD_W);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
++  expect_state(aecct::ST_IDLE);
++
++  // Provide a valid aligned base inside W_REGION.
++  drive_cmd1_u32(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SET_W_BASE, sram_map::PARAM_BASE_DEFAULT);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_SET_W_BASE);
++  expect_state(aecct::ST_IDLE);
++
++  // LOAD_W enters PARAM_RX and replies OK (transaction continues until PARAM_WORDS_EXPECTED words are ingested).
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_LOAD_W);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_LOAD_W);
++  expect_state(aecct::ST_PARAM_RX);
++
++  // Illegal opcode while in PARAM_RX.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
++  expect_state(aecct::ST_PARAM_RX);
++
++  // Exit PARAM_RX via SOFT_RESET.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_state(aecct::ST_IDLE);
++
++  // Case 4: INFER requires cfg_ready (not set in this bring-up TB).
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_INFER);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
++  expect_state(aecct::ST_IDLE);
++
++  std::printf("PASS: tb_top_m1\n");
++  return 0;
+ }
+diff --git a/tb/tb_top_m2.cpp b/tb/tb_top_m2.cpp
+index fe5f7a5..9ab4bfa 100644
+--- a/tb/tb_top_m2.cpp
++++ b/tb/tb_top_m2.cpp
+@@ -1,5 +1,5 @@
+ // tb_top_m2.cpp
+-// M2 TB嚗?霅銝 SRAM + READ_MEM嚗???頞?/????塚?
++// M2 bring-up TB: verify single SRAM map + READ_MEM behavior.
+ 
+ #include <cstdio>
+ #include <cstdlib>
+@@ -10,47 +10,44 @@
+ #include "Top.h"
+ 
+ static void expect_rsp(aecct::ctrl_ch_t& ctrl_rsp, uint8_t expect_kind, uint8_t expect_payload) {
+-    aecct::u16_t w;
+-    if (!ctrl_rsp.nb_read(w)) {
+-        std::printf("ERROR: expected ctrl_rsp but channel empty.\n");
+-        std::exit(1);
+-    }
+-    uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
+-    uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
+-    if (kind != expect_kind || payload != expect_payload) {
+-        std::printf("ERROR: rsp mismatch. kind=%u payload=%u (expect kind=%u payload=%u)\n",
+-            (unsigned)kind, (unsigned)payload,
+-            (unsigned)expect_kind, (unsigned)expect_payload);
+-        std::exit(1);
+-    }
++  aecct::u16_t w;
++  if (!ctrl_rsp.nb_read(w)) {
++    std::printf("ERROR: expected ctrl_rsp but channel empty.\n");
++    std::exit(1);
++  }
++  const uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
++  const uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
++  if (kind != expect_kind || payload != expect_payload) {
++    std::printf("ERROR: rsp mismatch. kind=%u payload=%u (expect kind=%u payload=%u)\n",
++                (unsigned)kind, (unsigned)payload, (unsigned)expect_kind, (unsigned)expect_payload);
++    std::exit(1);
++  }
+ }
+ 
+ static void expect_no_data(aecct::data_ch_t& data_out) {
+-    aecct::u32_t w;
+-    if (data_out.nb_read(w)) {
+-        std::printf("ERROR: expect no data_out, but got word=0x%08X\n", (unsigned)w.to_uint());
+-        std::exit(1);
+-    }
++  aecct::u32_t w;
++  if (data_out.nb_read(w)) {
++    std::printf("ERROR: expect no data_out, but got word=0x%08X\n", (unsigned)w.to_uint());
++    std::exit(1);
++  }
+ }
+ 
+ static void expect_state(aecct::TopState expect_s) {
+-    aecct::TopState s = aecct::top_peek_state();
+-    if ((unsigned)s != (unsigned)expect_s) {
+-        std::printf("ERROR: state mismatch. state=%u expect=%u\n",
+-            (unsigned)s, (unsigned)expect_s);
+-        std::exit(1);
+-    }
++  const aecct::TopState s = aecct::top_peek_state();
++  if ((unsigned)s != (unsigned)expect_s) {
++    std::printf("ERROR: state mismatch. state=%u expect=%u\n", (unsigned)s, (unsigned)expect_s);
++    std::exit(1);
++  }
+ }
+ 
+-static void drive_cmd(
++static void drive_cmd0(
+     aecct::ctrl_ch_t& ctrl_cmd,
+     aecct::ctrl_ch_t& ctrl_rsp,
+     aecct::data_ch_t& data_in,
+     aecct::data_ch_t& data_out,
+-    uint8_t opcode
+-) {
+-    ctrl_cmd.write(aecct::pack_ctrl_cmd(opcode));
+-    aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
++    uint8_t opcode) {
++  ctrl_cmd.write(aecct::pack_ctrl_cmd(opcode));
++  aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
+ }
+ 
+ static void drive_read_mem(
+@@ -59,87 +56,87 @@ static void drive_read_mem(
+     aecct::data_ch_t& data_in,
+     aecct::data_ch_t& data_out,
+     uint32_t addr_word,
+-    uint32_t len_words
+-) {
+-    data_in.write((aecct::u32_t)addr_word);
+-    data_in.write((aecct::u32_t)len_words);
+-    ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_READ_MEM));
+-    aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
++    uint32_t len_words) {
++  // NOTE: All stimuli are queued BEFORE calling top().
++  ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_READ_MEM));
++  data_in.write((aecct::u32_t)addr_word);
++  data_in.write((aecct::u32_t)len_words);
++  aecct::top(ctrl_cmd, ctrl_rsp, data_in, data_out);
+ }
+ 
+ static uint32_t make_pattern(uint32_t region_id, uint32_t local_idx) {
+-    return ((region_id & 0xFFu) << 24) | (local_idx & 0x00FFFFFFu);
++  return ((region_id & 0xFFu) << 24) | (local_idx & 0x00FFFFFFu);
+ }
+ 
+ static void expect_data_word(aecct::data_ch_t& data_out, uint32_t expect_word) {
+-    aecct::u32_t w;
+-    if (!data_out.nb_read(w)) {
+-        std::printf("ERROR: expected data_out word but channel empty.\n");
+-        std::exit(1);
+-    }
+-    uint32_t got = (uint32_t)w.to_uint();
+-    if (got != expect_word) {
+-        std::printf("ERROR: data mismatch. got=0x%08X expect=0x%08X\n",
+-            (unsigned)got, (unsigned)expect_word);
+-        std::exit(1);
+-    }
++  aecct::u32_t w;
++  if (!data_out.nb_read(w)) {
++    std::printf("ERROR: expected data_out word but channel empty.\n");
++    std::exit(1);
++  }
++  const uint32_t got = (uint32_t)w.to_uint();
++  if (got != expect_word) {
++    std::printf("ERROR: data mismatch. got=0x%08X expect=0x%08X\n", (unsigned)got, (unsigned)expect_word);
++    std::exit(1);
++  }
+ }
+ 
+ int main() {
+-    aecct::ctrl_ch_t ctrl_cmd;
+-    aecct::ctrl_ch_t ctrl_rsp;
+-    aecct::data_ch_t data_in;
+-    aecct::data_ch_t data_out;
+-
+-    // ??reset嚗Ⅱ靽?SRAM pattern ????
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
+-    expect_state(aecct::ST_IDLE);
+-
+-    // Case 1嚗?祈???IDLE嚗?
+-    drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 8);
+-    for (uint32_t i = 0; i < 8; ++i) {
+-        expect_data_word(data_out, make_pattern(0u, i));
+-    }
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_READ_MEM);
+-    expect_state(aecct::ST_IDLE);
+-
+-    // Case 3嚗??隤?
+-    drive_read_mem(
+-        ctrl_cmd, ctrl_rsp, data_in, data_out,
+-        (uint32_t)(sram_map::SRAM_WORDS_TOTAL - 4u), 8u
+-    );
+-    expect_no_data(data_out);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_MEM_RANGE);
+-    expect_state(aecct::ST_IDLE);
+-
+-    // Case 4嚗????塚?BAD_STATE嚗?
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
+-    expect_state(aecct::ST_CFG_RX);
+-
+-    // 靘?瘙 BAD_STATE case 銋? READ_MEM args
+-    drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 2u);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
+-    expect_no_data(data_out);
+-    expect_state(aecct::ST_CFG_RX);
+-
+-    // 撽? BAD_STATE 頝臬?銝?瘨?data_in ?
+-    aecct::u32_t sink;
+-    if (!data_in.nb_read(sink) || !data_in.nb_read(sink)) {
+-        std::printf("ERROR: READ_MEM args unexpectedly consumed in BAD_STATE path.\n");
+-        std::exit(1);
+-    }
+-    if (data_in.nb_read(sink)) {
+-        std::printf("ERROR: unexpected extra data_in residue.\n");
+-        std::exit(1);
+-    }
+-
+-    drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
+-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_CFG_COMMIT);
+-    expect_state(aecct::ST_IDLE);
+-
+-    std::printf("PASS: tb_top_m2 (single SRAM + READ_MEM)\n");
+-    return 0;
++  aecct::ctrl_ch_t ctrl_cmd;
++  aecct::ctrl_ch_t ctrl_rsp;
++  aecct::data_ch_t data_in;
++  aecct::data_ch_t data_out;
++
++  // Reset first to initialize SRAM pattern.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_state(aecct::ST_IDLE);
++
++  // Case 1: Read from X_PAGE0 base.
++  drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 8u);
++  for (uint32_t i = 0; i < 8u; ++i) {
++    expect_data_word(data_out, make_pattern(0u, i));
++  }
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_READ_MEM);
++  expect_state(aecct::ST_IDLE);
++
++  // Case 2: Out-of-range READ_MEM must return ERR_MEM_RANGE and output no data.
++  drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint32_t)(sram_map::SRAM_WORDS_TOTAL - 4u), 8u);
++  expect_no_data(data_out);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_MEM_RANGE);
++  expect_state(aecct::ST_IDLE);
++
++  // Case 3: In CFG_RX, READ_MEM must return ERR_BAD_STATE and must NOT consume READ_MEM args.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_BEGIN);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
++  expect_state(aecct::ST_CFG_RX);
++
++  drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 2u);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
++  expect_no_data(data_out);
++  expect_state(aecct::ST_CFG_RX);
++
++  // Drain the two args; they must remain in data_in because READ_MEM is illegal in CFG_RX.
++  aecct::u32_t sink;
++  if (!data_in.nb_read(sink) || !data_in.nb_read(sink)) {
++    std::printf("ERROR: READ_MEM args unexpectedly consumed in BAD_STATE path.\n");
++    std::exit(1);
++  }
++  if (data_in.nb_read(sink)) {
++    std::printf("ERROR: unexpected extra data_in residue.\n");
++    std::exit(1);
++  }
++
++  // CFG_COMMIT without cfg words must fail with CFG_LEN_MISMATCH and stay in CFG_RX.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_CFG_COMMIT);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_CFG_LEN_MISMATCH);
++  expect_state(aecct::ST_CFG_RX);
++
++  // Exit CFG_RX and finish.
++  drive_cmd0(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
++  expect_state(aecct::ST_IDLE);
++
++  std::printf("PASS: tb_top_m2\n");
++  return 0;
+ }
+-

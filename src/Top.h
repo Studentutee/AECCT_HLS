@@ -800,7 +800,7 @@ namespace aecct {
                     else {
                         regs.w_base_set = true;
                         regs.w_base_word = w_base_in;
-                        ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SET_W_BASE));
+                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_SET_W_BASE));
                     }
                 }
                 else if (op == (uint8_t)OP_LOAD_W) {

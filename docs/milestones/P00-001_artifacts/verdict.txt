@@ -1,0 +1,1 @@
+PASS: fixed M0/M1/M2 bring-up TB and aligned protocol behavior (OP_SOFT_RESET=0x7F, OP_SET_W_BASE->RSP_OK).

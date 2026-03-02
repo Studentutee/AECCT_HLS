@@ -1,0 +1,12 @@
+M include/AecctProtocol.h - Align OP_SOFT_RESET opcode to v11.7.2 and normalize comments to English.
+M src/Top.h - Change OP_SET_W_BASE success response from DONE to OK in ST_IDLE path.
+M tb/tb_top_m0.cpp - Replace incorrect CFG_BEGIN ERR_UNIMPL expectation with unknown-opcode ERR_UNIMPL check.
+M tb/tb_top_m1.cpp - Align FSM/state bring-up checks with Top behavior and provide required SET_W_BASE u32 argument.
+M tb/tb_top_m2.cpp - Fix comment encoding and align CFG_RX READ_MEM/CFG_COMMIT/SOFT_RESET expectations.
+M README.md - Update AUTO block with tb_top_m0/m1/m2 build/run commands and P00-001 validation stamp.
+A docs/milestones/P00-001_report.md - P00-001 milestone report with required sections.
+A docs/milestones/P00-001_artifacts/file_manifest.txt - Patch file manifest.
+A docs/milestones/P00-001_artifacts/diff.patch - Diff artifact for tracked patch changes.
+A docs/milestones/P00-001_artifacts/build.log - Baseline and patched compile/gate logs.
+A docs/milestones/P00-001_artifacts/run_tb.log - Baseline and patched testbench run logs.
+A docs/milestones/P00-001_artifacts/verdict.txt - One-line PASS/FAIL verdict.
