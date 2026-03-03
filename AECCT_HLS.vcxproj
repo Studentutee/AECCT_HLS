@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -92,6 +92,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(TargetPath)" copy /Y "$(TargetPath)" "$(OutDir)ref_sim.exe" &gt;nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
@@ -109,6 +112,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(TargetPath)" copy /Y "$(TargetPath)" "$(OutDir)ref_sim.exe" &gt;nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -124,6 +130,9 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(TargetPath)" copy /Y "$(TargetPath)" "$(OutDir)ref_sim.exe" &gt;nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -141,13 +150,11 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
+    <PostBuildEvent>
+      <Command>if exist "$(TargetPath)" copy /Y "$(TargetPath)" "$(OutDir)ref_sim.exe" &gt;nul</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="data\trace\embed_node_embed_step0.h" />
-    <ClInclude Include="data\trace\layer0_attn_K_step0.h" />
-    <ClInclude Include="data\trace\layer0_attn_post_concat_step0.h" />
-    <ClInclude Include="data\trace\layer0_attn_Q_step0.h" />
-    <ClInclude Include="data\trace\layer0_attn_V_step0.h" />
     <ClInclude Include="include\AecctProtocol.h" />
     <ClInclude Include="include\AecctTypes.h" />
     <ClInclude Include="include\AecctUtil.h" />
@@ -185,13 +192,12 @@
     <ClInclude Include="third_party\ac_types\ac_channel.h" />
     <ClInclude Include="third_party\ac_types\ac_fixed.h" />
     <ClInclude Include="third_party\ac_types\ac_int.h" />
-    <ClInclude Include="data\trace\embed_plus_SPE_step0.h" />
-    <ClInclude Include="data\trace\input_y_step0.h" />
     <ClInclude Include="src\Layer0_QKVProj.h" />
-    <ClInclude Include="data\trace\norm_mid_out_step0.h" />
     <ClInclude Include="data\weights\weights.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AECCT_ac_ref\src\RefModel.cpp" />
+    <ClCompile Include="AECCT_ac_ref\src\ref_main.cpp" />
     <ClCompile Include="tb\tb_attn_m9a_qkv.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
@@ -258,7 +264,6 @@
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="tb\tb_regress_m14.cpp" />
     <ClCompile Include="tb\tb_softmax_m15a.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
