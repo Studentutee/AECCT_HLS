@@ -1,4 +1,4 @@
-﻿# Ref Align Report (step0)
+# Ref Align Report (step0)
 
 ## Scope
 - Model reference source: `algorithm_ref.ipynb` (step0 flow)
@@ -87,3 +87,36 @@ Other high-impact mismatches fixed:
 ## Output Paths
 - C++ dumps: `logs/ref_cpp/pattern_0/*.npy`
 - Python dumps: `logs/ref_py/pattern_0/*.npy`
+## v11.9 ApproxMath Update (2026-03-04)
+
+### Invariants kept (no algorithm drift)
+- mask/head routing unchanged (`h0~h3 -> one_ring`, `h4~h7 -> second_ring`)
+- no LPE score-bias injection
+- layer order unchanged (`layer0 -> norm2 -> layer1 -> norm`)
+- quant-dequant linear path unchanged (`round(x*s_x)` with `W^T/(s_x*s_w)`)
+- x_pred rule unchanged (`logit * sign(y) < 0`)
+
+### Numeric path changes
+- Core tensors use `ac_ieee_float<binary32>` (`fp32_ref_t`)
+- Softmax replaced by LUT exp + LUT reciprocal (+ 1-step Newton refinement)
+- LayerNorm denominator replaced by `inv_sqrt` LUT approximation (no `std::sqrt`, no `/` in LN/softmax/activation blocks)
+
+### Build / run
+- Build: `msbuild AECCT_HLS.vcxproj /p:Configuration=Debug /p:Platform=x64 /m`
+  - compile/link: success
+  - known intermittent post-build copy lock on `ref_sim.exe` (manual copy workaround used)
+- Run: `build/bin/x64/Debug/ref_sim.exe 0`
+  - MSE: `6.545970e-01`
+  - RMSE: `8.090717e-01`
+  - MAE: `5.842421e-01`
+  - MaxAbs: `2.854652e+00`
+  - x_pred match: `100.00% (63/63)`
+
+### Checkpoint divergence summary (python exact vs C++ approx)
+- First over-threshold tensor (`1e-4`): `layer0_ln_in` (already includes softmax approximation effect)
+- Largest attention-prob gap in layer0: `layer0_attn_probs maxabs ~= 1.556e-02`
+- Final logits gap: `final_logits maxabs ~= 2.855`, `mae ~= 5.842e-01`
+
+### Error attribution
+Primary error source is approximation (Softmax + LayerNorm denominator approximation), not algorithm mismatch.
+The previous algorithm-drift failure mode (`layer0_ln_out` exploding to `~1e5`) was fixed; current checkpoints remain finite and follow the same computational topology as notebook step0.
