@@ -155,6 +155,7 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="AECCT_ac_ref\synth\RefStep0Synth.h" />
     <ClInclude Include="include\AecctProtocol.h" />
     <ClInclude Include="include\AecctTypes.h" />
     <ClInclude Include="include\AecctUtil.h" />
@@ -196,6 +197,7 @@
     <ClInclude Include="data\weights\weights.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AECCT_ac_ref\synth\RefStep0Synth.cpp" />
     <ClCompile Include="AECCT_ac_ref\src\RefModel.cpp" />
     <ClCompile Include="AECCT_ac_ref\src\ref_main.cpp" />
     <ClCompile Include="tb\tb_attn_m9a_qkv.cpp">
