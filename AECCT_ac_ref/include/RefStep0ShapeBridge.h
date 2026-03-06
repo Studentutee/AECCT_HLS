@@ -29,8 +29,8 @@ static const int SCR_K_WORDS = static_cast<int>(sram_map::SIZE_SCR_K_W);
 static const int SCR_V_BASE = static_cast<int>(sram_map::BASE_SCR_V_W);
 static const int SCR_V_WORDS = static_cast<int>(sram_map::SIZE_SCR_V_W);
 
-static const int SCR_FINAL_SCALAR_WORDS = static_cast<int>(align_up_words(static_cast<uint32_t>(T_TOKENS), static_cast<uint32_t>(ALIGN_WORDS)));
-static const int SCR_FINAL_SCALAR_BASE = static_cast<int>(sram_map::BASE_SCR_K_W);
+static const int SCR_FINAL_SCALAR_WORDS = static_cast<int>(sram_map::SCR_FINAL_SCALAR_WORDS);
+static const int SCR_FINAL_SCALAR_BASE = static_cast<int>(sram_map::SCR_FINAL_SCALAR_BASE);
 
 static const int XPRED_WORDS = (N_VARS + 31) / 32;
 

@@ -9,7 +9,7 @@
 // - All addresses/sizes are in u32 words (1 word = 4 bytes).
 // - Alignment is defined in words.
 //
-// v11.5 update (方案 1 / M2-2P):
+// v11.5 update (scheme 1 / M2-2P):
 // - "Logical regions" are still fixed to 4 contention classes:
 //     * X_PAGE0, X_PAGE1, SCRATCH, W_REGION
 // - Physical implementation MAY be a single true 2-port SRAM macro.
@@ -64,10 +64,11 @@ static const uint32_t X_PAGE1_BASE_W = BASE_X_PONG_W;
 static const uint32_t X_PAGE1_WORDS  = SIZE_X_PONG_W;
 
 // ----------------------------
-// SCRATCH (S1: KV cache)
+// SCRATCH (S1: KV cache + FinalHead scalar)
 // ----------------------------
 // SCR_K: fp32 [N_NODES, D_MODEL]
 // SCR_V: fp32 [N_NODES, D_MODEL]
+// SCR_FINAL_SCALAR: fp32 [N_NODES]
 static const uint32_t BASE_SCRATCH_W = BASE_X_PONG_W + SIZE_X_PONG_W;
 
 static const uint32_t BASE_SCR_K_W = align_up_words(BASE_SCRATCH_W, ALIGN_WORDS);
@@ -76,7 +77,17 @@ static const uint32_t SIZE_SCR_K_W = X_PAGE_WORDS;
 static const uint32_t BASE_SCR_V_W = BASE_SCR_K_W + SIZE_SCR_K_W;
 static const uint32_t SIZE_SCR_V_W = X_PAGE_WORDS;
 
-static const uint32_t SIZE_SCRATCH_W = (BASE_SCR_V_W + SIZE_SCR_V_W) - BASE_SCRATCH_W;
+static const uint32_t BASE_SCR_FINAL_SCALAR_W =
+  align_up_words(BASE_SCR_V_W + SIZE_SCR_V_W, ALIGN_WORDS);
+static const uint32_t SIZE_SCR_FINAL_SCALAR_W = align_up_words(N_NODES, ALIGN_WORDS);
+
+// Alias names used by v11.12/v12 bridge and reports.
+static const uint32_t SCR_FINAL_SCALAR_BASE_W = BASE_SCR_FINAL_SCALAR_W;
+static const uint32_t SCR_FINAL_SCALAR_WORDS = SIZE_SCR_FINAL_SCALAR_W;
+static const uint32_t SCR_FINAL_SCALAR_BASE = SCR_FINAL_SCALAR_BASE_W;
+
+static const uint32_t SIZE_SCRATCH_W =
+  (BASE_SCR_FINAL_SCALAR_W + SIZE_SCR_FINAL_SCALAR_W) - BASE_SCRATCH_W;
 
 // ----------------------------
 // [legacy] BIAS region (fp32 words)
