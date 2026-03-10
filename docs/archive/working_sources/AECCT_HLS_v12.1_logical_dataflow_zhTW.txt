@@ -1,0 +1,188 @@
+AECCT HLS v12.1 邏輯資料流草稿
+==============================
+
+目的
+----
+本檔案僅記錄「邏輯上的資料流」。
+它描述的是數值如何流動，以及各區塊之間的 producer / consumer 關係。
+本檔案不凍結以下事項：
+- 實體 SRAM 落點
+- alias / overlay
+- overwrite policy
+- address map
+
+核心原則
+--------
+邏輯值名稱 ≠ 實體儲存名稱。
+
+邏輯資料流圖要回答的是：
+1. 下一個被產生的值是什麼？
+2. 下一個會消費它的區塊是什麼？
+
+SRAM / 暫存配置圖要回答的是：
+1. 這個值暫時住在哪裡？
+2. 這塊儲存空間何時可以被覆蓋？
+
+主邏輯資料流（2-layer 模型）
+----------------------------
+input_y
+  -> variable_feature / check_parity_update
+  -> check_feature
+  -> node_feature
+  -> preproc_x
+  -> Layer0_out
+  -> midLN_out
+  -> Layer1_out
+  -> endLN_out
+  -> FinalEmbedding（s_t）
+  -> OUT_FC reduction（logits / x_pred）
+  -> data_out
+
+詳細邏輯資料流
+--------------
+
+0. 輸入讀入（Input ingest）
+- input_y 依 variable-major 順序進入。
+- 對每個 variable y[v]：
+  - 產生 var_feature[v] = abs(y[v])
+  - 由 sign(y[v]) 產生 hard_bit[v]
+  - 使用 H-by-var / column-access 的觀點更新 check_parity[c]
+
+1. Check 端特徵完成（Check-side feature finalize）
+- 當所有 input_y 都處理完成後：
+  - 將 check_parity[c] 轉成 check_feature[c]，其值域為 {+1, -1}
+
+2. node_feature 形成
+- node_feature 由下列兩部分組成：
+  - variable 端：var_feature[v]
+  - check 端：check_feature[c]
+
+3. Preproc
+- 對每個 token t：
+  - 消費 node_feature[t]
+  - 結合 embedding / positional information
+  - 產生 preproc_x[t][d]
+
+4. Transformer Layer 0
+- 消費 preproc_x
+- 產生 Layer0_out
+
+4a. Layer 0 內部邏輯子流程
+- X_in
+  -> Q path
+  -> attention score
+  -> single-pass online softmax
+  -> 每個 head 的 context，記為 ctx_h
+  -> 每個 head 的 Wo partial accumulation
+  -> attention_out
+  -> residual
+  -> LN
+  -> FFN1
+  -> activation
+  -> FFN2
+  -> residual
+  -> layer output
+
+5. Mid LN
+- 消費 Layer0_out
+- 產生 midLN_out
+
+6. Transformer Layer 1
+- 消費 midLN_out
+- 產生 Layer1_out
+
+6a. Layer 1 內部邏輯子流程
+- 與 Layer 0 相同：
+  - X_in
+  - Q path
+  - attention score
+  - single-pass online softmax
+  - 每個 head 的 context，記為 ctx_h
+  - 每個 head 的 Wo partial accumulation
+  - attention_out
+  - residual
+  - LN
+  - FFN1
+  - activation
+  - FFN2
+  - residual
+  - layer output
+
+7. End LN
+- 消費 Layer1_out
+- 產生 endLN_out
+
+8. FinalHead Pass A
+- 消費 endLN_out[token][d]
+- 套用 FinalEmbedding
+- 對每個 token 產生 scalar s_t
+
+9. FinalHead Pass B
+- 消費全部的 s_t
+- 沿 token 維度做 OUT_FC reduction
+- 產生：
+  - logits，或
+  - x_pred
+- 將結果串流輸出到 data_out
+
+Attention 邏輯子流程（單一 token 視角）
+-----------------------------------
+對單一 query token q：
+
+X_in[q][:]
+  -> Q(q)
+  -> 與串流進來的 K(:) 做內積
+  -> base mask + comparator 派生出的 connectivity rule
+  -> single-pass online softmax 狀態更新
+  -> weighted V accumulation
+  -> 對每個 head 產生 ctx_h
+  -> Wo_h partial multiply
+  -> 累加到 out_acc[:]
+  -> 得到 attention_out[q][:]
+
+重要的邏輯註記
+--------------
+1. ring1 / ring2 是邏輯規則，不一定是實體存放的 tensor。
+2. base mask 是保存下來的 mask 來源；派生出的 ring 行為屬於 runtime 邏輯。
+3. Q 是邏輯值；即使實作上最後選擇只用 streaming / local buffering，也不影響它在邏輯資料流中的角色。
+4. K 與 V 是 attention 的邏輯操作數；即使實作上選擇 materialize 到 SRAM，也不改變其邏輯角色。
+5. endLN_out 是 FinalEmbedding 之前的邏輯值。
+6. s_t 是 OUT_FC reduction 之前的邏輯值。
+
+建議搭配的後續文件
+------------------
+本檔案建議之後搭配下列兩份文件一起使用：
+1. Storage / SRAM mapping draft
+2. Lifetime / overwrite-point draft
+
+建議命名方式
+------------
+建議的邏輯值名稱：
+- var_feature
+- check_parity
+- check_feature
+- node_feature
+- preproc_x
+- Layer0_out
+- midLN_out
+- Layer1_out
+- endLN_out
+- s_t
+- logits
+- x_pred
+
+除非兩者在定義上完全相同，否則不要直接用實體儲存名稱來當作邏輯值名稱。
+例如：
+- 優先使用「Layer0_out」，不要直接寫「X_PAGE(next)」
+- 優先使用「endLN_out」，不要直接寫「X_WORK」
+- 優先使用「s_t」，不要直接寫「FINAL_SCALAR_BUF」
+
+補充說明
+--------
+若後續需要討論矩陣方向，建議明確標註：
+- 列(Row)
+- 行(Colume)
+
+本檔案目前只處理邏輯資料流，不處理實體地址、bank 切法、alias group、overwrite 時機與 page/scratch 的實作配置。
+
+檔案結束

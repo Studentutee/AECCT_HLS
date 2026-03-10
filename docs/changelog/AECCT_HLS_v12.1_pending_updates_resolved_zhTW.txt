@@ -1,0 +1,59 @@
+AECCT HLS v12.1 待更新事項去向表
+================================
+
+用途
+----
+本檔記錄 AECCT_HLS_v12.1_pending_updates_zhTW_updated.txt 內各項更新事項，在本次 v12.1 整編後的正式去向。
+
+去向分類
+--------
+- 合併至 Spec v12.1：代表已寫入 AECCT_HLS_Spec_v12.1_zhTW.txt。
+- 合併至 Spec v12.1 + SSOT/generator 要求：代表主規格已納入語意，後續仍需同步更新 WeightStreamOrder / SramMap / generator。
+- 保留於 Architecture Guide：代表不宜凍結成主規格，改保存於 AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt。
+
+一、已合併至 Spec v12.1
+-----------------------
+[U-001] 合併至 Spec v12.1（6.4）
+[U-002] 合併至 Spec v12.1（6.4.1；以 logical / physical 分離方式寫入，不把整份 micro-architecture 寫死）
+[U-003] 合併至 Spec v12.1（6.5）
+[U-004] 合併至 Spec v12.1（5.1.1 / 6.6 / 15.1）
+[U-005] 合併至 Spec v12.1（6.7 / 9.1）
+[U-006] 合併至 Spec v12.1（6.8 / 9.2）
+[U-007] 合併至 Spec v12.1（9.1）
+[U-008] 合併至 Spec v12.1（9.1）
+[U-009] 合併至 Spec v12.1（9.1）
+[U-010] 合併至 Spec v12.1（9.1）
+[U-011] 合併至 Spec v12.1（6.8 / 9.2 / 13.2）
+[U-012] 合併至 Spec v12.1（6.8 / 9.2）
+[U-013] 合併至 Spec v12.1（9.2）
+[U-014] 合併至 Spec v12.1（6.8 / 9.2）
+[U-015] 合併至 Spec v12.1（9.2）
+[U-016] 合併至 Spec v12.1（5.1.1）
+[U-017] 合併至 Spec v12.1（9.3 / 10.1）
+[U-022] 合併至 Spec v12.1（7.8）
+[U-023] 合併至 Spec v12.1（7.8）
+[U-024] 合併至 Spec v12.1（15.5）
+[U-025] 合併至 Spec v12.1（15.6）
+[U-026] 合併至 Spec v12.1（9.2 / 9.4 / 15.6）
+[U-027] 合併至 Spec v12.1（9.1 / 12.6）
+
+二、已合併至 Spec v12.1 + SSOT / generator 要求
+-----------------------------------------------
+[U-018] 合併至 Spec v12.1 + WeightStreamOrder / generator（13.2）
+[U-019] 合併至 Spec v12.1 + WeightStreamOrder / generator（13.2）
+[U-020] 合併至 Spec v12.1 + WeightStreamOrder / generator（13.2）
+[U-021] 合併至 Spec v12.1 + SramMap / generator（14.2）
+
+三、保留於 Architecture Guide 的內容
+----------------------------------
+說明：
+- pending updates 本身幾乎都是應進主 spec 的語意項，因此 U-001~U-027 沒有被單獨留在 Architecture Guide。
+- 但與它們相關、且不宜凍結成主 spec 的實作細節，已保留在 AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt，例如：
+  - X_WORK / KV_REGION / TOKEN_LOCAL / OUT_ACC_TILE / HEAD_CTX_BUF 等實體命名與配置偏好
+  - 何時可 overlay / alias / overwrite 的微架構收斂建議
+  - 各 tile buffer 的推薦切法
+
+四、補充說明
+------------
+- 本次整編採用的原則是：主 spec 只吸收「需要對外一致、需要作為正式語意與驗證依據」的內容。
+- 邏輯資料流與實體落點的完整原文，為避免資料遺失，已完整保留於 Architecture Guide 的附錄。

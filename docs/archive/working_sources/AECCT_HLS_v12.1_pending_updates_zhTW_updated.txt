@@ -1,0 +1,340 @@
+AECCT HLS v12.1 待更新事項（暫存清單）
+====================================
+
+用途
+----
+本檔用來暫存 v12.1 相對於 v12 需要補充、修正、釐清或正式寫入 spec / governance / SSOT 的更新事項。
+後續新的待更新內容可持續追加在本檔，不直接分散在聊天紀錄中。
+
+更新原則
+--------
+1. 先記錄「待更新事項」，之後再統一回填到 spec / governance / WeightStreamOrder / SramMap / TB 規格。
+2. 名詞需避免模糊詞彙；凡涉及數學索引、實體布局、runtime 存取方向、mask 語意，皆需明確定義。
+3. 若某事項同時影響 spec 與 generator / SSOT，需在本清單中同時標示。
+4. 若某事項只屬於設計討論、尚未定版，需標註為「候選」。
+
+--------------------------------------------------
+一、名詞與資料表示法待更新
+--------------------------------------------------
+
+[U-001] 補 H matrix 的正式數學定義
+狀態：待更新
+建議章節：Spec 6.x 名詞定義 / 資料表示法
+內容：
+- 正式定義 H[c][v]
+- 列(Row) = check index c
+- 行(Colume) = variable index v
+- 後續所有 H 的敘述均以此為唯一數學定義
+目的：
+- 避免把數學索引方向與 SRAM 實體布局方向混用
+
+[U-002] 補 H 的實體布局（physical layout）定義
+狀態：待更新
+建議章節：Spec 6.x / 13 / 14
+內容：
+- 數學定義 H[c][v] 與 SRAM 實體布局必須分開描述
+- 明定可使用 H_by_var / adjacency-by-variable 等 layout 名稱
+- v12.1 預設推薦：為支援 variable-major input_y streaming 與 check_parity 更新，H 的實體布局應優先採用 H_by_var 或等價 adjacency-by-variable
+目的：
+- 避免討論「沿著 check 的方向讀」時產生誤解
+
+[U-003] 補 row-scan / column-access 術語
+狀態：待更新
+建議章節：Spec 6.x 名詞定義
+內容：
+- row-scan：固定某個 check c，掃所有 variable v
+- column-access：固定某個 variable v，取得所有 check c 的連接資訊
+- 若 input_y 採 variable-major stream，則更新 check_parity 時推薦使用 column-access，不建議每筆 y 做 full row-scan
+
+[U-004] 補 input_y stream order 術語
+狀態：待更新
+建議章節：Spec 6.x / 5 / 15
+內容：
+- 正式定義 input_y 預設為 variable-major stream
+- 第 k 筆輸入對應 y[var_idx = k]
+- 若未來允許其他順序，需由 CFG / metadata 額外明示；v12.1 預設不開放模糊敘述
+
+[U-005] 補 check_parity / check_feature / check token 三者區分
+狀態：待更新
+建議章節：Spec 6.x / 9.1
+內容：
+- check_parity[c]：Preproc ingest 階段的 local accumulator
+- check_feature[c]：全部 input_y 處理完成後，由 check_parity 轉成的 scalar feature（例如 +1 / -1）
+- check token：Preproc 將 check_feature 與 embedding / positional information 結合後形成的完整 token 向量
+目的：
+- 避免把「前段 parity 狀態」與「完整 token 向量」混為一談
+
+[U-006] 補 mask 語意定義
+狀態：待更新
+建議章節：Spec 6.x / 9.2 / 13
+內容：
+- 明定 base mask 的 bit 語意：1 = 有連接（connected），0 = 無連接（not connected）
+- 明定參數流 / SRAM 中只保存一張 base mask，不保存 ring1 / ring2 的 persistent tables
+- 明定 ring1 / ring2 為 runtime derived policy：由 base mask 加上 token type comparator / head-group comparator 即時計算
+- 明定 attention datapath 最終使用的是 connected / not-connected 語意，並再由規則層轉成 allow / block 判定
+目的：
+- 避免把 base mask、allow/block、ring 派生規則混為一談
+- 避免在程式中出現 if(mask[q][k]) continue 之類語意反轉而無文件依據
+
+--------------------------------------------------
+二、Preproc / ingest 資料流待更新
+--------------------------------------------------
+
+[U-007] 補 variable-side Preproc 可直接由 input_y streaming 驅動
+狀態：待更新
+建議章節：Spec 9.1
+內容：
+- input_y 預設可直接串流，不必先落主 SRAM
+- 對於 variable token，可在 y[v] 到來時直接計算 abs(y[v])，並作為 variable-side preproc 的輸入
+- 需與現有 input_y streaming 規則對齊
+
+[U-008] 補 check_parity 的更新流程
+狀態：待更新
+建議章節：Spec 9.1
+內容：
+- 每個 y[v] 到來時，根據 hard_bit(y[v]) 與 H_by_var[v] 更新 check_parity[c]
+- 需明示此處採用的是 H 的 column-access / adjacency-by-variable 讀法
+- 不建議寫成每個 y 都對 H 做 full row-scan
+
+[U-009] 補 check_parity 屬於 local state 的規則
+狀態：待更新
+建議章節：Spec 7 / 9.1
+內容：
+- check_parity 預設為 local regs / local array 狀態
+- 不應被定義成每筆 y 都需對 SRAM 做 read-modify-write 的 rolling state
+原因：
+- 現行主記憶體模型為 single-port deterministic 1-issue，前段不宜被不必要的 SRAM 更新拖住
+
+[U-010] 補 check-side Stage B
+狀態：待更新
+建議章節：Spec 9.1
+內容：
+- 全部 y 處理完成後，將 check_parity[c] 轉為 check_feature[c] ∈ {+1, -1}
+- 再由 check_feature[c] 進入 check-side Preproc / embedding 路徑
+- 需明確說明 variable-side 與 check-side 在時間上可分兩個 stage 完成
+
+--------------------------------------------------
+三、Attention mask 架構待更新
+--------------------------------------------------
+
+[U-011] 明定只保存一張 base mask
+狀態：待更新
+建議章節：Spec 9.2 / 13 / 14
+內容：
+- 參數流 / W_REGION / SRAM 中只保存一張 base source mask
+- ring1 / ring2 不再作為獨立 persistent tables 存在於 SRAM
+目的：
+- 減少不必要的 persistent storage
+- 使 mask 架構與硬體控制邏輯一致
+
+[U-012] 明定 ring1 / ring2 由 runtime comparators + base mask 派生
+狀態：待更新
+建議章節：Spec 9.2
+內容：
+- ring1 / ring2 不作為獨立 SRAM-resident tensor
+- 在 attention loop 中，由以下資訊即時計算：
+  1. base mask
+  2. token type（variable/check）
+  3. head group（例如前半 heads / 後半 heads）
+- 屬於 local combinational / temporary logic，不得要求 persistent allocation
+
+[U-013] 明定 head-group 規則
+狀態：待更新
+建議章節：Spec 9.2
+內容：
+- 正式寫出哪些 heads 使用 rule1、哪些 heads 使用 rule2
+- 若目前 N_HEADS=8，需明寫前半 / 後半的切分規則
+- 若未來要支援其他分法，需由 SSOT 或 generator 明示
+
+[U-014] 明定 base mask 與 runtime 派生 mask 的 bit 語意
+狀態：待更新
+建議章節：Spec 9.2 / 13
+內容：
+- 明定 base mask[q][k]：1 = 有連接（connected），0 = 無連接（not connected）
+- 明定 ring1 / ring2 不是獨立表，而是由 base mask + token type comparator + head-group comparator 推導出的 runtime 判斷結果
+- 明定 runtime 產出的 ring1 / ring2 判斷結果如何轉成最終的 allow / block
+- 明定最終 score loop 的使用方式，避免 connected 語意與 block-mask 寫法混淆
+
+[U-015] 明定不得為 ring1 / ring2 配置獨立 SRAM 區塊
+狀態：待更新
+建議章節：Spec 7 / 9.2 / 14
+內容：
+- ring1 / ring2 只能作為 derived policy / local temporary
+- 不得在 PAGE / SCRATCH / W_REGION 中宣告 persistent storage for ring1 / ring2
+
+--------------------------------------------------
+四、Transformer / FinalHead 資料流主鏈待更新
+--------------------------------------------------
+
+[U-016] 修正資料流主鏈的正式寫法
+狀態：待更新
+建議章節：Spec 5 / 9 / 總覽圖
+目前需要修正的原因：
+- 先前口語摘要容易把 Layer1、end LN、FinalEmbedding、OUT_FC 混在一起
+建議正式主鏈：
+- 2-layer 範例版：
+  y
+  -> node_feature
+  -> preproc_x
+  -> X_PAGE(active)
+  -> Layer0
+  -> X_PAGE(next)
+  -> mid LN
+  -> X_PAGE(active)
+  -> Layer1
+  -> end LN
+  -> FinalHead Pass A (FinalEmbedding -> s_t)
+  -> SCRATCH.FINAL_SCALAR_BUF
+  -> FinalHead Pass B (OUT_FC reduction -> logits/x_pred)
+  -> data_out
+- 一般 N-layer 版：
+  y
+  -> node_feature
+  -> preproc_x
+  -> X_PAGE(active)
+  -> [TransformerLayer_0 ... TransformerLayer_{N-1}]
+  -> end LN
+  -> FinalHead Pass A
+  -> SCRATCH.FINAL_SCALAR_BUF
+  -> FinalHead Pass B
+  -> data_out
+  並在 layer = mid_index 後插入 mid LN
+
+[U-017] 明定 mid LN / end LN / FinalHead 的邏輯分界
+狀態：待更新
+建議章節：Spec 9 / 10
+內容：
+- mid LN 為 Top 額外插入的 LayerNormBlock
+- end LN 為所有 transformer layers 之後、FinalHead 之前的強制節點
+- FinalHead Pass A 為 FinalEmbedding 產生 s_t 並寫入 FINAL_SCALAR_BUF
+- FinalHead Pass B 為 OUT_FC 對 FINAL_SCALAR_BUF 做 reduction，輸出 logits / x_pred
+
+--------------------------------------------------
+五、WeightStreamOrder / SramMap / SSOT metadata 待更新
+--------------------------------------------------
+
+[U-018] H matrix section 名稱需更明確
+狀態：待更新
+建議章節：Spec 13 / WeightStreamOrder / generator
+內容：
+- 目前 H matrix（BITPACK）過於模糊
+- 建議改為 H_BY_VAR_BITPACK 或 H_VAR_TO_CHECK_ADJ 等具語意名稱
+- 名稱需反映實際 runtime access 方向
+
+[U-019] mask section 名稱需更明確
+狀態：待更新
+建議章節：Spec 13 / WeightStreamOrder / generator
+內容：
+- 目前 mask（若存在）過於模糊
+- 建議改為 BASE_SRC_MASK
+- 並註記 ring1 / ring2 為 runtime derived，不單獨存於參數流
+
+[U-020] WeightStreamOrder metadata 需可描述 H / mask layout kind
+狀態：待更新
+建議章節：Spec 13 / generator
+內容：
+- 補 layout_kind，例如：H_BY_VAR_BITPACK / H_BY_VAR_ADJ
+- 補 mask_kind，例如：BASE_SRC_MASK
+- 補 logical_index_order / storage_semantics 等欄位
+
+[U-021] SramMap metadata 需擴充語意欄位
+狀態：待更新
+建議章節：Spec 14 / SramMap SSOT
+內容：
+- 除 base / size / dtype / region / lifetime 外
+- 建議新增：layout_kind / logical_shape / index_semantics / storage_semantics
+- 使 H 與 mask 不再只是「某段 bitpack」，而是可由 metadata 理解語意
+
+--------------------------------------------------
+六、記憶體與排程限制待更新
+--------------------------------------------------
+
+[U-022] H 的 ingest 存取規則需與 single-port 1-issue 一致
+狀態：待更新
+建議章節：Spec 7 / 9.1
+內容：
+- ingest 階段不應要求每筆 y[v] 都做 full row-scan
+- H 的 layout 與 fetch policy 必須支援 variable-major 下的 column-access 或 adjacency-style fetch
+
+[U-023] base mask 的讀取方式需避免 inner-most random bit read
+狀態：待更新
+建議章節：Spec 7 / 9.2
+內容：
+- 若 base mask 需在 attention 中重複使用，應規定適當的 tile/local buffer / decode 策略
+- 不宜在最內層 score loop 中對 SRAM 做零碎隨機 bit 讀取
+
+--------------------------------------------------
+七、TB / 驗證規格待更新
+--------------------------------------------------
+
+[U-024] 補 H layout 解碼一致性驗證
+狀態：待更新
+建議章節：Spec 15 / TB
+內容：
+- TB 需驗證 H_by_var（或 adjacency-by-variable）的解讀與設計端 check_parity 更新結果一致
+- 至少要有小模型 / 小矩陣 case 驗證 parity accumulator 的正確性
+
+[U-025] 補 base-mask 派生規則驗證
+狀態：待更新
+建議章節：Spec 15 / TB
+內容：
+- TB 需驗證 base mask 本體、runtime ring1/ring2 派生、head-group 切換規則
+- 不允許 TB 直接餵兩張已展開的 ring mask 來繞過設計實作
+
+--------------------------------------------------
+八、建議優先順序
+--------------------------------------------------
+
+P1（最優先）
+- U-001 ~ U-006：名詞定義與語意釘清
+- U-007 ~ U-010：Preproc / ingest 資料流
+- U-011 ~ U-015：單一 base mask + runtime derived ring1/ring2
+- U-016 ~ U-017：主鏈與 FinalHead 邏輯分界
+
+P2（次優先）
+- U-018 ~ U-021：WeightStreamOrder / SramMap / SSOT metadata
+- U-022 ~ U-023：記憶體與排程限制補述
+- U-024 ~ U-025：TB / 驗證規格補述
+
+--------------------------------------------------
+九、後續追加區
+--------------------------------------------------
+
+說明：
+- 後續新的 v12.1 待更新事項，直接從此區塊往下追加
+- 建議格式：
+  [U-xxx] 標題
+  狀態：待更新 / 候選 / 已定版 / 已合併
+  建議章節：
+  內容：
+  備註：
+
+
+[U-026] Softmax 改為 single-pass 規則
+狀態：待更新
+建議章節：Spec 9.2 / 9.x Softmax / 15 TB
+內容：
+- 自 v12.1 起，attention 內的 softmax 規則改為 single-pass 實作，不再以 two-pass（pass1 找 max、pass2 累積 sumexp/acc_vec）作為正式 spec 預設。
+- Spec 需明確定義 single-pass softmax 的數值流程、所需局部狀態、數值穩定化策略，以及與現有 exp / reciprocal LUT 的關係。
+- 需明確說明 single-pass softmax 是否允許在同一輪掃描中同時完成 max/update normalization/accumulate，或採其他等價單輪流程；不得僅以「single-pass」模糊帶過。
+- 需同步更新 attention 資料流描述、演算法 reference、synth reference、以及 TB 驗證基準，避免文件仍沿用 two-pass 敘述。
+- 若現有 zip / reference code 仍為 two-pass softmax，需在待修正清單中明列為與 v12.1 spec 不對齊項目。
+備註：
+- 使用者口頭決議：從 v12.1 開始，softmax 以 single-pass 為正式規則。
+- 若後續需要，可再補 single-pass 的精確數學式與硬體資料流草圖。
+
+
+[U-027] 補 AECCT 原生量化特性與適用範圍
+狀態：待更新
+建議章節：Spec 1.1 / 9 / 12.6 / 13
+內容：
+- 明定 AECCT 原生 linear path 的既有量化特性：
+  1. 線性運算權重採 ternary {+1, 0, -1}
+  2. 線性運算輸入向量 / activation 採 INT8
+- 明定上述 AECCT 原生 linear quant 屬於演算法既有前提，不應與 v12 預留的 pre-infer configurable integer+exponent grouping / zone 規則混為同一層設定。
+- 明定輸出層 / FinalHead（特別是 OUT_FC readout path）不自動沿用上述原生 linear quant 假設；若其量化策略不同，必須在 spec 中獨立描述。
+- 明定未來 grouping / zone 的適用範圍：優先作用於非原生線性量化路徑、embedding / special constants、norm 前後 activation、FinalHead scalar / logits path 等；不得在未明示下覆蓋 AECCT 原生 ternary+INT8 線性路徑。
+- 需補充目前有效的 LPE 使用範圍：algorithm / PARAM 實際只使用 lpe_token，不使用 lpe 與 lpe_proj.{weight,bias}；量化描述不得把未使用的 LPE 路徑混入正式主規格。
+備註：
+- 離線分析顯示，多數 decoder self_attn / FFN weights 的最佳 exponent 為 -6 且 MSE=0；但 out_fc.weight 的最佳 exponent 為 -5 且 MSE 非 0，顯示輸出層應視為獨立量化路徑。
+- 現行 spec 12.6 仍只保留 data quantization 預留，grouping / zone 尚未正式凍結；因此需先把「AECCT 原生 quant baseline」與「未來 zone 分區規則」的邊界寫清楚。

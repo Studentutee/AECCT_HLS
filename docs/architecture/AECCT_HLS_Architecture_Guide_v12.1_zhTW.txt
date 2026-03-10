@@ -1,0 +1,642 @@
+AECCT_HLS_Architecture_Guide（繁體中文版）
+Version: 2026-03-09
+Revision: v12.1 guideA（邏輯資料流 + 實體落點／覆蓋方式整編版）
+Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_physical_storage_and_overwrite_zhTW.txt
+
+====================================================================
+0. 文件定位與使用方式
+====================================================================
+
+0.1 文件目的
+- 本文件保存 v12.1 的「邏輯資料流」與「實體落點／覆蓋方式」兩類內容。
+- 它的用途是協助設計、討論、trace 對照、micro-architecture 收斂與 SramMap / generator 規劃。
+- 它不取代主規格；正式 contract、硬體行為、記憶體語意與 TB 驗證期望，仍以 AECCT_HLS_Spec_v12.1_zhTW.txt 為準。
+
+0.2 為什麼本文件不直接併入主 spec
+- 邏輯資料流文件重點是 producer / consumer 與值的語意，不負責凍結 SRAM 實體落點。
+- 實體落點文件重點是 alias / overlay / overwrite / free-point 與微架構偏好，不直接定義演算法主鏈。
+- 因此本文件採「架構指南」定位：保留資訊完整性，但避免把尚可替換的微架構選擇過早寫死成主 spec。
+
+0.3 與其他文件的關係
+- 主規格：AECCT_HLS_Spec_v12.1_zhTW.txt
+- 治理文件：AECCT_HLS_Governance_v12_zhTW.txt
+- 更新去向表：AECCT_HLS_v12.1_pending_updates_resolved_zhTW.txt
+
+====================================================================
+1. 使用原則
+====================================================================
+
+1.1 邏輯值名稱與實體名稱分離
+- 邏輯值名稱回答的是「值是什麼、誰生產它、誰消費它」。
+- 實體名稱回答的是「值暫時住在哪裡、何時可被覆蓋、是否能 alias」。
+- 除非兩者定義完全相同，否則不要把實體儲存名稱直接拿來當作邏輯值名稱。
+
+1.2 哪些內容應回填到主 spec
+- 名詞定義
+- stream order
+- mask 語意
+- FinalHead 邏輯分界
+- 單埠 1-issue 下必須遵守的存取限制
+
+1.3 哪些內容保留在本文件
+- TOKEN_BUF_D / OUT_ACC_TILE / HEAD_CTX_BUF 等實作偏好
+- KV_REGION 是否在同 context 內再做 ping-pong
+- 各 tile buffer 的切法與上限
+- 任何仍可被替換的 micro-architecture 選項
+
+====================================================================
+2. 邏輯資料流（整理版）
+====================================================================
+
+2.1 主邏輯主鏈
+- input_y
+  -> variable_feature / check_parity_update
+  -> check_feature
+  -> node_feature
+  -> preproc_x
+  -> Layer0_out
+  -> midLN_out
+  -> Layer1_out
+  -> endLN_out
+  -> FinalEmbedding（s_t）
+  -> OUT_FC reduction（logits / x_pred）
+  -> data_out
+
+2.2 關鍵邏輯結論
+- input_y 預設採 variable-major。
+- check_parity 是 ingest local accumulator；check_feature 是 ingest 完成後導出的 scalar feature；check token 是進入 Preproc 後的完整 token 向量。
+- ring1 / ring2 是 runtime derived rule，不代表必須存在對應 SRAM tensor。
+- K / V 是 attention 的邏輯操作數；即使實作上 materialize 到 SRAM，也不改變其邏輯角色。
+- FinalHead 分為兩個正式 phase：Pass A 產生 s_t；Pass B 對 s_t 做 OUT_FC reduction。
+
+====================================================================
+3. 實體落點／覆蓋方式（整理版）
+====================================================================
+
+3.1 建議的實體儲存類別
+- W_REGION：權重 / 參數 / metadata 的 persistent 區。
+- X_WORK：主 token × d 工作區，用於 preproc_x、layer outputs、endLN_out 等主工作矩陣。
+- KV_REGION：attention K/V scratch。
+- TOKEN_LOCAL / SMALL_SCRATCH：小型短生命週期暫存，應以 tile / scalar state 為主，而非膨脹成新的大型 page。
+- FINAL_SCALAR_BUF：FinalHead Pass A / Pass B 間的專用 scratch。
+- DATA_OUT path：正常輸出以 direct streaming 為主，不預設大型中間 SRAM 緩衝。
+
+3.2 覆蓋規則的核心
+- 只有當某值的所有 consumer 都完成後，該 storage 才能被覆蓋。
+- 寬度相關物件不應一律 full-register 化，也不應一律升級成獨立 SRAM 大區；是否放 reg 或 scratch，應看 tile 化、RMW 頻率、共享程度與 lifetime。
+- 單一 token / 單一 head / 單一 tile 的短生命週期狀態，是優先考慮 reg 的對象。
+
+====================================================================
+4. 邏輯與實體的對照原則
+====================================================================
+
+4.1 例子
+- Layer0_out 住在 X_WORK：正確。
+- Layer0_out 就是 X_WORK：不建議。
+- s_t 寫入 FINAL_SCALAR_BUF：正確。
+- s_t 等於 FINAL_SCALAR_BUF：不建議。
+
+4.2 推薦使用方式
+- 當你在討論 producer / consumer / 演算法順序時，先看第 2 章。
+- 當你在討論 alias / overlay / overwrite / scratch lifetime 時，先看第 3 章。
+- 當你需要正式對外 contract 或 TB 規範時，回到主 spec。
+
+====================================================================
+附錄 A：原始邏輯資料流全文（保留）
+====================================================================
+
+AECCT HLS v12.1 邏輯資料流草稿
+==============================
+
+目的
+----
+本檔案僅記錄「邏輯上的資料流」。
+它描述的是數值如何流動，以及各區塊之間的 producer / consumer 關係。
+本檔案不凍結以下事項：
+- 實體 SRAM 落點
+- alias / overlay
+- overwrite policy
+- address map
+
+核心原則
+--------
+邏輯值名稱 ≠ 實體儲存名稱。
+
+邏輯資料流圖要回答的是：
+1. 下一個被產生的值是什麼？
+2. 下一個會消費它的區塊是什麼？
+
+SRAM / 暫存配置圖要回答的是：
+1. 這個值暫時住在哪裡？
+2. 這塊儲存空間何時可以被覆蓋？
+
+主邏輯資料流（2-layer 模型）
+----------------------------
+input_y
+  -> variable_feature / check_parity_update
+  -> check_feature
+  -> node_feature
+  -> preproc_x
+  -> Layer0_out
+  -> midLN_out
+  -> Layer1_out
+  -> endLN_out
+  -> FinalEmbedding（s_t）
+  -> OUT_FC reduction（logits / x_pred）
+  -> data_out
+
+詳細邏輯資料流
+--------------
+
+0. 輸入讀入（Input ingest）
+- input_y 依 variable-major 順序進入。
+- 對每個 variable y[v]：
+  - 產生 var_feature[v] = abs(y[v])
+  - 由 sign(y[v]) 產生 hard_bit[v]
+  - 使用 H-by-var / column-access 的觀點更新 check_parity[c]
+
+1. Check 端特徵完成（Check-side feature finalize）
+- 當所有 input_y 都處理完成後：
+  - 將 check_parity[c] 轉成 check_feature[c]，其值域為 {+1, -1}
+
+2. node_feature 形成
+- node_feature 由下列兩部分組成：
+  - variable 端：var_feature[v]
+  - check 端：check_feature[c]
+
+3. Preproc
+- 對每個 token t：
+  - 消費 node_feature[t]
+  - 結合 embedding / positional information
+  - 產生 preproc_x[t][d]
+
+4. Transformer Layer 0
+- 消費 preproc_x
+- 產生 Layer0_out
+
+4a. Layer 0 內部邏輯子流程
+- X_in
+  -> Q path
+  -> attention score
+  -> single-pass online softmax
+  -> 每個 head 的 context，記為 ctx_h
+  -> 每個 head 的 Wo partial accumulation
+  -> attention_out
+  -> residual
+  -> LN
+  -> FFN1
+  -> activation
+  -> FFN2
+  -> residual
+  -> layer output
+
+5. Mid LN
+- 消費 Layer0_out
+- 產生 midLN_out
+
+6. Transformer Layer 1
+- 消費 midLN_out
+- 產生 Layer1_out
+
+6a. Layer 1 內部邏輯子流程
+- 與 Layer 0 相同：
+  - X_in
+  - Q path
+  - attention score
+  - single-pass online softmax
+  - 每個 head 的 context，記為 ctx_h
+  - 每個 head 的 Wo partial accumulation
+  - attention_out
+  - residual
+  - LN
+  - FFN1
+  - activation
+  - FFN2
+  - residual
+  - layer output
+
+7. End LN
+- 消費 Layer1_out
+- 產生 endLN_out
+
+8. FinalHead Pass A
+- 消費 endLN_out[token][d]
+- 套用 FinalEmbedding
+- 對每個 token 產生 scalar s_t
+
+9. FinalHead Pass B
+- 消費全部的 s_t
+- 沿 token 維度做 OUT_FC reduction
+- 產生：
+  - logits，或
+  - x_pred
+- 將結果串流輸出到 data_out
+
+Attention 邏輯子流程（單一 token 視角）
+-----------------------------------
+對單一 query token q：
+
+X_in[q][:]
+  -> Q(q)
+  -> 與串流進來的 K(:) 做內積
+  -> base mask + comparator 派生出的 connectivity rule
+  -> single-pass online softmax 狀態更新
+  -> weighted V accumulation
+  -> 對每個 head 產生 ctx_h
+  -> Wo_h partial multiply
+  -> 累加到 out_acc[:]
+  -> 得到 attention_out[q][:]
+
+重要的邏輯註記
+--------------
+1. ring1 / ring2 是邏輯規則，不一定是實體存放的 tensor。
+2. base mask 是保存下來的 mask 來源；派生出的 ring 行為屬於 runtime 邏輯。
+3. Q 是邏輯值；即使實作上最後選擇只用 streaming / local buffering，也不影響它在邏輯資料流中的角色。
+4. K 與 V 是 attention 的邏輯操作數；即使實作上選擇 materialize 到 SRAM，也不改變其邏輯角色。
+5. endLN_out 是 FinalEmbedding 之前的邏輯值。
+6. s_t 是 OUT_FC reduction 之前的邏輯值。
+
+建議搭配的後續文件
+------------------
+本檔案建議之後搭配下列兩份文件一起使用：
+1. Storage / SRAM mapping draft
+2. Lifetime / overwrite-point draft
+
+建議命名方式
+------------
+建議的邏輯值名稱：
+- var_feature
+- check_parity
+- check_feature
+- node_feature
+- preproc_x
+- Layer0_out
+- midLN_out
+- Layer1_out
+- endLN_out
+- s_t
+- logits
+- x_pred
+
+除非兩者在定義上完全相同，否則不要直接用實體儲存名稱來當作邏輯值名稱。
+例如：
+- 優先使用「Layer0_out」，不要直接寫「X_PAGE(next)」
+- 優先使用「endLN_out」，不要直接寫「X_WORK」
+- 優先使用「s_t」，不要直接寫「FINAL_SCALAR_BUF」
+
+補充說明
+--------
+若後續需要討論矩陣方向，建議明確標註：
+- 列(Row)
+- 行(Colume)
+
+本檔案目前只處理邏輯資料流，不處理實體地址、bank 切法、alias group、overwrite 時機與 page/scratch 的實作配置。
+
+檔案結束
+
+====================================================================
+附錄 B：原始實體落點／覆蓋方式全文（保留）
+====================================================================
+
+AECCT HLS v12.1 實體落點／覆蓋方式草稿
+====================================
+
+目的
+----
+本檔案僅記錄「實體上的落點、暫存類別、覆蓋方式、可釋放時機」。
+它描述的是：
+- 某個邏輯值暫時住在哪裡
+- 該儲存區的用途與生命週期
+- 哪些區域可以 alias / overlay
+- 哪些區域不得共用
+- 何時允許 overwrite
+
+本檔案不直接定義演算法主鏈；主鏈請以邏輯資料流文件為準。
+
+核心原則
+--------
+1. 邏輯值名稱 ≠ 實體儲存名稱。
+2. 先看 producer / consumer，再看 liveness，最後才決定 storage reuse。
+3. 只有當某值的所有 consumer 都完成讀取後，該 storage 才能被覆蓋。
+4. 是否放 SRAM，不以「會隨模型寬度變化」單獨決定，而以：
+   - 是否為 O(token × d) 或更大
+   - 是否跨 phase 仍存活
+   - 是否跨 block 共享
+   - 是否需要 context 間隔離
+   - 是否無法有效 tile 化
+5. 本版採用的實作偏好：
+   - 能 tile 化，才優先考慮放 reg
+   - 凡 width-dependent 且不保證 tile 很小者，預設集中放 SRAM / local scratch
+   - 若採 reg，必須能說明必要性為：
+     a. 當前 tile 的高頻 read-modify-write accumulator
+     b. scalar state / control state
+     c. 當前 head / 當前 token 的很小片段向量
+     d. 若放 SRAM 會導致每 cycle 不必要的讀改寫，明顯拖慢 datapath
+
+建議的實體儲存類別
+--------------------
+A. W_REGION
+- 性質：persistent，存放權重/參數/metadata。
+- 內容：
+  - H_by_var / adjacency metadata
+  - embedding / positional information
+  - BASE_SRC_MASK
+  - Q/K/V/O/FFN/LN/FinalHead 權重與參數
+  - quant 相關 metadata
+- 規則：
+  - 不與 runtime scratch alias
+  - LOAD_W 後在整次推論期間保持有效
+
+B. X_WORK（主 token × d 工作區）
+- 性質：主工作矩陣區。
+- 主要用途：
+  - Preproc 輸出
+  - Layer 輸入
+  - Attention / FFN / LN 後的 token 向量結果
+- 邏輯上可對應：
+  - preproc_x
+  - Layer0_out
+  - midLN_out
+  - Layer1_out
+  - endLN_out
+- 規則：
+  - 可 overlay / alias，但僅能在 liveness 允許時覆蓋
+  - 建議保留「邏輯 active / next page」語意
+  - 實體上可在同一塊 token × d 區域內做 phase-safe reuse
+
+C. KV_REGION
+- 性質：attention 專用 scratch。
+- 內容：
+  - K matrix
+  - V matrix
+- 規則：
+  - 至少支援 per-context duplication（若啟用 multi-context overlap）
+  - K/V 完成 materialize 後，供該 layer 全部 query token 重複讀取
+  - 在該 layer attention 完成前不得覆蓋
+  - 是否在同一 context 內再做 tile ping-pong，先視為候選微架構，不在本檔凍結
+
+D. TOKEN_LOCAL / SMALL_SCRATCH
+- 性質：短生命週期的小型暫存。
+- 設計原則：
+  - width-dependent 物件預設放 SRAM / local scratch
+  - 只有 tile 版本、scalar state、或當前小片段才優先放 reg
+  - 不應膨脹成新的 token × d 大 page
+  - 可依 phase 重複使用，但需遵守 liveness
+- 內容與建議落點：
+  - TOKEN_BUF_D
+    - 定義：單一 token 的 d 向量緩衝
+    - 建議：不要直接做 full TOKEN_BUF_D in reg
+    - 改法：以 TOKEN_BUF_TILE 為主；主體 backing store 放 SRAM / local scratch
+    - 可放 reg 的部分：當前 tile
+    - 原因：d 長度不固定，可能到 128 或更大；只有 tile 版本才適合用 reg 高頻重用
+  - LN_TOKEN_BUF
+    - 定義：LN 兩-pass token 暫存
+    - 建議：主體放 SRAM / local scratch；不要預設 full-register 化
+    - 可放 reg 的部分：LN scalar state，例如 sum、sum_sq、mean、var、inv_std；以及當前 tile
+    - 原因：scalar state 每 cycle 更新，若放 SRAM 只會造成不必要的密集存取
+  - FFN1_TILE_BUF
+    - 定義：FFN1 hidden tile 緩衝
+    - 建議：主體放 SRAM / local scratch
+    - 可放 reg 的部分：當前 tile 的 partial sums
+    - 原因：FFN hidden 維度通常較大；但 partial sums 屬高頻 accumulator，適合放 reg 避免每拍讀改寫
+  - OUT_ACC_D
+    - 定義：Wo / FFN2 / token output 累加器
+    - 建議：主體預設為 OUT_ACC backing store in SRAM / scratch
+    - 改法：實作上以 OUT_ACC_TILE in reg 為主
+    - 可放 reg 的部分：當前 output tile 的 accumulator
+    - 原因：accumulator 是典型高頻 read-modify-write 狀態，tile 結束前不應每拍回 SRAM
+  - HEAD_CTX_BUF[8][d_h]
+    - 定義：單一 token 的多頭 context 暫存
+    - 建議：完整 HEAD_CTX_BUF 預設放 SRAM / local scratch
+    - 更推薦的收斂：若資料流允許「ctx_h 算完即送 Wo_h」，則改為 CUR_HEAD_CTX_TILE in reg，而非保留完整 8 × d_h
+    - 可放 reg 的部分：當前 head、當前 tile 的小片段
+    - 原因：d_h 仍是 width-dependent；只有 current-head immediate-Wo 的小片段版本才適合 reg
+  - Q_VEC
+    - 定義：單一 query 向量
+    - 建議：完整 Q_VEC 預設放 SRAM / local scratch
+    - 更推薦的收斂：若採 one-q-at-a-time streaming，則改為 Q_TILE in reg
+    - 可放 reg 的部分：當前 tile
+    - 原因：完整 d 長度不固定；只有被下游內積單元立即高頻消費的小 tile 才值得 reg 化
+  - SOFTMAX_STATE
+    - 定義：single-pass online softmax 狀態
+    - 建議：拆成 scalar state 與 accumulator 兩類
+    - 應放 reg 的部分：
+      - scalar state：m、l、score、flags
+      - accumulator tile：SOFTMAX_ACC_TILE（若 d_h 已 tile 化）
+    - 其餘部分：若向量長度過大而未 tile 化，則回 SRAM / local scratch
+    - 原因：online softmax 狀態每 cycle 更新；其中 scalar 與當前 accumulator tile 屬最典型不該每拍回 SRAM 的狀態
+
+E. FINAL_SCALAR_BUF
+- 性質：FinalHead 專用 scratch。
+- 內容：
+  - 對每個 token 的 scalar s_t
+- 規則：
+  - FinalHead Pass A 寫入
+  - FinalHead Pass B 讀取
+  - 在 Pass B 完成前不得覆蓋
+  - 不建議與 X_WORK / KV_REGION 混 alias
+
+F. DATA_OUT 路徑
+- 性質：輸出串流路徑。
+- 內容：
+  - logits 或 x_pred
+- 規則：
+  - FinalHead Pass B 完成 tile / word 後直接輸出
+  - 不應規劃為大型中間 SRAM 緩衝，除非後續另立特殊模式
+
+各階段的實體落點與覆蓋方式
+----------------------------
+
+0. 參數載入（LOAD_W）
+- 讀寫：
+  - 寫入 W_REGION
+- 覆蓋規則：
+  - LOAD_W 完成後，W_REGION 不應被 runtime scratch 覆蓋
+
+1. Input ingest / Preproc 前段
+- 邏輯值：
+  - var_feature
+  - hard_bit
+  - check_parity
+  - check_feature
+  - node_feature
+- 建議實體落點：
+  - check_parity：local regs / local array
+  - var_feature：可直接串流，不必長期落地
+  - node_feature：可直接餵 Preproc；若需要 staging，可用 small scratch
+- 讀寫：
+  - 讀 W_REGION 中的 H_by_var / embedding / positional data
+  - 寫 X_WORK[token][d]
+- 覆蓋規則：
+  - check_parity 為 local rolling state，不應設計成每筆 y 都去 SRAM read-modify-write
+  - Preproc 寫入 X_WORK 時，沿 d 方向分次、順序寫入，不假設單拍整列寫入
+
+2. Preproc 輸出到 X_WORK
+- 邏輯值：preproc_x[token][d]
+- 建議實體落點：X_WORK
+- 覆蓋規則：
+  - Preproc 完成後，X_WORK 內容作為第一層輸入
+  - 在 Layer 0 的 K/V build 尚未完成前，不應提早覆蓋任何仍可能被後續 token 使用的 X_WORK 槽位
+
+3. Layer ℓ / Phase A：K/V build
+- 邏輯值：K[token][:]、V[token][:]
+- 建議實體落點：KV_REGION
+- 讀寫：
+  - 讀 X_WORK[token][:]
+  - 讀 W_REGION 中的 Wk / Wv（或合併 QKV 權重中的 K / V 部分）
+  - 寫 KV_REGION
+- 覆蓋規則：
+  - 在整張 K/V 尚未 materialize 完成前，不應把仍未被讀作 K/V source 的 X_WORK 舊資料覆蓋掉
+  - 同一 layer 的 K/V 在全部 query token 完成前不得覆蓋
+
+4. Layer ℓ / Phase B：attention token-wise
+- 邏輯值：
+  - Q
+  - score
+  - softmax state
+  - ctx_h
+  - Wo partial
+  - attention_out[token][:]
+- 建議實體落點：
+  - Q：Q_VEC / Q_TILE / local stream
+  - score：不落大型 scratch，直接在 datapath 內使用
+  - softmax 狀態：SOFTMAX_STATE
+  - 每個 head 的 context：HEAD_CTX_BUF 或更進一步直接接 Wo_h
+  - Wo partial 累加：OUT_ACC_D / OUT_ACC_TILE
+  - token 最終 attention output：可回寫 X_WORK[token][:]，或先進 token-local 緩衝後再覆蓋回去
+- 讀寫：
+  - 讀 X_WORK[q_token][:]
+  - 讀 KV_REGION
+  - 讀 BASE_SRC_MASK
+  - 讀 Wq / Wo
+  - 寫 X_WORK[q_token][:]（若採 token-safe overwrite）
+- 覆蓋規則：
+  - 僅當某 token 的舊 X_WORK[token][:] 已完成：
+    1) K/V build 所需讀取
+    2) 該 token 的 Q / residual source 所需讀取
+    才允許覆蓋成新的 attention_out[token][:]
+  - 不建議保存整張 8 × token × d 的 per-head feature map
+  - 單一 token 的 HEAD_CTX_BUF 若僅服務當前 head 的 Wo partial accumulation，則該 head 完成後即可立即釋放其對應片段
+
+5. Layer ℓ / Phase C：FFN
+- 邏輯值：
+  - FFN1 hidden
+  - activation
+  - FFN2 output
+  - layer output
+- 建議實體落點：
+  - FFN1 hidden：FFN1_TILE_BUF
+  - activation：可與 FFN1_TILE_BUF 共用，或以同一 tile buffer 覆蓋
+  - FFN2 / token output：OUT_ACC_D / TOKEN_BUF_TILE
+  - 最終 layer output：覆蓋回 X_WORK[token][:]
+- 讀寫：
+  - 讀 X_WORK[token][:]
+  - 讀 Wff1 / Wff2
+  - 寫回 X_WORK[token][:]
+- 覆蓋規則：
+  - FFN 這一段最適合做 in-place / token-wise overwrite
+  - 不建議先規劃整張 T × D_FFN 的 full hidden matrix SRAM
+
+6. Mid LN / End LN
+- 邏輯值：midLN_out / endLN_out
+- 建議實體落點：
+  - LN_TOKEN_BUF + 回寫 X_WORK[token][:]
+- 讀寫：
+  - 讀 X_WORK[token][:]
+  - 寫回 X_WORK[token][:]
+- 覆蓋規則：
+  - LN 建議採 token-wise two-pass
+  - 先將單一 token 向量放入 LN_TOKEN_BUF 或其 tile 版本
+  - 完成 mean / var 與 normalize / affine 後，再寫回同一 token 槽位
+  - 不建議為 LN 額外配置新的整張 token × d page
+
+7. FinalHead Pass A
+- 邏輯值：s_t
+- 建議實體落點：FINAL_SCALAR_BUF[token]
+- 讀寫：
+  - 讀 X_WORK / endLN_out 對應 token
+  - 讀 FinalEmbedding 權重
+  - 寫 FINAL_SCALAR_BUF[token]
+- 覆蓋規則：
+  - 一旦 token 的 s_t 已成功寫入 FINAL_SCALAR_BUF，該 token 在 X_WORK 的最終表示可視需求釋放
+
+8. FinalHead Pass B
+- 邏輯值：logits / x_pred
+- 建議實體落點：
+  - local class tile accumulator
+  - 最後直送 data_out
+- 讀寫：
+  - 讀 FINAL_SCALAR_BUF
+  - 讀 OUT_FC 權重
+  - 寫 data_out
+- 覆蓋規則：
+  - 在全部 class / output word 完成前，不應覆蓋 FINAL_SCALAR_BUF
+  - data_out 為 direct streaming，不先規劃大塊 logits SRAM
+
+建議的覆蓋／釋放檢查點
+----------------------
+1. X_WORK[token][:] 的舊內容可被 attention output 覆蓋的條件：
+- 該 token 已完成 K/V build source 角色
+- 該 token 已完成 Q / residual source 所需讀取
+
+2. HEAD_CTX_BUF 的釋放點：
+- 對應 head 的 Wo_h partial accumulation 完成後即可釋放
+- 若採 current-head immediate-Wo，則 current-head tile 在該 head 完成後即可立即釋放
+
+3. OUT_ACC_D 的釋放點：
+- 對應 token 的 attention / FFN / output accumulation 完成後即可釋放
+- 若採 OUT_ACC_TILE，則 tile 寫回後即可釋放該 tile accumulator
+
+4. KV_REGION 的釋放點：
+- 該 layer 全部 query token 的 attention 都完成後
+- 若採 per-context duplication，則各 context 獨立管理釋放時機
+
+5. FINAL_SCALAR_BUF 的釋放點：
+- FinalHead Pass B 完成後
+
+目前不建議直接凍結成硬規格的事項
+------------------------------
+1. 同一 context 內是否再做 full KV_A / KV_B ping-pong
+2. 是否保存完整 per-head token × d feature map
+3. 是否配置 full hidden T × D_FFN SRAM
+4. 任一 width-dependent 物件一律升級成 SRAM
+5. 任一 width-dependent 物件一律 full-register 化
+
+建議後續再補的配套文件
+----------------------
+1. Lifetime / overwrite-point checklist
+2. SramMap alias_group / layout_kind / storage_semantics 草案
+3. 每個 major buffer 的 producer / consumer / free-point 表
+4. multi-context overlap 專用的 context 隔離規則
+5. 各 tile 版本（TOKEN_BUF_TILE、Q_TILE、OUT_ACC_TILE、SOFTMAX_ACC_TILE）的上限與切法
+
+建議命名方式
+------------
+實體儲存名稱建議使用：
+- W_REGION
+- X_WORK
+- KV_REGION
+- TOKEN_BUF_D / TOKEN_BUF_TILE
+- LN_TOKEN_BUF
+- FFN1_TILE_BUF
+- OUT_ACC_D / OUT_ACC_TILE
+- HEAD_CTX_BUF / CUR_HEAD_CTX_TILE
+- Q_VEC / Q_TILE
+- SOFTMAX_STATE / SOFTMAX_ACC_TILE
+- FINAL_SCALAR_BUF
+
+不要把這些實體名稱直接當成邏輯值名稱。
+例如：
+- 「Layer0_out 住在 X_WORK」是正確的說法
+- 「Layer0_out 就是 X_WORK」則容易造成語意混淆
+
+補充說明
+--------
+若後續需要討論矩陣方向，建議明確標註：
+- 列(Row)
+- 行(Colume)
+
+本檔案目前只處理實體落點／覆蓋方式草稿；正式地址、bank 切法、alignment、實際 base/size，之後應交由 SramMap 與 generator 規格補全。
+
+檔案結束
+

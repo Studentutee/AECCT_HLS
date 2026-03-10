@@ -1,0 +1,557 @@
+Catapult / CCS (C++ Base) C++ Code 生成指引（給 Codex 當參考）
+Version: v3.0 (2026-02-27)  // includes v1+v2 full content + addendum integrated
+
+本文件目的
+- 讓自動產碼工具（例如 Codex）在產生 Catapult 可合成的 C++（HLS C++）時，有一致的「可合成子集合（synthesizable subset）」與「程式骨架（templates）」可依循。
+- 本文件以你提供的範例來源為基準：
+  (A) 你的專案範例：PreprocEmbedSPE.h、tb.cpp
+  (B) Catapult 官方範例：Catapult coding範本.zip（basic/cxx/lab2、lab4、lab5 等）
+  (C) Catapult 官方手冊：catapult_useref.pdf、ac_datatypes_ref.pdf
+
+------------------------------------------------------------------------------
+0) 最重要的基本原則（General Rules）
+
+0.1 你在寫硬體（hardware），不是寫一般軟體（software）
+- 你的 C++ 會被 Catapult 轉換成硬體排程（schedule）+ 資源（resources）+ 介面（ports）。
+- 所以寫法要「靜態可分析（statically analyzable）」：固定大小陣列、固定 loop bound、少用不可預測控制流。
+
+0.2 可合成禁區（強烈禁止 / 或極不建議）
+- 動態記憶體（dynamic allocation）：new/delete/malloc/free（一般不要出現在 design code）
+- 例外處理（exceptions）、RTTI、複雜 STL（例如無上限的 std::vector）
+- 遞迴（recursion）
+- 依賴 OS/IO 的功能（fstream、socket、thread 等）
+
+（補充）CFormalSLEC/SCVerify 等流程對某些語法也有限制，例如無上限 std::vector 不支援、rolled loop 裡的 conditional return/continue 可能造成問題。參考 catapult_useref.pdf p.494。 
+
+0.3 型態與命名偏好（你的專案規範）
+- 硬體資料型態請使用 Algorithmic C：ac_int / ac_fixed / ac_channel。
+- 不要使用 using 來做 type alias（除非你明確要求）。
+- 若需要型態占位符（template parameter），請使用名字：ac_type。
+
+------------------------------------------------------------------------------
+1) GUI 的 Hierarchy Settings 對應到程式寫法（Top / Block / Inline）
+
+你在 GUI 看到的 Block implementation（Top / Block / Inline）基本上是在決定「階層是否保留」與「程式骨架」。
+
+1.1 Top
+- 用途：整個設計的最上層（top-level）。
+- 程式型態：通常用 class（也可用 function，但本文件建議 class）。
+- 必要標記：#pragma hls_design top
+
+1.2 Block（保留階層）
+- 用途：子模組（sub-block），希望保留成獨立 module。
+- 程式型態：用 class。
+- 必要標記：
+  - class 內對外介面 method 標：#pragma hls_design interface
+  - 介面 method 名稱用 CCS_BLOCK(...) 包起來（用於 SCVerify）。
+  - 官方說明：class-based hierarchical blocks，需在 class definition 中把 public member function 包成 CCS_BLOCK。參考 catapult_useref.pdf p.507–510。
+
+1.3 Inline（展平/內嵌）
+- 用途：小功能，想展平成父層，避免形成獨立 module。
+- 程式型態：用 function（建議 static inline）。
+- 必要標記：#pragma hls_design inline
+
+------------------------------------------------------------------------------
+2) 必備 include 與 CCS/SCVerify 巨集規則
+
+2.1 mc_scverify.h 的 include 位置
+- 官方要求：在使用 CCS_BLOCK 前，mc_scverify.h 必須「在最後一個 #include 之後、任何 function/class definition 之前」被 include。
+  參考 catapult_useref.pdf p.507。
+
+2.2 常用巨集
+- CCS_BLOCK(...)：標記 design block 介面（給 SCVerify 使用）。
+  - 可用 1 或 2 個參數：CCS_BLOCK(func) 或 CCS_BLOCK(ClassOrNamespace, func)
+  - 必須放在同一行（不能換行），不然 SCVerify 編譯會出錯。
+  參考 catapult_useref.pdf p.507–510。
+
+- CCS_MAIN(...) / CCS_RETURN(x)：testbench 入口與回傳。
+  - 官方範例：lab2/tb.cpp 使用 CCS_MAIN + CCS_RETURN。
+  - 手冊也有 design+tb 範例（cubed_testbench.cpp）。參考 catapult_useref.pdf p.520。
+
+- CCS_SCVERIFY：SCVerify 模式下會定義，常用於把某些 TB 控制或 debug 行為包起來。
+  - 例如 output skip/wait controls。參考 catapult_useref.pdf p.542（skip control）。
+
+------------------------------------------------------------------------------
+3) 程式模板（Templates）
+
+本節提供 Codex 可直接照抄的「概念模板」。
+注意：此處模板是「風格規範」，不保證你每個 project 都需要完全相同的參數與 array 尺寸。
+
+3.1 Block（class）模板（保留階層）
+
+[BlockClass.h]
+- 特色：class + interface method + CCS_BLOCK + 固定大小 array 或 ac_channel 介面
+- 對照官方：basic/cxx/lab2/mult_add_pipeline.h
+
+----------------------------------
+#pragma once
+
+#include <ac_int.h>
+#include <ac_fixed.h>
+#include <ac_channel.h>
+#include <mc_scverify.h>
+
+#pragma hls_design top
+class MyBlock {
+public:
+  MyBlock() {}
+
+  static constexpr int IN_LEN  = 63;
+  static constexpr int OUT_LEN = 2400;
+
+  #pragma hls_design interface
+  void CCS_BLOCK(run)(
+      const ac_fixed<32,16,true> in[IN_LEN],
+      ac_fixed<32,16,true>       out[OUT_LEN]
+  ) {
+    // 主計算路徑
+    for (int i = 0; i < IN_LEN; ++i) {
+      // ...
+    }
+  }
+};
+----------------------------------
+
+備註（SCVerify/CCS_BLOCK 規範）
+- class-based hierarchy：被 CCS_BLOCK 包起來的 interface method 建議「直接在 header 的 class 定義內實作」。
+  若你一定要把實作放到 .cpp，官方建議用 wrapper function（run_wrapper）在 class 內呼叫真正的 run()。
+  參考 catapult_useref.pdf p.509–510。
+
+3.2 Multi-block Top（class）模板（上層串接多個 sub-block）
+
+[SystemTop.h]
+- 特色：top class 裡 instantiate sub-block，block-to-block 以 ac_channel 串接。
+- 對照官方：basic/cxx/lab5/test_multi_block.h（matrixMultiplyTop，使用 ac_channel + private members）
+
+----------------------------------
+#pragma once
+
+#include <ac_int.h>
+#include <ac_channel.h>
+#include <mc_scverify.h>
+
+class SubA {
+public:
+  SubA() {}
+  #pragma hls_design interface
+  void CCS_BLOCK(run)(ac_channel<ac_int<16,false> > &in,
+                      ac_channel<ac_int<16,false> > &out) {
+    // ...
+  }
+};
+
+class SubB {
+public:
+  SubB() {}
+  #pragma hls_design interface
+  void CCS_BLOCK(run)(ac_channel<ac_int<16,false> > &in,
+                      ac_channel<ac_int<32,false> > &out) {
+    // ...
+  }
+};
+
+#pragma hls_design top
+class SystemTop {
+public:
+  SystemTop() {}
+
+  #pragma hls_design interface
+  void CCS_BLOCK(run)(ac_channel<ac_int<16,false> > &din,
+                      ac_channel<ac_int<32,false> > &dout) {
+    subA.run(din, ch_mid);
+    subB.run(ch_mid, dout);
+  }
+
+private:
+  SubA subA;
+  SubB subB;
+  ac_channel<ac_int<16,false> > ch_mid;
+};
+----------------------------------
+
+注意事項
+- 在 class-based hierarchy 的正式 bottom-up flow 中，private members/多 process method 可能牽涉到特定流程限制（尤其 formal）。
+  若你要走 formal（CFormalSLEC），請留意 leaf block 的限制（例如 leaf class only one interface method）。參考 catapult_useref.pdf p.495。
+
+3.3 Inline（function）模板（小算子 / 小 kernel）
+
+[inline_kernels.h]
+- 特色：function + #pragma hls_design inline + static inline
+
+----------------------------------
+#pragma once
+#include <ac_fixed.h>
+
+#pragma hls_design inline
+static inline ac_fixed<32,16,true> clamp_fx(
+    ac_fixed<32,16,true> x,
+    ac_fixed<32,16,true> lo,
+    ac_fixed<32,16,true> hi) {
+  if (x < lo) return lo;
+  if (x > hi) return hi;
+  return x;
+}
+----------------------------------
+
+3.4 TB（testbench）class 模板（你偏好的 TB 風格）
+
+[tb_xxx.cpp]
+- 特色：TB 用 class 管理 stimulus/compare；CCS_MAIN 只負責建立 tb + 呼叫 + CCS_RETURN。
+- 對照官方：basic/cxx/lab2/tb.cpp（官方是 function-style，但 CCS_MAIN/CCS_RETURN 同概念）。
+
+----------------------------------
+#include <cstdio>
+#include <mc_scverify.h>
+#include <ac_fixed.h>
+#include "MyBlock.h"
+
+class Tb_MyBlock {
+public:
+  int run_all() {
+    int err = 0;
+    // 準備輸入、呼叫 dut.run(...)、比對輸出
+    return err;
+  }
+
+private:
+  MyBlock dut;
+};
+
+CCS_MAIN(int argc, char **argv) {
+  Tb_MyBlock tb;
+  int err = tb.run_all();
+  CCS_RETURN(err);
+}
+----------------------------------
+
+------------------------------------------------------------------------------
+4) 介面（Interface）與資料交換的建議
+
+4.1 Streaming：使用 ac_channel
+- 適用：block-to-block 串接、需要 ready/valid 概念、資料流。
+- 範例：lab2/mult_add_pipeline.h（a/b/c/result 都是 ac_channel）
+
+4.2 Memory-like：使用固定大小 array
+- 適用：一次性搬運、向量/矩陣、權重/特徵圖。
+- 範例：lab4/test.h：coeffs[32][4] 以 array 形式當作 memory interface。
+
+4.3 shared memory / handshake（進階）
+- 若你要做共享記憶體 + 兩個子 block 的同步，可用 ac_shared + ac_sync。
+  手冊示例：catapult_useref.pdf p.41（ac_sync / ac_shared 範例）。
+
+------------------------------------------------------------------------------
+5) loop / array / memory 的可合成寫法重點
+
+5.1 loop bound 要可靜態推導
+- 推薦：for (int i=0; i<N; ++i) 其中 N 是 constexpr。
+- 避免：runtime 才決定迴圈上限（除非你非常確定工具支援且 QoR 可接受）。
+
+5.2 需要 unroll/pipeline 時
+- 官方範例會在 code 內下 #pragma unroll yes（例如 lab3/dynamic_offset/test.cpp、lab4/test.h）。
+- 你若要讓 Codex 產生 pragma，請只在「確定 loop 很小且固定」的地方加。
+
+5.3 shared memory 的打包（struct 包 array）
+- 官方在 multi-block 的 shared memories 範例：用 struct 打包 array（memStruct）。
+  參考：basic/cxx/lab5/test_multi_block.h。
+
+------------------------------------------------------------------------------
+6) ac_int / ac_fixed 的用法（精度、捨入、飽和）
+
+6.1 設計端（design）建議
+- 使用 ac_int / ac_fixed 讓 bit-width 明確。
+- 對 overflow/rounding 要有一致策略。
+
+6.2 捨入/飽和模式（rounding / saturation）
+- ac_fixed 的 rounding modes（例如 AC_RND、AC_RND_CONV）與 overflow modes（例如 AC_SAT、AC_SAT_SYM）請在型態上明確指定。
+  參考 ac_datatypes_ref.pdf：
+  - AC_SAT / AC_SAT_SYM：p.19–22
+  - AC_RND / AC_RND_CONV：p.20（以及後續多處表格）
+
+6.3 AC 型態轉型/轉換（Casting / Conversion）— Codex 必讀
+
+核心概念（中文）
+- AC 型態之間的轉換，最終都會落在「指定目標型態」的 assignment / construction / cast 上。
+- 量化（quantization）與溢位（overflow）的行為，是由「目標型態」的模板參數（W/I/S/Q/O）決定，而不是來源型態。
+- 因此：想要結果可控，就要把「目標型態」寫清楚（尤其 Q=rounding、O=overflow）。
+
+核心概念（English）
+- Quantization and overflow happen on assignment or construction/cast.
+- The destination AC type defines rounding/overflow behavior.
+
+6.3.1 AC -> AC（ac_int / ac_fixed 互轉）
+- 最穩的做法：用「明確目標型態」做 assign 或 cast（等價於以目標型態 construction）。
+- 不要依賴隱式推導，避免不同編譯器/版本造成 promotion 差異。
+
+範例：ac_fixed -> ac_fixed（不同寬度/rounding/overflow）
+  ac_fixed<8,1,true,  AC_RND_CONV, AC_SAT_SYM> x = -0.1;
+  ac_fixed<4,1,true,  AC_TRN,      AC_WRAP>    z = x;  // 量化：丟掉部分小數
+  z = (ac_fixed<4,1,true,AC_TRN,AC_WRAP>)x;            // cast 等價於目標型態 construction
+
+範例：ac_fixed -> ac_int（明確轉整數語意）
+  ac_fixed<16,4,true,AC_TRN,AC_WRAP> fx = ...;
+  int a = fx.to_int();              // 會丟掉小數（轉成 C int）
+  ac_int<16,true> i1 = fx.to_ac_int();  // bit-accurate：先轉成 ac_int 再 resize
+  ac_int<8,true>  i2 = (ac_int<8,true>)i1;
+
+6.3.2 AC -> C/C++ int / bool（避免常見編譯地雷）
+- ac_int 只有有限的 conversion operator；ac_fixed 沒有到 C integer 的 conversion operator。
+- 因此 if(k) / int a = x; 這種「隱式」寫法可能直接編譯失敗。
+- 規則：條件判斷用 (k != 0)；要轉回 int/long/double 用 to_int()/to_long()/to_double()。
+
+範例：
+  ac_int<80,true> k = ...;
+  if (k)      { }  // 常見：ERROR
+  if (k != 0) { }  // OK
+  double d = k.to_double();
+
+6.3.3 AC <-> float/double（含 ac_ieee_float<binary32>）
+(1) ac_int / ac_fixed -> float/double
+- 建議：先 to_double() 再 cast 成 float（如果你真的需要 float）
+  float f = (float)x.to_double();
+
+(2) ac_float
+- ac_float 提供 to_float()/to_double()/to_ac_fixed()/to_ac_int() 等 API（需要時用明確 API）。
+
+(3) ac_ieee_float<binary32>
+- 建議常數用 2.0f 這種 float literal（避免 int/double literal 混算歧義）。
+- 轉回 float：用 static_cast<float>(a)（explicit operator float）。
+- 轉成 ac_fixed / ac_int：用 convert_to_ac_fixed<...>() / convert_to_ac_int<...>()，並視需求設定 map_inf。
+
+範例：
+  ac_ieee_float<binary32> a = 2.0f;
+  float f = static_cast<float>(a);
+  ac_fixed<16,4,true,AC_RND_CONV,AC_SAT> fx =
+      a.convert_to_ac_fixed<16,4,true,AC_RND_CONV,AC_SAT>(/*map_inf=*/true);
+
+6.3.4 避免隱式混算（重要）
+- 規則：常數先轉成 AC 型態，避免 overload ambiguity / promotion 出現非預期型態（特別是 double literal）。
+- bad：y = s * 0.5;    // 0.5 是 double
+- good：ac_fixed<...> half = ac_fixed<...>(0.5);  y = s * half;
+
+------------------------------------------------------------------------------
+7) Debug / TB / Synthesis guard 建議
+
+7.1 建議把 TB 與 Design 分檔
+- design code（會被合成）不要包含 printf/iostream/file IO。
+- TB code（只跑模擬）可以用 printf、讀 trace header、比對 golden。
+
+7.2 若需要在 design 裡放 debug（不建議常態）
+- 使用 #ifndef __SYNTHESIS__ 包住 debug 行為，避免進 synthesis。
+- 但更乾淨的做法仍是：debug 放 TB。
+
+------------------------------------------------------------------------------
+8) Codex 產碼「硬性規格」（請當成生成約束）
+
+(1) Block 用 class 寫；Inline 用 function 寫；TB 用 class 寫。
+(2) Block 的 interface method 必須：
+    - 有 #pragma hls_design interface
+    - method 名稱用 CCS_BLOCK(...) 包住
+    - mc_scverify.h include 在最後一個 include 後、任何定義前（參考 catapult_useref.pdf p.507）
+(3) Top 用 class 寫，class 前加 #pragma hls_design top。
+(4) loop bound 盡量 constexpr；array 尺寸固定。
+(5) 不使用 using type alias（除非你要求）；型態占位符使用 ac_type。
+(6) 所有原始碼存 UTF-8（no BOM），註解以英文為主（避免 Catapult editor 亂碼）。
+
+------------------------------------------------------------------------------
+9) 參考來源（你可以用來交叉驗證）
+
+A) Catapult coding範本.zip（已解壓）
+- basic/cxx/lab2/mult_add_pipeline.h : class + #pragma hls_design top/interface + CCS_BLOCK(run) + ac_channel
+- basic/cxx/lab4/test.h              : memory interface array + #pragma unroll
+- basic/cxx/lab5/test_multi_block.h  : multi-block top 串接 + private instances + interconnect channels
+
+B) Catapult 手冊（PDF viewer page number）
+- catapult_useref.pdf
+  - p.507–510: CCS_BLOCK macro 用法、include 規則、class member wrapper 的官方建議
+  - p.520: Design + Testbench（CCS_MAIN）範例
+  - p.41 : ac_sync / ac_shared 的 shared memory + handshake 示例
+  - p.542: mc_testbench_<var>_skip（當設計端需通知 TB skip 比對）
+  - p.494–495: 一些語言/階層限制（例如無上限 std::vector、rolled loop 的 conditional return/continue 等）
+
+- ac_datatypes_ref.pdf
+  - p.19–22: AC_SAT / AC_SAT_SYM 等 overflow 行為
+  - p.20   : AC_RND / AC_RND_CONV 等 rounding mode 列表與描述
+
+
+
+==============================================================================
+ADDENDUM (v2.0): 進階型態與同步 (ac_ieee_float<binary32>, ac_shared, ac_sync)
+Date: 2026-02-27
+來源補強：
+- Catapult 官方手冊：catapult_useref.pdf（Shared Memory / ac_sync / ac_shared）
+- AC Datatypes：ac_datatypes_ref.pdf（ac_ieee_float / ac_std_float / bfloat16）
+- Catapult coding範本.zip：ondemand/module12/src/mem_intf.*（ac_sync 作為 standalone handshake）
+
+------------------------------------------------------------------------------
+10) Standard Floating-Point（標準浮點）— ac_ieee_float / ac_std_float / bfloat16
+（目的：讓 Codex 在需要「浮點 bring-up 或 bit-accurate FP」時，有正確用法與避坑規則）
+
+10.1 型態選擇（What to use）
+- ac_ieee_float<binary32>：IEEE-754 binary32（對應一般 float 的格式），屬於「標準浮點」且 bit-accurate。
+- ac_std_float<W,E>：可自訂總寬 W / exponent 寬 E 的標準浮點（General standard FP）。
+- bfloat16：Google bfloat16（常見於 ML）。
+
+（建議）
+- 最終要追 QoR（area/power）時：優先用 ac_fixed。
+- bring-up 或想快速對齊 PyTorch fp32 行為時：可暫用 ac_ieee_float<binary32>，之後再換成 ac_fixed。
+
+10.2 ac_ieee_float 的格式對照與「加速模式」（Acceleration using builtin float/double）
+- ac_ieee_float<binary32> 等價於 ac_std_float<32,8>；32-bit / 64-bit 版本可用 AC_IEEE_FLOAT_USE_BUILTIN 走 C++ float/double 加速執行（但要注意 bit-accuracy）。
+- 若要 bit-accurate，請注意編譯器的 extended precision（例如 x86 的 80-bit temporaries），官方建議 GCC 用 -mfpmath=sse 來避免 mismatch。
+（文件參考：ac_datatypes_ref.pdf「Table 29 / Acceleration using C++ float/double」段落）
+
+10.3 轉型與 operator 的「坑」（非常常見）
+ac_ieee_float 的運算子「不會」自動接受所有 C++ 整數/浮點混算；尤其是 literal 常踩雷。
+規則（給 Codex）：
+- 任何與 C++ literal 混算時：
+  - binary32：請使用 float literal（例如 2.0f）或先明確建構成 ac_ieee_float<binary32>
+  - 不要寫 x * 2 或 x * 2.0（可能直接編譯失敗）
+- 若你一定要從 int 轉：請顯式轉型成 float 或用 explicit constructor（或 convert_to_* API）
+（文件參考：ac_datatypes_ref.pdf 對 binary32/binary64 的 operator 範例段落）
+
+10.4 rounding mode / subnormal（浮點 rounding / subnormal）
+- ac_ieee_float 的預設 rounding mode 是 AC_RND_CONV（IEEE: roundTiesToEven）。
+- ac_ieee_float 提供 add/sub/mult/div/fma/sqrt 等 member function 版本，可指定 QR（rounding）與 No_SubNormals（flush subnormals to zero）來降硬體複雜度。
+（文件參考：ac_datatypes_ref.pdf「Arithmetic Member Functions」段落）
+
+10.5 產碼模板：在設計端使用 ac_ieee_float<binary32>
+注意：你不喜歡 using type alias；因此此處示範不使用 typedef/using。
+
+[fp_ieee32_kernel.h]
+----------------------------------
+#pragma once
+#include <ac_std_float.h>   // ac_ieee_float<binary32> 在此定義（官方文件示例亦使用此 header）
+
+#pragma hls_design inline
+static inline ac_ieee_float<binary32> fp32_fma(
+    ac_ieee_float<binary32> a,
+    ac_ieee_float<binary32> b,
+    ac_ieee_float<binary32> c) {
+  // 盡量不要混用 double/int literal；需要常數請用 0.0f / 1.0f 這種 float literal
+  return a.template fma<AC_RND_CONV,false>(b, c);
+}
+----------------------------------
+
+（若要轉成 fixed）
+- 使用 convert_to_ac_fixed<...>(map_inf) / convert_to_ac_int<...>(map_inf) 等 API。
+- 注意：NaN/Inf 的 map 行為與 assert 行為，請在 bring-up 階段就釘死策略。
+
+------------------------------------------------------------------------------
+11) Shared Memory + Handshake — ac_shared + ac_sync
+（目的：多 block 共享同一塊 memory，並且用同步訊號讓 schedule 行為唯一、可綜合）
+
+11.1 什麼時候用（When to use）
+- 兩個（或多個）sub-block 需要存取同一塊 memory（shared array），且你不想用 ac_channel 來搬運全部資料。
+- 你需要「可控」的同步點：Block A 做完寫入才允許 Block B 開始讀出。
+- 典型：ping-pong buffer、共享 SRAM region 的 lock/仲裁（你咒語裡 bank lock 的概念）。
+
+11.2 ac_shared 的官方 coding guideline（Codex 必須遵守）
+- ac_shared 只用在「共享變數本體」上：建議宣告 shared array 為 ac_shared<Elem[N]>，不要宣告成「ac_shared 的陣列」（array of shared objects）。
+- sub-block 的 interface 不要直接用 ac_shared 型態；應該只傳「被包住的 base type」（通常用 pointer/reference）。
+- static shared array 建議用 ac::init_array 進行 uninitialize/初始化（例如 AC_VAL_DC）。
+- 單埠（single-port）shared memory 不支援；需要單埠時，建議用 Memory Generator 產生 1R1W wrapper。
+（文件參考：catapult_useref.pdf「Creating Shared Memories」段落）
+
+11.3 ac_sync 的排程規則（Scheduling rule）
+- Catapult 對 ac_sync 有特殊排程規則：ac_sync 的事件邊緣上，不會再排其他 IO；因此 sync_in()/sync_out() 的相對順序會反映在硬體排程中。
+（文件參考：catapult_useref.pdf「Specifying Standalone Handshaking Signals (ac_sync)」段落）
+
+11.4 產碼模板：ac_shared + ac_sync 的最小 ping-pong 範例骨架（與手冊一致）
+注意：這是「概念模板」，Codex 產碼時要保留此結構（static ac_shared + static ac_sync + sync_in/out）。
+
+[shared_mem_block_style.h]
+----------------------------------
+#pragma once
+#include <ac_channel.h>
+#include <ac_sync.h>
+#include <ac_shared.h>
+#include <mc_scverify.h>
+
+template <typename ac_type, int SIZE>
+void Block1(ac_sync &sync, ac_type mem[2*SIZE], ac_channel<ac_type> &in) {
+  static bool select;
+  for (int i = 0; i != SIZE; ++i) {
+    mem[(select*SIZE)+i] = in.read();
+  }
+  sync.sync_out(mem); // producer done
+  select = !select;
+}
+
+template <typename ac_type, int SIZE>
+void Block2(ac_sync &sync, ac_type mem[2*SIZE], ac_channel<ac_type> &out) {
+  static bool select;
+  sync.sync_in(mem);  // wait for producer
+  for (int i = SIZE; i; ) {
+    out.write(mem[(select*SIZE)+(--i)]);
+  }
+  select = !select;
+}
+
+#pragma hls_design top
+template <typename ac_type, int SIZE>
+void CCS_BLOCK(Top)(ac_channel<ac_type> &in, ac_channel<ac_type> &out) {
+  static ac_shared<ac_type[2*SIZE]> mem;            // persistent, not reset
+  static bool d = ac::init_array<AC_VAL_DC>(mem, 2*SIZE);
+  static ac_sync sync;                              // persistent
+  Block1<ac_type,SIZE>(sync, mem, in);
+  Block2<ac_type,SIZE>(sync, mem, out);
+}
+----------------------------------
+
+（提醒）
+- mem 是 shared 物件；Block1/Block2 的參數型態仍是 base type array（不是 ac_shared）。
+- 任何要修改 mem 的地方，都必須透過同步（sync_in/sync_out）形成 deterministic schedule。
+
+------------------------------------------------------------------------------
+12) Standalone Handshake — ac_sync 作為「run/complete」控制（module12 範例）
+（目的：不建立 ac_shared，也可以用 ac_sync 讓 block 在收到 run 後才開始；做完再發 complete）
+
+範例來源（zip）：ondemand/module12/src/mem_intf.*
+- 設計端做法：if (run.available(1)) { run.sync_in(); ...; complete.sync_out(); }
+- TB 端做法：run.sync_out(); call DUT; complete.sync_in();
+
+（Codex 規則）
+- 設計端若有 “start/finish” handshake，就用 ac_sync：
+  - run：由 TB 或上游 block 觸發 sync_out() → DUT 用 sync_in() 等待
+  - complete：DUT 用 sync_out() 通知完成 → TB 用 sync_in() 等待
+
+[mem_intf_style.h]
+----------------------------------
+#pragma once
+#include <ac_int.h>
+#include <ac_sync.h>
+
+#pragma hls_design
+void my_kernel(ac_sync &run,
+               ac_int<16,false> a[256],
+               ac_int<16,false> b[256],
+               ac_int<17,false> c[256],
+               ac_sync &complete) {
+  if (run.available(1)) {
+    run.sync_in();
+    for (int i = 0; i < 256; ++i) c[i] = a[i] + b[i];
+    complete.sync_out();
+  }
+}
+----------------------------------
+
+------------------------------------------------------------------------------
+13) 更新後的「Codex 產碼硬性規格」（補充）
+- 若設計端使用 ac_ieee_float<binary32>：
+  - 禁止混用 int/double literal（例如 *2 或 *2.0），常數請用 2.0f 或顯式建構。
+  - 明確決定 rounding/subnormal 策略（預設 AC_RND_CONV；必要時用 member function 指定）。
+- 若設計端使用 ac_shared：
+  - shared array 必須是 static ac_shared<Elem[N]>（不是 array of ac_shared）
+  - sub-block 介面不得傳 ac_shared 型態；只傳 base type（pointer/ref/array）
+  - 必須搭配 ac_sync 或其他明確同步手段，避免 schedule 歧義
+
+------------------------------------------------------------------------------
+14) 參考來源增補（你可以用來交叉驗證）
+- catapult_useref.pdf（Catapult 2025.3）
+  - Creating Shared Memories / ac_shared guideline（含 ping-pong 範例）
+  - Specifying Standalone Handshaking Signals (ac_sync)（排程規則、sync_in/out）
+- ac_datatypes_ref.pdf（AC Datatypes v2025.4）
+  - ac_ieee_float / ac_std_float / bfloat16：format、加速模式、operator/constructor 規則、rounding override
+- Catapult coding範本.zip
+  - ondemand/module12/src/mem_intf.cpp / mem_intf_tb.cpp：ac_sync run/complete 範例
+==============================================================================

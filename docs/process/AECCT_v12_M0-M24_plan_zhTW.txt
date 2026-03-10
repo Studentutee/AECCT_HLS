@@ -1,0 +1,507 @@
+AECCT_HLS v12｜M0～M24 搭建規劃（取代 v11.7 版）
+
+==================================================
+全域規則（所有里程碑共用）
+==================================================
+
+A. Contract / 邊界 / 風格
+- Top 外部介面固定不變：
+  - ctrl_cmd  : ac_channel<ac_int<16,false>>
+  - ctrl_rsp  : ac_channel<ac_int<16,false>>
+  - data_in   : ac_channel<ac_int<32,false>>
+  - data_out  : ac_channel<ac_int<32,false>>
+- DESIGN 嚴禁 include trace/golden/weights.h；權重只能由 TB 透過 LOAD_W/PARAM_RX 串流寫入 SRAM。
+- DESIGN 嚴守 HLS-safe subset：優先 ac_int / ac_fixed / ac_ieee_float<binary32>，禁止 host-only 技巧。
+- 所有 shape 以 ModelDesc.h / ModelShapes.h 為 SSOT。
+- token 是列(Row)，d 是行(Colume)；線性化以 d/行(Colume) 為 inner-most contiguous。
+
+B. 量化總原則（v12）
+- 量化規劃分兩階段：
+  - Phase 1：預留規格、SSOT、命令入口、分析流程
+  - Phase 2：grouping/payload 定版、TB 定版、datapath 接線
+- 在 grouping 未定版前，不得把 zone count / zone enum 寫死。
+
+C. 每個 milestone 都必須附帶
+- docs/milestones/Mxx_report.md
+- docs/milestones/Mxx_artifacts/
+  - file_manifest.txt
+  - diff.patch
+  - build.log
+  - run_tb.log
+  - verdict.txt
+- 必跑 gates：
+  - check_design_purity
+  - check_interface_lock
+  - check_repo_hygiene
+  - check_tb_flow（Top/bring-up 類 TB）
+
+==================================================
+M0 — 工程骨架、Contract、SSOT 骨架一次釘死
+==================================================
+
+交付
+- include/
+  - aecct_types.h
+  - aecct_cmd.h
+  - aecct_rsp.h
+  - aecct_err.h
+  - align_utils.h
+- Top class 骨架
+- README Auto 區塊骨架
+- scripts/run_gates.sh/.ps1 雛形
+
+TB
+- tb_top_m0.cpp
+- 只驗 SOFT_RESET -> OK -> DONE
+
+DoD
+- Build/Link 通過
+- 4-channel contract 固定
+- SSOT 檔位置固定
+- gates 基礎版可跑
+
+==================================================
+M1 — Top FSM 模式分離 + 回應順序固定
+==================================================
+
+交付
+- IDLE / CFG_RX / PARAM_RX / INFER_RX / HALTED
+- 成功路徑固定 OK -> DONE
+- 錯誤路徑固定 ERR(err_code)
+
+TB
+- 非法 state 發 cmd
+- 正常 CFG_BEGIN -> CFG_COMMIT
+
+DoD
+- 狀態切換正確
+- ctrl_rsp 協定不漂移
+
+==================================================
+M2 — 單一主 SRAM logical regions + READ_MEM
+==================================================
+
+交付
+- 單一主 SRAM 抽象
+- logical regions：
+  - X_PAGE0 / X_PAGE1 / SCRATCH / W_REGION / IO_REGION
+- READ_MEM(addr_word, len_words)
+- range check / 跨區檢查 / 非對齊 slice 回吐
+
+TB
+- 已知 pattern 回讀
+- 越界錯誤
+
+DoD
+- READ_MEM 成為 bring-up/debug 基建
+- 單埠 1-issue 假設建立
+
+==================================================
+M3 — CFG_RX 完整化 + ModelDesc/ModelShapes 驗證
+==================================================
+
+交付
+- CFG_BEGIN / CFG_COMMIT
+- EXP_LEN_CFG_WORDS
+- cfg 合法性檢查
+- shape/limit 以 SSOT 為準
+
+TB
+- 少送/多送 cfg
+- 非法 shape
+- 正常 cfg
+
+DoD
+- cfg pipeline 嚴格可預期
+
+==================================================
+M4 — SET_W_BASE + LOAD_W + WeightStreamOrder
+==================================================
+
+交付
+- SET_W_BASE
+- LOAD_W
+- WeightStreamOrder.h
+- valid_bits / bitpack padding 檢查
+- DESIGN 嚴禁 compile-time weights
+
+TB
+- 未設 base 就 LOAD_W
+- 對齊錯誤
+- 長度錯誤
+- padding bits 非零
+- LOAD_W 後 READ_MEM 比對
+
+DoD
+- 權重主路徑固定為「TB 串流進 SRAM」
+
+==================================================
+M5 — in_fifo + IO_REGION + SET_OUTMODE + HALTED/DEBUG 基建
+==================================================
+
+交付
+- in_fifo（elastic FIFO）
+- IO_REGION 語意清楚化
+- SET_OUTMODE
+- DEBUG_CFG(SET/ARM/RESUME/CLEAR) 基本框架
+- HALTED 狀態允許命令白名單
+
+TB
+- OUTMODE_NONE
+- HALTED 後 READ_MEM
+- DEBUG_CFG(RESUME) 恢復
+
+DoD
+- input decouple / debug contract / output mode 基礎就位
+
+==================================================
+M6 — INFER stub，先打通 end-to-end 流程
+==================================================
+
+交付
+- INFER_RX
+- input payload 收取
+- stub 推論：
+  - 可固定零輸出，或 input echo
+- OUTMODE_LOGITS / OUTMODE_XPRED / OUTMODE_NONE 的長度與流程先打通
+
+TB
+- 完整 bring-up：
+  CFG_BEGIN -> CFG_COMMIT -> SET_W_BASE -> LOAD_W -> SET_OUTMODE -> INFER
+
+DoD
+- 第一版完整流程跑通
+- 先不追數值正確，只追流程正確
+
+==================================================
+M7 — PreprocEmbedSPE
+==================================================
+
+交付
+- PreprocEmbedSPE.h
+- embed + SPE + 必要 LPE slice
+- 寫入 X_PAGE(active)
+
+TB
+- block unit TB
+- 或 Top + READ_MEM 對齊 preproc 節點
+
+DoD
+- preproc 結果可觀測、可對齊
+
+==================================================
+M8 — LayerNormBlock（可合成版本）
+==================================================
+
+交付
+- 兩 pass LN
+- gamma/beta 從 W_REGION 讀
+- 禁 host sqrt
+
+TB
+- tb_ln_m8.cpp
+- 或 checkpoint + READ_MEM 比對
+
+DoD
+- LN 數值與可合成路徑成立
+
+==================================================
+M9 — Attention bring-up（Q/K/V + KV cache + 路徑跑通）
+==================================================
+
+交付
+- Q/K/V projection
+- SCR_K / SCR_V
+- attention 前半段資料流
+- per-context persist buffer 規則初版
+
+TB
+- K_CACHE / V_CACHE checkpoint
+- context lifetime 自洽檢查
+
+DoD
+- attention 記憶體生命週期正確
+
+==================================================
+M10 — SoftmaxApprox + Attention completion
+==================================================
+
+交付
+- SoftmaxApprox.h
+- max / sumexp / reciprocal 可合成路徑
+- attention output + residual
+
+TB
+- softmax unit TB
+- ATTN_OUT checkpoint
+
+DoD
+- attention sublayer 可獨立驗證
+
+==================================================
+M11 — FFN + residual + reusable TransformerLayer
+==================================================
+
+交付
+- FFN1 / activation / FFN2
+- residual
+- TransformerLayer.h
+- layer_id / time-mux 骨架
+
+TB
+- FFN unit TB
+- X_OUT checkpoint
+
+DoD
+- 單層 Transformer 可完整通過
+
+==================================================
+M12 — 多層排程 + mid LN / end LN
+==================================================
+
+交付
+- layer loop
+- mid LN、end LN
+- X_PAGE ping-pong / SCRATCH liveness 完整規則
+
+TB
+- MID_LN_OUT / END_LN_OUT 比對
+- 多層自洽回歸
+
+DoD
+- 多層與 page swap 規則正確
+
+==================================================
+M13 — FinalHead（v11.12/v12 正式版）
+==================================================
+
+交付
+- Pass A：x_last -> s_t
+- s_t 寫入 SCRATCH.FINAL_SCALAR_BUF
+- Pass B：FINAL_SCALAR_BUF -> logits
+- logits/x_pred 直接 data_out streaming
+- 正常路徑不得使用 PAGE_NEXT/TEMP_PAGE
+- SramMap.h 新增：
+  - SCR_FINAL_SCALAR_BASE
+  - SCR_FINAL_SCALAR_WORDS
+
+TB
+- OUTMODE_LOGITS：讀 data_out
+- OUTMODE_XPRED：讀 data_out
+- debug only：READ_MEM(SCRATCH.FINAL_SCALAR_BUF)
+
+DoD
+- FinalHead 完全符合 v11.12/v12 正式規格，不再沿用舊的 TEMP_PAGE readout 思路
+
+==================================================
+M14 — Top end-to-end regression + overlap 基本驗證
+==================================================
+
+交付
+- tb_top_end2end.cpp
+- x_pred / logits / none 三種模式
+- overlap stress smoke test
+- 輸出順序固定為 INFER 接收順序
+
+TB
+- 兩輪以上 E2E
+- overlap 下先收下一筆 INFER
+
+DoD
+- Top 協定 + 輸出模式 + overlap 基本行為全通
+
+==================================================
+M15 — v12 量化 Phase 1：規格預留，不接 datapath
+==================================================
+
+交付
+- QuantDesc.h / QuantConfig.h placeholder
+- quant version 欄位
+- placeholder grouping table 結構
+- host decode 規則 placeholder
+- 文件明確區分 legacy path / quant-reserved path
+
+TB
+- legacy regression 全綠
+- quant placeholder 不影響既有功能
+
+DoD
+- 量化規劃進入專案結構，但不破壞現行 datapath
+
+==================================================
+M16 — 離線生成器整合：SramMap / WeightStreamOrder / QuantDesc
+==================================================
+
+交付
+- scripts/gen_sram_map.py
+- scripts/gen_weight_stream_order.py
+- scripts/gen_quant_desc.py（可先輸出 placeholder）
+- generator 輸出統一：
+  - ModelDesc.h
+  - ModelShapes.h
+  - SramMap.h
+  - WeightStreamOrder.h
+  - QuantDesc*.h
+
+TB
+- 重新生成 headers 後，M14 regression 仍綠
+
+DoD
+- Top/TB 不再 hardcode offset/len/quant metadata
+
+==================================================
+M17 — Synthesis gate 清點與合成安全收斂
+==================================================
+
+交付
+- 清掉 DESIGN 內不可合成項
+- SYNTHESIS_RULES.md
+- check_design_purity 強化
+- check_interface_lock、check_repo_hygiene 真正納管
+
+TB
+- Catapult analyze/schedule 可跑
+- 功能回歸不退步
+
+DoD
+- 專案進入真正可合成狀態
+
+==================================================
+M18 — v12 量化 Phase 1：離線分析流程建立
+==================================================
+
+交付
+- trace/weights/reference tensor 分析腳本
+- MSE / distribution / exponent sweep / grouping report
+- 建議配置輸出格式
+- quant-enabled compare framework（先 tolerant，不凍結）
+
+TB
+- 不要求 datapath 全接
+- 先驗證分析結果可重現
+
+DoD
+- 量化從「想法」變成「可決策的分析流程」
+
+==================================================
+M19 — v12 量化 Phase 2：grouping / payload / 命令語意凍結
+==================================================
+
+交付
+- grouping/zone 定版
+- payload layout 定版
+- SET_QCFG 或等價入口正式定義
+- busy/state 規則定版
+- freeze-time 規則：
+  - 只能 pre-infer 配置
+  - in-flight inference 不得改寫
+
+TB
+- payload legality
+- busy-state 檢查
+- legacy path 與 quant path 分流
+
+DoD
+- 量化 external contract 正式凍結，但仍維持與既有 4-channel contract 相容
+
+==================================================
+M20 — 量化 datapath 接線（先 major persistent domains）
+==================================================
+
+交付
+- 先接 major persistent domains
+- 採 v12 容許的混合式策略：
+  - global configurable
+  - block-local fixed handling
+- 不強迫所有 local temporary 都馬上受全域量化控制
+
+TB
+- legacy path
+- quant-test path
+- tolerant compare / MSE report
+
+DoD
+- 第一版 quant-enabled datapath 可跑，但範圍受控
+
+==================================================
+M21 — 量化擴大覆蓋 + 單埠性能收斂
+==================================================
+
+交付
+- 擴大量化覆蓋範圍
+- loop pipeline / tiling / W_LANES=8 對齊 / prefetch / local buffering
+- 單一 SRAM true 1-port 仲裁與衝突模型定版
+
+TB
+- quant-enabled regression
+- 性能 baseline 對比
+
+DoD
+- quant path 與性能路徑開始一起收斂
+
+==================================================
+M22 — Dataset regression（legacy + quant）
+==================================================
+
+交付
+- tb_dataset_eval
+- legacy 與 quant 兩套統計
+- 報表不進 git
+
+TB
+- 多筆測資
+- MSE / BER / FER / fail cases 蒐集
+
+DoD
+- 大樣本回歸可重現
+
+==================================================
+M23 — 品質門檻凍結（Quality gate）
+==================================================
+
+交付
+- 測試矩陣：
+  - SNR
+  - cfg
+  - code_n / code_c
+  - seed
+  - legacy/quant mode
+- pass/fail 門檻定版
+
+TB
+- 自動產出 verdict matrix
+
+DoD
+- legacy path 與 quant path 都有正式品質標準
+
+==================================================
+M24 — Release / reproducible package
+==================================================
+
+交付
+- 一鍵流程：
+  - gen_headers
+  - build
+  - run_gates
+  - regress
+  - dataset_eval
+  - export_reports
+  - package
+- manifest：
+  - spell/spec version
+  - generator hash
+  - weights hash
+  - config hash
+  - git commit hash
+
+DoD
+- 他人拿到 package 可重現結果
+
+==================================================
+建議用途
+==================================================
+
+這份 v12 版 M0～M24 plan 可直接作為：
+1. 取代資料來源中的 v11.7 版 MasterPlan
+2. 後續咒語與 milestone report 的新基準
+3. Codex / ChatGPT / 人工協作時的統一里程碑藍圖
