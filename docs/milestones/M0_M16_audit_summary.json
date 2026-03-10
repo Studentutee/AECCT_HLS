@@ -1,0 +1,338 @@
+{
+  "audit_version": "v12.1_single_x_work_evidence_first",
+  "generated_on": "2026-03-10",
+  "rules": {
+    "formal_pass_requires_mxx_pack": true,
+    "evidence_first_override": true,
+    "spec_drift_category_enabled": true,
+    "separate_impl_vs_closure": true
+  },
+  "initial_human_hypothesis": {
+    "M0": "code exists but evidence missing",
+    "M1": "code exists but evidence missing",
+    "M2": "code exists but evidence missing",
+    "M3": "PASS with evidence",
+    "M4": "PASS with evidence",
+    "M5": "PASS with evidence",
+    "M6": "code exists but evidence missing",
+    "M7": "code exists but evidence missing",
+    "M8": "code exists but evidence missing",
+    "M9": "code exists but evidence missing",
+    "M10": "code exists but evidence missing",
+    "M11": "code exists but evidence missing",
+    "M12": "spec drift / needs re-baseline",
+    "M13": "code exists but evidence missing",
+    "M14": "code exists but evidence missing",
+    "M15": "code exists but evidence missing",
+    "M16": "spec drift / needs re-baseline"
+  },
+  "milestones": [
+    {
+      "milestone": "M0",
+      "latest_plan_expected_scope": "project skeleton and contract/SSOT skeleton bring-up",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M00 report and artifacts",
+      "repo_evidence_paths": [
+        "src/Top.h",
+        "tb/tb_top_m0.cpp",
+        "include/AecctProtocol.h",
+        "scripts/run_gates.ps1"
+      ],
+      "recommended_next_action": "create M00 report/artifacts from current repo and rerun tb_top_m0 plus gates"
+    },
+    {
+      "milestone": "M1",
+      "latest_plan_expected_scope": "Top FSM mode separation and fixed response ordering",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M01 report and artifacts",
+      "repo_evidence_paths": [
+        "src/Top.h",
+        "tb/tb_top_m1.cpp"
+      ],
+      "recommended_next_action": "create M01 closure evidence with state/opcode matrix checks"
+    },
+    {
+      "milestone": "M2",
+      "latest_plan_expected_scope": "single X_WORK logical regions and READ_MEM foundation",
+      "formal_evidence_pack_present": false,
+      "status": "spec drift / needs re-baseline",
+      "hypothesis_overridden": true,
+      "main_gap": "current memory/schedule still uses dual-page X_PAGE0/X_PAGE1 semantics",
+      "repo_evidence_paths": [
+        "include/SramMap.h",
+        "src/Top.h",
+        "tb/tb_top_m2.cpp",
+        "docs/changelog/AECCT_v12_single_X_WORK_change_summary_zhTW.txt"
+      ],
+      "recommended_next_action": "re-baseline M2 to single-X_WORK semantics and produce M02 evidence pack"
+    },
+    {
+      "milestone": "M3",
+      "latest_plan_expected_scope": "CFG_RX completion and ModelDesc/ModelShapes validation",
+      "formal_evidence_pack_present": true,
+      "status": "PASS with evidence",
+      "hypothesis_overridden": false,
+      "main_gap": "no critical closure gap found",
+      "repo_evidence_paths": [
+        "docs/milestones/M03_report.md",
+        "docs/milestones/M03_artifacts/diff.patch",
+        "docs/milestones/M03_artifacts/build.log",
+        "docs/milestones/M03_artifacts/run_tb.log",
+        "docs/milestones/M03_artifacts/verdict.txt",
+        "docs/milestones/M03_artifacts/file_manifest.txt",
+        "tb/tb_top_m3.cpp"
+      ],
+      "recommended_next_action": "keep PASS and carry forward"
+    },
+    {
+      "milestone": "M4",
+      "latest_plan_expected_scope": "SET_W_BASE plus LOAD_W plus WeightStreamOrder checks",
+      "formal_evidence_pack_present": true,
+      "status": "PASS with evidence",
+      "hypothesis_overridden": false,
+      "main_gap": "pack is TB-centric; add traceability note to later purity reinforcement",
+      "repo_evidence_paths": [
+        "docs/milestones/M04_report.md",
+        "docs/milestones/M04_artifacts/diff.patch",
+        "docs/milestones/M04_artifacts/build.log",
+        "docs/milestones/M04_artifacts/run_tb.log",
+        "docs/milestones/M04_artifacts/verdict.txt",
+        "docs/milestones/M04_artifacts/file_manifest.txt",
+        "tb/tb_top_m4.cpp",
+        "include/WeightStreamOrder.h"
+      ],
+      "recommended_next_action": "keep PASS and add cross-reference note in future bookkeeping update"
+    },
+    {
+      "milestone": "M5",
+      "latest_plan_expected_scope": "in_fifo plus IO_REGION plus SET_OUTMODE plus HALTED/DEBUG foundation",
+      "formal_evidence_pack_present": true,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": true,
+      "main_gap": "existing M05 pack does not fully close latest full-scope framing",
+      "repo_evidence_paths": [
+        "docs/milestones/M05_report.md",
+        "docs/milestones/M05_artifacts/diff.patch",
+        "docs/milestones/M05_artifacts/build.log",
+        "docs/milestones/M05_artifacts/run_tb.log",
+        "docs/milestones/M05_artifacts/verdict.txt",
+        "docs/milestones/M05_artifacts/file_manifest.txt",
+        "tb/tb_top_m5.cpp",
+        "tb/tb_top_m6.cpp"
+      ],
+      "recommended_next_action": "refresh M05 closure evidence with explicit full-scope checklist"
+    },
+    {
+      "milestone": "M6",
+      "latest_plan_expected_scope": "INFER stub end-to-end flow and outmode flow bring-up",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M06 report and artifacts",
+      "repo_evidence_paths": [
+        "src/Top.h",
+        "tb/tb_top_m6.cpp"
+      ],
+      "recommended_next_action": "create M06 report/artifacts from current INFER flow behavior"
+    },
+    {
+      "milestone": "M7",
+      "latest_plan_expected_scope": "PreprocEmbedSPE checkpointable write into X_WORK",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M07 formal evidence pack",
+      "repo_evidence_paths": [
+        "src/blocks/PreprocEmbedSPE.h",
+        "include/PreprocDescBringup.h",
+        "tb/tb_preproc_m7.cpp"
+      ],
+      "recommended_next_action": "create M07 report/artifacts and document X_WORK mapping explicitly"
+    },
+    {
+      "milestone": "M8",
+      "latest_plan_expected_scope": "synth-safe LayerNorm block closure",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M08 report and artifacts",
+      "repo_evidence_paths": [
+        "src/blocks/LayerNormBlock.h",
+        "tb/tb_layernorm_m8.cpp"
+      ],
+      "recommended_next_action": "create M08 checkpoint evidence pack"
+    },
+    {
+      "milestone": "M9",
+      "latest_plan_expected_scope": "attention bring-up with Q/K/V and cache/lifetime checks",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M09 report and artifacts",
+      "repo_evidence_paths": [
+        "src/blocks/AttnLayer0.h",
+        "tb/tb_attn_m9a_qkv.cpp",
+        "tb/tb_attn_m9b_scores.cpp",
+        "tb/tb_attn_m9c_out.cpp",
+        "tb/tb_top_m9.cpp"
+      ],
+      "recommended_next_action": "create M09 checkpoint-driven closure evidence"
+    },
+    {
+      "milestone": "M10",
+      "latest_plan_expected_scope": "SoftmaxApprox integration and attention completion",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M10 report/artifacts and explicit latest-direction closure statement",
+      "repo_evidence_paths": [
+        "include/SoftmaxApprox.h",
+        "src/blocks/AttnLayer0.h",
+        "tb/tb_softmax_m15a.cpp"
+      ],
+      "recommended_next_action": "create M10 closure pack and explicitly state softmax direction alignment/deferments"
+    },
+    {
+      "milestone": "M11",
+      "latest_plan_expected_scope": "FFN plus residual plus reusable TransformerLayer",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "missing M11 report/artifacts",
+      "repo_evidence_paths": [
+        "src/blocks/FFNLayer0.h",
+        "src/blocks/TransformerLayer.h",
+        "tb/tb_ffn_m10a_w1.cpp",
+        "tb/tb_ffn_m10b_relu.cpp",
+        "tb/tb_ffn_m10c_w2.cpp",
+        "tb/tb_ffn_m10d_norm.cpp",
+        "tb/tb_layerloop_m11.cpp"
+      ],
+      "recommended_next_action": "create M11 checkpoint-based closure evidence"
+    },
+    {
+      "milestone": "M12",
+      "latest_plan_expected_scope": "multi-layer scheduling with mid/end LN under single-X_WORK overwrite rules",
+      "formal_evidence_pack_present": false,
+      "status": "spec drift / needs re-baseline",
+      "hypothesis_overridden": false,
+      "main_gap": "current top-level flow is out-of-place page-alternating and not single-X_WORK token-safe overwrite",
+      "repo_evidence_paths": [
+        "src/Top.h",
+        "include/SramMap.h",
+        "tb/tb_mid_end_ln_m12.cpp",
+        "docs/changelog/AECCT_v12_single_X_WORK_change_summary_zhTW.txt"
+      ],
+      "recommended_next_action": "re-baseline schedule/storage to single-X_WORK, then close with M12 evidence pack"
+    },
+    {
+      "milestone": "M13",
+      "latest_plan_expected_scope": "official FinalHead Pass A/B with FINAL_SCALAR_BUF and no next-page staging",
+      "formal_evidence_pack_present": false,
+      "status": "not done",
+      "hypothesis_overridden": true,
+      "main_gap": "current FinalHead implementation does not match formal Pass A/B and FINAL_SCALAR_BUF semantics",
+      "repo_evidence_paths": [
+        "src/blocks/FinalHead.h",
+        "src/Top.h",
+        "tb/tb_top_end2end_m13.cpp",
+        "docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt"
+      ],
+      "recommended_next_action": "implement formal M13 behavior and generate M13 report/artifacts"
+    },
+    {
+      "milestone": "M14",
+      "latest_plan_expected_scope": "top end-to-end regression with outmode coverage and overlap basic verification",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "no M14 formal closure artifacts despite existing regression TB",
+      "repo_evidence_paths": [
+        "tb/tb_regress_m14.cpp"
+      ],
+      "recommended_next_action": "create M14 evidence pack with explicit coverage statement for outmode and overlap cases"
+    },
+    {
+      "milestone": "M15",
+      "latest_plan_expected_scope": "native AECCT quant freeze documentation and SSOT convergence",
+      "formal_evidence_pack_present": false,
+      "status": "code exists but evidence missing",
+      "hypothesis_overridden": false,
+      "main_gap": "no M15 freeze report/artifacts; current evidence is fragmented",
+      "repo_evidence_paths": [
+        "include/QuantDesc.h",
+        "include/VerifyTolerance.h",
+        "include/WeightStreamOrder.h",
+        "tb/tb_softmax_m15a.cpp"
+      ],
+      "recommended_next_action": "produce M15 freeze closure pack with explicit boundary table and validation evidence"
+    },
+    {
+      "milestone": "M16",
+      "latest_plan_expected_scope": "offline generator integration for SramMap/WeightStreamOrder/native quant metadata",
+      "formal_evidence_pack_present": true,
+      "status": "spec drift / needs re-baseline",
+      "hypothesis_overridden": false,
+      "main_gap": "existing M16 package proves compliance convergence, not latest-plan generator integration closure",
+      "repo_evidence_paths": [
+        "docs/milestones/M16_report.md",
+        "docs/milestones/M16_artifacts/diff.patch",
+        "docs/milestones/M16_artifacts/build.log",
+        "docs/milestones/M16_artifacts/run_tb.log",
+        "docs/milestones/M16_artifacts/verdict.txt",
+        "docs/milestones/M16_artifacts/file_manifest.txt",
+        "tools/gen_headers.py",
+        "tools/run_m16_pipeline.ps1"
+      ],
+      "recommended_next_action": "remap current M16 as compliance pre-M17 item and close latest-plan M16 with generator-focused evidence"
+    }
+  ],
+  "status_buckets": {
+    "PASS with evidence": [
+      "M3",
+      "M4"
+    ],
+    "code exists but evidence missing": [
+      "M0",
+      "M1",
+      "M5",
+      "M6",
+      "M7",
+      "M8",
+      "M9",
+      "M10",
+      "M11",
+      "M14",
+      "M15"
+    ],
+    "spec drift / needs re-baseline": [
+      "M2",
+      "M12",
+      "M16"
+    ],
+    "not done": [
+      "M13"
+    ]
+  },
+  "strongest_pass_candidates": [
+    "M3",
+    "M4"
+  ],
+  "most_urgent_closeout": [
+    "M2",
+    "M12",
+    "M13",
+    "M14",
+    "M16"
+  ],
+  "spec_drift_milestones": [
+    "M2",
+    "M12",
+    "M16"
+  ],
+  "next_concrete_action": "Execute a focused re-baseline closure for M2 and M12 under single-X_WORK semantics, then close M13 and publish missing milestone evidence packs for implemented milestones."
+}
