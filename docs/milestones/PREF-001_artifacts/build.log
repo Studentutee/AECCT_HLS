@@ -1,0 +1,40 @@
+Command: msbuild AECCT_HLS.vcxproj /p:Configuration=Debug /p:Platform=x64 /m
+Timestamp: 2026-03-10 16:25:58 +08:00
+.NET Framework 的 MSBuild 版本 18.3.0-release-26070-10+3972042b7
+已經開始建置於 2026/3/10 下午 04:25:59。
+
+     1>節點 1 (預設目標) 上的專案 "C:\Users\Peter\source\repos\AECCT_HLS\AECCT_HLS.vcxproj"。
+     1>PrepareForBuild:
+         結構化輸出已啟用。編譯器診斷的格式化將反映錯誤階層。如需詳細資料，請參閱 https://aka.ms/cpp/structured-output。
+       InitializeBuildStatus:
+         由於指定了 "AlwaysCreate"，因此正在建立 "C:\Users\Peter\source\repos\AECCT_HLS\build\obj\x64\Debug\AECCT_HLS.tlog\unsuccessfulbuild"。
+         正在變更時間戳記 "C:\Users\Peter\source\repos\AECCT_HLS\build\obj\x64\Debug\AECCT_HLS.tlog\unsuccessfulbuild"。
+       ComputeStdModulesCompileInputs:
+         正在讀取為程式庫 'microsoft/STL' 提供資料的 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\modules\modules.json' 的資訊清單檔案。
+         正在從程式庫 'microsoft/STL' 新增模組來源 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\modules\std.ixx'，以與此專案一起建置。
+         正在從程式庫 'microsoft/STL' 新增模組來源 'C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\modules\std.compat.ixx'，以與此專案一起建置。
+       ClCompile:
+         所有輸出都是最新的。
+       Link:
+         所有輸出都是最新的。
+         AECCT_HLS.vcxproj -> C:\Users\Peter\source\repos\AECCT_HLS\build\bin\x64\Debug\AECCT_HLS.exe
+       PostBuildEvent:
+         if exist "C:\Users\Peter\source\repos\AECCT_HLS\build\bin\x64\Debug\AECCT_HLS.exe" copy /Y "C:\Users\Peter\source\repos\AECCT_HLS\build\bin\x64\Debug\AECCT_HLS.exe" "C:\Users\Peter\source\repos\AECCT_HLS\build\bin\x64\Debug\ref_sim.exe" >nul
+         :VCEnd
+       FinalizeBuildStatus:
+         正在刪除檔案 "C:\Users\Peter\source\repos\AECCT_HLS\build\obj\x64\Debug\AECCT_HLS.tlog\unsuccessfulbuild"。
+         正在變更時間戳記 "C:\Users\Peter\source\repos\AECCT_HLS\build\obj\x64\Debug\AECCT_HLS.tlog\AECCT_HLS.lastbuildstate"。
+     1>專案 "C:\Users\Peter\source\repos\AECCT_HLS\AECCT_HLS.vcxproj" (預設目標) 建置完成。
+
+建置成功。
+    0 個警告
+    0 個錯誤
+
+經過時間 00:00:00.55
+
+ExitCode: 0
+
+Command: python tools/check_ref_approx_rules.py
+PASS: ref approx rules
+
+ExitCode: 0

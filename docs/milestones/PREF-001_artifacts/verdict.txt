@@ -1,0 +1,20 @@
+PATCH_ID: PREF-001
+DATE: 2026-03-10
+SCOPE: algorithm-ref alignment (synth-first, minimal scope)
+
+RESULT: PASS (patch-local)
+
+PATCH_LOCAL_CHECKS:
+- msbuild AECCT_HLS.vcxproj /p:Configuration=Debug /p:Platform=x64 /m : PASS
+- python tools/check_ref_approx_rules.py : PASS
+- .\build\bin\x64\Debug\ref_sim.exe 0 : PASS
+
+ALIGNMENT_STATUS:
+- Synth softmax: moved to online single-pass state update in both attention regions.
+- FinalHead semantics: preserved (`final_scalar_buf` as logical `s_t`; no PAGE_NEXT normal staging).
+- Quant boundary: symmetric INT8 saturation applied only at native linear activation quant boundaries.
+- RefModel softmax: partially aligned; online accumulation adopted, but trace-only probability materialization loop retained intentionally.
+
+LIMITATION_NOTE:
+- This verdict is patch-local only, not a repo-wide full-gates pass.
+- Repo-wide `run_gates` currently has pre-existing hygiene failures outside PREF-001 scope.

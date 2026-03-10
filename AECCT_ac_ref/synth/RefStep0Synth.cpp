@@ -27,6 +27,8 @@ static const fp32_ref_t kLnEps = fp32_ref_t(1.0e-5f);
 static const fp32_ref_t kInvDModel = fp32_ref_t(1.0f / static_cast<float>(kDModel));
 static const fp32_ref_t kInvSqrtDHead = (kDHead == 1) ? fp32_ref_t(1.0f) : (kDHead == 2) ? fp32_ref_t(0.70710678f) : (kDHead == 4) ? fp32_ref_t(0.5f) : (kDHead == 8) ? fp32_ref_t(0.35355339f) : (kDHead == 16) ? fp32_ref_t(0.25f) : fp32_ref_t(1.0f);
 static const fp32_ref_t kNegLarge = fp32_ref_t(-1.0e30f);
+static const fp32_ref_t kActQMin = fp32_ref_t(-127.0f);
+static const fp32_ref_t kActQMax = fp32_ref_t(127.0f);
 
 static const fp32_ref_t kInvScaleL0Q = fp32_ref_t(0.0071290909f);
 static const fp32_ref_t kInvScaleL0K = fp32_ref_t(0.0077177854f);
@@ -86,6 +88,13 @@ static inline fp32_ref_t sign_fp32(fp32_ref_t x) {
 
 static inline fp32_ref_t fp32_round(fp32_ref_t x) {
   return x.round();
+}
+
+static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
+  fp32_ref_t q = fp32_round(x * s_x);
+  if (q > kActQMax) q = kActQMax;
+  if (q < kActQMin) q = kActQMin;
+  return q;
 }
 
 static inline fp32_ref_t fp32_relu(fp32_ref_t x) {
@@ -271,7 +280,7 @@ static inline void quant_linear_vec_tiled(
 ) {
   fp32_ref_t qx[IN_DIM];
   for (int i = 0; i < IN_DIM; ++i) {
-    qx[i] = fp32_round(x[i] * s_x);
+    qx[i] = quantize_int8_symmetric(x[i], s_x);
   }
 
   fp32_ref_t wbuf_ping[kOutTile][IN_DIM];
@@ -362,6 +371,42 @@ static inline fp32_ref_t dot_head(
     dot += q_vec[base + dh] * k_vec[base + dh];
   }
   return dot;
+}
+
+// Online single-pass softmax update for one head state.
+static inline void online_softmax_update(
+  bool &is_init,
+  fp32_ref_t score,
+  const fp32_ref_t v_head[kDHead],
+  fp32_ref_t &max_score,
+  fp32_ref_t &sumexp,
+  fp32_ref_t acc_vec[kDHead]
+) {
+  if (!is_init) {
+    max_score = score;
+    sumexp = fp32_ref_t(1.0f);
+    for (int dh = 0; dh < kDHead; ++dh) {
+      acc_vec[dh] = v_head[dh];
+    }
+    is_init = true;
+    return;
+  }
+
+  if (score > max_score) {
+    const fp32_ref_t rescale = ref_softmax_exp_lut(max_score - score);
+    sumexp = (sumexp * rescale) + fp32_ref_t(1.0f);
+    for (int dh = 0; dh < kDHead; ++dh) {
+      acc_vec[dh] = (acc_vec[dh] * rescale) + v_head[dh];
+    }
+    max_score = score;
+    return;
+  }
+
+  const fp32_ref_t w = ref_softmax_exp_lut(score - max_score);
+  sumexp += w;
+  for (int dh = 0; dh < kDHead; ++dh) {
+    acc_vec[dh] += w * v_head[dh];
+  }
 }
 
 static inline void layernorm_token(
@@ -551,8 +596,16 @@ static void run_layer_writeback(
 
     for (int h = 0; h < kHeads; ++h) {
       const bool (*mask)[kTokens] = (h < (kHeads / 2)) ? one_ring : second_ring;
+      const int base = h * kDHead;
       bool has_valid = false;
-      fp32_ref_t max_score = kNegLarge;
+      bool online_init = false;
+      fp32_ref_t online_max = kNegLarge;
+      fp32_ref_t online_sumexp = fp32_ref_t(0.0f);
+
+      fp32_ref_t acc_vec[kDHead];
+      for (int dh = 0; dh < kDHead; ++dh) {
+        acc_vec[dh] = fp32_ref_t(0.0f);
+      }
 
       for (int k_idx = 0; k_idx < kTokens; ++k_idx) {
         if (mask[q_idx][k_idx]) {
@@ -560,42 +613,24 @@ static void run_layer_writeback(
         }
         has_valid = true;
         const fp32_ref_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
-        if (score > max_score) {
-          max_score = score;
-        }
-      }
-
-      fp32_ref_t acc_vec[kDHead];
-      for (int dh = 0; dh < kDHead; ++dh) {
-        acc_vec[dh] = fp32_ref_t(0.0f);
+        online_softmax_update(
+          online_init,
+          score,
+          &scr_v[k_idx][base],
+          online_max,
+          online_sumexp,
+          acc_vec
+        );
       }
 
       if (!has_valid) {
-        const int base = h * kDHead;
         for (int dh = 0; dh < kDHead; ++dh) {
           post_concat[base + dh] = fp32_ref_t(0.0f);
         }
         continue;
       }
 
-      fp32_ref_t sumexp = fp32_ref_t(0.0f);
-      for (int k_idx = 0; k_idx < kTokens; ++k_idx) {
-        if (mask[q_idx][k_idx]) {
-          continue;
-        }
-        const fp32_ref_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
-        const fp32_ref_t delta = ref_softmax_clamp_x(score - max_score);
-        const fp32_ref_t w = ref_softmax_exp_lut(delta);
-        sumexp += w;
-
-        const int base = h * kDHead;
-        for (int dh = 0; dh < kDHead; ++dh) {
-          acc_vec[dh] += w * scr_v[k_idx][base + dh];
-        }
-      }
-
-      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(sumexp);
-      const int base = h * kDHead;
+      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
       for (int dh = 0; dh < kDHead; ++dh) {
         post_concat[base + dh] = acc_vec[dh] * inv_sumexp;
       }
@@ -714,8 +749,16 @@ static void run_final_layer_pass_a(
 
     for (int h = 0; h < kHeads; ++h) {
       const bool (*mask)[kTokens] = (h < (kHeads / 2)) ? one_ring : second_ring;
+      const int base = h * kDHead;
       bool has_valid = false;
-      fp32_ref_t max_score = kNegLarge;
+      bool online_init = false;
+      fp32_ref_t online_max = kNegLarge;
+      fp32_ref_t online_sumexp = fp32_ref_t(0.0f);
+
+      fp32_ref_t acc_vec[kDHead];
+      for (int dh = 0; dh < kDHead; ++dh) {
+        acc_vec[dh] = fp32_ref_t(0.0f);
+      }
 
       for (int k_idx = 0; k_idx < kTokens; ++k_idx) {
         if (mask[q_idx][k_idx]) {
@@ -723,42 +766,24 @@ static void run_final_layer_pass_a(
         }
         has_valid = true;
         const fp32_ref_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
-        if (score > max_score) {
-          max_score = score;
-        }
-      }
-
-      fp32_ref_t acc_vec[kDHead];
-      for (int dh = 0; dh < kDHead; ++dh) {
-        acc_vec[dh] = fp32_ref_t(0.0f);
+        online_softmax_update(
+          online_init,
+          score,
+          &scr_v[k_idx][base],
+          online_max,
+          online_sumexp,
+          acc_vec
+        );
       }
 
       if (!has_valid) {
-        const int base = h * kDHead;
         for (int dh = 0; dh < kDHead; ++dh) {
           post_concat[base + dh] = fp32_ref_t(0.0f);
         }
         continue;
       }
 
-      fp32_ref_t sumexp = fp32_ref_t(0.0f);
-      for (int k_idx = 0; k_idx < kTokens; ++k_idx) {
-        if (mask[q_idx][k_idx]) {
-          continue;
-        }
-        const fp32_ref_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
-        const fp32_ref_t delta = ref_softmax_clamp_x(score - max_score);
-        const fp32_ref_t w = ref_softmax_exp_lut(delta);
-        sumexp += w;
-
-        const int base = h * kDHead;
-        for (int dh = 0; dh < kDHead; ++dh) {
-          acc_vec[dh] += w * scr_v[k_idx][base + dh];
-        }
-      }
-
-      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(sumexp);
-      const int base = h * kDHead;
+      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
       for (int dh = 0; dh < kDHead; ++dh) {
         post_concat[base + dh] = acc_vec[dh] * inv_sumexp;
       }
@@ -805,6 +830,7 @@ static void run_final_layer_pass_a(
     }
     layernorm_token(ln1_in, cfg.ln1_w, cfg.ln1_b, ln1_out);
 
+    // Logical name: endLN_out for FinalHead input.
     layernorm_token(ln1_out, w_decoder_norm_weight, w_decoder_norm_bias, token_norm);
     dense_vec_tiled<1, kDModel>(
       token_norm,
@@ -814,6 +840,7 @@ static void run_final_layer_pass_a(
     );
 
     if (q_idx < ModelShapes::SCR_FINAL_SCALAR_WORDS) {
+      // Logical value s_t is staged in FINAL_SCALAR_BUF semantics.
       final_scalar_buf[q_idx] = token_logit[0];
     }
   }

@@ -30,6 +30,8 @@ static constexpr int HEADS = 8;
 static constexpr int D_HEAD = 4;
 static constexpr int FF_DIM = 128;
 static constexpr float LN_EPS_F32 = 1.0e-5f;
+static const fp32_ref_t kActQMin = fp32_ref_t(-127.0f);
+static const fp32_ref_t kActQMax = fp32_ref_t(127.0f);
 
 struct DumpContext {
   bool enabled;
@@ -48,6 +50,13 @@ static inline fp32_ref_t sign_fp32(fp32_ref_t x) {
 
 static inline fp32_ref_t fp32_round(fp32_ref_t x) {
   return x.round();
+}
+
+static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
+  fp32_ref_t q = fp32_round(x * s_x);
+  if (q > kActQMax) q = kActQMax;
+  if (q < kActQMin) q = kActQMin;
+  return q;
 }
 
 static bool write_npy_f32(const std::string& path,
@@ -203,7 +212,7 @@ static void quant_linear_75x32_to32(const fp32_ref_t x[TOKENS_T][D_MODEL],
   for (int t = 0; t < TOKENS_T; ++t) {
     fp32_ref_t qx[D_MODEL];
     for (int i = 0; i < D_MODEL; ++i) {
-      qx[i] = fp32_round(x[t][i] * fp32_ref_t(s_x));
+      qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
     }
 
     for (int o = 0; o < D_MODEL; ++o) {
@@ -227,7 +236,7 @@ static void quant_linear_75x32_to128(const fp32_ref_t x[TOKENS_T][D_MODEL],
   for (int t = 0; t < TOKENS_T; ++t) {
     fp32_ref_t qx[D_MODEL];
     for (int i = 0; i < D_MODEL; ++i) {
-      qx[i] = fp32_round(x[t][i] * fp32_ref_t(s_x));
+      qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
     }
 
     for (int o = 0; o < FF_DIM; ++o) {
@@ -251,7 +260,7 @@ static void quant_linear_75x128_to32(const fp32_ref_t x[TOKENS_T][FF_DIM],
   for (int t = 0; t < TOKENS_T; ++t) {
     fp32_ref_t qx[FF_DIM];
     for (int i = 0; i < FF_DIM; ++i) {
-      qx[i] = fp32_round(x[t][i] * fp32_ref_t(s_x));
+      qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
     }
 
     for (int o = 0; o < D_MODEL; ++o) {
@@ -297,6 +306,41 @@ static void build_masks(bool one_ring[TOKENS_T][TOKENS_T],
 }
 
 // SOFTMAX_APPROX_BEGIN
+static inline void online_softmax_update(
+  bool &is_init,
+  fp32_ref_t score,
+  const fp32_ref_t v_head[D_HEAD],
+  fp32_ref_t &max_score,
+  fp32_ref_t &sumexp,
+  fp32_ref_t acc_vec[D_HEAD]
+) {
+  if (!is_init) {
+    max_score = score;
+    sumexp = fp32_ref_t(1.0f);
+    for (int dh = 0; dh < D_HEAD; ++dh) {
+      acc_vec[dh] = v_head[dh];
+    }
+    is_init = true;
+    return;
+  }
+
+  if (score > max_score) {
+    const fp32_ref_t rescale = ref_softmax_exp_lut(max_score - score);
+    sumexp = (sumexp * rescale) + fp32_ref_t(1.0f);
+    for (int dh = 0; dh < D_HEAD; ++dh) {
+      acc_vec[dh] = (acc_vec[dh] * rescale) + v_head[dh];
+    }
+    max_score = score;
+    return;
+  }
+
+  const fp32_ref_t w = ref_softmax_exp_lut(score - max_score);
+  sumexp += w;
+  for (int dh = 0; dh < D_HEAD; ++dh) {
+    acc_vec[dh] += w * v_head[dh];
+  }
+}
+
 static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
                             const fp32_ref_t k[TOKENS_T][D_MODEL],
                             const fp32_ref_t v[TOKENS_T][D_MODEL],
@@ -312,9 +356,16 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
   for (int h = 0; h < HEADS; ++h) {
     for (int i = 0; i < TOKENS_T; ++i) {
       const bool (*mask)[TOKENS_T] = (h < 4) ? one_ring : second_ring;
-
+      const int base = h * D_HEAD;
       bool has_valid = false;
-      fp32_ref_t max_s = neg_inf;
+      bool online_init = false;
+      fp32_ref_t online_max = neg_inf;
+      fp32_ref_t online_sumexp = fp32_ref_t(0.0f);
+      fp32_ref_t acc_vec[D_HEAD];
+      for (int dh = 0; dh < D_HEAD; ++dh) {
+        acc_vec[dh] = fp32_ref_t(0.0f);
+      }
+
       for (int j = 0; j < TOKENS_T; ++j) {
         if (mask[i][j]) {
           scores[h][i][j] = neg_inf;
@@ -324,15 +375,19 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
 
         has_valid = true;
         fp32_ref_t dot = fp32_ref_t(0.0f);
-        const int base = h * D_HEAD;
         for (int dh = 0; dh < D_HEAD; ++dh) {
           dot += q[i][base + dh] * k[j][base + dh];
         }
-        fp32_ref_t s = dot * inv_sqrt_dh;
-        scores[h][i][j] = s;
-        if (s > max_s) {
-          max_s = s;
-        }
+        const fp32_ref_t score = dot * inv_sqrt_dh;
+        scores[h][i][j] = score;
+        online_softmax_update(
+          online_init,
+          score,
+          &v[j][base],
+          online_max,
+          online_sumexp,
+          acc_vec
+        );
       }
 
       if (!has_valid) {
@@ -342,34 +397,16 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
         continue;
       }
 
-      fp32_ref_t sumexp = fp32_ref_t(0.0f);
-      fp32_ref_t acc_vec[D_HEAD];
-      for (int dh = 0; dh < D_HEAD; ++dh) {
-        acc_vec[dh] = fp32_ref_t(0.0f);
-      }
+      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
 
-      for (int j = 0; j < TOKENS_T; ++j) {
-        if (mask[i][j]) {
-          continue;
-        }
-        fp32_ref_t x = scores[h][i][j] - max_s;
-        fp32_ref_t w = ref_softmax_exp_lut(x);
-        probs[h][i][j] = w;
-        sumexp += w;
-
-        const int base = h * D_HEAD;
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          acc_vec[dh] += w * v[j][base + dh];
-        }
-      }
-
-      fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(sumexp);
+      // Trace-only probability materialization from final online state.
       for (int j = 0; j < TOKENS_T; ++j) {
         if (mask[i][j]) {
           probs[h][i][j] = fp32_ref_t(0.0f);
           continue;
         }
-        probs[h][i][j] = probs[h][i][j] * inv_sumexp;
+        const fp32_ref_t w = ref_softmax_exp_lut(scores[h][i][j] - online_max);
+        probs[h][i][j] = w * inv_sumexp;
       }
 
       for (int dh = 0; dh < D_HEAD; ++dh) {
@@ -721,12 +758,14 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ffn2_out", layer1_ffn2);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ffn_ln_out", layer1_ffn_ln_out);
 
+    // Logical name: endLN_out, kept in end_norm for trace compatibility.
     static fp32_ref_t end_norm[TOKENS_T][D_MODEL];
     apply_layernorm_tokens(layer1_ffn_ln_out,
                            w_decoder_norm_weight,
                            w_decoder_norm_bias,
                            end_norm);
 
+    // Logical name: s_t (token-wise FinalEmbedding scalar), trace tensor name kept stable.
     static fp32_ref_t final_node_logits[TOKENS_T][1];
     static fp32_ref_t out_fc_in[1][TOKENS_T];
     for (int t = 0; t < TOKENS_T; ++t) {

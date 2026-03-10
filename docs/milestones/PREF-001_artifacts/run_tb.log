@@ -1,0 +1,91 @@
+Command: .\\build\\bin\\x64\\Debug\\ref_sim.exe 0
+Timestamp: 2026-03-10 16:26:08 +08:00
+=== Step0 logits metrics vs golden ===
+MSE     : 7.073902e-01
+RMSE    : 8.410649e-01
+MAE     : 5.954486e-01
+MaxAbs  : 2.549500e+00
+x_pred match: 100.00% (63 / 63)
+golden_logits[0:8]:
+  [0] 24.814947128
+  [1] 25.889328003
+  [2] 20.760557175
+  [3] 24.449008942
+  [4] 22.794401169
+  [5] 46.781997681
+  [6] 22.262340546
+  [7] 23.891241074
+ref_logits   [0:8]:
+  [0] 24.290998459
+  [1] 26.423374176
+  [2] 20.779596329
+  [3] 24.765678406
+  [4] 22.889890671
+  [5] 46.502544403
+  [6] 22.051868439
+  [7] 24.174230576
+=== OUTMODE=0 RunReport ===
+final_scalar_base_word         : 9600
+final_scalar_words             : 80
+scratch_base_word              : 4800
+scratch_words                  : 4880
+final_scalar_in_scratch        : 1
+final_scalar_range_ok          : 1
+final_scalar_capacity_ok       : 1
+addr_overlap_scr_k             : 0
+addr_overlap_scr_v             : 0
+live_conflict_scr_k            : 0
+live_conflict_scr_v            : 0
+final_scalar_overlap_conflict  : 0
+final_layer_no_writeback       : 1
+final_layer_writeback_words    : 0
+final_head_used_page_next      : 0
+pass_b_executed                : 1
+output_words                   : 2
+has_error                      : 0
+error_code                     : 0x00000000
+error_msg                      : NONE
+=== OUTMODE=1 RunReport ===
+final_scalar_base_word         : 9600
+final_scalar_words             : 80
+scratch_base_word              : 4800
+scratch_words                  : 4880
+final_scalar_in_scratch        : 1
+final_scalar_range_ok          : 1
+final_scalar_capacity_ok       : 1
+addr_overlap_scr_k             : 0
+addr_overlap_scr_v             : 0
+live_conflict_scr_k            : 0
+live_conflict_scr_v            : 0
+final_scalar_overlap_conflict  : 0
+final_layer_no_writeback       : 1
+final_layer_writeback_words    : 0
+final_head_used_page_next      : 0
+pass_b_executed                : 1
+output_words                   : 63
+has_error                      : 0
+error_code                     : 0x00000000
+error_msg                      : NONE
+=== OUTMODE=2 RunReport ===
+final_scalar_base_word         : 9600
+final_scalar_words             : 80
+scratch_base_word              : 4800
+scratch_words                  : 4880
+final_scalar_in_scratch        : 1
+final_scalar_range_ok          : 1
+final_scalar_capacity_ok       : 1
+addr_overlap_scr_k             : 0
+addr_overlap_scr_v             : 0
+live_conflict_scr_k            : 0
+live_conflict_scr_v            : 0
+final_scalar_overlap_conflict  : 0
+final_layer_no_writeback       : 1
+final_layer_writeback_words    : 0
+final_head_used_page_next      : 0
+pass_b_executed                : 0
+output_words                   : 0
+has_error                      : 0
+error_code                     : 0x00000000
+error_msg                      : NONE
+
+ExitCode: 0
