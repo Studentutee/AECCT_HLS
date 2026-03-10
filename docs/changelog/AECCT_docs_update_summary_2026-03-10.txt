@@ -1,0 +1,16 @@
+AECCT 文件更新摘要（2026-03-10）
+
+本次依照最新決策更新：
+1. v1 只保留 AECCT 原生 linear quant。
+2. quantized 範圍：Wq/Wk/Wv/Wo/Wff1/Wff2 與其 activation 邊界。
+3. 其他路徑先維持 FP32；E4M3 僅保留為未來方向。
+4. s_x 改為固定值，不做動態更新；activation 量化必須 sat，不可 overflow。
+5. 權重端保留 s_w 語意，但主流程只存 inv_s_w。
+6. grouping / zone / SET_QCFG / QuantDesc 僅保留 reserved 身分，不進主流程。
+7. 補入 check_parity = local RAM backing store + reg tile 的收斂描述。
+
+更新檔案：
+- AECCT_HLS_Spec_v12.1_zhTW_revB.txt
+- AECCT_HLS_Architecture_Guide_v12.1_zhTW_revB.txt
+- AECCT_v12_M0-M24_plan_zhTW_revB.txt
+- 咒語v12.1_native_linear_quant_zhTW.txt

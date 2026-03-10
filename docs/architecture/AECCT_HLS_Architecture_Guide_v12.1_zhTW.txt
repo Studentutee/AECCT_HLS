@@ -1,6 +1,6 @@
 AECCT_HLS_Architecture_Guide（繁體中文版）
 Version: 2026-03-09
-Revision: v12.1 guideB（邏輯資料流 + 實體落點／覆蓋方式整編版；補入 native linear quant v1）
+Revision: v12.1 guideC（邏輯資料流 + 實體落點／覆蓋方式整編版；補入 native linear quant v1 + 單一 X_WORK）
 Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_physical_storage_and_overwrite_zhTW.txt + native linear quant v1 決策
 
 ====================================================================
@@ -380,8 +380,9 @@ B. X_WORK（主 token × d 工作區）
   - endLN_out
 - 規則：
   - 可 overlay / alias，但僅能在 liveness 允許時覆蓋
-  - 建議保留「邏輯 active / next page」語意
-  - 實體上可在同一塊 token × d 區域內做 phase-safe reuse
+  - 本版預設為單一實體 X_WORK；不要求實體 X_PAGE0 / X_PAGE1
+  - 「active / next」僅保留為 phase / producer-consumer 語意，不代表必須有雙頁 base
+  - 實體上以同一塊 token × d 區域做 phase-safe reuse 與 token-safe overwrite
 
 C. KV_REGION
 - 性質：attention 專用 scratch。
@@ -496,6 +497,7 @@ F. DATA_OUT 路徑
 - 覆蓋規則：
   - Preproc 完成後，X_WORK 內容作為第一層輸入
   - 在 Layer 0 的 K/V build 尚未完成前，不應提早覆蓋任何仍可能被後續 token 使用的 X_WORK 槽位
+  - 本版不要求把 preproc_x 再搬到第二頁；正式預設就是直接留在單一 X_WORK 等待後續 phase 消費
 
 3. Layer ℓ / Phase A：K/V build
 - 邏輯值：K[token][:]、V[token][:]
@@ -506,6 +508,7 @@ F. DATA_OUT 路徑
   - 寫 KV_REGION
 - 覆蓋規則：
   - 在整張 K/V 尚未 materialize 完成前，不應把仍未被讀作 K/V source 的 X_WORK 舊資料覆蓋掉
+  - 對採用 S1 的 schedule，可把「第一個 residual 可開始成立」視為 KV_MAT 已完成的結果；此後才進入 token-safe overwrite 區間
   - 同一 layer 的 K/V 在全部 query token 完成前不得覆蓋
 
 4. Layer ℓ / Phase B：attention token-wise
@@ -534,6 +537,7 @@ F. DATA_OUT 路徑
     1) K/V build 所需讀取
     2) 該 token 的 Q / residual source 所需讀取
     才允許覆蓋成新的 attention_out[token][:]
+  - 在你目前採用的「K/V 全矩陣先 materialize」schedule 下，KV_MAT 完成後即可逐 token 進行覆蓋，不必再保留第二張 X page
   - 不建議保存整張 8 × token × d 的 per-head feature map
   - 單一 token 的 HEAD_CTX_BUF 若僅服務當前 head 的 Wo partial accumulation，則該 head 完成後即可立即釋放其對應片段
 

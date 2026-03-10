@@ -1,4 +1,4 @@
-AECCT_HLS v12｜M0～M24 搭建規劃（取代 v11.7 版）
+AECCT_HLS v12｜M0～M24 搭建規劃（取代 v11.7 版；單一 X_WORK 修訂）
 
 ==================================================
 全域規則（所有里程碑共用）
@@ -85,7 +85,9 @@ M2 — 單一主 SRAM logical regions + READ_MEM
 交付
 - 單一主 SRAM 抽象
 - logical regions：
-  - X_PAGE0 / X_PAGE1 / SCRATCH / W_REGION / IO_REGION
+  - X_WORK / SCRATCH / W_REGION / IO_REGION
+- X_WORK 為單一 token × d 主工作區
+- active / next 僅保留為 phase 語意，不要求實體雙頁
 - READ_MEM(addr_word, len_words)
 - range check / 跨區檢查 / 非對齊 slice 回吐
 
@@ -181,7 +183,7 @@ M7 — PreprocEmbedSPE
 交付
 - PreprocEmbedSPE.h
 - embed + SPE + 必要 LPE slice
-- 寫入 X_PAGE(active)
+- 寫入 X_WORK
 
 TB
 - block unit TB
@@ -263,14 +265,14 @@ M12 — 多層排程 + mid LN / end LN
 交付
 - layer loop
 - mid LN、end LN
-- X_PAGE ping-pong / SCRATCH liveness 完整規則
+- X_WORK token-safe overwrite / SCRATCH liveness 完整規則
 
 TB
 - MID_LN_OUT / END_LN_OUT 比對
 - 多層自洽回歸
 
 DoD
-- 多層與 page swap 規則正確
+- 多層與 in-place overwrite 規則正確
 
 ==================================================
 M13 — FinalHead（v11.12/v12 正式版）
