@@ -21,7 +21,7 @@ static const int kFfnDim = ModelShapes::D_FFN;
 static const int kOutTile = 8;
 static const int kClassTile = 16;
 static const int kFifoDepth = 2;
-static const int kXRegionWords = ModelShapes::PAGE1_BASE + ModelShapes::PAGE_WORDS;
+static const int kXRegionWords = ModelShapes::X_WORK_BASE + ModelShapes::X_WORK_WORDS;
 
 static const fp32_ref_t kLnEps = fp32_ref_t(1.0e-5f);
 static const fp32_ref_t kInvDModel = fp32_ref_t(1.0f / static_cast<float>(kDModel));
@@ -535,18 +535,17 @@ static inline bool get_layer_config(int layer_idx, LayerConfig &cfg) {
 static void run_layer_writeback(
   const LayerConfig &cfg,
   fp32_ref_t x_region[kXRegionWords],
-  int x_in_base,
+  int x_work_base,
   const bool one_ring[kTokens][kTokens],
   const bool second_ring[kTokens][kTokens],
   fp32_ref_t scr_k[kTokens][kDModel],
   fp32_ref_t scr_v[kTokens][kDModel],
-  int x_out_base,
   bool &scr_k_live,
   bool &scr_v_live
 ) {
   for (int n = 0; n < kTokens; ++n) {
     fp32_ref_t x_row[kDModel];
-    load_x_token(x_region, x_in_base, n, x_row);
+    load_x_token(x_region, x_work_base, n, x_row);
 
     quant_linear_vec_tiled<kDModel, kDModel>(
       x_row,
@@ -583,7 +582,7 @@ static void run_layer_writeback(
     fp32_ref_t ln1_in[kDModel];
     fp32_ref_t ln1_out[kDModel];
 
-    load_x_token(x_region, x_in_base, q_idx, x_q);
+    load_x_token(x_region, x_work_base, q_idx, x_q);
 
     quant_linear_vec_tiled<kDModel, kDModel>(
       x_q,
@@ -676,7 +675,7 @@ static void run_layer_writeback(
       ln1_in[d] = ffn2_out[d] + ln0_out[d];
     }
     layernorm_token(ln1_in, cfg.ln1_w, cfg.ln1_b, ln1_out);
-    store_x_token(x_region, x_out_base, q_idx, ln1_out);
+    store_x_token(x_region, x_work_base, q_idx, ln1_out);
   }
 
   scr_k_live = false;
@@ -686,7 +685,7 @@ static void run_layer_writeback(
 static void run_final_layer_pass_a(
   const LayerConfig &cfg,
   fp32_ref_t x_region[kXRegionWords],
-  int x_in_base,
+  int x_work_base,
   const bool one_ring[kTokens][kTokens],
   const bool second_ring[kTokens][kTokens],
   fp32_ref_t scr_k[kTokens][kDModel],
@@ -697,7 +696,7 @@ static void run_final_layer_pass_a(
 ) {
   for (int n = 0; n < kTokens; ++n) {
     fp32_ref_t x_row[kDModel];
-    load_x_token(x_region, x_in_base, n, x_row);
+    load_x_token(x_region, x_work_base, n, x_row);
 
     quant_linear_vec_tiled<kDModel, kDModel>(
       x_row,
@@ -736,7 +735,7 @@ static void run_final_layer_pass_a(
     fp32_ref_t token_norm[kDModel];
     fp32_ref_t token_logit[1];
 
-    load_x_token(x_region, x_in_base, q_idx, x_q);
+    load_x_token(x_region, x_work_base, q_idx, x_q);
 
     quant_linear_vec_tiled<kDModel, kDModel>(
       x_q,
@@ -832,6 +831,7 @@ static void run_final_layer_pass_a(
 
     // Logical name: endLN_out for FinalHead input.
     layernorm_token(ln1_out, w_decoder_norm_weight, w_decoder_norm_bias, token_norm);
+    store_x_token(x_region, x_work_base, q_idx, token_norm);
     dense_vec_tiled<1, kDModel>(
       token_norm,
       w_oned_final_embed_0_weight,
@@ -1000,8 +1000,7 @@ void ref_step0_synth(
     final_scalar_buf[i] = fp32_ref_t(0.0f);
   }
 
-  int active_base = ModelShapes::PAGE0_BASE;
-  int next_base = ModelShapes::PAGE1_BASE;
+  const int x_work_base = ModelShapes::X_WORK_BASE;
 
   fp32_ref_t node_feature[kTokens];
   for (int i = 0; i < kVars; ++i) {
@@ -1028,7 +1027,7 @@ void ref_step0_synth(
     for (int k = 0; k < lpe_token_dim; ++k) {
       x_row[src_embed_dim + k] = fp32_ref_t(static_cast<float>(w_lpe_token[t * lpe_token_dim + k]));
     }
-    store_x_token(x_region, active_base, t, x_row);
+    store_x_token(x_region, x_work_base, t, x_row);
   }
 
   if (ModelShapes::N_LAYERS == 1) {
@@ -1039,7 +1038,7 @@ void ref_step0_synth(
       run_final_layer_pass_a(
         final_cfg,
         x_region,
-        active_base,
+        x_work_base,
         one_ring,
         second_ring,
         scr_k,
@@ -1059,36 +1058,27 @@ void ref_step0_synth(
       run_layer_writeback(
         layer0_cfg,
         x_region,
-        active_base,
+        x_work_base,
         one_ring,
         second_ring,
         scr_k,
         scr_v,
-        next_base,
         scr_k_live,
         scr_v_live
       );
 
-      int tmp = active_base;
-      active_base = next_base;
-      next_base = tmp;
-
       for (int t = 0; t < kTokens; ++t) {
         fp32_ref_t in_row[kDModel];
         fp32_ref_t out_row[kDModel];
-        load_x_token(x_region, active_base, t, in_row);
+        load_x_token(x_region, x_work_base, t, in_row);
         layernorm_token(in_row, w_decoder_norm2_weight, w_decoder_norm2_bias, out_row);
-        store_x_token(x_region, next_base, t, out_row);
+        store_x_token(x_region, x_work_base, t, out_row);
       }
-
-      tmp = active_base;
-      active_base = next_base;
-      next_base = tmp;
 
       run_final_layer_pass_a(
         layer1_cfg,
         x_region,
-        active_base,
+        x_work_base,
         one_ring,
         second_ring,
         scr_k,

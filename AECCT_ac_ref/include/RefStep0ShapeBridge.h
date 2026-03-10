@@ -15,11 +15,18 @@ static const int D_HEAD = static_cast<int>(::D_HEAD);
 static const int D_FFN = static_cast<int>(::D_FFN);
 
 static const int ALIGN_WORDS = static_cast<int>(::ALIGN_WORDS);
-static const int PAGE_WORDS = static_cast<int>(align_up_words(static_cast<uint32_t>(T_TOKENS * D_MODEL), static_cast<uint32_t>(ALIGN_WORDS)));
+// Canonical single-workspace bridge constants.
+// The formal baseline is one physical X_WORK activation region.
+static const int X_WORK_WORDS = static_cast<int>(align_up_words(static_cast<uint32_t>(T_TOKENS * D_MODEL), static_cast<uint32_t>(ALIGN_WORDS)));
+static const int X_WORK_BASE = static_cast<int>(sram_map::X_PAGE0_BASE_W);
 
-static const int X_REGION_BASE = static_cast<int>(sram_map::X_PAGE0_BASE_W);
-static const int PAGE0_BASE = static_cast<int>(sram_map::X_PAGE0_BASE_W);
-static const int PAGE1_BASE = static_cast<int>(sram_map::X_PAGE1_BASE_W);
+// Legacy compatibility aliases.
+// PAGE1_BASE is a virtual alias only and must not drive real X storage sizing
+// or swap-based scheduling semantics.
+static const int PAGE_WORDS = X_WORK_WORDS;
+static const int PAGE0_BASE = X_WORK_BASE;
+static const int PAGE1_BASE = X_WORK_BASE + X_WORK_WORDS;
+static const int X_REGION_BASE = X_WORK_BASE;
 
 static const int SCRATCH_BASE = static_cast<int>(sram_map::BASE_SCRATCH_W);
 static const int SCRATCH_WORDS = static_cast<int>(sram_map::SIZE_SCRATCH_W);

@@ -39,6 +39,7 @@ struct RefStep0RunReport {
 
   bool final_layer_no_writeback_enforced;
   uint32_t final_layer_writeback_words;
+  // Legacy compatibility field; expected false under single X_WORK scheduling.
   bool final_head_used_page_next;
 
   bool pass_b_executed;
