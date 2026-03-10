@@ -1,0 +1,1839 @@
+咒語 v12.1（在 v12 / v11.12 基礎上增補；不刪舊內容）
+Version: 2026-03-10
+
+目的：維持 v12 / v11.12 與下方所有 legacy 段落「原樣保留」，並新增/覆寫以下條款（本段優先於後續任何舊段落）。
+
+====================================================================
+【v12.1 增補條款：v1 量化策略收斂（只保留 AECCT 原生 linear quant）】
+====================================================================
+
+(0) 本版定位（先把 v1 量化策略正式釘死）
+- 本版正式凍結：v1 只實作 AECCT 原生 linear quant。
+- 本版【不導入】grouping / zone 分區量化進主流程。
+- 本版【不導入】SET_QCFG / QuantDesc 正式配置介面進主流程。
+- 本版【不啟用】v11.10 的動態 ScaleTable / ScaleEstimator 更新路徑；若有相關舊條文，對目前 v1 bring-up 一律視為停用 / reserved。
+- 本版【不改】既有 4 channels contract、既有 CFG/PARAM/INFER 基本流程、既有 FinalHead / X_PAGE / SCRATCH / overlap / single-port deterministic 1-issue 等規格。
+
+(1) v1 量化範圍
+- v1 的 quantized linear path 僅限於：Wq / Wk / Wv / Wo / Wff1 / Wff2，以及它們的 activation 邊界。
+- 上述權重維持 ternary {+1, 0, -1}。
+- 上述 activation 邊界維持 INT8。
+- 其他路徑在 v1 一律維持 FP32：
+  - embed
+  - LPE token
+  - LayerNorm
+  - softmax
+  - residual / add / concat
+  - FinalEmbedding（s_t）
+  - FinalHead / OUT_FC / logits / x_pred
+- 後續若要導入 E4M3，必須以新增條款獨立描述；本版不預設啟用。
+
+(2) 固定 s_x（不做動態更新）
+- s_x 先採固定值，不做 runtime 自動更新。
+- 舊有 QUANT_SX_* 段落保留，但在本版中其語意是「固定配置值」，不是 seed+動態覆寫流程。
+- 量化 activation 時，必須做 clamp / saturation；不得 overflow、不得 wrap-around。
+- 本版建議以對稱 signed INT8 飽和語意為準，並由 reference / TB / streamer 使用同一套規則。
+- 若 block 內部偏好使用 reciprocal，可自行快取對應 inv_s_x，但不得因此重新引入動態 scale table 行為。
+
+(3) 一定要有 s_w，但主流程只存 inv_s_w
+- 權重端必須保留 s_w 的量化/反量化語意。
+- 但本版正式規定：主流程只需保存 inv_s_w = 1 / s_w；不要求獨立保存 s_w。
+- 若 notebook / host / 轉檔腳本原始持有 s_w，應在離線整理或 streamer 準備階段先轉成 inv_s_w 再送入 unified PARAM stream。
+- WeightStreamOrder / PARAM metadata 必須能明確指出哪些欄位屬於固定 s_x，哪些欄位屬於 inv_s_w。
+
+(4) 主流程保留 reserved 身分的項目
+- grouping / zone
+- SET_QCFG 或等價配置命令
+- QuantDesc / QuantConfig 正式配置表
+- 動態 ScaleTable / ScaleEstimator 更新
+- 上述項目在本版都只保留 reserved 身分；不得要求 Codex / HLS / TB 在主流程中先實作。
+
+(5) 推薦 datapath 邊界
+- FP32 activation
+  -> 依固定 s_x 量化為 INT8（含 sat）
+  -> ternary linear
+  -> 依固定 inv_s_w 做權重端比例處理
+  -> 線性結果回到 FP32
+- LN / softmax / residual / FinalHead 繼續留在 FP32 island。
+
+(6) 優先級
+- 本 v12.1 增補條款優先於下方 v12「預留 grouping/zone 規劃」與 v11.10「動態 scale」相關條文。
+- 下方歷史條文全部保留以供回溯；但若與本版 v1 收斂決策衝突，以本條款為準。
+
+====================================================================
+【v12 增補條款：預留資料量化規劃（pre-infer configurable；grouping/zone 尚未定版）】
+====================================================================
+
+(0) 本版定位（先把計畫寫進規格，但暫不強迫實作落地）
+- 本版正式記錄：後續版本預計導入「資料量化」規劃。
+- 本版的目標是把量化方向、邊界條件、SSOT/命令預留、驗證規則先寫進咒語，讓後續版本可無痛擴充。
+- 本版【不要求】目前所有 datapath 立即改成量化實作。
+- 本版【不要求】目前就凍結最終 grouping / zone 分區方式。
+- 本版【不要求】目前就決定所有 block 的最終 exponent / scale 配置。
+- 本版【不改】既有 4 channels contract、既有 CFG/PARAM/INFER 基本流程、既有 FinalHead / X_PAGE / SCRATCH / overlap / P-1/P-2 / single-port deterministic 1-issue 等規格。
+
+(1) 規劃方向（先記錄設計意圖）
+- 本版正式記錄之量化規劃方向為：
+  - 以「整數值（mantissa/int payload） + 指數（exponent）」作為主要探索方向。
+  - exponent/scale 的設定屬於「推論前配置（pre-infer configurable）」：在進入一次 INFER 前可先配置；同一次 inference 期間不允許任意改變。
+  - 目前要解的是：先用離線數值分析（distribution / MSE / error study）找出較佳配置，再決定 grouping 與配置表；不是做 sample-by-sample 動態浮動格式。
+- 本版不把此規劃過度綁死為特定數學表示；若後續實證顯示需在 implementation 上以 fixed-point / int+exp hybrid / boundary-requant 方式落地，允許後續版本補充，但不得違反本版之「pre-infer configurable、非 inference 途中任意改變」原則。
+
+(2) 重要邊界（先釘死，避免日後語意漂移）
+- 「動態」在本規劃中的意思，一律指：
+  - 在一次 inference 開始前可由 host/config 寫入一組量化配置。
+  - 一旦該次 inference 開始，該組配置在本次 inference 期間視為固定。
+- 本規劃【不是】：
+  - 每個 sample / token / 向量 / 中間值在執行途中各自切換不同格式。
+  - 每筆資料都各自攜帶獨立 exponent 的一般浮點流程。
+  - 為了量化而破壞既有 deterministic scheduling / memory contract。
+- 若未來導入 shared exponent / grouped exponent，其語意也屬於「pre-infer loaded configuration」，不是 runtime free-running adaptation。
+
+(3) grouping / zone 分區：本版正式保留，暫不定版
+- 本版承認：量化 grouping / zone 分區方式目前【尚未定版】。
+- 也就是說，現階段不在咒語中強制寫死：
+  - zone 的最終數量
+  - zone 的最終命名
+  - zone 是否依 layer type、模塊邊界、consumer-side domain、或其他規則分組
+  - zone payload 的最終欄位數
+- 但本版要求：後續若要定版 grouping，必須以「不破壞既有外部 contract」為優先，並盡量透過新增 SSOT / 新增配置表 / 新增保留命令達成，而非回頭大改既有推論流程。
+- 本版允許後續版本從以下方向中擇一或混合定版（僅作方向記錄，不代表本版已定案）：
+  - 依模塊邊界輸入/輸出（module boundary I/O domains）
+  - 依 consumer-side numeric contract
+  - 依 layer / sublayer 類型
+  - 依 persistent buffer / major datapath lifetime
+- 在 grouping 未定版前，任何新檔案/新程式/新 TB 都不得擅自把 zone count 或 zone enum 寫成硬規格。
+
+(4) SSOT 預留：QuantDesc / QuantConfig 類檔案
+- 本版要求：後續量化規劃若正式導入，必須有獨立 SSOT 檔案（例如 `QuantDesc.h`、`QuantDesc_gen.h`、`QuantConfig.h` 或等價命名）。
+- 該 SSOT 的責任預期包括（本版僅預留，不要求立刻完整實作）：
+  - 記錄量化模式版本（version）
+  - 記錄 grouping / zone 定義（待定版後）
+  - 記錄每一組的 exponent / scale / 或等價配置
+  - 記錄合法範圍、預設值、與 host payload decode 規則
+- 在本版階段，若專案中尚未實作該 SSOT 檔案，允許先以註解 / placeholder / TODO 形式預留，但不得把量化規劃只散落在 TB 或臨時 script 中。
+
+(5) 配置命令 / payload 預留（本版先保留，不強制釘死 opcode）
+- 本版正式記錄：後續量化配置應有獨立的配置入口（例如保留命令 `SET_QCFG` 或等價機制）。
+- 但本版【不強制】立即定案：
+  - opcode 數值
+  - payload 長度
+  - payload 欄位定義
+  - 是走 data_in 串流、CFG 擴充、或其他相容方式
+- 本版僅要求：
+  - 後續若導入量化配置入口，必須維持與既有 4-channel contract 相容。
+  - 後續若導入量化配置入口，其配置時機必須在無 in-flight inference 時進行；不得在同一次 inference 中途任意重寫。
+  - 若未來定義了 `SET_QCFG`，其 busy / state 規則應與既有 CFG/PARAM 類命令保持一致精神（避免 overlap 下配置污染）。
+
+(6) 實作邊界（避免現在就把設計鎖死）
+- 本版不要求目前實作：
+  - 每個 block 內部的 local temporary / accumulator 都受全域量化配置支配。
+  - 所有 debug trace node（例如 *_act_q / *_out_q）直接成為 zone 定義依據。
+  - 所有 scale / reciprocal / normalization 中間值立即納入同一套全域配置表。
+- 本版允許後續版本採取：
+  - 全域可配置 + block local fixed handling 的混合式設計
+  - 先只配置 major persistent domains，再逐步擴充
+  - 先做分析與 TB 驗證，再逐步把 datapath 接上
+- 本版的原則是：先把 architecture hook / spec hook 留好，再決定最終 grouping 與硬體化細節。
+
+(7) 離線分析流程：正式列入規劃
+- 本版正式承認：量化配置的來源可來自離線分析流程（例如 distribution / MSE / compare traces / weight sweep / exponent sweep / quant search）。
+- 後續版本允許/鼓勵：
+  - 由 script 讀取 trace / weights / reference tensors
+  - 產生建議 exponent / scale / grouping 報表
+  - 再由生成器或轉檔流程產出 QuantDesc / 預設 payload
+- 但在本版階段：
+  - 離線分析結果僅作為「規劃與決策依據」
+  - 不得在咒語中假裝 grouping 已定版
+  - 不得把目前暫時觀察到的群組直接寫死為永遠的硬規格
+
+(8) 里程碑與凍結時機（先記錄，不強迫當下完成）
+- 本版建議把量化導入拆成至少兩個階段：
+  - 第一階段：規格預留 / SSOT 預留 / 命令預留 / 分析流程建立
+  - 第二階段：grouping 定版 / payload 定版 / TB 對應 / datapath 真正接線
+- 在 grouping 未定版前：
+  - 咒語可以明寫「有量化計畫」
+  - 但不得要求 Codex / 產碼端現在就依未知 zone enum 生成最終版硬體
+- 建議在後續某一版再做 quant spec freeze；freeze 後才允許把 group id / payload layout / decode table 寫死。
+
+(9) TB / 驗證預留
+- 本版要求：後續若導入量化配置，TB 必須能區分：
+  - 未啟用量化配置（legacy path）
+  - 啟用量化配置但 grouping/設定為測試版
+  - grouping / payload 定版後的正式量化路徑
+- 在 grouping 未定版前，本版不要求立即新增完整量化 TB matrix。
+- 但允許/鼓勵在文件中預留：
+  - quant-enabled regression
+  - 比對 reference / tolerant compare / MSE report
+  - payload legality / busy-state / freeze-time checks
+
+(10) 優先級與相容
+- 本 v12 條款的功能是「記錄與預留量化規劃」，不是推翻 v11.12 既有 FinalHead / page / scratch / streaming 規格。
+- 若後續版本導入量化實作，仍必須與 v11.12 以及下方所有 legacy 條款相容；如有衝突，需以新增條款明確覆蓋，不得默默改語意。
+- 本版新增條款若與下方舊段落衝突，以本 v12 增補條款為準；未衝突者全部沿用既有內容。
+
+====================================================================
+【以下附：v11.12 原文（完整保留；供回溯/相容）】
+====================================================================
+
+咒語 v11.12（在 v11.11 基礎上增補；不刪舊內容）
+Version: 2026-03-06
+
+目的：維持 v11.11 與下方所有 legacy 段落「原樣保留」，並新增/覆寫以下條款（本段優先於後續任何舊段落）。
+
+====================================================================
+【v11.12 增補條款：FinalHead 的 s_t 固定落在 SCRATCH；logits 直接 streaming 輸出；FinalHead 不得使用 PAGE_NEXT】
+====================================================================
+
+(0) 名詞與形狀（避免模型結構過定）
+- 所有 shape（T_TOKENS、D_MODEL、N_LAYERS、OUT_DIM、N_VARS…）皆以 CFG / ModelShapes / ModelDesc 的 SSOT 為準，禁止在規格或程式中寫死 75×32、63、或任何固定 token 數。
+- X 向量 shape 一律以 x[token][d] 表示：token 是列(Row)，d 是行(Colume)；線性化規則仍為 d/行(Colume) inner-most contiguous。
+- FinalHead 的 token-wise scalar 記為 s_t，其中 t=0..T_TOKENS-1；s_t 的長度隨模型而變，因此不得假設為固定大小 regs-only buffer。
+
+(1) 本版設計決策（覆蓋 v11.11 的 TEMP_PAGE readout 配置）
+- 保留 v11.11 的 final-layer no-writeback：
+  - 對最後一層 layer = N_LAYERS-1，仍然禁止把 x_last[token][d] 寫回 next_page。
+- 但覆蓋 v11.11 對 next_page / TEMP_PAGE 的 readout 用法：
+  - FinalHead 的 s_t 暫存不得放在 next_page / TEMP_PAGE。
+  - FinalHead 的 logits 不得配置 OUT_LOGITS_BUF 落在 next_page / TEMP_PAGE。
+  - FinalHead 在本版中完全不使用 PAGE_NEXT 作為 readout 暫存。
+- 理由：PAGE_NEXT 必須保留給下一次 input / staging / 後續 page 生命週期管理，避免與 FinalHead 的短生命週期暫存發生 liveness 衝突。
+
+(2) 新規則：s_t 必須落在 SCRATCH SRAM（可變長度；非 regs-only）
+- 新增 / 覆寫 readout 規則：
+  - s_t 必須寫入 SCRATCH 內的 FINAL_SCALAR_BUF。
+  - FINAL_SCALAR_BUF 的容量必須依 runtime cfg 決定，因為 s_t 長度與 T_TOKENS（或等價 cfg_n_nodes）相關。
+- FINAL_SCALAR_BUF 定義：
+  - 語意：存放每個 token 對應的一個 scalar s_t
+  - shape：FINAL_SCALAR_BUF[t]，t=0..T_TOKENS-1
+  - words：ST_WORDS = align_up(T_TOKENS, ALIGN_WORDS)
+- FINAL_SCALAR_BUF 屬於 SCRATCH lifetime，不屬於 X ping-pong page，不得被宣告為 X_PAGE 的子區或 page tail。
+
+(3) FinalHead 的輸出策略：logits 直接走 streaming，不落 SRAM
+- FinalHead 的最終 logits / x_pred 仍以 output channel 為正常輸出路徑。
+- 本版新增硬規則：
+  - logits 不配置 OUT_LOGITS_BUF 作為正常輸出 staging。
+  - Pass B 產生的 logits[c] 必須直接依 CFG_OUT_MODE / OUTMODE 送到 data_out。
+  - 不得要求 host 以 READ_MEM 讀回 OUT_LOGITS_BUF 才取得正常推論輸出。
+- 若 CFG_OUT_MODE = logits：依序 streaming 輸出 OUT_DIM 筆 logits。
+- 若 CFG_OUT_MODE = x_pred：以既有 logits→x_pred 的規則在 FinalHead 內產生後，依序 streaming 輸出。
+
+(4) FinalHead Two-pass Readout（本版正式定義）
+Pass A（token-wise）
+- 讀最後一層可見的 x_last[token][0:D_MODEL]（來源仍依 v11.11 的 final-layer no-writeback 規則）
+- 計算：s_t = FinalEmbedding(LN(x_last[token][0:D_MODEL]))
+- 將 s_t 寫入 SCRATCH.FINAL_SCALAR_BUF[t]
+
+Pass B（GEMV / reduction）
+- 讀 SCRATCH.FINAL_SCALAR_BUF[t]
+- 計算：logits[c] = Σ_t OUT_FC[c,t] * FINAL_SCALAR_BUF[t]，c=0..OUT_DIM-1
+- logits 不落地到 SRAM；每一筆（或每個 tile 完成後）直接往 data_out streaming 輸出
+- 若需要 class tiling（例如 TILE_C=8/16），只允許 tile accumulator 以 regs / local buffer 暫存；tile 完成後直接輸出，不得因此新增 OUT_LOGITS_BUF 的正常流程依賴。
+
+(5) PAGE_NEXT / TEMP_PAGE 的禁止事項（本版硬規則）
+- FinalHead 階段：
+  - 不得把 s_t 寫入 PAGE_NEXT
+  - 不得把 FINAL_SCALAR_BUF 配到 PAGE_NEXT
+  - 不得把 logits / OUT_LOGITS_BUF 配到 PAGE_NEXT
+  - 不得宣稱 next_page 為 FinalHead 專用 TEMP_PAGE
+- 也就是說：v11.11 中「next_page 在最後一層期間可被切成 FINAL_SCALAR_BUF / OUT_LOGITS_BUF」的條文，對本版 FinalHead 正常路徑不再適用。
+
+(6) SCRATCH 的生命週期（liveness）與 overlap 規則
+- FINAL_SCALAR_BUF 的 liveness 僅限於同一個 inference 的 FinalHead Pass A / Pass B 期間。
+- FinalHead 完成後，FINAL_SCALAR_BUF 可被覆寫，不得被視為 persistent output。
+- 若啟用 multi-context overlap：
+  - 只有在兩個 context 可能同時活到 FinalHead 且需要並存 FINAL_SCALAR_BUF 時，才要求 per-context duplication。
+  - 若實作上保證同一時間只會有一個 context 進入 FinalHead，則可維持單份 FINAL_SCALAR_BUF，但行為必須 deterministic，且不得造成另一個 context 的 scratch 資料被誤覆寫。
+
+(7) SramMap.h / 生成器 / 配置的新增要求
+- SramMap.h（或等價的離線生成輸出）必須新增 / 提供：
+  - SCR_FINAL_SCALAR_BASE
+  - SCR_FINAL_SCALAR_WORDS
+- 若支援 overlap 且 FinalHead scratch 需並存，可選擇擴充為：
+  - SCR_FINAL_SCALAR_CTX0_BASE / WORDS
+  - SCR_FINAL_SCALAR_CTX1_BASE / WORDS
+- 生成器必須以 runtime cfg / ModelShapes 規則決定 ST_WORDS，不得寫死固定長度。
+
+(8) TB / 驗證規則（必須同步更新）
+- OUTMODE_LOGITS：TB 必須以 data_out 讀取 streaming logits 做比對；不得把 READ_MEM(OUT_LOGITS_BUF) 當正常驗收路徑。
+- OUTMODE_XPRED：TB 必須以 data_out 讀取 streaming x_pred 做比對。
+- 若要 debug / inspect s_t：
+  - 允許用 READ_MEM 讀 SCRATCH.FINAL_SCALAR_BUF
+  - 但此路徑僅屬 debug / verification，不屬正常輸出 contract。
+- 若啟用動態 debug/halt（D1），仍遵守既有 HALTED + READ_MEM 規則；本版只改 FinalHead 正常 readout 落點，不改 debug contract。
+
+(9) Gate / 驗收（避免退化）
+- 必須能證明 FinalHead 正常路徑不使用 PAGE_NEXT 作為 s_t 或 logits buffer。
+- 必須能證明 FINAL_SCALAR_BUF 的落點位於 SCRATCH region。
+- 必須能證明正常 logits/x_pred 輸出由 data_out 自動輸出，而非要求 host 追加 READ_MEM。
+- 若程式 / 文件仍保留 v11.11 關於 TEMP_PAGE readout 的舊描述，於 FinalHead 正常路徑有衝突者，以本 v11.12 增補條款為準。
+
+====================================================================
+【以下附：v11.11 原文（完整保留；供回溯/相容）】
+====================================================================
+
+咒語 v11.11（在 v11.10 基礎上增補；不刪舊內容）
+Version: 2026-03-06
+
+目的：維持 v11.10 與下方所有 legacy 段落「原樣保留」，並新增/覆寫以下條款（本段優先於後續任何舊段落）。
+
+====================================================================
+【v11.11 增補條款：Page base swap + Final-layer no-writeback + Two-pass Readout（OUT_DIM 可變）】
+====================================================================
+
+(0) 名詞與形狀（避免模型結構過定）
+- 所有 shape（T_TOKENS、D_MODEL、N_LAYERS、OUT_DIM…）皆以 CFG/ModelShapes/ModelDesc 的 SSOT 為準，禁止在規格或程式中寫死 75×32 或 63。
+- X 向量 shape 一律以 x[token][d] 表示：token 是列(Row)，d 是行(Colume)；線性化規則：d/行(Colume) 為 inner-most contiguous。
+
+(1) X_PAGE 的本質：同一塊 SRAM 內的「base 指標」切換（swap=切 base，不搬資料）
+- X_PAGE0 / X_PAGE1 不是固定用途的兩頁，而是同一個 X_REGION 內的兩個 base：
+  - PAGE_WORDS = align_up(T_TOKENS * D_MODEL, ALIGN_WORDS)
+  - PAGE0_BASE = X_REGION_BASE + 0 * PAGE_WORDS
+  - PAGE1_BASE = X_REGION_BASE + 1 * PAGE_WORDS
+- runtime 只維護 (active_base, next_base)，swap_pages() 僅交換 base（或切換 index），禁止任何 page-to-page memcpy。
+
+(2) Layer 排程：前面層照常寫回 next_page；最後一層禁止寫回 X_PAGE（final-layer no-writeback）
+- Preproc 會把 token embedding（input_y*embed 與 lpe_token 拼接後的 x[token][d]）寫入 active_page。
+- 對 layer = 0 .. N_LAYERS-2：
+  - read active_page → compute → write next_page → swap_pages()
+- 對最後一層 layer = N_LAYERS-1：
+  - read active_page → compute（token-wise streaming）
+  - 【禁止】把最後一層輸出 x_last[token][d] 寫回 next_page
+  - next_page 在最後一層期間視為 TEMP_PAGE（可被切割成暫存區或 CTX_NEXT staging；見 (4)）
+
+(3) READ_MEM 的地位：debug/驗證用；正常輸出不依賴 READ_MEM
+- READ_MEM 仍可用於 debug（例如 checkpoint/對齊），但不得把 READ_MEM 當作正常輸出機制。
+- 正常輸出行為由 CFG_OUT_MODE（或等價的 OUTPUT_SEL/OUTMODE）決定：推論完成（INFER_DONE）後自動輸出，不需要任何額外「輸出指令」。
+
+(4) OUT_DIM 可變 + logits 需要累加：採用 Two-pass Readout（內部 SRAM 暫存），最終仍自動輸出
+- 動機：OUT_DIM 可變時，logits accumulator 不可過定成固定大小 reg array；因此允許/鼓勵用 SRAM 做可調長度的累加/存放。
+
+Two-pass Readout 定義：
+Pass A（token-wise，與最後一層 token 流水線同時進行）
+- 對每個 token t（列(Row)）：
+  - 計算 s_t = FinalEmbedding(LN(x_last[t][0:D_MODEL]))，s_t 為 scalar
+  - 將 s_t 寫入 FINAL_SCALAR_BUF[t]
+
+Pass B（GEMV，產生 logits）
+- logits[c] = Σ_t OUT_FC[c,t] * FINAL_SCALAR_BUF[t]，c=0..OUT_DIM-1
+- 使用 class tiling（TILE_C=8/16 建議）：
+  - acc_tile[TILE_C] 用 regs 累加
+  - tile 完成後一次性寫回 OUT_LOGITS_BUF[c_tile]
+- 完成後依 CFG_OUT_MODE 自動輸出：
+  - logits 模式：依序輸出 OUT_DIM 筆 logits
+  - x_pred 模式：以 logits 與 input_y 的 sign/既有規則產生 bit，依序輸出（輸出筆數視模型定義，通常為 N_VARS）
+
+(5) TEMP_PAGE 的切割（避免過定，保留彈性）
+- final layer 不寫回 next_page，因此 next_page 可被切成多段暫存：
+  - FINAL_SCALAR_BUF：至少容納 T_TOKENS 個 scalar
+  - OUT_LOGITS_BUF：至少容納 OUT_DIM 個 scalar（若 Pass B 需要落地）
+  - 剩餘空間（若有）允許用於 CTX_NEXT 的 preproc staging（選配 overlap），或其他 scratch，但需遵守 liveness（不得覆寫仍需資料）。
+- 必須有容量檢查：
+  - FINAL_WORDS + OUT_WORDS <= PAGE_WORDS 時，允許兩者都放在 TEMP_PAGE
+  - 若 OUT_DIM 過大導致塞不下，OUT_LOGITS_BUF 必須改放到既有 OUT_REGION/SCRATCH 中由 SramMap/CFG 給定位址
+
+(6) Gate/驗收（釘死避免退化）
+- 必須證明 final layer 沒有對 next_page 做任何 full-page writeback（可用 code audit 或簡單計數器）。
+- CFG_OUT_MODE 決定自動輸出；不得要求 host 透過 READ_MEM 才拿到最終結果。
+- OUT_DIM 可變：Pass B 必須以 OUT_DIM 為迴圈界線，禁止硬寫 63。
+- 以上新增條款若與下方 v11.10/legacy 衝突，以本 v11.11 增補條款為準。
+
+====================================================================
+【以下附：v11.10 原文（完整保留；供回溯/相容）】
+====================================================================
+
+咒語 v11.10（在 v11.9 基礎上增補；不刪舊內容）
+Version: 2026-03-05
+
+目的：維持 v11.9 與下方所有 legacy 段落「原樣保留」，在不破壞既有規格（4 channels contract、SSOT、Gates、in_fifo、IO_REGION、2-context overlap、P-1/P-2、single-port deterministic 1-issue 等）的前提下，
+新增「per-layer 動態量化尺度（s_x）與其倒數（inv_s_x）」的可合成規格：以 SRAM 作為可擴充的 layer table（層數可變），並在 layer 內以暫存器快取避免反覆讀 SRAM；同時用專用 Scale Estimator datapath（compute-only）在背景計算下一次要用的尺度。
+
+⚠️ 本文件只「新增」與「覆蓋優先級」；下方 v11.9 / v11.8 / v11.7.2 / ... 原文全部保留不刪不改。
+
+====================================================================
+【v11.10 變更重點（其餘規格完全沿用下方 v11.9 原文）】
+W) per-layer 動態量化尺度：新增 ScaleTable（SRAM）+ LayerScaleCache（regs）+ Scale Estimator（NR reciprocal）
+   - 保留既有 QUANT_SX_* 權重載入段落不變，但語意改為 seed（只供第一次使用）
+   - 新增 inv_s_x（= 1/s_x）並與 s_x 同步更新（同一次更新一起寫回 ScaleTable）
+   - 動態更新頻率以「整個矩陣一次」（非每個向量）為單位；本次計算用上一輪尺度，下一次才生效（no critical-path penalty）
+
+====================================================================
+【v11.10 優先級規則（很重要）】
+1) 本文件為主要權威規格（v11.10）。
+2) 本文件新增的 v11.10 條款優先於下方 v11.9 內容（若有衝突，以 v11.10 為準）。
+3) 下方 v11.9 原文與其包含的 v11.8/v11.7.2/v11.7.1/v11.7/v11.6/v11.5 原文全部「原樣保留」（不刪/不改）以避免遺失資訊。
+4) 「Catapult/CCS 產碼風格與可合成子集合」以《Catapult_C++_CodeGen_Guide_for_Codex_v3.txt》為唯一權威（若有衝突，以該文件為準）。
+
+====================================================================
+【W) v11.10 新增：Per-layer Dynamic Quant ScaleTable（s_x + inv_s_x）+ Scale Estimator（必做）】
+====================================================================
+
+[W-0] 覆蓋範圍（本條款優先）
+- 本條款新增「動態量化尺度」行為，不改動既有 4 channels contract、不新增 opcode、不新增任何外部欄位。
+- 本條款與 v11.9 single-port/1-issue 仲裁相容：所有新增的 SRAM 存取仍受 [S-*] deterministic priority 約束。
+
+[W-1] 名詞與基本定義
+- s_x：量化尺度（scale）。
+- inv_s_x：s_x 的倒數（English: reciprocal / gain），inv_s_x = 1 / s_x。
+- 量化建議主路徑（示意）：q = round(x * inv_s_x) + clamp/sat。
+- slot（每層固定 4 個；與既有命名對應）：
+  slot0=in, slot1=o, slot2=ff1, slot3=ff2
+  （對應 l{L}_in_s_x, l{L}_o_s_x, l{L}_ff1_s_x, l{L}_ff2_s_x）
+- 矩陣（matrix）更新粒度：以一整個 activation 矩陣為單位（例如 X[列(Row)=node/token][行(Colume)=d]），收完/算完該矩陣後才更新一次，不允許每個向量都更新。
+
+[W-2] 既有權重載入段落保留，但語意改為 seed（只供第一次使用）
+- 既有 unified PARAM stream 中的量化參數段落（例如 QUANT_SX_*；FP32 raw words）必須保留，不改順序、不改 dtype、不改 expected_len。
+- 新增語意：上述 s_x 僅作為 seed/初始值。
+  - 第一次使用某 layer/slot 時：用 seed（或以 seed 初始化 cache）
+  - 之後：以動態估測寫回 ScaleTable 的值為準（seed 不再覆蓋）
+
+[W-3] 新增：ScaleTable（SRAM 內的 per-layer table；層數可變）
+- 動機：模型層數 N_LAYERS 可能是 runtime cfg；因此 s_x/inv_s_x 必須放在 SRAM 的 table 形式，避免用 compile-time 固定層數的 regs 陣列綁死架構。
+- SramMap.h 必須新增（或等價表示）ScaleTable 的配置（u32 word addressing）：
+  - SCALE_TABLE_BASE
+  - SCALE_TABLE_WORDS
+  - SCALE_ENTRY_STRIDE_WORDS（建議 stride 以 ALIGN_WORDS 或 W_LANES 對齊，便於 burst/切片）
+  - 規劃建議：ScaleTable 放在 IO_REGION 的子區（語意上屬於 runtime I/O/metadata），不得污染 W_REGION 的 PARAM 區語意。
+- 每個 layer L 的 entry（以 u32 words 表示；slot_count=4）至少包含：
+  1) sx[L][4]
+  2) inv_sx[L][4]
+  3) amax_prev[L][4]（平滑用的歷史狀態；見 [W-6]）
+  4) valid_mask[L]（1 個 u32，低 4 bits 對應 4 slots；1=已動態更新可用，0=尚未更新、需用 seed）
+- 本版不要求 commit flag/version two-phase commit（此議題先不納入本次更新）。
+
+[W-4] 新增：LayerScaleCache（本層快取；避免本輪反覆讀 SRAM）
+- 每次進入某 layer L 計算前，Top/Layer 必須先把該 layer 的 ScaleTable entry 載入到暫存器快取：
+  - sx_cache[4], inv_sx_cache[4], amax_prev_cache[4], valid_mask_cache
+- 該 layer 計算期間（處理其矩陣/向量/tiles 時）：
+  - 不允許每次使用尺度都回 SRAM 讀取（本輪只用 cache）
+- 多 context overlap 時，cache 的保存不可互相覆寫：
+  - 最少需能支援 CTX_ACTIVE 與 CTX_NEXT 的獨立 cache（或以「同一時間只允許一個 context compute」等價方式保證不互撞，但行為需 deterministic）。
+
+[W-5] 新增：Scale Estimator（做法 A；專用 compute-only datapath）
+- Scale Estimator 必須是獨立於主計算 datapath 的子模組/子 FSM（English: dedicated estimator datapath）：
+  - 僅做比較/乘加/shift 等可合成運算
+  - 不得發任何 SRAM request（避免干擾 single-port 1-issue）
+- Estimator 輸入：
+  - amax_obs（本次矩陣觀測到的最大絕對值）
+  - amax_prev_cache（上一輪平滑狀態）
+  - inv_sx_cache（用於 freeze/fallback）
+- Estimator 輸出：
+  - inv_sx_next（本次更新的倒數尺度）
+  - sx_next（可選；若需要 dequant/debug；與 inv_sx_next 同步更新）
+
+[W-6] 動態更新的保護措施（Protection；必做）
+- Headroom（避免雜訊突然變大導致飽和）：
+  - 以常數 margin（shift/add 近似）做保守放大：amax_guard = amax_obs * (1 + margin)
+- Smoothing（避免尺度抖動）：
+  - 以 shift-based EMA（或等價可合成平滑）更新：
+    amax_filt = amax_prev + ((amax_guard - amax_prev) >> SMOOTH_SHIFT)
+  - 並寫回 amax_prev_next = amax_filt
+- Clamp / Freeze（避免除以 0 或極端值）：
+  - 若 amax_filt == 0（或小於 amax_min）→ freeze：inv_sx_next = inv_sx_cache（維持舊值），sx_next 亦維持對應值
+
+[W-7] 倒數（inv_s_x）的計算方法（NR reciprocal；固定迭代次數）
+- inv_sx_next 建議以 Newton-Raphson（NR）做 reciprocal 近似，固定迭代次數 K（compile-time 常數；deterministic）：
+  - r_{i+1} = r_i * (2 - amax_filt * r_i)
+  - inv_sx_next = QGAIN * r_K（QGAIN 為常數，用於對應你的 quant range，例如 int8 的 Qmax=127；具體常數來源需 SSOT）
+- sx_next 與 inv_sx_next 必須同一次更新同步寫回 ScaleTable（不可一新一舊）。
+
+[W-8] 更新時序（matrix-level；下一次使用才生效）
+- 本次矩陣的量化/運算使用 inv_sx_cache（seed 或舊動態值）。
+- 同時旁路累積 amax_obs（abs+max），不得為了算 amax 額外掃 SRAM。
+- 在該矩陣處理結束（或可定義的矩陣邊界）後：
+  - Estimator 產生 inv_sx_next / sx_next / amax_prev_next
+  - 寫回 ScaleTable[L] 對應欄位並更新 valid_mask 的對應 bit
+- 下次再進入同一 layer/slot 時，才載入新的值生效（本輪不 retroactively 改變）。
+
+[W-9] TB/驗證一致性（必須可重現）
+- 若啟用本條款的動態尺度更新，TB 的 reference/軟體端比對流程必須採用同一套：
+  - 同樣的 headroom、smoothing、clamp/freeze、NR 迭代次數與更新時機
+- 若 bring-up 階段需要固定尺度以對齊舊 golden：
+  - 允許暫時關閉動態更新（只用 seed），但必須在 milestone report 的 Known limitations 明確註記。
+
+====================================================================
+【以下開始：v11.9 原文（完整保留，不刪不改；但若與 v11.10 衝突，以 v11.10 為準）】
+====================================================================
+
+咒語 v11.9（在 v11.8 基礎上增補；不刪舊內容）
+Version: 2026-03-03
+
+目的：維持 v11.8 與下方所有 legacy 段落「原樣保留」，在不破壞既有規格（4 channels contract、SSOT、Gates、in_fifo、IO_REGION、2-context overlap、P-1/P-2 等）的前提下，
+把「物理 SRAM」的前提收斂為：單一主 SRAM（single wide port / true 1-port）+ deterministic 1-issue 仲裁。
+⚠️ 本文件只「新增」與「覆蓋優先級」；下方 v11.8 / v11.7.2 / v11.7.1 / v11.7 / v11.6 / v11.5 原文全部保留不刪不改。
+
+====================================================================
+【v11.9 變更重點（其餘規格完全沿用下方 v11.8 原文）】
+S) 單一主 SRAM：由 true 2-port 假設改為 single wide port（true 1-port；每 cycle 最多 1 次 access）
+T) 仲裁策略不變、issue 數改變：保留 memory request 抽象 + deterministic priority，但 dispatcher 從 2-issue 改成 1-issue
+U) overlap 語意不變、port 綁定移除：保留 CTX_ACTIVE/CTX_NEXT 規格，但移除 v11.8 [O-6] 的 port0/port1 綁定建議（改為 single-port 共享）
+V) W_LANES 固定維持 8：對齊/ padding / READ_MEM slice 規則完全沿用（不更改）
+
+====================================================================
+【v11.9 優先級規則（很重要）】
+1) 本文件為主要權威規格（v11.9）。
+2) 本文件新增的 v11.9 條款優先於下方 v11.8 內容（若有衝突，以 v11.9 為準）。
+3) 下方 v11.8 原文與其包含的 v11.7.2/v11.7.1/v11.7/v11.6/v11.5 原文全部「原樣保留」（不刪/不改）以避免遺失資訊。
+4) 「Catapult/CCS 產碼風格與可合成子集合」以《Catapult_C++_CodeGen_Guide_for_Codex_v3.txt》為唯一權威（若有衝突，以該文件為準）。
+
+====================================================================
+【S) v11.9 新增：Single-port SRAM + deterministic 1-issue 仲裁（必做）】
+====================================================================
+
+[S-0] 覆蓋範圍（本條款優先）
+- 覆蓋 v11.8 的「單一主 SRAM（true 2-port）」前提敘述。
+- 覆蓋 v11.8 [O-6]「dual-port SRAM 仲裁建議（port0/port1 綁定）」。
+- 覆蓋 v11.5【8.5】/v11.7.* 內關於「每 cycle 最多 2 個 memory access（2-issue）」的描述。
+- 其餘 v11.8 的 M/N/O/P/Q/R 條款與 legacy 段落一律保留。
+
+[S-1] 外部介面不變（Contract 不變）
+- 不新增 channel、不新增 opcode、不新增任何外部欄位。
+- 仍使用 ctrl_cmd / ctrl_rsp / data_in / data_out（4 channels）。
+
+[S-2] memory request 抽象保留（與 v11.5【8.5】精神一致）
+- Top 內部把所有 memory access 統一抽象成：
+  {addr_word, is_write, wdata, tag(region, block_id)}
+- 此抽象不因 single-port 而改變；只改「每 cycle 允許派發的筆數」。
+
+[S-3] deterministic priority 保留（順序不變）
+- 每個 cycle 依固定優先序選擇要服務的 request（其餘排隊到之後的 cycle）：
+  1) 必要寫入（X_out / SCRATCH / IO_REGION 的 write-back；避免資料遺失）
+  2) 讀 X_in（支撐 datapath）
+  3) 讀 W_REGION 的 prefetch（放入各 block 的 local FIFO/line-buffer；見 v11.8【P】與 v11.*【8.4.2】）
+  4) DEBUG/READ_MEM（最低優先；避免干擾推論吞吐）
+- 若要在同一優先序內做公平性（例如 round-robin），也必須是「固定、可重現」的規則（deterministic RR）。
+
+[S-4] 1-issue（每 cycle 最多 1 次 memory access）— 核心規則
+- single-port SRAM：每個 cycle 最多允許 1 個 memory access（讀或寫擇一）。
+- Top 的 dispatcher 每 cycle 只能派發 1 筆 request；任何同 cycle 其他請求必須序列化（stall / retry / queue）。
+- 因為已是單埠，本版不再討論 port0/port1；所有「借用 port」語意一律失效化。
+
+[S-5] 對 multi-context overlap 的影響（語意不變、資源序列化）
+- CTX_ACTIVE/CTX_NEXT 的 overlap 語意仍成立（可提前接收下一筆 INFER 的 input），但：
+  - 任何 CTX_ACTIVE compute 與 CTX_NEXT staging / W prefetch 之間的 SRAM 競爭，皆由 [S-3] 的 deterministic priority 在 single-port 上序列化。
+  - in_fifo（v11.8【M】）仍是必做，用來吸收 data_in 抖動/背壓，避免因 SRAM 忙碌導致上游死鎖。
+
+[S-6] W_REGION 寬讀口與 W_LANES（維持 8；規則不改）
+- W_LANES 仍固定為 8（等價 256-bit lanes 觀念；或以連續 8 次 u32 讀模擬）。
+- 所有對齊/ padding / READ_MEM slice 規則完全沿用既有條款（v11.*【8.1.1】）。
+
+[S-7] Local buffering / streaming 必須更積極（重申 v11.8【P-1】【P-2】）
+- softmax partial 等「小中間量」禁止落 SRAM，必須用 local regs / 小型 HLS-safe RAM（P-1）。
+- FFN1 hidden / Attn_out 優先 streaming（小 FIFO/line buffer），避免整頁落 SRAM（P-2）。
+- 權重讀取必須 prefetch & reuse（v11.*【8.4.2】）：禁止在 inner-most loop 每次去 W_REGION 讀 1 個 u32。
+
+====================================================================
+【以下開始：v11.8 原文（完整保留，不刪不改；但若與 v11.9 衝突，以 v11.9 為準）】
+====================================================================
+
+咒語 v11.8（在 v11.7.2 基礎上增補；不刪舊內容）
+Version: 2026-03-02
+備註：v11.8 為 v11.7.3 的正式升版命名；規格內容與 v11.7.3 一致（僅版本號升級）。
+
+目的：維持 v11.7.2 與下方所有 legacy 段落「原樣保留」，在不破壞既有規格的前提下，
+新增「Input Elastic FIFO + IO_REGION（輸入/輸出/回吐）+ Multi-context overlap（雙 context 交錯）」等規範，
+使單一主 SRAM（true 2-port）在不更動外部介面（4 channels）的前提下，也能提升吞吐與可用性。
+⚠️ 本文件只「新增」與「覆蓋優先級」；下方 v11.7.2 / v11.7.1 / v11.7 / v11.6 / v11.5 原文全部保留不刪不改。
+
+====================================================================
+【v11.8 變更重點（其餘規格完全沿用下方 v11.7.2 原文）】
+M) Input Elastic FIFO：以 ac_channel 做 data_in 彈性緩衝；FIFO 深度由 Catapult/HLS 設定，不在咒語寫死
+N) SRAM logical regions 語意清晰化：在「單一主 SRAM」前提下，將 raw-words 區拆為 W_REGION(權重/參數) + IO_REGION(輸入/輸出/回吐)
+O) Multi-context overlap（選配但本版預設啟用規格）：支援 2 個 context（CTX0/CTX1）交錯，允許上一筆推論未完成時，先接收下一筆 INFER 的 input
+P) SCRATCH 規範補強：softmax partial 等小中間量禁止落地 SRAM；FFN1/Attn_out 優先走 local streaming buffer；需要並存時採 per-context duplication
+Q) TB/回吐規則補強：輸出仍以 data_out 串流為主；若啟用 overlap，輸出順序固定為 INFER 接收順序（不新增 ctx_id 介面）
+
+====================================================================
+【v11.8 優先級規則（很重要）】
+1) 本文件為主要權威規格（v11.8）。
+2) 本文件新增的 v11.8 條款優先於下方 v11.7.2 內容（若有衝突，以 v11.8 為準）。
+3) 下方 v11.7.2 原文與其包含的 v11.7.1/v11.7/v11.6/v11.5 原文全部「原樣保留」（不刪/不改）以避免遺失資訊。
+4) 「Catapult/CCS 產碼風格與可合成子集合」以《Catapult_C++_CodeGen_Guide_for_Codex_v3.txt》為唯一權威（若有衝突，以該文件為準）。
+
+====================================================================
+【M) v11.8 新增：Input Elastic FIFO（ac_channel）— 必做】
+====================================================================
+
+[M-1] 目的（English: decouple input stream）
+- 以「小而固定深度」的 FIFO 解耦 data_in 的抖動/背壓，避免上游送資料被卡死。
+- Elastic FIFO 不是「完整 payload buffer」：不保證能放下整筆 CFG/PARAM/INFER payload。
+
+[M-2] 實作形式（必遵守）
+- Top 內部必須有一個 elastic FIFO（建議命名：in_fifo）：
+  - in_fifo 型別：ac_channel<ac_int<32,false>>（或等價 data_word_t）
+  - data_in（外部 channel）→ 由 Top 收進 in_fifo → 內部 consumer（CFG_RX/PARAM_RX/INFER_RX）再從 in_fifo 取用
+- FIFO 深度：
+  - 由 Catapult/HLS 設定（可用 pragma 或工具設定）；咒語不寫死數字
+  - 但每次里程碑交付（Mxx_report.md）必須記錄本次使用的 FIFO 深度（方便可重現）
+
+[M-3] 行為約束（避免規格歧義）
+- Top 不能因為 internal consumer 尚未開始而拒絕吸收 data_in；只要 in_fifo 未滿，就應盡量吸收 data_in。
+- 若 in_fifo 滿：允許對 data_in backpressure（channel rdy 拉低）。
+- 所有 length check（EXP_LEN_*）仍以「被 consumer 實際取用的 word 數」為準：
+  - 不可用 in_fifo 的暫存量來假裝已完成 payload。
+- Gate 建議（可選但強烈建議加嚴）：
+  - scripts/check_design_purity.sh 可新增檢查：DESIGN 禁止使用 host-side queue/ STL 容器來當 FIFO（必須用 ac_channel 或等價 HLS-safe FIFO）。
+
+====================================================================
+【N) v11.8 新增：IO_REGION（輸入/輸出/回吐）— 建議必做】
+====================================================================
+
+[N-1] 動機
+- v11.7.2 定義 W_REGION 可包含 input y 等 raw words；功能上可行，但語意容易混淆。
+- 本版在「單一主 SRAM」不變的前提下，將 raw-words 區拆成兩個 logical sub-region：
+  - W_REGION：僅放 weights/params/bitpack（受 SET_W_BASE + WeightStreamOrder.h 管控）
+  - IO_REGION：僅放 input_y staging / output staging / debug dump（可選落地；預設仍以 data_out 串流為主）
+
+[N-2] 規格要求（SramMap.h 必須提供）
+- SramMap.h 必須新增（或等價表示）：
+  - W_REGION_BASE, W_REGION_WORDS（同 v11.7.2；語意更嚴格：僅權重/參數）
+  - IO_REGION_BASE, IO_REGION_WORDS（新增：I/O staging）
+- SET_W_BASE 的 range check 只允許落在 W_REGION 範圍內（不得落在 IO_REGION）。
+
+[N-3] input_y / output 落點規則（必遵守）
+- 預設：
+  - input_y 由 data_in 串流直接被運算消費（不要求落地 SRAM）。
+  - 最終輸出（logits/x_pred）預設直接走 data_out（同 v11.7.2 FinalHead 規則）。
+- 若需要落地（staging）：
+  - input_y staging：只能落地到 IO_REGION（不得混到 W_REGION；避免污染權重區）
+  - output staging：只能落地到 IO_REGION（例如 OUT_BUF）；不得放在 SCRATCH
+
+====================================================================
+【O) v11.8 新增：Multi-context overlap（CTX0/CTX1 交錯）— 本版納入規格】
+====================================================================
+
+[O-0] 名詞
+- Context（CTX）：一次 INFER 的「獨立狀態集合」（X pages + 必要的 per-context buffers，例如 KV cache）。
+- 本版規格要求最少支援 2 個 context：CTX0、CTX1（English: 2-context interleaving）。
+
+[O-1] 目標（English: accept next INFER early）
+- 允許上一筆推論尚未完成（例如後段 FFN/Head/輸出仍在進行）時，
+  Top 先接受下一筆 INFER 的 input（接收與 staging），並在資源允許時先做前段運算（例如 Preproc/QKV），提升吞吐。
+
+[O-2] 外部介面不變（Contract 不變）
+- 不新增 channel、不新增 opcode；仍使用既有：
+  - ctrl_cmd / ctrl_rsp / data_in / data_out（4 channels）
+- 不新增 ctx_id 外部欄位；輸出順序固定為 INFER 被 Top 接受的順序（FIFO order）。
+
+[O-3] Top-FSM 行為擴充（覆蓋 v11.7.2 的「*_RX 期間禁止其他 ctrl_cmd」規則；本條款優先）
+- 在 v11.8 overlap 模式下，Top 允許：
+  - 當 CTX_ACTIVE 正在 COMPUTE（非 *_RX 接收階段）時，
+    接受下一筆 ctrl_cmd: INFER（若仍有空的 CTX slot），並進入對應的 INFER_RX(CTX_NEXT) 接收 input。
+- 限制：
+  - 任一時刻只允許「一個 RX」：也就是同時只收一筆 payload（CFG/PARAM/INFER）；
+    但可以在 CTX_ACTIVE COMPUTE 時，收 CTX_NEXT 的 INFER payload。
+  - 若兩個 context 都忙（CTX0/CTX1 皆佔用）→ 回 ERR_BUSY。
+  - CFG/PARAM 流程仍需在「無 in-flight inference」時執行（避免規格爆炸）：
+    - 若有 in-flight inference 時收到 CFG_BEGIN/CFG_COMMIT/LOAD_W/SET_W_BASE → ERR_BUSY。
+
+[O-4] per-context PERSIST buffers（必遵守；這就是你要的「KV 需要雙份」）
+- 啟用 multi-context overlap 時，以下資料必須 per-context 各一份（不可共用同一段 SRAM）：
+  1) X pages：每個 context 各有 2-page ping-pong
+     - X_CTX0_PAGE0 / X_CTX0_PAGE1
+     - X_CTX1_PAGE0 / X_CTX1_PAGE1
+  2) KV cache（S1）：每個 context 各有 SCR_K / SCR_V
+     - SCR_K_CTX0 / SCR_V_CTX0
+     - SCR_K_CTX1 / SCR_V_CTX1
+- 以上 per-context buffers 雖位於 SCRATCH/ACT region，但其 lifetime_class 視為「CTX_PERSIST」（在該 context 完成前不可覆寫）。
+
+[O-5] SCRATCH 的使用策略（避免 SRAM 爆炸）
+- 不強制把所有 scratch 做 double buffer。
+- 只對「需要並存」的狀態做 per-context duplication（例如 KV、X pages）。
+- 其餘中間量優先 local streaming buffer（見【P】）；
+  若不得已落地 SRAM，才允許 per-context duplication，但必須在 SramMap.h 明列並在 report 說明原因。
+
+[O-6] dual-port SRAM 仲裁建議（對應你有 true 2-port）
+- 建議：
+  - port0：服務 CTX_ACTIVE 的 X/SCR 讀寫（主運算關鍵路徑）
+  - port1：服務 CTX_NEXT 的 input staging / KV build / W prefetch（若當下沒有請求可借用給 port0 類請求）
+- 仲裁仍需 deterministic（同 v11.7.2【8.5】精神）。
+
+====================================================================
+【P) v11.8 補強：SCRATCH / Local buffering 規則（禁止錯用 SRAM）】
+====================================================================
+
+[P-1] softmax partial 禁止落地 SRAM（必遵守）
+- softmax 的 max/sumexp/denom/reciprocal、以及單一 q_node 的 acc_vec 等「小中間量」：
+  - 必須使用 local regs 或小型 HLS-safe RAM（例如固定深度 FIFO/array），不得佔用 SRAM pages。
+  - 理由：這些量的 liveness 極短，落地 SRAM 只會浪費頻寬與容量，且增加仲裁不確定性。
+
+[P-2] FFN1 / Attn_out 優先 streaming（強烈建議）
+- 若後段 consumer（例如 W2 / residual / LN）能 streaming consume：
+  - FFN1 hidden、Attn_out 不應整頁落地 SRAM。
+  - 允許使用固定深度的小 FIFO / line buffer（可用 ac_channel 或等價 HLS buffer）。
+- 若因排程/資源隔離需要落地 SRAM：
+  - 僅允許落地到 SCRATCH（或 per-context scratch），且必須在 SramMap.h 宣告，並在 report 說明為何不能 streaming。
+
+====================================================================
+【Q) v11.8 補強：TB/驗證規則（overlap 模式下的可驗證性）】
+====================================================================
+
+[Q-1] 輸出順序（必遵守）
+- 無論是否 overlap，data_out 的正常輸出順序固定為：
+  - 依 INFER 被 Top 接受（回 RSP_OK(INFER)）的先後順序輸出 logits/x_pred。
+- 不新增 ctx_id 於外部介面；TB 以「命令發送順序」對應輸出即可。
+
+[Q-2] TB 可選擴充（建議）
+- TB 可在 overlap 模式下做 stress test：
+  - 在上一筆 INFER 仍在運算/輸出期間，提前送下一筆 INFER + input_y
+  - 驗證 Top 是否能正確處理、且輸出順序無誤
+- 若未做 overlap stress test，功能仍可 PASS，但在 report 的 Known limitations 必須註明。
+
+====================================================================
+【R) v11.8 補強：離線生成器（M16）需要新增的輸出欄位】
+====================================================================
+
+[R-1] SramMap.h 需新增（或擴充）欄位
+- region: X_CTX0_PAGE0 / X_CTX0_PAGE1 / X_CTX1_PAGE0 / X_CTX1_PAGE1 / SCR_K_CTX0 / ... / W_REGION / IO_REGION
+- lifetime_class: PINGPONG / SCRATCH / CTX_PERSIST / PERSIST
+- ctx_id: 0/1（若不適用填 0）
+- alias_group: 僅允許對 SCRATCH 類使用；CTX_PERSIST 不可 alias（直到該 context 完成）
+
+====================================================================
+【以下開始：v11.7.2 原文（完整保留，不刪不改）】
+====================================================================
+
+咒語 v11.7.2（在 v11.7.1 基礎上增補；不刪舊內容）
+Version: 2026-03-01
+
+目的：維持 v11.7.1 與下方所有 legacy 段落「原樣保留」，在不破壞既有規格的前提下，
+新增一組能讓 Codex/生成流程更可控、更可驗收、更可追溯的「交付與門禁（Gates）規範」。
+⚠️ 本文件只「新增」與「覆蓋優先級」；下方 v11.7.1 / v11.7 / v11.6 / v11.5 原文全部保留不刪不改。
+
+
+====================================================================
+【v11.7.2 變更重點（其餘規格完全沿用下方 v11.7.1 原文）】
+I) 交付證據包：每個里程碑（M0/M1/...）執行完必須產出 report + artifacts（可重現、可稽核）
+J) README 治理：Manual + Auto 區塊；Codex 只能修改 Auto；變更觸發規則明確化
+K) 可控生成門禁（Gates）+ 修改範圍鎖（Scope Lock）：失敗即 FAIL，不得宣稱 PASS
+L) 規格限制加嚴：Interface/Contract 鎖、SSOT 規則、禁止「隱性改規格」與「無證據交付」
+====================================================================
+
+====================================================================
+【v11.7.2 優先級規則（很重要）】
+1) 本文件為主要權威規格（v11.7.2）。
+2) 本文件新增的 v11.7.2 條款優先於下方 v11.7.1 內容（若有衝突，以 v11.7.2 為準）。
+3) 下方 v11.7.1 原文與其包含的 v11.7/v11.6/v11.5 原文全部「原樣保留」（不刪/不改）以避免遺失資訊。
+4) 「Catapult/CCS 產碼風格與可合成子集合」以《Catapult_C++_CodeGen_Guide_for_Codex_v3.txt》為唯一權威
+   （若有衝突，以該文件為準）。
+====================================================================
+
+====================================================================
+【I) v11.7.2 新增：里程碑交付證據包（Report + Artifacts）— 必交付】
+====================================================================
+
+[I-1] 里程碑完成（Mx）必須同時交付「人可讀」與「機器可檢查」兩種產物
+- 人可讀（摘要報告）：
+  - docs/milestones/Mxx_report.md
+- 機器可檢查（證據包目錄）：
+  - docs/milestones/Mxx_artifacts/
+
+[I-2] Mxx_report.md 的固定章節（缺一視為 FAIL）
+1) Goal / DoD（逐條列出本 M 的驗收點）
+2) What changed（新增/修改/刪除檔案清單 + 理由；不得只寫“refactor”）
+3) Repro steps（完整可重現指令：build + run TB；含 working dir）
+4) Test results（列出每個 TB 的 PASS/FAIL；關鍵輸出摘要）
+5) Gate results（所有門禁檢查的 PASS/FAIL；若 FAIL 必須說明原因與修正）
+6) Design boundary check（DESIGN vs TB 邊界是否違規；必須明確回答）
+7) Known limitations（這版刻意沒做什麼，避免被誤會）
+8) Next step（下一個 M 的最小工作清單）
+
+[I-3] Mxx_artifacts/ 最小必備檔（缺一視為 FAIL）
+- file_manifest.txt     （列出本次變動檔案：A=新增、M=修改、D=刪除；每列附 1 句說明）
+- diff.patch            （本次變更的 patch；若無法產生，至少提供等價 diff 文字檔）
+- build.log             （編譯輸出）
+- run_tb.log            （跑 TB 的輸出）
+- verdict.txt           （一行結論：PASS/FAIL + 原因）
+
+[I-4] 絕對禁止的交付方式
+- 只說“我改好了/應該可以”，但沒有 report / artifacts。
+- Gate FAIL 但仍宣稱 PASS。
+- 沒有可重現指令、或指令缺關鍵參數（include path / define / working dir）。
+
+====================================================================
+【J) v11.7.2 新增：README 治理（Manual + Auto）— Codex 只能改 Auto】
+====================================================================
+
+[J-1] README.md 必須分成兩塊（固定標記）
+- Manual 區：由規格 owner（你）維護；Codex 不得改動
+- Auto 區：由 Codex 維護；只能改這段
+  - 使用固定界標：
+    <!-- AUTO-GENERATED BEGIN -->
+    ...（可更新內容）
+    <!-- AUTO-GENERATED END -->
+
+[J-2] Auto 區允許包含的內容（建議最小集合）
+- Build/Run 指令（M0/M1/...）
+- Repo layout（include/design/tb/scripts 的用途；簡短即可）
+- 最新通過的測試清單與版本戳（例如：M0 PASS / 日期）
+
+[J-3] Codex 更新 README 的觸發規則（必做）
+- 若改到下列任一類檔案，必須同步更新 README Auto 區（至少更新 build/run 或測試狀態）：
+  - include/**（介面/協定/enum/helper）
+  - design/**（Top/blocks）
+  - tb/**（測試入口、測試名稱、驗收條件）
+  - scripts/**（新增/修改 gate 或打包腳本）
+
+====================================================================
+【K) v11.7.2 新增：可控生成門禁（Gates）+ 修改範圍鎖（Scope Lock）】
+====================================================================
+
+[K-1] Gate 的定義：所有 Gate 必須 PASS 才能宣稱里程碑 PASS
+- Gate FAIL → 本次交付視為 FAIL（即使 TB 偶然 PASS 也不算）
+- Gate 結果必須寫進 Mxx_report.md，並保存到 Mxx_artifacts/
+
+[K-2] 最小 Gate（M0 起必做；後續可加嚴但不可移除）
+1) scripts/check_design_purity.sh
+   - DESIGN 禁止 include trace headers（*_step0.h 等）
+   - DESIGN 禁止 iostream/fstream、new/delete、exceptions、RTTI、host math（exp/log/pow/sqrt）
+2) scripts/check_interface_lock.sh
+   - Top 4 channels 型別、ctrl/rsp bitfield、rsp 順序、opcode/errcode SSOT 不得被改動
+   - 若真的要改：只能先改規格（咒語/SSOT）再改程式，且 report 必須說明（不建議）
+3) scripts/check_repo_hygiene.sh（M0 建議就放入口；可先做最小檢查）
+   - .gitignore 必須排除 trace/log/build/archives
+   - repo 內不得出現大型 trace/zip/tar 之類（可設定門檻）
+
+[K-3] Scope Lock（修改範圍鎖）：每個里程碑只允許改動白名單範圍
+- M0（示例白名單；可依你的 M0_rebuild 咒語一致）
+  - include/**
+  - design/AecctTop*.h
+  - tb/tb_top_m0.cpp
+  - scripts/**
+  - README.md（僅 Auto 區）
+  - docs/milestones/M00_*（report/artifacts）
+- 若要新增/修改白名單外檔案：必須在 Mxx_report.md 的 What changed 章節逐條說明理由。
+
+====================================================================
+【L) v11.7.2 新增：規格限制加嚴（Contract/SSOT/禁止隱性改規格）】
+====================================================================
+
+[L-1] Contract Lock（介面/協定鎖）
+- Top 介面（4 channels）與 ctrl/rsp 編碼規則視為 Contract。
+- 任何變更一律視為 Breaking Change：必須先在咒語（SSOT）明確寫出、再改程式、再更新 TB + report。
+- 不允許“我順手調整一下”的隱性改動。
+
+[L-2] SSOT（Single Source of Truth）規則
+- opcode / errcode / rsp pack-unpack 必須集中於單一位置（include/ 的專用 header）。
+- DESIGN/TB 不得各自複製一份（避免漂移）。
+
+[L-3] 無證據交付禁止
+- 任何宣稱 PASS，必須同時具備：
+  - TB PASS log
+  - Gate PASS log
+  - diff.patch
+  - verdict.txt
+  - report.md
+
+[L-4] 產碼與文件的最低一致性
+- 只要修改了介面/協定相關檔（include/**），TB 與 README Auto 區必須同步更新並在 report 說明。
+- 只要修改了 scripts/**，必須在 report 補上新舊行為差異與使用方式。
+
+====================================================================
+【以下開始：v11.7.1 原文（完整保留，不刪不改）】
+====================================================================
+
+咒語 v11.7.1（在 v11.7 基礎上增補；不刪舊內容）
+Version: 2026-02-28
+目的：維持 v11.7 的既有規格與所有 legacy 段落「原樣保留」，並補上 v11.7 在實作/協作時最容易被忘記、
+但實際上會造成 bring-up / regression / packaging 反覆踩雷的「全域硬規則（Global Hard Rules）」與「規格入口整理」。
+
+====================================================================
+【v11.7.1 變更重點（其餘規格完全沿用下方 v11.7 原文）】
+F) Global Hard Rules（全域硬規則；必遵守；強制 gate）
+G) 參考文件更新：CodeGen Guide 以 v3 為準（v1 視為 legacy 引用）
+H) Route B（Correctness）落地：里程碑不得跳關，並規範 checkpoint traces 的放置方式
+
+⚠️ 本文件只「新增」與「覆蓋優先級」；下方 v11.7 / v11.6 / v11.5 原文全部保留不刪不改。
+====================================================================
+
+====================================================================
+【v11.7.1 優先級規則（很重要）】
+1) 本文件為主要權威規格（v11.7.1）。
+2) 本文件新增的 v11.7.1 條款優先於下方 v11.7 內容（若有衝突，以 v11.7.1 為準）。
+3) 下方 v11.7 原文與其包含的 v11.6/v11.5 原文全部「原樣保留」（不刪/不改）以避免遺失資訊。
+4) 「Catapult/CCS 產碼風格與可合成子集合」以《Catapult_C++_CodeGen_Guide_for_Codex_v3.txt》為唯一權威
+   （若有衝突，以該文件為準）。
+====================================================================
+
+====================================================================
+【F) v11.7.1 新增：Global Hard Rules（全域硬規則；必遵守）】
+====================================================================
+
+[F-1] DESIGN vs TB boundary（設計/測試邊界；零容忍）
+- DESIGN（src/、include/、design/ 等任何會被 HLS analyze/synth 的檔）：
+  - 禁止 include 任何 trace headers：例如 "*_step0.h"、"layer*_*.h" 這類 checkpoint trace
+  - 禁止使用 trace tensor_shape / trace tensor 內容當作設計行為的依據
+  - 即使包在 #ifdef/#ifndef 也不允許（原因：會讓設計受 TB 宏控制，且打包時常因缺檔而分析失敗）
+
+- TB（tb/）：
+  - 可以 include trace（step0 headers），用於比對與 debug（READ_MEM + compare）
+  - trace 永不進 git；交付壓縮檔可帶最小 end-to-end trace（見 v11.7 原文）
+
+[F-2] 禁 trace bypass（禁止用抄 golden 讓 end2end 假通過）
+- 禁止任何形式：
+  - 先從 input_y 找 sample_idx
+  - 然後把 output_logits_step0 / output_x_pred_step0 直接寫到 SRAM / data_out
+- logits/x_pred 必須由設計運算得到；TB 只能做載入與比對。
+
+[F-3] 可合成安全子集合（HLS-safe subset；以 gate 強制）
+- DESIGN 禁止：
+  - <cmath> 的 sqrt/exp/log/pow 等 host math
+  - union / memcpy 這類 bit-cast 技巧（若要 bits<->float，使用既定的 raw-fp32 轉換 helper，且需符合 CodeGen Guide）
+  - dynamic allocation / exceptions / RTTI / iostream / fstream / heavy STL
+- DESIGN 型別優先：
+  - ac_int / ac_fixed / ac_ieee_float<binary32>（依 QuantDesc/SoftmaxApprox/LayerNorm 規範）
+- 任何違反上述項目，都必須讓 scripts/check_ccs_style.sh 直接 FAIL。
+
+[F-4] SSOT（Single Source of Truth）強制收斂
+- shape / expected_len / SRAM base&size / PARAM offsets 的唯一來源：
+  - ModelDesc.h / ModelShapes.h / SramMap.h / WeightStreamOrder.h
+  - 若存在 gen/ 版本（M16 pipeline），Top/TB/blocks 一律 include gen/ 版本；Bringup 版只保留 legacy，不可用於正式編譯。
+- 禁止 Top/TB/blocks 各自 hardcode base/len/offset；否則 regression 會出現「寫A讀B」的假錯誤。
+
+[F-5] Gate（你必須讓規則「機械化」）
+- scripts/check_ccs_style.sh 必須新增檢查（DESIGN 範圍）：
+  - FAIL if found: #include ".*step0.h"
+  - FAIL if found: trace_.*(tensor_shape|tensor)
+  - FAIL if found: AECCT_.*_TRACE_MODE（或任何 trace bypass 宏）
+  - FAIL if found: <cmath> 或 std::sqrt/std::exp 之類 host math（依你選擇的嚴格程度）
+- scripts/make_pkg.sh（或你的打包流程）必須：
+  - 打包前先跑 check_ccs_style.sh；FAIL 就不得產生 tar/zip
+  - 交付壓縮檔內只允許 end-to-end 最小 trace（input_y_step0 / output_logits_step0 / output_x_pred_step0）
+
+====================================================================
+【G) v11.7.1 新增：參考文件更新（避免引用版本不一致）】
+====================================================================
+- CodeGen Guide 的唯一權威改為：
+  《Catapult_C++_CodeGen_Guide_for_Codex_v3.txt》
+- v11.7 原文中提到的 v1 引用視為 legacy（保留原文不改），但實際執行以 v3 為準。
+
+====================================================================
+【H) v11.7.1 新增：Route B（Correctness）落地規則】
+====================================================================
+- 若你的目標是「讓 end-to-end logits/x_pred 正確」：
+  - 必須按里程碑順序：M7 → M8 → M9 → M10 → M11 → M12 → M13 → M14
+  - 禁止直接拿 regression(case_9_logits) 當第一個 correctness 檢查點（會浪費時間且容易誤判）
+- Trace 放置規範（避免 repo 肥大、又保留 debug 能力）：
+  - tb/trace/：只放 3 個 end-to-end trace（允許進交付壓縮檔；永不進 git）
+  - tb/trace_extra/：checkpoint traces（只用於定位最早失配點；永不打包、永不進 git）
+
+--------------------------------------------------------------------
+【以下為 v11.7 原文（原樣保留；不刪不改）】
+--------------------------------------------------------------------
+
+（咒語 v11.7；在 v11.6 基礎上「不刪舊內容」的增補版）
+- 目的：產生「可用於 Catapult HLS 合成」的 C++ 硬體程式（硬體思維；ac_channel + AC datatypes），並延續 v11.6 的編碼/Repo 體積控管規則。
+- v11.7 變更重點（其餘規格完全沿用下方 v11.6 全文）：
+  D) Catapult/CCS 的 C++ 產碼規範已獨立到《Catapult_C++_CodeGen_Guide_for_Codex_v1.txt》；本咒語不再重複定義，只引用該文件（避免重複與分歧）。
+  E) Trace/Git/Packaging 補充：trace 永不進 git；但在「交付用壓縮檔（.tar/.zip）」內允許包含 end-to-end 必要的最小 trace（避免 repo 肥大、同時保留可跑性）。
+
+====================================================================
+【v11.7 優先級規則（很重要）】
+1) 本文件為主要權威規格；但「Catapult/CCS 產碼風格與可合成子集合」以《Catapult_C++_CodeGen_Guide_for_Codex_v1.txt》為唯一權威（若有衝突，以該文件為準）。
+2) 本文件新增的 v11.7 條款優先於下方 v11.6 內容（若有衝突，以 v11.7 為準）。
+3) 下方 v11.6 全文原樣保留（不刪/不改）以避免遺失資訊；其中標記為 [legacy] 的段落仍維持「預設不需實作」規則。
+====================================================================
+
+【v11.7 新增：Catapult/CCS 產碼規範（必讀；不在此重複）】
+- 必須遵循：《Catapult_C++_CodeGen_Guide_for_Codex_v1.txt》
+- 該文件涵蓋（摘要）：
+  - DUT vs TB 分工、CCS_MAIN/CCS_BLOCK/mc_scverify.h 使用位置與限制
+  - 可合成禁區（dynamic alloc / recursion / exceptions / RTTI / heavy STL / I/O 等）
+  - Top/Block/Inline 的 class/function 骨架與 pragma 使用方式
+  - loop bound / fixed-size array / memory access 可分析性等 checklist
+
+【v11.7 新增：Trace/Git/Packaging 補充（避免不小心把 repo 變肥）】
+- Trace 原則：
+  - trace 一律不進 git（必須由 .gitignore 排除；不得用 un-ignore 放行 trace 檔）
+  - 允許在交付壓縮檔內包含最小必要 trace（例如 end-to-end 的 input_y_step0 / output_logits_step0 / output_x_pred_step0），但壓縮檔本身也不可進 git。
+- 建議做法：
+  - repo 內預設不保存 trace；用打包腳本在打包前把 trace copy 進資料夾、打包後再刪除（保留工作目錄乾淨、避免誤 commit）。
+--------------------------------------------------------------------
+【以下為 v11.6 全文（原樣保留）】
+
+（咒語 v11.6；在 v11.5 基礎上「不刪舊內容」的增補版）
+- 目的：產生「可用於 Catapult HLS 合成」的 C++ 硬體程式（硬體思維；ac_channel + AC datatypes），並避免檔案編碼/Repo 體積問題。
+- v11.6 新增三件事（其餘規格完全沿用下方 v11.5 全文）：
+  A) 文字檔編碼：所有生成的 .h/.cpp/.md/.txt/.cmake 等文字檔，一律使用 UTF-8（NO BOM；不要用 UTF-8-BOM）。
+  B) 註解語言：所有生成的程式碼註解一律使用英文（English comments only），禁止中文註解（避免亂碼與跨平台差異）。
+  C) Git 可推送內容控管：提供 .gitignore/.gitattributes/.editorconfig 建議，預設把 trace、壓縮檔、build/out 產物等「易膨脹」資料排除，避免不小心推上 Git。
+
+====================================================================
+【v11.6 優先級規則（很重要）】
+1) 本文件為唯一權威規格。
+2) 本文件新增的 v11.6 條款優先於下方 v11.5 內容（若有衝突，以 v11.6 為準）。
+3) 下方 v11.5 全文原樣保留（不刪/不改）以避免遺失資訊；其中標記為 [legacy] 的段落仍維持「預設不需實作」規則。
+====================================================================
+
+【v11.6 新增：文字檔編碼規則（必遵守）】
+- 生成檔案（.h/.hpp/.cpp/.c/.md/.txt/.cmake/.py/.tcl/.sh 等）：
+  - Encoding: UTF-8
+  - 禁止：UTF-8 with BOM（UTF-8-BOM）
+- 生成的 C/C++ 程式碼內：
+  - 註解只用英文（// ... , /* ... */ 都只能英文）
+  - 字串常數若非必要避免放中文（尤其是 printf/log），以免不同 toolchain / console codepage 造成亂碼
+
+【v11.6 新增：Repo hygiene（避免 Git 肥大；必遵守）】
+- 目標：trace、壓縮檔、暫存輸出、build 產物等，預設不應出現在 git stage/commit 的候選清單。
+- 必須提供（或提示使用者新增）以下檔案於 repo root：
+  1) .gitignore（必須至少包含：trace/、*.zip、*.tar、*.tar.gz、*.7z 等，以及 build/out/catapult 產物）
+  2) .gitattributes（可選但建議：確保 text 檔一致化；避免誤把 binary 當 text）
+  3) .editorconfig（可選但強烈建議：把 charset 固定為 utf-8，避免 BOM）
+
+--------------------------------------------------------------------
+【.gitignore 範本（v11.6 建議；直接複製到 repo root）】
+# --- Build / output ---
+build/
+out/
+dist/
+Release/
+Debug/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.log
+
+# --- Catapult / HLS generated ---
+catapult/
+Catapult/
+*.vcd
+*.fsdb
+*.wlf
+*.tcl.swp
+*.rpt
+*.qdb
+*.key
+*.bak
+
+# --- Trace / golden / dumps (can be huge) ---
+trace/
+traces/
+trace_infer/
+trace_golden/
+dump/
+dumps/
+*.pt
+*.pth
+*.npy
+*.npz
+*.pkl
+*.pickle
+*.bin
+*.dat
+*.raw
+
+# --- Archives / packages ---
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+
+# --- Local IDE / OS ---
+.vscode/
+.vs/
+*.user
+*.suo
+*.opensdf
+*.sdf
+*.ipch
+.DS_Store
+Thumbs.db
+
+# --- Optional: large intermediate headers (keep only what you really need) ---
+# If you regenerate trace headers often, consider ignoring them too:
+# tb/trace_*.h
+# tb/input_y_step*.h
+# tb/output_*_step*.h
+--------------------------------------------------------------------
+
+【.editorconfig 範本（v11.6 建議；直接複製到 repo root）】
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{h,hpp,cpp,c,cc}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+--------------------------------------------------------------------
+
+【.gitattributes 範本（v11.6 可選；直接複製到 repo root）】
+# Normalize text files to LF in repo
+* text=auto eol=lf
+
+# Treat common binaries as binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+*.7z binary
+*.rar binary
+*.tar binary
+*.gz  binary
+*.dat binary
+*.bin binary
+*.pt  binary
+*.npy binary
+*.npz binary
+--------------------------------------------------------------------
+
+【v11.6 新增：對生成器的硬性要求（你在產生檔案時必須做到）】
+- 任何你產生的「文字檔」都不得含 BOM。
+- 任何你產生的「程式碼註解」都不得含中文。
+- 任何會造成 repo 膨脹的輸出（trace、壓縮檔、build/out 等）：
+  - 你可以產生在本地資料夾供驗證使用，但必須同時提供（或更新） .gitignore，確保它們預設不會被 git 追蹤。
+
+====================================================================
+【以下為 v11.5 全文（原樣保留；請繼續遵守）】
+====================================================================
+
+（咒語 v11.5；整合既有內容為單一規格：主路徑採 B 方案（SET_W_BASE + param_base_word runtime base）；參數統一為 PARAM 串流（bias / LayerNorm gamma,beta / 其他 weights / bit-pack 等都歸為 PARAM）；LOAD_W 語意為「載入 PARAM 串流」；並保留分離式 LOAD_BIAS/BIAS_RX/WEIGHT_RX 等 [legacy] 相容段落（預設不需實作，除非要 backward compatible）。）
+
+你正在協助我產生「可用於 Catapult HLS 合成」的 C++ 硬體程式（硬體思維；預設不使用 SystemC sc_module，全用 ac_channel + AC datatypes），目標是完成可跑 TB 的整套工程：Top module + 子模組 blocks + testbench + 必要的 headers（trace/權重介面）。請嚴格遵守以下規格：
+
+====================================================================
+【v11.5 優先級規則（很重要）】
+1) 本文件為唯一權威規格。
+2) 任何段落標記為 [legacy] 代表「相容性/回溯」用途：預設不需要實作，除非你要 backward compatible。
+3) 若同一概念在主流程與 [legacy] 文字出現不同描述，以主流程為準。
+====================================================================
+
+【v11.5 主流程（單一規格；[legacy] 段落只供相容）】
+
+【0) 名詞與總則（v11.4 新增）】
+- PARAM（神經網路參數，統一一類）：
+  - 包含：bias、LayerNorm gamma/beta（若 notebook 有）、各線性層 weights、以及任何 bit-packed 參數（例如 H/Mask/表格等）。
+  - v11.4 的「參數載入」不再區分 BIAS 與 WEIGHT，統一走 PARAM 串流（English: unified PARAM stream）。
+- runtime base（B 方案）：
+  - Top 必須保存一個 runtime 暫存器：param_base_word（SRAM 的 u32 word address）
+  - PARAM 的 SRAM 寫入/讀取位置一律以「param_base_word + offset」定義（offset 由 WeightStreamOrder.h 的 PARAM 表提供）
+
+【4) 介面模式分離（v11.4 更新）】
+- 模式分離（Top-FSM 解析 data_in 的方式）更新為：
+  - IDLE：只接受 ctrl_cmd（以及該 cmd 的 args）
+  - CFG_RX：data_in 只允許 cfg words（按 ModelDesc.h 欄位順序；全 u32）
+  - PARAM_RX（v11.4）：data_in 只允許 PARAM words（FP32 raw + BITPACK raw；exact order/len 以 WeightStreamOrder.h 的 PARAM 表為準）
+  - INFER_RX：data_in 只允許 input y words（FP32 raw bits，u32）
+  - HALTED：同本文件 D1 規則（斷點就地 halt + READ_MEM）
+
+【5) Ctrl 命令集（v11.4 更新：新增 SET_W_BASE；LOAD_W 語意更新）】
+- 新增 opcode：SET_W_BASE（0x09；B 方案；設定 PARAM 的 runtime base）
+  - SET_W_BASE：需要 1 個 u32 arg，走 data_in
+    * arg0 = param_base_word（SRAM u32 word address）
+  - Top 行為：
+    * 檢查對齊：param_base_word 必須 align 到 SramMap.h 的 ALIGN_WORDS
+    * （若啟用 W_LANES 寬讀口）建議額外要求 align 到 W_LANES（或其倍數）；不符合可回 ERR_PARAM_BASE_ALIGN（可選）
+    * 檢查範圍（range check）：
+      - param_base_word 必須落在 SramMap.h 定義的 W_REGION 允許範圍內
+      - 且 (param_base_word + EXP_LEN_PARAM_WORDS) 不得超過 W_REGION 上界
+      - 若失敗，回 ERR_PARAM_BASE_RANGE
+    * 存入 Top regs：param_base_word
+    * 回 RSP_OK(SET_W_BASE)
+
+- LOAD_W（v11.4 語意更新：LOAD_PARAM；進入 PARAM_RX）
+  - v11.4 將 LOAD_W 定義為：載入 PARAM 統一串流（包含 bias/weights/bitpack）
+  - 前置條件：
+    * 必須已完成 CFG_COMMIT
+    * 必須已執行 SET_W_BASE（否則 ERR_BAD_STATE）
+  - Top 行為：
+    * 進入 PARAM_RX
+    * 從 data_in 連續接收剛好 EXP_LEN_PARAM_WORDS 個 u32 raw words
+    * 依序寫入 W bank：sram[param_base_word + i] = word_i
+    * 完成後回 RSP_DONE(LOAD_W)
+  - 若長度不符：回 ERR_PARAM_LEN_MISMATCH
+
+- [legacy] LOAD_BIAS / BIAS_RX / WEIGHT_RX：
+  - v11.2 的分離式載入流程保留於本文件的 [legacy] 相容段落（回溯/相容用），但 v11.4 主流程不使用。
+
+【WeightStreamOrder.h（v11.4 必須更新的約束）】
+- v11.4 主流程必須提供「PARAM 統一表」：
+  - EXP_LEN_PARAM_WORDS：PARAM payload 總長度（u32 words）
+  - kParamMeta[]：每段參數的 {id, dtype, offset_w, len_w, valid_bits, shape...}
+    * offset_w 定義為「相對於 param_base_word」
+  - valid_bits 定義（為了 padding 檢查可機械化）：
+    * 僅對 dtype=BITPACK 段有意義：valid_bits = 最後一個 u32 word 的有效 bits 數（1..32）
+    * 對 dtype=FP32 段：valid_bits 必須填 0（代表 N/A；Top/TB 必須忽略）
+    * Top 在載入 BITPACK 段時必須檢查：最後一個 word 的 padding bits（[31:valid_bits]）必須為 0，否則回 ERR_BITPACK_PAD
+- 可保留舊的 kBiasMeta/kWeightMeta/EXP_LEN_BIAS_WORDS/EXP_LEN_W_WORDS，但必須明確標示 [legacy]，避免 TB/Top 產生歧義。
+
+【SramMap.h（v11.4 使用方式）】
+- v11.4 主流程下，PARAM 的 base 不再使用 BASE_BIAS_W/BASE_WEIGHT_W（除非啟用 [legacy] 相容流程）。
+- PARAM 的實際 SRAM 落點由 SET_W_BASE 設定的 param_base_word 決定。
+- 強制規則（English: must be within allowed region）：
+  * SramMap.h 必須定義 W_REGION_BASE / W_REGION_WORDS（u32 word addressing）
+  * SET_W_BASE 需做 range check：param_base_word 必須落在 W_REGION 範圍，且 param_base_word + EXP_LEN_PARAM_WORDS 不得越界（否則 ERR_PARAM_BASE_RANGE）
+- 建議（方便 TB bring-up）：SramMap.h 可額外提供 PARAM_BASE_DEFAULT（通常等於 W_REGION_BASE 或你保留給 PARAM 的子區起點），TB 若未特別指定就用此值。
+
+【error code（v11.4 新增）】
+- 新增（主路徑使用）：ERR_PARAM_LEN_MISMATCH
+- 新增（主路徑使用）：ERR_PARAM_BASE_RANGE（SET_W_BASE 範圍檢查失敗）
+- 可選新增：ERR_PARAM_BASE_ALIGN（SET_W_BASE 對齊檢查失敗）
+- 其餘 error code 保留；若標記 [legacy] 則僅供相容流程
+
+====================================================================
+【[legacy] 相容流程：分離式 BIAS/WEIGHT 載入（原內容完整保留；僅供回溯/相容）】
+====================================================================
+
+[legacy 來源註記：原 v11.2 摘要：以 v11.1 為底更新 OUTMODE=0:x_pred、1:logits、2:none；W_LANES 以 ModelShapes.h 為準；Softmax LUT 索引映射移除 '/'（改用預先計算 scale 常數）；其餘條款保持原文。]
+
+你正在協助我產生「可用於 Catapult HLS 合成」的 C++ 硬體程式（硬體思維；預設不使用 SystemC sc_module，全用 ac_channel + AC datatypes），目標是完成可跑 TB 的整套工程：Top module + 子模組 blocks + testbench + 必要的 headers（trace/權重介面）。請嚴格遵守以下規格：
+
+【0) 必讀資料（我會附這些檔案）】
+- 算法檔：algorithm_ref.ipynb（Python 測試演算法；推導資料流、張量 shape、運算順序與權重命名規則）
+- 模型描述（CFG_RX 欄位順序唯一來源）：ModelDesc.h（cfg words 順序完全照 ModelDesc.h；全 u32；CFG_OUT_MODE 語意必須與 SET_OUTMODE 一致：0:x_pred、1:logits、2:none）
+- 形狀/元素數/常用 expected_len（frozen shapes）：ModelShapes.h（提供 words_fp32/words_bits/align_up 與 EXP_LEN_CFG/INFER/OUT 常數；列(Row)/行(Colume) 註記同檔案說明）
+- SRAM 版面（word addressing）：SramMap.h（ALIGN_WORDS + 各 region base/size；X ping-pong + SCRATCH S1(KV cache) + BIAS + WEIGHT；base/size/對齊以此為準）
+- 權重/偏置串流順序與 expected_len：WeightStreamOrder.h（LOAD_BIAS/LOAD_W 的 exact order + 每段 expected_len/dtype/shape + SRAM offset；TB/Top 必須一致；禁止 TODO）
+ - legacy（保留 舊語意）：TB 可先讀 ModelDesc.h 的 preset/欄位定義當作 default cfg，再用 CFG_BEGIN/CFG_COMMIT 寫入 Top regs。
+ - 注意 shape 語意：x[node][d] 的 shape = [N_NODES, D_MODEL]，其中 N_NODES 是列(Row)、D_MODEL 是行(Colume)（定義以 ModelShapes.h 為準）
+ - 線性化規則：inner-most dimension contiguous（也就是 d/行(Colume) 連續）
+- Softmax 近似參數與 LUT（唯一來源）：SoftmaxApprox.h（定義 SOFTMAX_NEG_T / LUT sizes / EPS / index-mapping scales + exp/rcp ROM LUT；禁止各處各自 hardcode；若改任何參數必須連同 SoftmaxApproxLutData.h 一起重生以保持一致）
+- 權重檔：weights.h（可包含多種型態的常數/權重）
+ - 浮點類權重：以 double 儲存；TB 端轉成 fp32 後再「以 32-bit raw word 形式」送入 Top（見 data word 規格）
+ - bit-packed 權重：例如校驗矩陣/Mask 等，用 packed words（例如 uint32_t/uint64_t）儲存；TB 端直接送 raw words
+ - 若 weights.h 內存在下列張量/向量，必須納入權重載入與 SRAM map（至少要支援）：
+ - l0_in_s_x, l0_o_s_x, l0_ff1_s_x, l0_ff2_s_x
+ - l1_in_s_x, l1_o_s_x, l1_ff1_s_x, l1_ff2_s_x
+- 權重串流器（TB 端）：weights_streamer.h
+ - 由使用者「手動」定義權重填入順序（類似 的 weights_load.h 概念），Top 只需照順序寫入 SRAM
+ - 仍需能與 include/WeightStreamOrder.h 的 expected_len 驗證機制對齊（少送/多送/順序錯 → error）
+- bias 來源（TB 端/離線生成）：bias_*.h（bias 用另一個 .h 檔來計算/產生，盡可能由 ModelDesc 自動完成）
+- Trace 檔（final golden）：
+ - input_y_step0.h
+ - output_x_pred_step0.h
+ - output_logits_step0.h
+
+【0.x) v11 記憶體/Bank 策略（唯一規則；禁止平均分散/低位址交錯；v11.5 更新：方案1—單一 2-port SRAM + logical regions）】
+- 本規格的「bank」在語意上等同於「logical region」（English: logical regions / address ranges）：
+  - X_PAGE0 region：只存 X ping-pong 第 0 頁
+  - X_PAGE1 region：只存 X ping-pong 第 1 頁
+  - SCRATCH region：只存 scratch（含你選的 S1：KV Cache）
+  - W_REGION region：只存參數/資料的 raw words（weights / bit-packed / bias / input y 等）
+- v11.5（你選的方案1 / M2-2P）允許「物理上」用 *單一* true 2-port SRAM macro 承載上述全部 regions：
+  - 外部仍以 u32 word addressable（addr_word）定義；READ_MEM 只依 SramMap.h 的 base/size decode 落點屬於哪個 region。
+  - region 的容量可以極度不平衡；SramMap.h 的離線生成器必須允許你按模型需求配置各 region 的 size（English: region sizes are configurable; not equal-split）。
+- 禁止：
+  - 把權重「依種類平均分散到不同 region」、或把單一線性位址「用最低位元交錯」做全域 interleave（這會破壞串流/對齊與 TB 一致性）。
+- W_REGION 的內部讀取仍允許寬讀口/向量化（wide read / burst gather）：
+  - 介面不變：TB↔Top 的 data_in/data_out 一律維持 u32 raw word（不改【6)】）。
+  - 若物理 SRAM 支援 256b（或更寬）讀：可直接對應 W_LANES=8 一拍讀出。
+  - 若物理 SRAM 只有 32b：Top 必須以「連續讀 W_LANES 次」做 burst gather，再放入 block-local FIFO/line-buffer 做重用（功能等價；吞吐視排程而定）。
+
+【1) Profile（避免規格互相覆蓋）】
+- PROFILE_RUNTIME（預設，對齊 ）：
+ - runtime CFG 可變：CODE_N、CODE_C、N_LAYERS、D_MODEL、D_FFN、(可選) D_LPE
+ - N_HEADS 固定為 8；必須檢查 cfg_d_model % 8 == 0
+ - 因硬體陣列需固定：定義 compile-time ModelLimits（MAX_*），runtime cfg 只能在有效範圍（<=MAX_*）內運作
+ - TB 的「模型架構設定」會先讀 ModelDesc.h 當作 default，再用 CFG 流程寫進 Top regs
+- PROFILE_FIXED（對齊 ，用於快速 bring-up / trace 對齊）：
+ - 所有 shape compile-time 固定；CFG 只驗證 Top-FSM 流程，不改變陣列大小與資源配置
+
+【2) 總體架構與分塊（Block partition：5 大 block）】
+(1) Top：仲裁者/控制器/共享 SRAM 擁有者 + FSM + runtime cfg regs + 各段 base/len 記錄 regs
+(2) PreprocEmbedSPE：embed + SPE；LPE 不做額外計算（LOAD_W 直接載入/或專段載入）
+ - 方案B：輸出一律寫入 X_out（由 Top 指定頁），完成後由 Top swap bank
+(3) TransformerLayer：單一層硬體，time-mux 重複執行 N_LAYERS 次
+ - 內部可拆 private functions，但維持單一對外介面
+ - 必須包含：Q/K/V 投影、多頭 attention、concat、out projection、residual、FFN(兩層 linear + ReLU)、以及該層的 norm（依 notebook 流程）
+ - 方案B（計算結果暫存）：Top 以 base/len 方式傳入 X_in/X_out 與 SCRATCH 的 base（避免子模塊自行分配/計算位址）；layer 完成後由 Top 進行 bank swap
+(4) LayerNormBlock：獨立 LN，供 Top 插入 mid LN / end LN（runtime cfg 時用 MAX_D_MODEL buffer + cfg_d_model 有效長度）
+ - 方案B：以兩-pass 規則運作（pass1 只讀 X_in；pass2 讀 X_in 寫 X_out），base 由 Top 指定
+(5) FinalHead：Transformer 後額外兩層 FFN + logits 計算 + x_pred/sign(logits*y) 翻轉邏輯
+ - 支援 OUTMODE：輸出 x_pred / logits / none（由 ctrl SET_OUTMODE 控制；none 用於 debug/halt）
+ - 方案B：輸入從最新的 X_in 頁讀取；中間暫存僅可使用 SCRATCH；最終結果預設直接走 output channel（若要落地 SRAM，必須在 SramMap.h 明確分配 PERSIST/OUT_BUF）
+
+【3) LayerNorm 插入規則】
+- mid LN 插入層 index：mid_index = (N_LAYERS//2) - 1
+ - N_LAYERS=5 時：mid_index=1，表示 layer 0、1 做完後插入一次 LN（對齊 notebook 的 encoder_norm_mid_out 概念）
+ - runtime cfg 太小導致 mid_index<0：可不插 mid LN（需明確邊界處理）
+- Transformer 全部完成後一定要做 end LN（encoder_norm_end），再進 FinalHead
+
+【4) 介面：data_in/data_out 共用 + ctrl_cmd/ctrl_rsp（模式分離 + 小位元數）】
+- 四條 channel（建議命名固定，避免你之後一直改 TB）：
+ - ctrl_cmd : ac_channel<ac_int<16,false>> // 小位元數；主要放 opcode
+ - ctrl_rsp : ac_channel<ac_int<16,false>> // 小位元數；回報 OK/DONE/ERR
+ - data_in : ac_channel<ac_int<32,false>> // 統一 u32 raw words（CFG/bias/weights/input y/command args）
+ - data_out : ac_channel<ac_int<32,false>> // 統一 u32 raw words（x_pred/logits/debug readback）
+
+- 「小 ctrl，大資料都走 data」的規則（你選 2B + 2C 的精神）：
+ - ctrl_cmd 只放 opcode（+少量 flags/小 arg，如果你之後真的需要）
+ - 任何需要參數的命令，一律在 ctrl_cmd 之後，立刻從 data_in 再讀固定個數的 u32 arg words
+ - 這樣就不必把 addr/len/outmode…硬塞進 ctrl 的 bitfield，ctrl 位元數可以很小
+ - 不需要 ST_BUSY：
+ - 若 Top 忙到不能收新命令：要嘛 ctrl_cmd 的寫入端會被 back-pressure（channel 本身的 rdy）
+ - 要嘛回 RSP_ERR(ERR_BUSY)
+
+- 模式分離（Top-FSM 解析 data_in 的方式）：
+ - IDLE：只接受 ctrl_cmd（以及該 cmd 的 args）
+ - CFG_RX：data_in 只允許 cfg words（按 ModelDesc.h 欄位順序；全 u32）
+ - BIAS_RX：data_in 只允許 bias words（全 u32 raw）
+ - WEIGHT_RX：data_in 只允許 weight words（FP32 raw + BITPACK raw）
+ - INFER_RX：data_in 只允許 input y words（FP32 raw bits，u32）
+ - HALTED：僅在 D1 斷點命中時進入；freeze 住運算與 SRAM 寫入；只允許 READ_MEM / DEBUG_CFG(RESUME/CLEAR) / SOFT_RESET
+
+- 命令與 payload 的邊界規則（避免 TB/硬體解析歧義）：
+ - 進入某個 *_RX 模式的 cmd（CFG_BEGIN/LOAD_W/INFER；LOAD_BIAS 為 [legacy]）只能在 IDLE 下發
+ - *_RX 模式期間禁止下其他 ctrl_cmd（除非你之後特別設計可中斷），結束後 Top 會回 RSP_DONE 再回到 IDLE
+
+【5) Ctrl 命令集（ctrl_cmd/ctrl_rsp，小位元數；大參數走 data_in）】
+- ctrl_cmd 格式（建議 16-bit）：
+ - [7:0] opcode
+ - [15:8] reserved（目前填 0；未來要加 flags 再用）
+
+- ctrl_rsp 格式（建議 16-bit）：
+ - [3:0] rsp_kind：0=OK，1=DONE，2=ERR
+ - [7:4] reserved
+ - [15:8] payload（對 OK/DONE：回傳對應的 opcode；對 ERR：回傳 err_code）
+
+- opcode 定義（目前用不到大 arg，所以 opcode 8-bit 很夠）：
+ - 0x01 CFG_BEGIN
+ - 0x02 CFG_COMMIT
+ - 0x04 LOAD_W（主路徑：LOAD_PARAM；進入 PARAM_RX）
+ - 0x05 SET_OUTMODE （需要 1 個 u32 arg，走 data_in）
+ - 0x06 INFER
+ - 0x07 READ_MEM （需要 2 個 u32 arg，走 data_in；debug/回吐用）
+ - 0x08 DEBUG_CFG （需要 1 個 u32 arg，走 data_in；選 checkpoint/是否 dump）
+ - 0x09 SET_W_BASE（需要 1 個 u32 arg，走 data_in；設定 param_base_word）
+ - 0x03 LOAD_BIAS [legacy]（分離式 bias 流程；相容用）
+ - 0x7F SOFT_RESET （可選：只 reset FSM/flags，不清 SRAM；bring-up 很好用）
+
+- 各命令的 args（都用 u32）：
+ - SET_OUTMODE：arg0 = outmode
+ - 0：OUTMODE_XPRED
+ - 1：OUTMODE_LOGITS
+ - 2：OUTMODE_NONE（不吐任何正常推論輸出；保留 data_out 給 D1 meta / READ_MEM；debug halt 時建議用這個）
+ - READ_MEM：arg0 = addr_word（SRAM 的「word address」，以 u32 為單位）
+ arg1 = len_words（要讀多少個 u32 words）
+ - Top 收到後：依序把 len_words 個 u32 丟到 data_out，最後回 RSP_DONE(READ_MEM)
+ - 這條就是你提的「直接做一個能讀 SRAM 的 ctrl」：debug/回吐一律走這條，不必再做第二條 debug channel
+ - DEBUG_CFG：arg0 = packed（你已選用 Debug 策略 D1：就地 halt + READ_MEM；不需要 PERSIST_DEBUG）
+ - arg0 layout（u32）：
+ - [0] dbg_en（1=啟用；0=關閉）
+ - [1] dbg_halt_en（1=命中 checkpoint 時「就地停住」；0=不 halt）
+ - [3:2] dbg_action（0=SET/ARM：套用本次設定；1=RESUME：從 HALTED 繼續；2=CLEAR：清除斷點；3=reserved）
+ - [11:4] dbg_kind（enum；例如 1=X_IN，2=K_CACHE，3=V_CACHE，4=ATTN_OUT，5=MID_LN_OUT，6=END_LN_OUT…）
+ - [19:12] dbg_layer_id（0..N_LAYERS-1；若不適用填 0）
+ - [27:20] dbg_head_id（若不適用填 0）
+ - [31:28] reserved
+ - D1（你選的策略；推薦、最省 SRAM）：
+ - DEBUG_CFG(SET/ARM) 只是在 Top 設定「斷點條件」（kind/layer/head + halt_en）
+ - INFER 執行期間若命中 checkpoint：
+ 1) Top 進入 HALTED（freeze）：停止往下運算、停止任何 SRAM 寫入（確保觀測資料不被覆寫）
+ 2) 回 ctrl_rsp：RSP_ERR(ERR_DBG_HALT)（這不是致命錯誤；表示「依 debug 設定停住」）
+ 3) 立即在 data_out 送 2 個 u32 meta words（不混在 logits/x_pred 中）：
+ - meta0 = addr_word（要觀測資料所在 SRAM word address）
+ - meta1 = len_words（要觀測資料長度，以 u32 words）
+ - 回應順序釘死：必須先寫 ctrl_rsp（RSP_ERR(ERR_DBG_HALT)），之後才允許在 data_out 推 meta0、meta1（且 meta0 必先於 meta1）。
+ - 注意：雖然 ctrl_rsp 與 data_out 是不同 channel、理論可並行，但為了 TB/host 不踩死鎖，這裡規格要求固定順序。
+ - Top 不得因 data_out backpressure 延遲 ctrl_rsp；meta0/1 必須可先暫存在內部 2-word buffer，待 data_out ready 再送出。
+
+ 4) TB 可用 READ_MEM(meta0, meta1) 讀回資料做比對/畫圖
+ 5) TB 若要繼續同一次 INFER：送 DEBUG_CFG(RESUME)（dbg_action=RESUME）→ Top 離開 HALTED 繼續跑
+ - 注意：HALTED 狀態下允許的 ctrl_cmd（其餘視為 ERR_BAD_STATE）：
+ - READ_MEM（讀回當下 SRAM 內容）
+ - DEBUG_CFG（RESUME / CLEAR）
+ - SOFT_RESET（放棄本次推論並回到 IDLE）
+ - D0（legacy，可保留但你目前不採用）：copy-to-PERSIST_DEBUG
+ - 若你未來想做「不中斷推論、把 checkpoint copy 到固定區域」才需要
+ - 這條路會需要在 SramMap.h 分配 PERSIST_DEBUG，並在命中點做 copy，再由 TB READ_MEM(PERSIST_DEBUG) 讀回
+
+- Top-FSM 的基本行為（回應順序）：
+ - cmd 被接受時：先回 RSP_OK(opcode)
+ - 需要等 payload/運算完成的 cmd（LOAD_W/INFER/READ_MEM；LOAD_BIAS 為 [legacy]）：完成時再回 RSP_DONE(opcode)
+ - 若發生錯誤：回 RSP_ERR(err_code)
+ - 一般錯誤：回到 IDLE（必要時也可保留現有載入進度，依你喜好）
+ - 例外：ERR_DBG_HALT（D1 斷點命中）→ 進入 HALTED，不回 IDLE；只允許 READ_MEM / DEBUG_CFG(RESUME/CLEAR) / SOFT_RESET
+
+- error code 建議枚舉（你說要我先給選項，你再多選）：
+ - 0x01 ERR_BUSY // 非 IDLE 狀態下收到 cmd
+ - 0x02 ERR_BAD_STATE // 指令順序不合法（沒 CFG_COMMIT 就 LOAD_W / INFER…）
+ - 0x03 ERR_CFG_LEN_MISMATCH // CFG words 數量不符
+ - 0x04 ERR_BIAS_LEN_MISMATCH // bias expected_len 不符
+ - 0x05 ERR_W_LEN_MISMATCH // weights expected_len 不符
+ - 0x06 ERR_BITPACK_PAD // bitpack 最後 word padding/valid_bits 檢查失敗
+ - 0x07 ERR_BAD_OUTMODE // SET_OUTMODE 參數非法
+ - 0x08 ERR_MEM_RANGE // READ_MEM addr/len 超界或跨 region 禁止
+ - 0x09 ERR_CFG_ILLEGAL // cfg 自洽性檢查失敗（例如 d_model%N_HEADS!=0、超 MAX…）
+ - 0x0A ERR_TIMEOUT_INTERNAL // 子模塊卡住（debug 用，可選）
+ - 0x0B ERR_DBG_HALT // 依 DEBUG_CFG 斷點命中而 halt（D1）；非致命；Top 留在 HALTED
+ - 0x0C ERR_PARAM_LEN_MISMATCH // PARAM expected_len 不符（主路徑）
+ - 0x0D ERR_PARAM_BASE_ALIGN // SET_W_BASE 對齊檢查失敗（可選）
+ - 0x0E ERR_PARAM_BASE_RANGE // SET_W_BASE 範圍檢查失敗（主路徑）
+
+-（回答你問的「什麼情況需要很大的 arg？」）
+ - 只要你想在 ctrl 內一次塞進「addr/len/layer/head/checkpoint/mode…」這種東西，就會爆
+ - 例如 READ_MEM：addr(>=20~24 bits) + len(>=16 bits) + mem_sel + flags
+ - 例如 debug dump：layer_id + head_id + tile_id + kind + stride…
+ - 所以我才把「大參數」全部移到 data_in 的 u32 args，ctrl 只留 opcode → 最省位元又最彈性
+
+【6) data_in/data_out：字格式（你已選 bit-packed；全部走 u32 raw word）】
+- 統一用「raw word」串流：DATA_W = 32，1 word = 1 個 u32
+- FP32 類資料（weights / bias / input y / x_pred / logits）：
+ - TB 端把 double/float 轉成 fp32
+ - 再把 fp32 以 IEEE754 bit-pattern 當作 u32 raw word 傳入/傳出
+ - Top 端 SRAM 也以 raw u32 存；使用時再轉回 ac_ieee_float<binary32>
+
+- BITPACK 類資料（例如校驗矩陣 H、Mask）：
+ - TB 端把 bitstream packing 成 u32 raw words
+ - bitstream 的第 0 個 bit → 放在 word[0] 的 LSB（bit0）
+ - 也就是：bit_idx = 0 對應 (word_idx=0, bit_in_word=0)
+ - 最後一個 word 若沒擺滿：剩餘 bits 全置 0
+ - Top/子模塊讀取邊界必須用 valid_bits（只對 BITPACK 段需要；FP32 段不需要）
+
+- 驗證與 expected_len（禁止 TODO；以 header 為準）：
+ - include/ModelDesc.h：CFG_RX 欄位順序/數量（EXP_LEN_CFG_WORDS）
+ - include/ModelShapes.h：INFER_RX 與正常 OUT 的 expected_len（EXP_LEN_INFER_IN_WORDS / EXP_LEN_OUT_*），以及 words_fp32/words_bits 的計算規則
+ - include/WeightStreamOrder.h：定義 LOAD_BIAS/LOAD_W 的 exact order + 每段 len(words)/dtype/shape + SRAM offset（FP32/BITPACK）；並提供 EXP_LEN_BIAS_WORDS / EXP_LEN_W_WORDS
+ - （可選/legacy）include/BiasDesc.h（或 bias_*.h）：若你把 bias 串流獨立出來可用；但 推薦以 WeightStreamOrder.h 內的 bias meta / EXP_LEN_BIAS_WORDS 為準
+ - Top 在 BIAS_RX/WEIGHT_RX：逐段驗證 expected_len（少送/多送/長度不符 → ERR_*_LEN_MISMATCH）
+ - BITPACK 段額外驗證：最後一段 word 的 padding bits 必須為 0（若你選擇做這個檢查）
+-（v11 補充：配合 W bank 寬讀口）W_REGION 的所有段落 base/len 必須對齊到 W_LANES（不足以 padding=0 補齊；padding words 仍算在 expected_len 內，並由 WeightStreamOrder.h 宣告）。
+
+【7) 型別規格（非常重要）】
+- 全部使用 AC datatypes：ac_int / ac_fixed / ac_ieee_float<binary32> / ac_channel（必要時可用 ac_shared/ac_sync）
+- data channel 建議型別：
+ - data_word_t = ac_int<DATA_W,false>（預設 DATA_W=32）
+- weights.h：
+ - 浮點權重以 double 儲存（TB 端轉 fp32 再以 raw bits 送入）
+ - bit-packed 權重以 packed words 儲存（TB 端直接送 raw words）
+- Top SRAM：
+ - 權重/bit-packed/輸入 y/bias 皆可用「raw-word SRAM」集中存放（W_SRAM）
+ - activation 中間結果可用 fp32 SRAM（ACT_SRAM）或同一塊 SRAM 分區（但務必清楚切分）
+- 避免 using type alias（除非我明確允許）
+
+【8) SRAM：集中在 Top、inner-most contiguous、方案B（X ping-pong + scratch reuse；v11.5 實作：單一 2-port SRAM + logical regions）】
+- 權重集中在 Top SRAM（v11.5：建議用「單一 true 2-port SRAM macro」承載所有資料，再以 SramMap.h 切成 logical regions）
+- tensor 線性化採 inner-most dimension contiguous（d/行(Colume) 連續）
+- 方案B 定義：主幹 activation「X」使用 2-page ping-pong；其餘中間結果一律視為 scratch（可重用/可覆寫），由 Top 排程保證不覆寫仍需資料
+-（v11 固定 logical regions；English: fixed logical regions by contention class）：
+ - X_PAGE0 region：只放 X_PAGE0
+ - X_PAGE1 region：只放 X_PAGE1
+ - SCRATCH region：只放 SCRATCH（含 S1：KV cache）
+ - W_REGION region：只放 W_REGION（weights / bit-packed / bias / input y 等；集中連續位址；禁止 interleave）
+
+
+【8.1) ACT_SRAM 版面（logical regions；實際 base/size 由 SramMap.h 離線生成）】
+-（v11 對應關係）：
+ - W_REGION → W bank（集中連續位址）
+ - X_PAGE0 → X_PAGE0 bank
+ - X_PAGE1 → X_PAGE1 bank
+ - SCRATCH → SCRATCH bank
+A) W_REGION（raw words）：weights / bit-packed / bias / input y 等（依【6)】與【11)】規則）
+B) ACT_REGION（raw words，內容視為 fp32 raw-bit pattern）：
+ - X_PAGE0：X ping-pong 第 0 頁
+ - X_PAGE1：X ping-pong 第 1 頁
+ - SCRATCH：各子模塊的暫存區（Q/K/V、attention partial、FFN hidden、residual 暫存等）
+ - （legacy，可選）PERSIST_DEBUG：僅供 D0(copy-to-PERSIST) 使用；你目前採 D1 就地 halt，預設不分配
+
+【8.1.1) v11：W bank 寬讀口（wide read port；只針對 W bank；W_LANES=8）】
+- 目的：降低權重讀取瓶頸；配合 block 內快取（見【8.4.2】）。
+- 外部介面不變：TB↔Top 仍是一個 u32 raw word 串流；Top 內部可用寬 word 存取 W bank。
+- 定義：W_LANES = 每個寬 word 包含的 u32 lanes 數（compile-time 常數；以 ModelShapes.h 的 W_LANES 為準；此模型固定為 8，等價 8×32=256-bit；Top/Blocks/TB 共用）。
+- 對齊規則（避免 read-modify-write）：
+ - W bank 的 base/len、以及 WeightStreamOrder.h 宣告的每段 offset/len，都必須 align 到 W_LANES。
+ - 不足的尾端以 padding=0 補齊，padding words 仍算在 expected_len（由 WeightStreamOrder.h 宣告）。
+
+- v11.1 額外硬規則（避免 wide-read 失效或引入複雜的 unaligned gather）：
+ - SramMap.h 的 W_REGION_BASE 與 W_REGION_WORDS 必須是 8 的倍數（以 u32 words 為單位）。
+ - WeightStreamOrder.h 中「落在 W_REGION」的每一段：
+  * offset_w 必須是 8 的倍數（u32 word address 對齊 8-word boundary）。
+  * len_w 必須是 8 的倍數；若真實 payload 長度不足 8 的倍數，必須在串流尾端補 0（padding=0）。
+  * padding words 必須計入 expected_len（也就是 TB 真的要送出那些 0）。
+ - padding 的值（TB→Top）一律送 u32=0x00000000（對 fp32 就是 +0.0 的 bit pattern；對 bitpack 就是全 0 bits）。
+- READ_MEM 相容性（debug 友善）：
+ - READ_MEM 的 addr_word/len_words 仍以「u32 words」定義，不因內部 256-bit 寬讀口而改變。
+ - 若 addr_word 或 len_words 不是 8 對齊：允許 Top 以「先對齊讀出包含區間的寬 word，再做 lane slice」的方式回吐（可較慢但必須正確）。
+
+
+【8.2) X ping-pong 的頁大小 + 「consumer 控制 swap」規則（支援 blocks 級 pipeline）】
+- X 的語意：X[列(Row)=node/token][行(Colume)=d_model]
+- 以 fp32 raw words 存放：1 element = 1 word（DATA_W=32）
+- 頁大小（words）：
+ - X_WORDS = cfg_n_nodes * cfg_d_model
+ - X_PAGE_WORDS = align_up(X_WORDS, ALIGN_WORDS) // ALIGN_WORDS 以 SramMap.h 的定義為準（例如 16 words）
+
+- ping-pong 的「頁」定義：
+ - page_id = 0/1 對應 X_PAGE0 / X_PAGE1
+ - 任何 stage 都必須遵守：只讀 X_in(page_in)，只寫 X_out(page_out)，且 page_out != page_in
+
+- consumer 控制 swap（你指定的規則）：
+ - producer（上游 stage）「完成寫入 page_out」之後，只做一件事：把 page_out 以 token/狀態 publish 給下游
+ - 真正的「bank_sel 切換」發生在 consumer（下游 stage）開始使用新頁的那一刻
+ - 直覺版：資料被下游「開始讀」了，才算 swap 成功
+ - 為了避免被覆寫：
+ - page 需要有「in_use」（被讀者占用）概念（refcnt 或簡化的 busy flag 皆可）
+ - producer 只有在 page_out 沒人占用時才允許覆寫（refcnt==0）
+ - in_use 釘死採用 per-consumer bitmask（每個 consumer 對應 1 bit；English: per-consumer in_use mask）：
+ - acquire_read(page_id, consumer_id)：in_use_mask[page_id][consumer_id] = 1
+ - release_read(page_id, consumer_id)：in_use_mask[page_id][consumer_id] = 0
+ - producer 覆寫條件：in_use_mask[page_out] == 0（等價於 legacy 的 refcnt==0；若需要 refcnt，可用 popcount(mask)）
+ - 同 cycle 多個 acquire/release：用 set_mask/clear_mask 做原子更新（atomic update）：mask_next = (mask | set_mask) & ~clear_mask
+
+（帶來的好處）
+- blocks 級 pipeline 時，上游可以先把結果寫到另一頁並 publish，下游什麼時候接手由下游自己決定
+- 也避免你之前擔心的：producer 一寫完就 swap，結果下游其實還沒讀完舊頁
+
+【8.3) 何時 swap bank（用「token/頁狀態」描述；對齊 TB/trace）】
+- 在你要的 blocks 級 pipeline 版本裡，「swap」不是硬做在 producer 結尾，而是以下事件：
+ - consumer 取得新頁 token / 或 consumer 開始讀新頁（兩者等價）
+
+- stage 串接的 publish/consume（語意版）：
+ - PreprocEmbedSPE：produce X_out(page_out) → publish
+ - TransformerLayer(layer_id)：consume X_in(page_in) → produce X_out(page_out) → publish
+ - mid LN（若啟用）：consume → produce → publish
+ - end LN：consume → produce → publish
+ - FinalHead：consume 最新 X_in，輸出 logits/x_pred 走 data_out（不再 produce 新 X page）
+
+- 若你先用「單一 Top-FSM、逐段呼叫子模塊」bring-up：
+ - 你仍然可以用同樣語意對齊：Top 不在 producer 結尾立刻 flip bank_sel
+ - 而是在「準備呼叫下一段 consumer」之前，才把 consumer 的 X_in 指到上一段 publish 的 page
+ - 這樣在行為上仍符合「consumer 控制 swap」
+
+【8.4) SCRATCH 的使用規範（同層內有效；跨層可覆寫）】
+- SCRATCH 的資料生命週期（liveness）：僅限「單一子模塊/單一 layer run / 單一 LN run」內有效
+- 允許的 scratch 類型（可依實作取捨，但必須在 SramMap.h 宣告其 base/size，且可支援 alias/overlay）：
+ - SCR_Q / SCR_K / SCR_V（若你選擇先 materialize 再算 attention）
+ - SCR_ATT_OUT（sublayer_out 暫存，用於 residual add）
+ - SCR_FFN1（FFN 第一層 hidden，用於 ReLU + 第二層）
+ - 其他：softmax partial、tile psum、reduce 用累加器等（若需）
+
+【8.4.1) SCRATCH 方案：S1「KV Cache」（你已選；推薦 bring-up）】
+- 目標：只在 SCRATCH 落地 K/V（各一份），Q 不落地（on-the-fly），以最小 scratch 換取可控 schedule 與良好 debug 可見性。
+- SCRATCH 分割（以 u32 words 為單位；base 由 Top/SramMap.h 提供）：
+ - X_WORDS = cfg_n_nodes * cfg_d_model
+ - X_PAGE_WORDS = align_up(X_WORDS, ALIGN_WORDS) // 同【8.2】規則
+ - SCR_K：shape = [cfg_n_nodes, cfg_d_model]（列(Row)=node、行(Colume)=d_model）
+ - base = scratch_base + 0 * X_PAGE_WORDS
+ - len = X_PAGE_WORDS
+ - SCR_V：shape = [cfg_n_nodes, cfg_d_model]（列(Row)=node、行(Colume)=d_model）
+ - base = scratch_base + 1 * X_PAGE_WORDS
+ - len = X_PAGE_WORDS
+ - 因此：SCRATCH_WORDS（S1）= 2 * X_PAGE_WORDS
+ - 註：softmax 的 max/sumexp、單一 node 的輸出向量 y[0..D_MODEL-1] 建議用 reg（不占 scratch）。
+
+- TransformerLayer（單層、time-mux）的內部排程（看得出流水線的版本）：
+ Phase A) KV_MAT（一次掃過 X_in；materialize K/V）
+ - 讀 X_in(page_in) →（依 notebook/你的 LN 插入規則，可在此做 LN1）→ 計算 K,V → 寫入 SCR_K/SCR_V
+ - K/V 在整個 attention 運算期間保持不變（不可被覆寫）
+
+ Phase B) ATTN（Q on-the-fly + 兩-pass softmax；寫出 attention+residual 結果）
+ - 對每個 q_node（0..cfg_n_nodes-1）：
+ 1) 由 X_in(q_node)（或 LN1(X_in)）計算 q_vec（不落地）
+ 2) pass1：掃 t_node=0..cfg_n_nodes-1
+ - score = dot(q_vec, SCR_K[t_node]) + (可選)LPE(q,t) + mask
+ - 求 max_score
+ 3) pass2：再掃 t_node
+ - w = exp(score - max_score)
+ - sumexp += w
+ - acc_vec += w * SCR_V[t_node] // acc_vec 是 D_MODEL 長度，建議用 reg 累加
+ 4) out_vec = acc_vec / sumexp
+ 5) out_proj = out_vec * Wo + bo
+ 6) residual：X_mid = out_proj + X_in(q_node)
+ 7) 寫入 X_out(page_out) 的對應 node（此時 X_out 暫存的是本層「attention sublayer 後」的結果）
+
+ Softmax 可合成實作（方案A：LUT exp + reciprocal；禁止 std::exp 與除法；English: LUT exp + reciprocal, no division）
+ - 定義：x = score - max_score（理論上 <=0），先 clamp：x_clamp = clamp(x, -SOFTMAX_NEG_T, 0)
+ - exp_lut：用 compile-time const ROM LUT 查 exp(x_clamp) → w（可選 linear interpolation；LUT index 由 x_clamp 線性映射）
+ - sumexp += w；sumexp 最小值需 clamp 到 SOFTMAX_EPS（避免 reciprocal 爆掉）
+ - inv_sumexp = rcp_lut(sumexp_clamp)（reciprocal LUT；可選做 1 次 Newton refinement，但仍禁止直接用 '/'）
+ - out_vec = acc_vec * inv_sumexp（用乘法取代除法）
+ - 需釘死的 compile-time 參數（建議放 ModelLimits.h 或 SoftmaxApprox.h）：
+ - SOFTMAX_NEG_T、SOFTMAX_EXP_LUT_SIZE、SOFTMAX_RCP_LUT_SIZE、SOFTMAX_EPS
+ - 放置位置釘死（English: header source of truth）：
+ - 以上 4 個參數 + exp_lut/rcp_lut 內容 **必須** 定義在 include/SoftmaxApprox.h（Top/TB/Blocks 全部 include 同一份）
+ - legacy： 的「ModelLimits.h 或 SoftmaxApprox.h」僅保留文字，不再允許二選一
+ - LUT 索引映射規則（避免各處不一致；English: fixed index mapping）：
+ - exp_lut：idx = sat_u( (-x_clamp) * SOFTMAX_EXP_IDX_SCALE )；其中 SOFTMAX_EXP_IDX_SCALE=(SOFTMAX_EXP_LUT_SIZE-1)/SOFTMAX_NEG_T，並在 SoftmaxApprox.h 以預先計算常數給出（mapping logic 不使用 '/'）；x=0→idx=0，x=-T→idx=LAST
+ - rcp_lut：sumexp_safe = clamp(sumexp, 1, SOFTMAX_SUMEXP_MAX)
+ idx = sat_u( (sumexp_safe - 1) * SOFTMAX_RCP_IDX_SCALE )；其中 SOFTMAX_RCP_IDX_SCALE=(SOFTMAX_RCP_LUT_SIZE-1)/(SOFTMAX_SUMEXP_MAX-1)，並在 SoftmaxApprox.h 以預先計算常數給出（mapping logic 不使用 '/'）
+ - SOFTMAX_SUMEXP_MAX：必須與 SoftmaxApproxLutData.h 生成參數一致（目前 LUT 以 256 生成；即使 N_NODES 較小也可維持 256 以簡化與保持一致）
+ - 推薦 bring-up 初值（可改但必須集中在 SoftmaxApprox.h；English: suggested defaults）：
+ - SOFTMAX_NEG_T=10（或 12）；SOFTMAX_EXP_LUT_SIZE=256；SOFTMAX_RCP_LUT_SIZE=256；SOFTMAX_EPS=1e-8（fp32）/ 1 LSB（fixed）
+ - 型態建議：LUT/acc/sumexp 可用 ac_fixed（推薦、資源可控）或 ac_ieee_float<binary32>（bring-up）；但不允許呼叫不可合成的 libm exp/div
+
+ Phase C) FFN（在 X_out(page_out) 上做「per-node in-place」更新；不需要 FFN hidden 落地）
+ - 注意：為了不增加第三頁 X_mid，本方案允許在 page_out 上做 node-by-node 的 in-place 更新：
+ - 對每個 node：
+ 1) 先把 X_mid(node)=X_out(node) 讀到 reg vec（長度 D_MODEL）
+ 2) 計算 FFN：y = W2 * ReLU(W1*x + b1) + b2（建議不存 hidden，逐 k 生成並累加）
+ 3) residual：X_final = X_mid + y
+ 4) 把 X_final 寫回同一個 node 的 X_out(node)
+ - 這種「同一 node 先讀後寫」可保證行為唯一，且不需要額外 scratch buffer。
+
+- S1 對 Debug 策略 D1 的好處（ckpt 可見性）：
+ - K/V 是明確落地在 SCRATCH 的固定區段：很適合 CKPT_K_CACHE / CKPT_V_CACHE
+ - ATTN_OUT / X_MID / X_OUT 都在 X_out(page_out) 中，可直接就地 halt 後 READ_MEM 讀回
+- residual 的強制規則（避免單埠/單 bank 讀寫衝突）：
+ - 預設做法：先算 sublayer_out → 寫入 SCR_ATT_OUT（或等價暫存），再做 add：讀 X_in + 讀 SCR_ATT_OUT → 寫 X_out
+ - S1(KV Cache) 推薦例外：若 page_in != page_out，且你以「單一 node 的 out_vec[0..D_MODEL-1]」暫存在 reg，再逐 element 讀 X_in 並直接寫 X_out，則可不配置 SCR_ATT_OUT
+- LayerNorm 的強制規則（避免隱式 in-place）：
+ - 允許「兩 pass」：pass1 只讀 X_in 計算 mean/var；pass2 讀 X_in 並寫 X_out
+ - 不允許同一 pass 同時對同一頁做讀寫
+
+【8.4.2) v11：block 內快取（local buffering）強制規則（English: prefetch & reuse）】
+- 目標：讓權重讀取變成「burst/prefetch → local reuse」，減少 W bank port 壓力與仲裁 stall。
+- 規則：
+ 1) 任何權重矩陣/向量在 inner-most loop（例如 d_model 迴圈）中，不允許每次都去 W bank 讀 1 個 u32（禁止零碎 random read）。
+ 2) 必須先以 tile/burst 方式從 W bank 讀出一段（至少對齊 W_LANES），放進 block 的 local regs / 小 buffer，再用多次 MAC 反覆重用。
+ 3) 對於 Attention/FFN 這種 GEMV/GEMM-like：
+  - 建議以輸出向量維度（行(Colume)=d_model 或 d_ffn）做 tile；每次 prefetch 一個 tile 的權重，計算完一批輸出再換下一批。
+
+【8.5) 多 block（pipeline）共用 SRAM：v11.5 採方案1（單一 2-port SRAM + TDM 排程；保留 logical regions）】
+你現在的前提是「blocks 級 pipeline」，同時又可能出現「同一頁被多個 block 讀」（例如 residual 的情境）。
+v11.5 你選的方案1，目標是：提升 SRAM 利用率（不再被 4 顆 macro 的深度切分卡死），但仍保留 v11 的 deterministic 行為與 TB 可驗證性。
+
+- 核心（English: single physical memory, logical regions preserved）：
+  1) SRAM 仍以 4 個 logical regions（X_PAGE0 / X_PAGE1 / SCRATCH / W_REGION）定義位址範圍（由 SramMap.h 的 base/size 決定）。
+  2) 物理上使用一顆 true 2-port SRAM（簡寫 SRAM_2P），所有讀寫都打到同一顆 macro；Top 是唯一 owner / arbitrator。
+  3) 每 cycle 最多允許 2 個 memory access（每個 port 各 1 次）。超過 2 個的請求必須在 Top 內序列化（stall / retry）。
+
+- Port 行為約束（為了「行為唯一」而不是追求最極致吞吐）：
+  - 禁止同 cycle 對同一個 addr_word 做「兩個寫入」。
+  - 禁止同 cycle 對同一個 addr_word 做「一讀一寫」（不依賴 macro 的 write-first/read-first 細節；Top 必須主動避開）。
+  - 允許同 cycle 對同一個 addr_word 做「兩個讀」（若 macro 不支援，Top 仍可序列化；功能正確優先）。
+
+- Top 的仲裁/排程規則（deterministic arbitration；TB 不會因排程抖動而歧義）：
+  - Top 內部把所有 memory access 統一抽象成：{addr_word, is_write, wdata, tag(region, block_id)}。
+  - 每個 cycle 依固定優先序挑最多 2 筆派發到 port0/port1；其餘保留到下一 cycle：
+    1) 必要寫入（X_out / SCRATCH 的 write-back；避免資料遺失）
+    2) 讀 X_in（支撐 datapath）
+    3) 讀 W_REGION 的 prefetch（放入各 block 的 local FIFO/line-buffer；見【8.4.2】）
+    4) DEBUG/READ_MEM（最低優先；避免干擾推論吞吐）
+  - 若你之後要更公平，可在同優先序內採 round-robin，但必須是「固定、可重現」的規則（English: deterministic RR）。
+
+- W_REGION 的 FIFO/prefetch（配合 2-port 才能吃到效益）：
+  - 強制精神不變：權重不得在 inner-most loop 逐 word 亂讀；必須先 burst/prefetch 到 local buffer 再重用（【8.4.2】）。
+  - 建議綁定：port1 優先服務 W_REGION 的 burst/prefetch；port0 優先服務 X/SCRATCH 的讀寫。
+    - 若某 cycle port1 沒有 W prefetch req，允許 port1 借去做 X/SCRATCH access（提高利用率）。
+  - 若物理 SRAM 為 32b：W_LANES=8 的寬讀口以「連續 8 次 read」完成，prefetch FIFO 至少要能容納一個 tile（>= 8 words，實務上建議 >= 2~4×W_LANES）。
+
+- Catapult 建模建議（不改外部介面；僅影響內部 SRAM 模型）：
+  - 以單一 SRAM array 表示整顆 memory（u32 words），並提供兩個獨立的存取介面/方法（對應 port0/port1）。
+  - 或以 Catapult 支援的 dual-port memory pragma / memory configuration 來推導 2-port macro（視你用的 memory compiler/flow）。
+  - 無論採哪種建模方式：addr_word 的 decode、range check、以及 READ_MEM 的行為都必須完全依 SramMap.h（保持 TB 一致）。
+
+- 邏輯上的「region lock」仍可保留，但用途改為「資料生命週期/覆寫保護」，而不是假設物理上一定有 4 顆獨立 macro：
+  - X_PAGE0/1 的 in_use_mask（per-consumer bitmask）仍然是覆寫保護的唯一依據（見【8.2】）。
+  - SCRATCH 的覆寫保證仍由 Top 排程負責（同一時間只允許一個 owner 使用 SCRATCH，或以明確的 alias_group 宣告可重疊）。
+
+【[legacy] v11.4 的 bank/lock 敘述（保留文字；v11.5 方案1 不要求物理 4 顆 macro）】
+你現在的前提是「blocks 級 pipeline」，同時又可能出現「同一頁被多個 block 讀」（你提到 residual 的情境）。
+因此這裡要把假設寫清楚，否則很容易 TB 可以跑但硬體行為不唯一。
+
+- 方案A 的核心：把 SRAM regions 拆成多個「可獨立鎖定/仲裁」的 bank（至少：X_PAGE0、X_PAGE1、SCRATCH、W；(可選)PERSIST_DEBUG）
+-（v11）W bank 內的 W_REGION 必須維持連續位址；禁止用低位址交錯或依權重種類分散到多 bank。
+ - 實作層面你有兩種等價做法（擇一即可）：
+ 1) 物理上真的是多顆 SRAM macro（最直覺，也最容易做 pipeline）
+ 2) Catapult 以 memory intervals / 多 memory instance 方式建模，讓不同 bank 有各自的 sync/arb（底層仍可能被綜合成 banked memory）
+
+- 互斥/仲裁規則（保證可合成、行為唯一）：
+ - 每個 bank 都要有自己的 lock（概念上就是你之前問的 ac_sync/ac_shared）
+ - 任一個 block 要讀/寫某個 bank 前，必須先拿到該 bank 的 lock；用完立刻釋放
+ - 若兩個 block 同時想讀同一個 bank：
+ - 預設行為：其中一個 stall（等待 lock）→ 功能正確，但吞吐可能下降
+ - 若你真的要「同 cycle 多讀」：那就必須選擇 multi-port SRAM 或把資料 replicate（這是物理限制）
+
+- residual 導致多讀的處理建議（你說「可能被多個 block 讀」）：
+ - 最省事/最穩的做法：把 residual add 留在同一個 TransformerLayer block 內（你現在的 其實就是這樣假設）
+ - 這樣「同一個 X_in」的多次讀取都發生在同一個 block 裡，等同單一 requester，不會變成多 block 競爭
+ - 若你堅持把 residual add 拆成獨立 block：
+ - 就必須接受同一頁會有多 consumer（多 block）讀
+ - 需要 refcnt（或 consumer_done token）避免頁被覆寫 + 需要 lock 來序列化同 bank 讀取
+ - 上述「refcnt」一律改為 in_use_mask（per-consumer 1-bit bitmask）為主；覆寫條件以 mask==0 判斷；如需數量再用 popcount(mask)
+
+【8.6) Debug/比對（你已選 D1：就地 halt + READ_MEM；預設不需要 PERSIST_DEBUG）】
+- D1 基本策略（你選的；最省 SRAM、最「硬體正統」）：
+ - DEBUG_CFG 只負責「設定斷點條件」（kind/layer/head + halt_en）
+ - INFER 跑到指定 checkpoint 時：
+ 1) Top 進入 HALTED（freeze）：停止往下運算、停止任何 SRAM 寫入（確保被觀測資料不被覆寫）
+ 2) 回 ctrl_rsp：RSP_ERR(ERR_DBG_HALT)
+ 3) 立即在 data_out 送 2 個 u32 meta words：
+ - meta0 = addr_word（觀測資料所在 SRAM word address）
+ - meta1 = len_words（觀測資料長度，以 u32 words）
+ - D1 meta 回應順序固定：先 ctrl_rsp（RSP_ERR(ERR_DBG_HALT)），再 data_out meta0、meta1；Top 需內建 2-word meta buffer，避免 data_out backpressure 影響 ctrl_rsp。
+
+ 4) TB 用 READ_MEM(meta0, meta1) 把那段 SRAM 內容讀回做比對/畫圖
+ 5) TB 需要繼續同一次 INFER：送 DEBUG_CFG(RESUME)；不想繼續則 SOFT_RESET
+
+- 建議的 ckpt(kind) 定義（搭配你已選的 S1：KV Cache）：
+ - 1: X_IN （某 layer 進入前的 X_in；在 X_PAGE(page_in)）
+ - 2: K_CACHE （SCR_K；shape=[N_NODES,D_MODEL]，列(Row)=node、行(Colume)=d_model）
+ - 3: V_CACHE （SCR_V；同上）
+ - 4: ATTN_OUT （attention sublayer + residual 後的 X_mid；在 X_PAGE(page_out)）
+ - 5: X_OUT （FFN + residual 後的最終 X_out；在 X_PAGE(page_out)）
+ - 6: MID_LN_OUT （若啟用 mid LN）
+ - 7: END_LN_OUT （end LN 之後）
+
+-（legacy，可保留但你目前不採用）D0：copy-to-PERSIST_DEBUG
+ - 若你未來想「不中斷推論、仍保留 checkpoint snapshot」才需要這條路
+ - 才需要在 SramMap.h 分配 PERSIST_DEBUG，並在命中點把資料 copy 到固定區域，再由 TB READ_MEM 讀回
+
+【9) bias/base offset 自動化（延伸 ，但符合你新增的「bias 模式」）】
+- SRAM base offset/bias 不在硬體中計算，必須離線自動生成（禁止人工手填 base）
+- 必須提供離線生成腳本（例如 scripts/gen_sram_map.py），根據：
+ - ModelDesc.h / runtime cfg
+ - algorithm_ref.ipynb 的命名與 shape
+ - weights.h 的存在張量
+ 自動生成：
+ - include/SramMap.h：每個 tensor base offset + size + dtype(FP32/BITPACK) + valid_bits（僅 BITPACK 段需要）
+ - include/SramMap.h 必須額外描述（為了方案B 的 ping-pong/scratch 規則，避免「隱式覆寫」）：
+ - region：W_REGION / ACT_REGION
+ - lifetime_class：PINGPONG / SCRATCH / PERSIST
+ - pingpong_tag：若為 PINGPONG，必須標示是 X（以及對應 X_PAGE0/X_PAGE1 的 base）
+ - alias/overlay（可選）：若多個 scratch buffer 允許重疊使用，必須以 alias_group 或同 base 明確宣告
+ - align_words：各 tensor 的對齊需求（例如 ALIGN_WORDS=16）
+ - include/WeightStreamOrder.h：固定傳輸順序 + 每段 expected_len(words) + 段類型
+ - include/BiasDesc.h（或 bias_*.h）：bias 的生成結果/expected_len
+- Top 在 LOAD_BIAS / LOAD_W：
+ - 以 write_ptr 連續寫 SRAM
+ - 逐段驗證 expected_len（少送/多送/長度不符 → error）
+
+【10) PreprocEmbedSPE 的 LPE 規格】
+- LPE per-node；LPE 佔據 D_MODEL 尾端 slice
+ - cfg_d_embed = cfg_d_model - cfg_d_lpe
+ - LPE_BASE = cfg_d_embed
+ - x[node][LPE_BASE .. cfg_d_model-1] 對應 lpe_token[node][0..cfg_d_lpe-1]
+- LPE 不做額外計算：LOAD_W 時載入；PreprocEmbedSPE 只負責把 LPE slice 填入輸出尾端
+- PreprocEmbedSPE 必須明確定義輸出 layout（各段起始 offset 與長度）
+- 線性化提醒（對應 ModelDesc.h）：
+ - lpe_token flatten order = node major, lpe_dim minor
+ - idx = node * D_LPE + i
+ - node 可視為列(Row)、lpe_dim 可視為行(Colume)
+
+【11) 權重/bit-packed 擺放順序（你要求：依種類分段，同類型跨層連續擺放）】
+- 目標：讓 Top「不需要理解權重語意」，只做順序寫入；使用者在 TB 端（weights_streamer.h）自行決定串流順序
+- 但順序仍必須遵循「類型分段」規則，且可由 include/WeightStreamOrder.h 驗證：
+ A. 校驗矩陣 H（BITPACK；最後一個 word padding=0）
+ B. embed（FP32 words）
+ C. LPE token（FP32 words）
+ D. Mask（若存在，BITPACK）
+ E. 量化參數（若存在；例如 s_x / s_w；FP32 words；並包含你列出的 l0/l1 in/o/ff1/ff2 s_x）
+ F. Attention weights（每層同類型連續擺放）：
+ - Wq (layer0..layerN-1)
+ - Wk (layer0..layerN-1)
+ - Wv (layer0..layerN-1)
+ - Wo (layer0..layerN-1)（若存在）
+ G. FFN weights（每層同類型連續擺放）：
+ - Wff1 (layer0..)
+ - Wff2 (layer0..)
+ H. LayerNorm weights（每層同類型連續擺放）：
+ - gamma/beta（或等價參數；依 notebook/weights.h 命名）
+ I. 其他（FinalHead 相關兩層 FFN、logits head…依 notebook/weights.h）
+- 若某類型在不同 layer 的元素數不同：
+ - Top 必須有 regs 記錄「每層該類型的 words 數」（例如 layer_wq_words[layer_id]）
+ -（v11 固定）上述 regs **只能** 由離線生成的 include/WeightStreamOrder.h 初始化（唯一來源）；CFG 不得再提供第二套 per-layer words 資訊，以避免 TB/Top 行為歧義。
+ -（v11 補充）以上所有權重/偏置/bitpack/input y 皆位於 W bank 的連續位址範圍（禁止跨 bank 平均分散/全域 interleave）。
+
+【12) TB（更新：ctrl_cmd/ctrl_rsp + 全 u32 data；先測 x_pred，再切 logits）】
+TB 必須完成以下步驟（並能對每步做 timeout/錯誤碼檢查；每個 ctrl_cmd 都要收 ctrl_rsp）：
+
+(0) 前置：讀 ModelDesc.h，建立 cfg words（固定順序 = ModelDesc.h 欄位順序；全用 u32）
+(1) ctrl_cmd: CFG_BEGIN -> 等 ctrl_rsp: OK(CFG_BEGIN)
+(2) data_in : 依固定順序送 cfg words（Top 存進 staging regs）
+(3) ctrl_cmd: CFG_COMMIT -> 等 ctrl_rsp: OK(CFG_COMMIT) 或 ERR(*)
+
+(4) ctrl_cmd: SET_W_BASE，data_in: arg0=param_base_word（1 個 u32；通常用 SramMap.h 的 PARAM_BASE_DEFAULT）
+    -> 等 ctrl_rsp: OK(SET_W_BASE) 或 ERR(ERR_PARAM_BASE_ALIGN / ERR_PARAM_BASE_RANGE)
+
+(5) ctrl_cmd: LOAD_W（主路徑：LOAD_PARAM）-> 等 ctrl_rsp: OK(LOAD_W)
+(6) data_in : 串流送 PARAM words（weights_streamer.h；含 FP32 raw + BITPACK raw；exact order/len 以 WeightStreamOrder.h 的 kParamMeta/EXP_LEN_PARAM_WORDS 為準）
+(7) 等 ctrl_rsp: DONE(LOAD_W) 或 ERR(ERR_PARAM_LEN_MISMATCH / ERR_BITPACK_PAD / ...)
+
+(8) ctrl_cmd: SET_OUTMODE，data_in: outmode=OUTMODE_XPRED（1 個 u32 arg）
+(9) ctrl_cmd: INFER -> 等 ctrl_rsp: OK(INFER)
+(10) data_in : 傳 input y（input_y_step0.h；fp32 raw bits u32）
+(11) data_out: 讀 x_pred words（PROFILE_FIXED：以 ModelShapes.h 的 EXP_LEN_OUT_XPRED_WORDS 為準；PROFILE_RUNTIME：以 cfg 計算，但必須使用與 ModelShapes.h 相同的 words_fp32 規則）→ 比對 output_x_pred_step0.h（abs err < 1e-5）
+(12) 等 ctrl_rsp: DONE(INFER) 或 ERR(*)
+
+(13) ctrl_cmd: SET_OUTMODE，data_in: outmode=OUTMODE_LOGITS（1 個 u32 arg）
+(14) ctrl_cmd: INFER -> 等 ctrl_rsp: OK(INFER)
+(15) data_in : 傳 input y（同一份 input y）
+(16) data_out: 讀 logits words（PROFILE_FIXED：以 ModelShapes.h 的 EXP_LEN_OUT_LOGITS_WORDS 為準；PROFILE_RUNTIME：以 cfg 計算，但必須使用與 ModelShapes.h 相同的 words_fp32 規則）→ 比對 output_logits_step0.h（abs err < 1e-5）
+(17) 等 ctrl_rsp: DONE(INFER) 或 ERR(*)
+
+[legacy] 分離式載入流程（僅供 backward compatible；原文字保留）：
+(0) 前置：讀 ModelDesc.h，建立 cfg words（固定順序 = ModelDesc.h 欄位順序；全用 u32）
+(1) ctrl_cmd: CFG_BEGIN -> 等 ctrl_rsp: OK(CFG_BEGIN)
+(2) data_in : 依固定順序送 cfg words（Top 存進 staging regs）
+(3) ctrl_cmd: CFG_COMMIT -> 等 ctrl_rsp: OK(CFG_COMMIT) 或 ERR(*)
+
+(4) ctrl_cmd: LOAD_BIAS -> 等 ctrl_rsp: OK(LOAD_BIAS)
+(5) data_in : 串流送 bias words（bias_*.h）
+(6) 等 ctrl_rsp: DONE(LOAD_BIAS) 或 ERR(*)
+
+(7) ctrl_cmd: LOAD_W -> 等 ctrl_rsp: OK(LOAD_W)
+(8) data_in : 串流送 weights（weights_streamer.h；含 FP32 + BITPACK）
+(9) 等 ctrl_rsp: DONE(LOAD_W) 或 ERR(*)
+
+(10) ctrl_cmd: SET_OUTMODE，data_in: outmode=OUTMODE_XPRED（1 個 u32 arg）
+(11) ctrl_cmd: INFER -> 等 ctrl_rsp: OK(INFER)
+(12) data_in : 傳 input y（input_y_step0.h；fp32 raw bits u32）
+(13) data_out: 讀 x_pred words（PROFILE_FIXED：以 ModelShapes.h 的 EXP_LEN_OUT_XPRED_WORDS 為準；PROFILE_RUNTIME：以 cfg 計算，但必須使用與 ModelShapes.h 相同的 words_fp32 規則）→ 比對 output_x_pred_step0.h（abs err < 1e-5）
+(14) 等 ctrl_rsp: DONE(INFER) 或 ERR(*)
+
+(15) ctrl_cmd: SET_OUTMODE，data_in: outmode=OUTMODE_LOGITS（1 個 u32 arg）
+(16) ctrl_cmd: INFER -> 等 ctrl_rsp: OK(INFER)
+(17) data_in : 傳 input y（同一份 input y）
+(18) data_out: 讀 logits words（PROFILE_FIXED：以 ModelShapes.h 的 EXP_LEN_OUT_LOGITS_WORDS 為準；PROFILE_RUNTIME：以 cfg 計算，但必須使用與 ModelShapes.h 相同的 words_fp32 規則）→ 比對 output_logits_step0.h（abs err < 1e-5）
+(19) 等 ctrl_rsp: DONE(INFER) 或 ERR(*)
+
+（可選 debug/回吐流程；D1：就地 halt + READ_MEM）
+- 建議先 ctrl_cmd: SET_OUTMODE，data_in: outmode=OUTMODE_NONE（避免 data_out 被正常推論輸出佔用）
+- ctrl_cmd: DEBUG_CFG，data_in: packed arg（dbg_action=SET/ARM；選 ckpt(kind)/layer/head；dbg_halt_en=1）
+- ctrl_cmd: INFER + data_in: input y
+ - 若命中斷點：Top 回 ctrl_rsp = RSP_ERR(ERR_DBG_HALT)，並在 data_out 先送 2 個 meta words：
+ 1) 讀 meta0=addr_word、meta1=len_words
+ 2) ctrl_cmd: READ_MEM，data_in: addr_word + len_words
+ - data_out 讀回 len_words 個 u32 做離線比對/畫圖
+ 3) 想繼續同一次 INFER：ctrl_cmd: DEBUG_CFG，data_in: packed arg（dbg_action=RESUME）
+ - 或想放棄：ctrl_cmd: SOFT_RESET
+【13) 檔案/資料夾輸出要求（請直接產生內容）】
+- top/Top.h
+- preproc/PreprocEmbedSPE.h
+- layer/TransformerLayer.h
+- layer/LayerNormBlock.h
+- head/FinalHead.h
+- tb/tb.cpp
+- tb/weights_streamer.h（或沿用我提供的 weights_streamer.h 但需擴充成完整段序）
+- tb/bias_*.h（或 tb/bias_builder.h + 產出 bias header 的方法）
+- include/ModelLimits.h（MAX_*，PROFILE_RUNTIME 用）
+- include/ModelConfig.h（cfg regs；PROFILE_FIXED 也可存在但不可改陣列大小）
+- include/ModelDescView.h（可選：把 ModelDesc.h 的欄位轉成 cfg 序列的 helper）
+- include/SramMap.h（離線生成）
+- include/WeightStreamOrder.h（離線生成；含段順序/expected_len/段型態）
+- include/Protocol.h（cmd/errcodes/封包格式；含 CFG_BEGIN/CFG_COMMIT/SET_W_BASE/LOAD_W；並可選保留 [legacy] 的 LOAD_BIAS）
+
+【14) 最後輸出格式（你每次回覆都要含）】
+(1) 依 algorithm_ref.ipynb 推導的資料流摘要（重點）
+(2) 分塊/排程（Top-FSM states + 每 state 做什麼）
+(3) SRAM map 總覽（tensor：name/base/size/type/valid_bits（僅 BITPACK 段需要））
+(4) 權重/bitpack 串流順序總覽（段列表 + expected_len）
+(5) 完整 code（上述所有檔案）
+
+
+【v11.5 增補（2026-02-25；不刪舊規格，只釘死本次修正）】
+- SRAM 實作改採「方案1 / M2-2P」：單一 true 2-port SRAM macro + logical regions（X_PAGE0/X_PAGE1/SCRATCH/W_REGION），並由 Top 做 deterministic 仲裁/排程（見【0.x】與【8.5】）。
+
+- PARAM stream 需明列量化 s_x：新增一段 FP32 向量 QUANT_SX_8（len_w=8，對齊 W_LANES=8）。
+  內容順序固定為：l0_in_s_x, l0_o_s_x, l0_ff1_s_x, l0_ff2_s_x, l1_in_s_x, l1_o_s_x, l1_ff1_s_x, l1_ff2_s_x。
+- algorithm_ref.ipynb（本 bundle 版本）實際只使用 lpe_token；不使用 lpe 與 lpe_proj.{weight,bias}。
+  因此 WeightStreamOrder.h / weights_streamer.h 的 unified PARAM 已移除：LPE、LPE_PROJ_WEIGHT、LPE_PROJ_BIAS。
+- EXP_LEN_BIAS_WORDS / EXP_LEN_W_WORDS 已同步更新，TB/Top 以新常數為準。
+
+

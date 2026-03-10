@@ -1,7 +1,7 @@
 AECCT_HLS_Architecture_Guide（繁體中文版）
 Version: 2026-03-09
-Revision: v12.1 guideA（邏輯資料流 + 實體落點／覆蓋方式整編版）
-Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_physical_storage_and_overwrite_zhTW.txt
+Revision: v12.1 guideB（邏輯資料流 + 實體落點／覆蓋方式整編版；補入 native linear quant v1）
+Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_physical_storage_and_overwrite_zhTW.txt + native linear quant v1 決策
 
 ====================================================================
 0. 文件定位與使用方式
@@ -69,6 +69,23 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - K / V 是 attention 的邏輯操作數；即使實作上 materialize 到 SRAM，也不改變其邏輯角色。
 - FinalHead 分為兩個正式 phase：Pass A 產生 s_t；Pass B 對 s_t 做 OUT_FC reduction。
 
+2.3 v1 量化邏輯邊界（native linear quant only）
+- v1 只量化 AECCT 原生 linear path：Wq / Wk / Wv / Wo / Wff1 / Wff2，以及其 activation 邊界。
+- 線性 kernel 的推薦邏輯邊界：
+  - 上游 FP32 tensor
+  - 依固定 s_x 做 activation 量化
+  - clamp / sat 到 signed INT8 可表示範圍（不得 overflow / wrap-around）
+  - ternary weight 線性運算
+  - 依固定 inv_s_w 做權重端比例處理
+  - kernel 輸出回到 FP32
+- embed、LPE token、LayerNorm、softmax、residual、FinalEmbedding、OUT_FC、logits / x_pred 在 v1 均維持 FP32 邏輯語意。
+- grouping / zone、SET_QCFG、動態 scale update、E4M3 等僅保留為未來方向，不屬於 v1 主邏輯。
+
+2.4 Input ingest / check_parity 的實體收斂
+- check_parity 的主體建議放在 block-private local array / local RAM backing store。
+- 只有當前 CHECK_PARITY_TILE 或其他小型更新片段才進 regs。
+- 不應把整包 check_parity 預設 full-register 化，也不應把每筆 y[v] 的 parity 更新做成對共享 SRAM 的 rolling RMW。
+
 ====================================================================
 3. 實體落點／覆蓋方式（整理版）
 ====================================================================
@@ -78,6 +95,7 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - X_WORK：主 token × d 工作區，用於 preproc_x、layer outputs、endLN_out 等主工作矩陣。
 - KV_REGION：attention K/V scratch。
 - TOKEN_LOCAL / SMALL_SCRATCH：小型短生命週期暫存，應以 tile / scalar state 為主，而非膨脹成新的大型 page。
+- QUANT_PARAM metadata（位於 W_REGION 內）：v1 的固定 s_x / inv_s_w 與相關 metadata；屬 persistent parameter data。
 - FINAL_SCALAR_BUF：FinalHead Pass A / Pass B 間的專用 scratch。
 - DATA_OUT path：正常輸出以 direct streaming 為主，不預設大型中間 SRAM 緩衝。
 
@@ -85,6 +103,7 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - 只有當某值的所有 consumer 都完成後，該 storage 才能被覆蓋。
 - 寬度相關物件不應一律 full-register 化，也不應一律升級成獨立 SRAM 大區；是否放 reg 或 scratch，應看 tile 化、RMW 頻率、共享程度與 lifetime。
 - 單一 token / 單一 head / 單一 tile 的短生命週期狀態，是優先考慮 reg 的對象。
+- v1 的 quant caches 屬於「固定值快取」而非動態追蹤狀態：當前 layer / slot 所需的 s_x / inv_s_x / inv_s_w 可在 block 入口載入 local regs，但不在 run-time 回寫新的 scale table。
 
 ====================================================================
 4. 邏輯與實體的對照原則

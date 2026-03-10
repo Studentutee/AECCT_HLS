@@ -15,11 +15,12 @@ A. Contract / 邊界 / 風格
 - 所有 shape 以 ModelDesc.h / ModelShapes.h 為 SSOT。
 - token 是列(Row)，d 是行(Colume)；線性化以 d/行(Colume) 為 inner-most contiguous。
 
-B. 量化總原則（v12）
-- 量化規劃分兩階段：
-  - Phase 1：預留規格、SSOT、命令入口、分析流程
-  - Phase 2：grouping/payload 定版、TB 定版、datapath 接線
-- 在 grouping 未定版前，不得把 zone count / zone enum 寫死。
+B. 量化總原則（v12.1 revB）
+- v1 先只實作 AECCT 原生 linear quant：ternary weights + INT8 activations。
+- 其他路徑先維持 FP32；未來若要導入 E4M3，必須以獨立條款逐步導入。
+- s_x 先採固定值；量化時必須做 clamp / sat，禁止 overflow / wrap-around。
+- 權重端正式保留 s_w 語意，但主流程只存 inv_s_w。
+- grouping / zone / SET_QCFG / QuantDesc 正式配置在本版只保留 reserved 身分，不進主 datapath。
 
 C. 每個 milestone 都必須附帶
 - docs/milestones/Mxx_report.md
@@ -311,43 +312,43 @@ DoD
 - Top 協定 + 輸出模式 + overlap 基本行為全通
 
 ==================================================
-M15 — v12 量化 Phase 1：規格預留，不接 datapath
+M15 — Native AECCT quant freeze（文件與 SSOT 收斂）
 ==================================================
 
 交付
-- QuantDesc.h / QuantConfig.h placeholder
-- quant version 欄位
-- placeholder grouping table 結構
-- host decode 規則 placeholder
-- 文件明確區分 legacy path / quant-reserved path
+- 明確凍結 v1 量化邊界：
+  - quantized：Wq / Wk / Wv / Wo / Wff1 / Wff2
+  - FP32：embed / LPE / LN / softmax / residual / FinalHead / logits
+- 文件明確寫出固定 s_x、必做 saturation、以及 inv_s_w only 的規則
+- grouping / zone / SET_QCFG 改列 reserved，不作主流程依賴
 
 TB
-- legacy regression 全綠
-- quant placeholder 不影響既有功能
+- legacy / FP32 path 仍綠
+- 文件與 streamer 規格一致性檢查
 
 DoD
-- 量化規劃進入專案結構，但不破壞現行 datapath
+- v1 量化策略不再模糊，主流程邊界可直接實作
 
 ==================================================
-M16 — 離線生成器整合：SramMap / WeightStreamOrder / QuantDesc
+M16 — 離線生成器整合：SramMap / WeightStreamOrder / native quant metadata
 ==================================================
 
 交付
 - scripts/gen_sram_map.py
 - scripts/gen_weight_stream_order.py
-- scripts/gen_quant_desc.py（可先輸出 placeholder）
+- native quant metadata 生成/整理流程（可不獨立命名為 QuantDesc）
 - generator 輸出統一：
   - ModelDesc.h
   - ModelShapes.h
   - SramMap.h
   - WeightStreamOrder.h
-  - QuantDesc*.h
+- WeightStreamOrder 能描述固定 s_x 與 inv_s_w sections
 
 TB
 - 重新生成 headers 後，M14 regression 仍綠
 
 DoD
-- Top/TB 不再 hardcode offset/len/quant metadata
+- Top/TB 不再 hardcode offset/len/native quant metadata
 
 ==================================================
 M17 — Synthesis gate 清點與合成安全收斂
@@ -367,85 +368,79 @@ DoD
 - 專案進入真正可合成狀態
 
 ==================================================
-M18 — v12 量化 Phase 1：離線分析流程建立
+M18 — Native quant 離線分析流程建立（固定 s_x / inv_s_w）
 ==================================================
 
 交付
 - trace/weights/reference tensor 分析腳本
-- MSE / distribution / exponent sweep / grouping report
-- 建議配置輸出格式
-- quant-enabled compare framework（先 tolerant，不凍結）
+- 固定 s_x 飽和率 / clipping 報表
+- inv_s_w / ternary weight 對照檢查
+- compare framework（先 tolerant，不凍結未來 grouping）
 
 TB
-- 不要求 datapath 全接
-- 先驗證分析結果可重現
+- 不要求 grouping / zone datapath
+- 先驗證固定 s_x 與 inv_s_w 的分析結果可重現
 
 DoD
-- 量化從「想法」變成「可決策的分析流程」
+- v1 native quant 從「設計假設」變成「可決策、可驗證」流程
 
 ==================================================
-M19 — v12 量化 Phase 2：grouping / payload / 命令語意凍結
+M19 — Native linear quant kernel bring-up
 ==================================================
 
 交付
-- grouping/zone 定版
-- payload layout 定版
-- SET_QCFG 或等價入口正式定義
-- busy/state 規則定版
-- freeze-time 規則：
-  - 只能 pre-infer 配置
-  - in-flight inference 不得改寫
+- 量化線性 kernel 邊界接線：FP32 -> INT8(sat) -> ternary linear -> FP32
+- current-layer/current-slot quant cache（固定值）
+- 不啟用動態 scale update / SET_QCFG / grouping 控制
 
 TB
-- payload legality
-- busy-state 檢查
-- legacy path 與 quant path 分流
+- quantized linear unit tests
+- saturation / no-overflow 檢查
+- 與 reference notebook 的線性路徑比對
 
 DoD
-- 量化 external contract 正式凍結，但仍維持與既有 4-channel contract 相容
+- 第一版原生線性量化 kernel 可獨立跑通
 
 ==================================================
-M20 — 量化 datapath 接線（先 major persistent domains）
+M20 — Native linear quant datapath integration（保留 FP32 islands）
 ==================================================
 
 交付
-- 先接 major persistent domains
-- 採 v12 容許的混合式策略：
-  - global configurable
-  - block-local fixed handling
-- 不強迫所有 local temporary 都馬上受全域量化控制
+- 將 native linear quant 接到 Transformer 主鏈
+- 明確保留 FP32 islands：LN / softmax / residual / FinalHead
+- 不強迫所有 local temporary 都受低精度控制
 
 TB
 - legacy path
-- quant-test path
+- native-quant path
 - tolerant compare / MSE report
 
 DoD
-- 第一版 quant-enabled datapath 可跑，但範圍受控
+- 第一版 native-quant end-to-end datapath 可跑，範圍受控
 
 ==================================================
-M21 — 量化擴大覆蓋 + 單埠性能收斂
+M21 — 性能收斂 + 未來 E4M3 預留
 ==================================================
 
 交付
-- 擴大量化覆蓋範圍
 - loop pipeline / tiling / W_LANES=8 對齊 / prefetch / local buffering
 - 單一 SRAM true 1-port 仲裁與衝突模型定版
+- 文件上保留未來 E4M3 導入點，但不要求本 milestone 實作
 
 TB
-- quant-enabled regression
+- native-quant regression
 - 性能 baseline 對比
 
 DoD
-- quant path 與性能路徑開始一起收斂
+- native quant path 與性能路徑一起收斂，且未來 E4M3 邊界清楚
 
 ==================================================
-M22 — Dataset regression（legacy + quant）
+M22 — Dataset regression（legacy + native quant）
 ==================================================
 
 交付
 - tb_dataset_eval
-- legacy 與 quant 兩套統計
+- legacy 與 native quant 兩套統計
 - 報表不進 git
 
 TB
