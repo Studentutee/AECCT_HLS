@@ -3,50 +3,51 @@ AECCT v12.1 單一 X_WORK 修訂摘要
 
 本次修訂目標
 ------------
-- 將主幹 activation 的正式實體落點，由 X_PAGE0 / X_PAGE1 兩頁 ping-pong，收斂為單一 X_WORK。
-- 保留 active / next 作為邏輯 phase 語意，但不再要求實體雙頁。
+- 以既有 v12.1 正式文件為主體，就地收斂成 single-X_WORK baseline，不另開正文副本。
+- 將主幹 activation 的正式實體落點收斂為單一 X_WORK，保留 active / next 作為邏輯 phase 語意，但不再要求實體雙頁。
 - 將 S1(KV cache) 的 schedule 明確改寫為：
   1) 先完成 KV_MAT（K/V 全矩陣 materialize 到 SCR_K / SCR_V）
   2) 再逐 token 做 attention / residual / FFN / LN 的 in-place overwrite
 - 明確規定 FinalHead staging 不得侵入 X_WORK。
+- 正式收斂 READ_MEM state gating：只允許 IDLE / HALTED，非法狀態統一回 RSP_ERR(ERR_BAD_STATE)。
 
 本次實際輸出檔案
 ----------------
-1. AECCT_HLS_Spec_v12.1_single_X_WORK_zhTW.txt
-2. AECCT_HLS_Architecture_Guide_v12.1_single_X_WORK_zhTW.txt
-3. AECCT_v12_M0-M24_plan_single_X_WORK_zhTW.txt
-4. 咒語v12.1_single_X_WORK_zhTW.txt
+1. docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt
+2. docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+3. docs/process/AECCT_v12_M0-M24_plan_zhTW.txt
+4. docs/changelog/AECCT_v12_single_X_WORK_change_summary_zhTW.txt
 
 主要修改點
 ----------
 Spec
 - 5.1.1 主流程改為 X_WORK 主鏈
-- 7.2~7.4 改為單一 X_WORK 與 overwrite 規則
-- 7.9 將 X_PAGE_WORDS 改名為 X_WORK_WORDS
-- 8.4 per-context persistent buffers 改為單一 X_WORK + SCR_K/V
+- 7.2~7.4 收斂成 X_WORK / SCRATCH / W_REGION / IO_REGION 主類別，並以 liveness / free-point 定義 overwrite
+- 8.4 per-context persistent buffers 改為 per-context X_WORK + per-context SCRATCH live 子區，live contexts 不得 alias
 - 9.2 attention 結果改寫回 X_WORK[q_token][:]
 - 9.3 LN 明確改為 token-wise two-pass + 回寫同一 token
-- 10.4 禁止把 X_WORK 尾端挪作 FinalHead staging
+- 10.x 明確禁止把 X_WORK 挪作 FinalHead staging，Pass A / Pass B 間只允許 SCRATCH.FINAL_SCALAR_BUF 或其他合法區域
+- 11.x / 15.4 新增 READ_MEM state gating：IDLE 合法、HALTED 合法、active state 回 RSP_ERR(ERR_BAD_STATE)，且不得與正常 data_out 混流
 
 Architecture Guide
-- B. X_WORK 改為單一實體 X_WORK 預設
+- 3.x / B. X_WORK 改為單一實體 X_WORK 預設，並明確區分 logical value name 與 physical storage name
+- 舊稱 KV_REGION 的正文語言正式降為 SCRATCH 子區語言；SCR_K / SCR_V / FINAL_SCALAR_BUF 都收斂到 SCRATCH
 - Preproc / KV build / attention / FFN / LN 的覆蓋規則文字補強
-- 明確寫出：K/V 全矩陣先 materialize 後，不必保留第二張 X page
+- 明確寫出：K/V 全矩陣先 materialize 後，不必保留第二份主工作頁
+- FinalHead 改寫為不得使用 page-based staging，X_WORK 也不得充當 readout staging
 
 Plan
 - M2 logical regions 改為 X_WORK / SCRATCH / W_REGION / IO_REGION
-- M7 改為 Preproc 寫入 X_WORK
-- M12 改為 X_WORK token-safe overwrite / SCRATCH liveness
-
-Spell
-- 新增優先級更高的「單一 X_WORK」增補條款
-- 直接覆蓋舊有 X_PAGE ping-pong / swap_pages / TEMP_PAGE 主路徑敘述
-- multi-context 的 per-context persistent buffers 改成每個 context 一份 X_WORK + 一份 SCR_K/V
+- M2 / M5 / M14 補上 READ_MEM state gating 驗證點：IDLE 合法、HALTED 合法、active state 回 RSP_ERR(ERR_BAD_STATE)
+- M7 改為 Preproc 寫入並映射到 X_WORK，readback 只在回到 IDLE 後進行
+- M12 改為 X_WORK token-safe overwrite / SCRATCH liveness / free-point
+- M13 清除 page-based FinalHead staging 語言，debug readback 只描述 HALTED 或回到 IDLE 後的 SCRATCH.FINAL_SCALAR_BUF
 
 提醒
 ----
 - 這次是文件修訂，不是 code patch。
+- 本次 changelog 只引用 repo 內實際存在且保留的正式檔案路徑，不再引用不存在的 _single_X_WORK_ 副本檔名。
 - 若後續要讓 ref / synth path 一起對齊，建議下一步同步更新：
   - RefStep0Synth.cpp 的 page 名稱與註解
   - SramMap.h 的 X region 命名
-  - 任何 trace/debug meta 對 X_PAGE 的舊稱呼
+  - 任何 trace/debug meta 對舊 page 語言的稱呼

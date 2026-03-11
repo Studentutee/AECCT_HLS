@@ -89,14 +89,17 @@ M2 — 單一主 SRAM logical regions + READ_MEM
 - X_WORK 為單一 token × d 主工作區
 - active / next 僅保留為 phase 語意，不要求實體雙頁
 - READ_MEM(addr_word, len_words)
+- READ_MEM state gating contract 固定為：IDLE 合法、HALTED 合法、其餘 active states 回 RSP_ERR(ERR_BAD_STATE)
 - range check / 跨區檢查 / 非對齊 slice 回吐
 
 TB
-- 已知 pattern 回讀
+- IDLE 下已知 pattern 回讀
+- active state READ_MEM 拒絕（至少 CFG_RX / PARAM_RX / INFER_RX）
 - 越界錯誤
 
 DoD
 - READ_MEM 成為 bring-up/debug 基建
+- READ_MEM 與正常 data_out 不混流的 contract 固定
 - 單埠 1-issue 假設建立
 
 ==================================================
@@ -133,7 +136,7 @@ TB
 - 對齊錯誤
 - 長度錯誤
 - padding bits 非零
-- LOAD_W 後 READ_MEM 比對
+- LOAD_W 完成並回到 IDLE 後 READ_MEM 比對
 
 DoD
 - 權重主路徑固定為「TB 串流進 SRAM」
@@ -148,14 +151,19 @@ M5 — in_fifo + IO_REGION + SET_OUTMODE + HALTED/DEBUG 基建
 - SET_OUTMODE
 - DEBUG_CFG(SET/ARM/RESUME/CLEAR) 基本框架
 - HALTED 狀態允許命令白名單
+- checkpoint 命中後 HALTED -> meta -> READ_MEM -> RESUME / SOFT_RESET 流程
+- OUTMODE_NONE 明確保留 data_out 給 debug / meta / readback
 
 TB
 - OUTMODE_NONE
 - HALTED 後 READ_MEM
+- checkpoint 命中後先收 halt/meta，再發 READ_MEM
+- 非 HALTED active state 發 READ_MEM -> RSP_ERR(ERR_BAD_STATE)
 - DEBUG_CFG(RESUME) 恢復
 
 DoD
 - input decouple / debug contract / output mode 基礎就位
+- HALTED / READ_MEM / OUTMODE_NONE 流程與 spec 對齊
 
 ==================================================
 M6 — INFER stub，先打通 end-to-end 流程
@@ -183,11 +191,11 @@ M7 — PreprocEmbedSPE
 交付
 - PreprocEmbedSPE.h
 - embed + SPE + 必要 LPE slice
-- 寫入 X_WORK
+- preproc_x 寫入並映射到 X_WORK
 
 TB
 - block unit TB
-- 或 Top + READ_MEM 對齊 preproc 節點
+- 或 Top 回到 IDLE 後以 READ_MEM 對齊 preproc 節點
 
 DoD
 - preproc 結果可觀測、可對齊
@@ -203,7 +211,7 @@ M8 — LayerNormBlock（可合成版本）
 
 TB
 - tb_ln_m8.cpp
-- 或 checkpoint + READ_MEM 比對
+- 或命中 checkpoint 進入 HALTED 後，以 READ_MEM 比對
 
 DoD
 - LN 數值與可合成路徑成立
@@ -219,7 +227,7 @@ M9 — Attention bring-up（Q/K/V + KV cache + 路徑跑通）
 - per-context persist buffer 規則初版
 
 TB
-- K_CACHE / V_CACHE checkpoint
+- K_CACHE / V_CACHE checkpoint（命中後 HALTED，再由 TB 以 READ_MEM 驗證）
 - context lifetime 自洽檢查
 
 DoD
@@ -236,7 +244,7 @@ M10 — SoftmaxApprox + Attention completion
 
 TB
 - softmax unit TB
-- ATTN_OUT checkpoint
+- ATTN_OUT checkpoint（命中後 HALTED，再由 TB 以 READ_MEM 驗證）
 
 DoD
 - attention sublayer 可獨立驗證
@@ -253,7 +261,7 @@ M11 — FFN + residual + reusable TransformerLayer
 
 TB
 - FFN unit TB
-- X_OUT checkpoint
+- X_OUT checkpoint（命中後 HALTED，再由 TB 以 READ_MEM 驗證）
 
 DoD
 - 單層 Transformer 可完整通過
@@ -265,14 +273,14 @@ M12 — 多層排程 + mid LN / end LN
 交付
 - layer loop
 - mid LN、end LN
-- X_WORK token-safe overwrite / SCRATCH liveness 完整規則
+- X_WORK token-safe overwrite / SCRATCH liveness / free-point 完整規則
 
 TB
-- MID_LN_OUT / END_LN_OUT 比對
+- MID_LN_OUT / END_LN_OUT 命中 checkpoint 後 HALTED，再以 READ_MEM 比對
 - 多層自洽回歸
 
 DoD
-- 多層與 in-place overwrite 規則正確
+- 多層與 phase-safe overwrite 規則正確
 
 ==================================================
 M13 — FinalHead（v11.12/v12 正式版）
@@ -283,7 +291,7 @@ M13 — FinalHead（v11.12/v12 正式版）
 - s_t 寫入 SCRATCH.FINAL_SCALAR_BUF
 - Pass B：FINAL_SCALAR_BUF -> logits
 - logits/x_pred 直接 data_out streaming
-- 正常路徑不得使用 PAGE_NEXT/TEMP_PAGE
+- 正常路徑不得使用 X_WORK 以外的未宣告 staging 來冒充 readout buffer
 - SramMap.h 新增：
   - SCR_FINAL_SCALAR_BASE
   - SCR_FINAL_SCALAR_WORDS
@@ -291,10 +299,10 @@ M13 — FinalHead（v11.12/v12 正式版）
 TB
 - OUTMODE_LOGITS：讀 data_out
 - OUTMODE_XPRED：讀 data_out
-- debug only：READ_MEM(SCRATCH.FINAL_SCALAR_BUF)
+- debug only：HALTED 後或回到 IDLE 後 READ_MEM(SCRATCH.FINAL_SCALAR_BUF)
 
 DoD
-- FinalHead 完全符合 v11.12/v12 正式規格，不再沿用舊的 TEMP_PAGE readout 思路
+- FinalHead 完全符合 v11.12/v12 正式規格，不再沿用舊的 page-based readout staging 思路
 
 ==================================================
 M14 — Top end-to-end regression + overlap 基本驗證
@@ -309,9 +317,11 @@ M14 — Top end-to-end regression + overlap 基本驗證
 TB
 - 兩輪以上 E2E
 - overlap 下先收下一筆 INFER
+- active infer / 正常輸出未結束期間發 READ_MEM，必須回 RSP_ERR(ERR_BAD_STATE)
 
 DoD
 - Top 協定 + 輸出模式 + overlap 基本行為全通
+- READ_MEM state gating 與正常輸出不混流的 regression 通過
 
 ==================================================
 M15 — Native AECCT quant freeze（文件與 SSOT 收斂）
