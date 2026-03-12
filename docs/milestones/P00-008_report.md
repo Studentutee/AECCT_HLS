@@ -24,6 +24,15 @@
 - `docs/archive/spells/咒語v12.1_zhTW.txt`
 - `docs/process/AECCT_v12_M0-M24_plan_zhTW.txt`
 
+## Reconciliation Result (Current Run)
+- 本次 reconciliation 以目前工作目錄作為 zip 基線。
+- 結果為 content no-op：六份目標 docs 的 ternary SRAM 凍結條文已存在，未再追加新的正文條文。
+- 依治理要求，P00-008 交付物仍保留並完成檢查：
+  - `P00-008_report.md`
+  - `file_manifest.txt`
+  - `diff.patch`
+  - `verdict.txt`
+
 ## Per-File Changes
 - `AECCT_HLS_Spec_v12.1_zhTW.txt`
 - 新增 ternary weight SRAM encoding 條文（codebook、2-bit packing、32-bit=16 weights、LSB-first）。
@@ -66,6 +75,21 @@
 - `W[out][in]` 是數學表示；`in contiguous` 僅為實體線性化/存放順序。
 - 遇 `10` illegal code：`LOAD_W / parameter ingest / checker` 必須報格式錯誤。
 - matrix record 是 logical section format，不代表手動固定 physical base offsets。
+
+## Validation Method
+- `rg` 僅作快速篩檢（fast screening），用於定位候選段落。
+- 最終判定採人工語意核對（semantic/manual），逐檔確認：
+  - codebook、packing、`last_word_valid_count`（1..16，滿載=16）、padding=0
+  - per-matrix `inv_s_w`
+  - illegal `10` 必須報格式錯誤
+  - matrix record 為 logical section format（非手動固定 physical base offset）
+  - `W[out][in]`（數學）與 `in contiguous`（實體線性化）分離
+  - tile-unpack/decode 建議
+
+## Diff Policy / Tooling
+- 本次為 content no-op reconciliation；`diff.patch` 採空檔策略（無額外 patch 內容）。
+- 差異工具優先使用 `git diff`；本次環境可用，未觸發 file-based fallback。
+- 若未來遇到 `git diff` 不可用，將改用檔案式比對並在報告明確記錄 fallback 與限制。
 
 ## Files Not Found in zip/docs
 - none

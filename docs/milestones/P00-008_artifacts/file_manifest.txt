@@ -1,18 +1,15 @@
-P00-008 file manifest
+P00-008 file manifest (reconciliation run)
 
 existing file patched
-- docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt
-- docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
-- docs/architecture/AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
-- docs/architecture/AECCT_module_interface_rules_v12.1_zhTW.txt
-- docs/archive/spells/咒語v12.1_zhTW.txt
-- docs/process/AECCT_v12_M0-M24_plan_zhTW.txt
-
-new file added
 - docs/milestones/P00-008_report.md
 - docs/milestones/P00-008_artifacts/file_manifest.txt
 - docs/milestones/P00-008_artifacts/diff.patch
-- docs/milestones/P00-008_artifacts/verdict.txt
+
+new file added
+- none (all required P00-008 deliverables already existed in current baseline)
 
 generated file regenerated
 - none
+
+notes
+- six target docs were semantically re-validated as content no-op in this run.
