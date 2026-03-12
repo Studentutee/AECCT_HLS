@@ -1,0 +1,14 @@
+P00-009 file manifest
+
+existing file patched
+- none
+
+new file added
+- docs/process/PROJECT_STATUS_zhTW.txt
+- docs/milestones/P00-009_report.md
+- docs/milestones/P00-009_artifacts/file_manifest.txt
+- docs/milestones/P00-009_artifacts/diff.patch
+- docs/milestones/P00-009_artifacts/verdict.txt
+
+generated file regenerated
+- none

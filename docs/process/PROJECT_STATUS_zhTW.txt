@@ -1,0 +1,67 @@
+PROJECT STATUS (zhTW)
+Version: 2026-03-12
+
+====================================================================
+1. 文件定位
+====================================================================
+- 本文件是「當前專案狀態摘要」，用於快速接手與進度對齊。
+- 本文件不是主規格（spec），也不是 milestone verdict 原文。
+- 正式規格以 spec / architecture / rules 文件為準；任務結論以各 milestone report + artifacts verdict 為準。
+
+====================================================================
+2. Current Overall Status
+====================================================================
+- M0 formal closure 已完成（PASS），M0 skeleton/contract/smoke baseline 已具正式證據鏈。
+- Step 2 skeleton / contract bring-up 已收斂，m0 smoke 可重現；m1/m2 在既有任務中屬 compile-compatible 證據。
+- docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
+- ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）。
+- global/repo-wide governance open items 仍存在，尚未等同全域 closure。
+
+====================================================================
+3. Frozen Baseline（已凍結基線）
+====================================================================
+- Top 是唯一 SRAM owner；共享 SRAM 仲裁與 lifetime/free-point 由 Top 管理。
+- 外部 4-channel contract 固定：ctrl_cmd / ctrl_rsp / data_in / data_out。
+- block contract 採 Top 強控型（base/cfg/token_range/tile_range/phase_id）。
+- single-X_WORK baseline 已凍結；W_REGION 與 runtime scratch 不 alias。
+- FinalHead 正式為 Pass A / Pass B，Pass bridge 落於 SCRATCH.FINAL_SCALAR_BUF。
+- READ_MEM state gating 已凍結：IDLE/HALTED 合法；active state 回 RSP_ERR(ERR_BAD_STATE)，避免 data_out 混流。
+- ternary SRAM storage 規格摘要已凍結：
+  - codebook：00=0、01=+1、11=-1、10 illegal
+  - 2-bit packing、32-bit word=16 weights、LSB-first
+  - last_word_valid_count=1..16（滿載=16）、tail padding=0
+  - per-matrix inv_s_w、matrix record（logical section format，非手動固定 physical base offset）
+  - W[out][in] 為數學表示；in contiguous 僅指實體線性化
+
+====================================================================
+4. Completed Milestones / Patch Tasks
+====================================================================
+- [P00-005] — Step 2 治理補件與證據收斂 — PARTIAL（technical direction aligned；governance closure pending）
+- [P00-006] — Repo hygiene triage / waiver baseline 建立 — PASS（triage 完成；hygiene gate 仍 open）
+- [P00-007] — Step 2 m0 smoke stabilization / M0 closure prep — PASS（m0 smoke reproduced；m1/m2 compile compatibility pass）
+- [P00-008] — Ternary weight SRAM storage docs freeze（docs-only） — PASS（implementation change not included）
+- [M0] — M0 formal closure evidence pack — PASS（global governance open items tracked outside M0 blocking scope）
+
+====================================================================
+5. Current Open Items
+====================================================================
+- repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
+- m1/m2 runtime closure 尚未完成（目前主證據重心在 m0 baseline 與 M0 closure）。
+- full numeric correctness / full algorithm closure 尚未完成。
+- ternary SRAM freeze 規格雖已文件凍結，WeightStreamOrder / loader / generator 的完整實作落地與回歸仍待後續任務。
+
+====================================================================
+6. Recommended Next Step
+====================================================================
+1. 啟動「ternary SRAM format 實作對齊」任務：收斂 WeightStreamOrder / loader / generator 與現行 frozen docs。
+2. 啟動「m1/m2 runtime closure」任務：在不回灌 M0 範圍的前提下建立獨立證據包。
+3. 啟動「global hygiene cleanup/waiver resolution」任務：關閉 repo-wide governance open items。
+
+====================================================================
+7. Reading Order for Future Work
+====================================================================
+1. 先讀本文件（PROJECT_STATUS）。
+2. 讀主 spec（AECCT_HLS_Spec_v12.1_zhTW.txt）。
+3. 讀 architecture / module_interface / srammap rules。
+4. 讀最新 milestone 報告與 verdict（P00-005~P00-008、M0）。
+5. 最後再進入 code/tb 與下一個里程碑任務。
