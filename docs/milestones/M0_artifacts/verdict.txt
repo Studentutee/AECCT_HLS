@@ -1,0 +1,2 @@
+PASS: M0 formal closure completed.
+Global/repo-wide governance open items remain and are tracked outside M0 blocking scope.

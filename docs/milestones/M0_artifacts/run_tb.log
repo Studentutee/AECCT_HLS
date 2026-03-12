@@ -1,0 +1,12 @@
+=== M0 Run Log ===
+Date: 2026-03-12 15:35:53 +08:00
+WorkingDir: C:\Users\Peter\source\repos\AECCT_HLS
+Evidence baseline commit: 390d49c
+Observed HEAD: 390d49c
+
+Command: .\\build\\tmp_tb_top_m0_m0closure.exe
+PASS: tb_top_m0
+ExitCode: 0
+
+SKIPPED: tb_top_m1 runtime is out of M0 scope.
+SKIPPED: tb_top_m2 runtime is out of M0 scope.

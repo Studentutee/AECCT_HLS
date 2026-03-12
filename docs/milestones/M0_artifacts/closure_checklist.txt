@@ -1,0 +1,23 @@
+M0 Formal Closure Checklist
+Evidence baseline commit: 390d49c
+
+Columns:
+item | expected | actual evidence | status | blocking? (yes/no) | note
+
+[Closed in M0]
+M0-C01 Top contract skeleton present | Top contract exists with fixed 4-channel interface | src/Top.h + interface rules doc reference in M0_report | PASS | yes | SSOT confirmed
+M0-C02 SSOT/wrapper relationship | src/Top.h is SSOT and design/AecctTop.h is adapter-only | build.log static check: SSOT/adapter grep hit | PASS | yes | wrapper-only relation observed
+M0-C03 m0 compile | tb_top_m0 build succeeds on baseline commit | build.log: tb_top_m0 compile ExitCode 0 | PASS | yes | baseline commit pinned
+M0-C04 m0 minimal smoke run | tb_top_m0 executable returns PASS with ExitCode 0 | run_tb.log: tb_top_m0 PASS, ExitCode 0 | PASS | yes | minimal smoke path validated
+M0-C05 no size()/available() correctness dependency | checked paths contain no size()/available() usage | build.log static check: NO_MATCH for size/available regex | PASS | yes | conforms to module interface rule
+M0-C06 m0 path interface consistency | no obvious interface mismatch during m0 flow | tb_top_m0 build+run pass on baseline | PASS | yes | no mismatch surfaced
+
+[Out of M0 Scope]
+M0-O01 m1 runtime | runtime execution of tb_top_m1 | run_tb.log marked SKIPPED | SKIPPED | no | out of M0 scope
+M0-O02 m2 runtime | runtime execution of tb_top_m2 | run_tb.log marked SKIPPED | SKIPPED | no | out of M0 scope
+M0-O03 full numeric correctness | golden/e2e numeric closure | not executed in M0 | SKIPPED | no | later milestone responsibility
+M0-O04 full algorithm/datapath completion | full transformer-level implementation closure | not executed in M0 | SKIPPED | no | later milestone responsibility
+
+[Deferred / Global Open Items]
+M0-D01 global repo hygiene closure | repo-wide hygiene gate fully closed | referenced from P00-006 verdict/baseline | OPEN | no | tracked outside M0 blocking scope
+M0-D02 m1/m2 compile fail handling policy | if compile fails, record only and do not patch code in this task | policy documented in M0_report | PASS | no | non-regression risk policy pinned

@@ -1,0 +1,14 @@
+existing file patched:
+- none
+
+new file added:
+- docs/milestones/M0_report.md
+- docs/milestones/M0_artifacts/build.log
+- docs/milestones/M0_artifacts/run_tb.log
+- docs/milestones/M0_artifacts/verdict.txt
+- docs/milestones/M0_artifacts/closure_checklist.txt
+- docs/milestones/M0_artifacts/file_manifest.txt
+- docs/milestones/M0_artifacts/diff.patch
+
+generated file regenerated:
+- none
