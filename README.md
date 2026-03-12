@@ -62,6 +62,14 @@
   - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights /I data\trace tb\tb_top_m3.cpp /Fe:build\tmp_tb_top_m3_p004.exe`
 - Bring-up TB run command (P00-004 mandatory):
   - `.\build\tmp_tb_top_m4_p004.exe`
+- Bring-up TB build commands (P00-005 Step 2 governance evidence):
+  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m0.cpp /Fe:build\tmp_tb_top_m0_p005.exe`
+  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m1.cpp /Fe:build\tmp_tb_top_m1_p005.exe`
+  - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m2.cpp /Fe:build\tmp_tb_top_m2_p005.exe`
+- Bring-up TB run command (P00-005 mandatory):
+  - `.\build\tmp_tb_top_m0_p005.exe`
+- Bring-up TB runtime scope note (P00-005):
+  - `tb_top_m1` and `tb_top_m2` are compile-compatible only in this step (runtime not required).
 - Smoke TB build/run command:
   - `cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_compliance_smoke_p16.cpp /Fe:build\tmp_tb_compliance_smoke_p16.exe`
   - `.\build\tmp_tb_compliance_smoke_p16.exe`
@@ -70,5 +78,6 @@
   - `2026-03-02 (P00-002)`: tb_top_m4 PASS, tb_top_m5 PASS, gates PASS.
   - `2026-03-02 (P00-003)`: tb_top_m3 PASS, tb_top_m6/m9/m11/m12/m13 build PASS, gates PASS.
   - `2026-03-02 (P00-004)`: design-side weights.h removed, tb_top_m4 PASS, gates PASS.
+  - `2026-03-12 (P00-005)`: Step 2 skeleton contract convergence tracked; tb_top_m0 smoke PASS; tb_top_m1/m2 build PASS (compile-compatible only); check_design_purity PASS; check_interface_lock PASS; check_repo_hygiene FAIL (pre-existing findings); governance closure pending.
 <!-- AUTO-GENERATED END -->
 

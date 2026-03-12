@@ -1,0 +1,184 @@
+﻿=== P00-005 Build Log ===
+Date: 2026-03-12 11:50:21 +08:00
+WorkingDir: C:\Users\Peter\source\repos\AECCT_HLS
+
+[Environment Metadata]
+OS: Microsoft Windows [Version 10.0.19045.6466]
+Shell: PowerShell 5.1.19041.6456
+Python: Python 3.11.2
+GitCommit: 198af0b
+
+Command: cl /Bv
+Microsoft (R) C/C++ Optimizing Compiler Version 19.50.35725 for x86
+Copyright (C) Microsoft Corporation.  著作權所有，並保留一切權利。
+System.Management.Automation.RemoteException
+編譯器傳遞: 
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\cl.exe:        版本 19.50.35725.0
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\c1.dll:        版本 19.50.35725.0
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\c1xx.dll:      版本 19.50.35725.0
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\c2.dll:        版本 19.50.35725.0
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\c1xx.dll:      版本 19.50.35725.0
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\link.exe:      版本 14.50.35725.0
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\mspdb140.dll:  版本 14.50.35725.0
+ C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\MSVC\14.50.35717\bin\HostX86\x86\1028\clui.dll: 版本 19.50.35725.0
+System.Management.Automation.RemoteException
+cl : 命令列 error D8003 : 遺漏原始程式檔檔名
+ExitCode: 2
+
+Command: cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m0.cpp /Fe:build\tmp_tb_top_m0_p005.exe
+tb_top_m0.cpp
+include\SoftmaxApprox.h(8): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(16): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(27): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(34): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(42): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(49): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(67): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(84): warning C4068: 未知的 pragma 'hls_inline'
+src\Top.h(900): warning C4068: 未知的 pragma 'HLS'
+third_party\ac_types\ac_std_float.h(1560): warning C4805: '&': 作業中不安全的混用類型 'bool' 和類型 'int'
+third_party\ac_types\ac_std_float.h(1560): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2459): note: 請參考正在進行編譯的 類別 樣板 具現化 'ac_std_float<16,8>'
+third_party\ac_types\ac_std_float.h(1557): note: 編譯 類別 樣板 成員函式 'bool ac_std_float<16,8>::operator >(const ac_std_float<16,8> &) const' 期間
+third_party\ac_types\ac_std_float.h(2620): note: 請參閱 'ac::bfloat16::operator >' 中 'ac_std_float<16,8>::operator >' 的第一個參考
+third_party\ac_types\ac_std_float.h(1549): warning C4805: '&': 作業中不安全的混用類型 'bool' 和類型 'int'
+third_party\ac_types\ac_std_float.h(1549): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(1547): note: 編譯 類別 樣板 成員函式 'bool ac_std_float<16,8>::operator <(const ac_std_float<16,8> &) const' 期間
+third_party\ac_types\ac_std_float.h(2614): note: 請參閱 'ac::bfloat16::operator <' 中 'ac_std_float<16,8>::operator <' 的第一個參考
+third_party\ac_types\ac_std_float.h(709): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(709): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2531): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,false>(const ac_int<16,false> &)'
+third_party\ac_types\ac_std_float.h(2531): note: 請參閱 'ac::bfloat16::bfloat16' 中 'ac_std_float<16,8>::assign_from' 的第一個參考
+third_party\ac_types\ac_std_float.h(748): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,16,false,AC_TRN,AC_WRAP>(const ac_fixed<16,16,false,AC_TRN,AC_WRAP> &)'
+third_party\ac_types\ac_std_float.h(639): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(639): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2555): note: 請參考正在進行編譯的函式 樣板 具現化 'ac::bfloat16::bfloat16<binary64>(const ac_ieee_float<binary64> &)'
+third_party\ac_types\ac_std_float.h(2455): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<64,11>::convert<16,8,AC_TRN_ZERO>(void) const'
+third_party\ac_types\ac_std_float.h(1281): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(1281): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2592): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<16,8>::div<AC_TRN_ZERO,false>(const ac_std_float<16,8> &) const'
+third_party\ac_types\ac_std_float.h(2592): note: 請參閱 'ac::bfloat16::operator /' 中 'ac_std_float<16,8>::div' 的第一個參考
+third_party\ac_types\ac_std_float.h(1300): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<16,8>::div_generic<AC_TRN_ZERO,false>(const ac_std_float<16,8> &) const'
+third_party\ac_types\ac_std_float.h(181): warning C4804: '>': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(181): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(748): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,16,false,AC_TRN,AC_WRAP>(const ac_fixed<16,16,false,AC_TRN,AC_WRAP> &)'
+third_party\ac_types\ac_std_float.h(688): note: 請參考正在進行編譯的函式 樣板 具現化 'unsigned int ac_private::leading_sign_constrained<141,16,false>(const ac_int<16,false> &,bool &)'
+ExitCode: 0
+
+Command: cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m1.cpp /Fe:build\tmp_tb_top_m1_p005.exe
+tb_top_m1.cpp
+include\SoftmaxApprox.h(8): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(16): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(27): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(34): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(42): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(49): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(67): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(84): warning C4068: 未知的 pragma 'hls_inline'
+src\Top.h(900): warning C4068: 未知的 pragma 'HLS'
+third_party\ac_types\ac_std_float.h(1560): warning C4805: '&': 作業中不安全的混用類型 'bool' 和類型 'int'
+third_party\ac_types\ac_std_float.h(1560): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2459): note: 請參考正在進行編譯的 類別 樣板 具現化 'ac_std_float<16,8>'
+third_party\ac_types\ac_std_float.h(1557): note: 編譯 類別 樣板 成員函式 'bool ac_std_float<16,8>::operator >(const ac_std_float<16,8> &) const' 期間
+third_party\ac_types\ac_std_float.h(2620): note: 請參閱 'ac::bfloat16::operator >' 中 'ac_std_float<16,8>::operator >' 的第一個參考
+third_party\ac_types\ac_std_float.h(1549): warning C4805: '&': 作業中不安全的混用類型 'bool' 和類型 'int'
+third_party\ac_types\ac_std_float.h(1549): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(1547): note: 編譯 類別 樣板 成員函式 'bool ac_std_float<16,8>::operator <(const ac_std_float<16,8> &) const' 期間
+third_party\ac_types\ac_std_float.h(2614): note: 請參閱 'ac::bfloat16::operator <' 中 'ac_std_float<16,8>::operator <' 的第一個參考
+third_party\ac_types\ac_std_float.h(709): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(709): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2531): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,false>(const ac_int<16,false> &)'
+third_party\ac_types\ac_std_float.h(2531): note: 請參閱 'ac::bfloat16::bfloat16' 中 'ac_std_float<16,8>::assign_from' 的第一個參考
+third_party\ac_types\ac_std_float.h(748): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,16,false,AC_TRN,AC_WRAP>(const ac_fixed<16,16,false,AC_TRN,AC_WRAP> &)'
+third_party\ac_types\ac_std_float.h(639): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(639): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2555): note: 請參考正在進行編譯的函式 樣板 具現化 'ac::bfloat16::bfloat16<binary64>(const ac_ieee_float<binary64> &)'
+third_party\ac_types\ac_std_float.h(2455): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<64,11>::convert<16,8,AC_TRN_ZERO>(void) const'
+third_party\ac_types\ac_std_float.h(1281): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(1281): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2592): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<16,8>::div<AC_TRN_ZERO,false>(const ac_std_float<16,8> &) const'
+third_party\ac_types\ac_std_float.h(2592): note: 請參閱 'ac::bfloat16::operator /' 中 'ac_std_float<16,8>::div' 的第一個參考
+third_party\ac_types\ac_std_float.h(1300): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<16,8>::div_generic<AC_TRN_ZERO,false>(const ac_std_float<16,8> &) const'
+third_party\ac_types\ac_std_float.h(181): warning C4804: '>': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(181): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(748): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,16,false,AC_TRN,AC_WRAP>(const ac_fixed<16,16,false,AC_TRN,AC_WRAP> &)'
+third_party\ac_types\ac_std_float.h(688): note: 請參考正在進行編譯的函式 樣板 具現化 'unsigned int ac_private::leading_sign_constrained<141,16,false>(const ac_int<16,false> &,bool &)'
+ExitCode: 0
+
+Command: cl /nologo /std:c++20 /EHsc /utf-8 /I . /I include /I src /I third_party\ac_types /I data\weights tb\tb_top_m2.cpp /Fe:build\tmp_tb_top_m2_p005.exe
+tb_top_m2.cpp
+include\SoftmaxApprox.h(8): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(16): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(27): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(34): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(42): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(49): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(67): warning C4068: 未知的 pragma 'hls_inline'
+include\SoftmaxApprox.h(84): warning C4068: 未知的 pragma 'hls_inline'
+src\Top.h(900): warning C4068: 未知的 pragma 'HLS'
+third_party\ac_types\ac_std_float.h(1560): warning C4805: '&': 作業中不安全的混用類型 'bool' 和類型 'int'
+third_party\ac_types\ac_std_float.h(1560): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2459): note: 請參考正在進行編譯的 類別 樣板 具現化 'ac_std_float<16,8>'
+third_party\ac_types\ac_std_float.h(1557): note: 編譯 類別 樣板 成員函式 'bool ac_std_float<16,8>::operator >(const ac_std_float<16,8> &) const' 期間
+third_party\ac_types\ac_std_float.h(2620): note: 請參閱 'ac::bfloat16::operator >' 中 'ac_std_float<16,8>::operator >' 的第一個參考
+third_party\ac_types\ac_std_float.h(1549): warning C4805: '&': 作業中不安全的混用類型 'bool' 和類型 'int'
+third_party\ac_types\ac_std_float.h(1549): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(1547): note: 編譯 類別 樣板 成員函式 'bool ac_std_float<16,8>::operator <(const ac_std_float<16,8> &) const' 期間
+third_party\ac_types\ac_std_float.h(2614): note: 請參閱 'ac::bfloat16::operator <' 中 'ac_std_float<16,8>::operator <' 的第一個參考
+third_party\ac_types\ac_std_float.h(709): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(709): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2531): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,false>(const ac_int<16,false> &)'
+third_party\ac_types\ac_std_float.h(2531): note: 請參閱 'ac::bfloat16::bfloat16' 中 'ac_std_float<16,8>::assign_from' 的第一個參考
+third_party\ac_types\ac_std_float.h(748): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,16,false,AC_TRN,AC_WRAP>(const ac_fixed<16,16,false,AC_TRN,AC_WRAP> &)'
+third_party\ac_types\ac_std_float.h(639): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(639): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2555): note: 請參考正在進行編譯的函式 樣板 具現化 'ac::bfloat16::bfloat16<binary64>(const ac_ieee_float<binary64> &)'
+third_party\ac_types\ac_std_float.h(2455): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<64,11>::convert<16,8,AC_TRN_ZERO>(void) const'
+third_party\ac_types\ac_std_float.h(1281): warning C4804: '-': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(1281): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(2592): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<16,8>::div<AC_TRN_ZERO,false>(const ac_std_float<16,8> &) const'
+third_party\ac_types\ac_std_float.h(2592): note: 請參閱 'ac::bfloat16::operator /' 中 'ac_std_float<16,8>::div' 的第一個參考
+third_party\ac_types\ac_std_float.h(1300): note: 請參考正在進行編譯的函式 樣板 具現化 'ac_std_float<16,8> ac_std_float<16,8>::div_generic<AC_TRN_ZERO,false>(const ac_std_float<16,8> &) const'
+third_party\ac_types\ac_std_float.h(181): warning C4804: '>': 作業中不安全的使用類型 'bool'
+third_party\ac_types\ac_std_float.h(181): note: 範本具現化內容 (首先是最舊的) 是
+third_party\ac_types\ac_std_float.h(748): note: 請參考正在進行編譯的函式 樣板 具現化 'void ac_std_float<16,8>::assign_from<AC_TRN_ZERO,16,16,false,AC_TRN,AC_WRAP>(const ac_fixed<16,16,false,AC_TRN,AC_WRAP> &)'
+third_party\ac_types\ac_std_float.h(688): note: 請參考正在進行編譯的函式 樣板 具現化 'unsigned int ac_private::leading_sign_constrained<141,16,false>(const ac_int<16,false> &,bool &)'
+ExitCode: 0
+
+Command: python scripts/check_design_purity.py --repo-root .
+PASS: check_design_purity
+ExitCode: 0
+
+Command: python scripts/check_interface_lock.py --repo-root .
+PASS: check_interface_lock
+ExitCode: 0
+
+Command: python scripts/check_repo_hygiene.py --repo-root .
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+ExitCode: 1
+
+Command: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_gates.ps1
+PASS: check_design_purity
+PASS: check_interface_lock
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+ExitCode: 1
