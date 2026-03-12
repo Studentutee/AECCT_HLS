@@ -140,11 +140,14 @@ E. TOKEN_LOCAL / SMALL_SCRATCH
 - transformer weights
 - H_by_var / connectivity metadata
 - QUANT_PARAM metadata（如固定 s_x / inv_s_w）
+- ternary packed weight payload（每個 weight 2 bits，32-bit word 打包 16 個）
+- per-matrix inv_s_w 與 matrix record/section metadata（例如 payload_words、last_word_valid_count）
 
 規則：
 - LOAD_W 或等價 parameter 載入完成後，W_REGION 不應被 runtime scratch 覆蓋
 - W_REGION 不與 runtime scratch alias
 - W_REGION 的 physical layout 應配合 WeightStreamOrder / layout_kind / mask_kind 描述
+- matrix record 在本版屬邏輯 section format，不代表手動固定 physical base offset
 
 3.2 X_WORK
 ----------
@@ -327,6 +330,7 @@ free-point 例：
 ----------------------------------
 在 generator 完成前，本文件先凍結語意欄位，
 不手工維護 base offset / region size 數值。
+- ternary matrix record 亦同：先凍結邏輯欄位與 section 語意，實體位址仍由生成流程決定。
 
 6.2 建議保留的語意欄位
 ----------------------
@@ -345,7 +349,7 @@ SramMap / WeightStreamOrder 後續至少應能表達：
 - X_WORK：single main working buffer / phase-safe overwrite
 - SCR_K / SCR_V：layer-scoped scratch
 - FINAL_SCALAR：finalhead pass-bridge scratch
-- W_REGION：persistent parameter region
+- W_REGION：persistent parameter region（含 ternary packed payload + per-matrix inv_s_w + matrix record metadata）
 - IO_REGION：staging-only region
 
 ================================================================

@@ -129,6 +129,8 @@ M4 — SET_W_BASE + LOAD_W + WeightStreamOrder
 - LOAD_W
 - WeightStreamOrder.h
 - valid_bits / bitpack padding 檢查
+- ternary packed weight SRAM format 凍結（codebook/payload packing/last_word_valid_count）
+- per-matrix inv_s_w metadata 凍結
 - DESIGN 嚴禁 compile-time weights
 
 TB
@@ -136,10 +138,12 @@ TB
 - 對齊錯誤
 - 長度錯誤
 - padding bits 非零
+- ternary codebook 非法碼（10）必須回報格式錯誤
 - LOAD_W 完成並回到 IDLE 後 READ_MEM 比對
 
 DoD
 - 權重主路徑固定為「TB 串流進 SRAM」
+- LOAD_W / WeightStreamOrder 與凍結的 ternary SRAM 格式一致
 
 ==================================================
 M5 — in_fifo + IO_REGION + SET_OUTMODE + HALTED/DEBUG 基建
@@ -355,6 +359,7 @@ M16 — 離線生成器整合：SramMap / WeightStreamOrder / native quant metad
   - SramMap.h
   - WeightStreamOrder.h
 - WeightStreamOrder 能描述固定 s_x 與 inv_s_w sections
+- WeightStreamOrder / generator 能描述 ternary packed payload、last_word_valid_count 與 per-matrix inv_s_w metadata
 
 TB
 - 重新生成 headers 後，M14 regression 仍綠
@@ -387,6 +392,7 @@ M18 — Native quant 離線分析流程建立（固定 s_x / inv_s_w）
 - trace/weights/reference tensor 分析腳本
 - 固定 s_x 飽和率 / clipping 報表
 - inv_s_w / ternary weight 對照檢查
+- ternary packed codebook / packing / last_word_valid_count 一致性檢查
 - compare framework（先 tolerant，不凍結未來 grouping）
 
 TB

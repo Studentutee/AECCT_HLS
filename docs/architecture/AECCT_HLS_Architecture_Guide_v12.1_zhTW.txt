@@ -92,6 +92,8 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 
 3.1 建議的實體儲存類別
 - W_REGION：權重 / 參數 / metadata 的 persistent 區。
+- W_REGION 內的 ternary 權重以 packed payload 儲存，並帶 per-matrix inv_s_w 與對應 metadata。
+- matrix record 在本版是邏輯 section format，不等於手動固定 physical SRAM base offsets。
 - X_WORK：主 token × d 工作區，用於 preproc_x、layer outputs、endLN_out 等主工作矩陣；這些是邏輯值名稱，並非實體儲存名稱。
 - SCRATCH：attention K/V、FinalHead 與其他合法 scratch 子區的共用暫存區；SCR_K / SCR_V / FINAL_SCALAR_BUF 都屬此類。
 - IO_REGION：input / output / debug / meta staging 的合法區域。
@@ -106,6 +108,12 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - 寬度相關物件不應一律 full-register 化，也不應一律升級成獨立 SRAM 大區；是否放 reg 或 scratch，應看 tile 化、RMW 頻率、共享程度與 lifetime。
 - 單一 token / 單一 head / 單一 tile 的短生命週期狀態，是優先考慮 reg 的對象。
 - v1 的 quant caches 屬於「固定值快取」而非動態追蹤狀態：當前 layer / slot 所需的 s_x / inv_s_x / inv_s_w 可在 block 入口載入 local regs，但不在 run-time 回寫新的 scale table。
+
+3.3 Ternary packed weight 的線性化與 decode 建議
+- 權重矩陣的數學表示維持 W[out][in]；out 是列(Row)、in 是行(Colume)。
+- 「in contiguous」只表示實體線性化/存放順序，不改變 W[out][in] 的數學語意。
+- datapath 不建議在 inner-most MAC loop 直接做逐權重 bit extract；建議先以 tile 為單位 unpack/decode 到 local buffer，再消費 {-1, 0, +1}。
+- per-matrix inv_s_w 建議在 matrix section 入口與 payload metadata 一起讀取，再供該矩陣的 decode/運算路徑使用。
 
 ====================================================================
 4. 邏輯與實體的對照原則
@@ -363,10 +371,13 @@ A. W_REGION
   - embedding / positional information
   - BASE_SRC_MASK
   - Q/K/V/O/FFN/LN/FinalHead 權重與參數
+  - ternary packed weight payload（2-bit codebook）與 per-matrix inv_s_w
+  - matrix record/section metadata（包含 payload_words 與 last_word_valid_count）
   - quant 相關 metadata
 - 規則：
   - 不與 runtime scratch alias
   - LOAD_W 後在整次推論期間保持有效
+  - matrix record 為邏輯 section 格式；實體 base offsets 仍由 SramMap / WeightStreamOrder / generator 決定
 
 B. X_WORK（主 token × d 工作區）
 - 性質：主工作矩陣區。
@@ -486,6 +497,9 @@ G. DATA_OUT 路徑
   - 寫入 W_REGION
 - 覆蓋規則：
   - LOAD_W 完成後，W_REGION 不應被 runtime scratch 覆蓋
+ - 格式規則：
+   - ternary packed payload 需符合固定 codebook（00/01/11；10 為 illegal）
+   - last_word_valid_count 與尾端 padding 必須與 payload 一致
 
 1. Input ingest / Preproc 前段
 - 邏輯值：
