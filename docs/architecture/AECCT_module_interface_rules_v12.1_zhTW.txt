@@ -1,0 +1,390 @@
+AECCT Module Interface Rules v12.1（繁體中文版）
+
+Version: 2026-03-11
+Revision: v12.1 draftA
+Source baseline:
+- AECCT_HLS_Spec_v12.1_zhTW.txt
+- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+
+================================================================
+0. 文件目的與定位
+================================================================
+
+本文件定義 AECCT_HLS v12.1 的 module 介面規則。
+它負責收斂：
+
+- Top 與 sub-block 的責任分界
+- sub-block 的統一介面欄位
+- token / tile 工作單位的傳遞方式
+- block 完成條件與錯誤邊界
+- 目前不開放的介面自由度
+
+本文件是 v12.1 主 spec 的補充規則文件。
+若本文件與主 spec 衝突，以 AECCT_HLS_Spec_v12.1_zhTW.txt 為準。
+
+本文件不負責：
+- 實體地址與 base offset 數值
+- alias_group / free-point 的完整表
+- tile size 的最終數值
+- generator 輸出格式細節
+
+上述事項由：
+- AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+- SramMap.h
+- WeightStreamOrder.h
+- 對應 generator / milestone report
+
+負責。
+
+================================================================
+1. 基本原則
+================================================================
+
+1.1 Top 所有權
+----------------
+Top 是唯一的 SRAM owner。
+sub-block 不得自行配置 SRAM，也不得繞過 Top 直接定義共享記憶體仲裁語意。
+
+1.2 Top 的正式責任
+-------------------
+Top 負責：
+- FSM controller
+- runtime cfg registers
+- memory request arbitration
+- base/len/region bookkeeping
+- X_WORK / SCRATCH lifetime 與 free-point 管理
+- overlap scheduling
+- output sequencing
+
+1.3 Sub-block 的正式責任
+-------------------------
+sub-block 只負責：
+- 消費 Top 指派的資料範圍與控制參數
+- 在合法的 token / tile 範圍內完成計算
+- 依約定回報完成或錯誤狀態
+- 使用 block-local temporary / tile-local state 完成自身運算
+
+sub-block 不得：
+- 自行宣告共享 SRAM ownership
+- 自行決定共享 SRAM arbitration policy
+- 自行引入與 spec 不一致的第二套介面 contract
+- 以 hidden request path 偷渡共享記憶體存取語意
+
+================================================================
+2. v12.1 固定外部 contract
+================================================================
+
+Top 外部 contract 固定為四條 channel：
+
+- ctrl_cmd  : ac_channel<ac_int<16,false>>
+- ctrl_rsp  : ac_channel<ac_int<16,false>>
+- data_in   : ac_channel<ac_int<32,false>>
+- data_out  : ac_channel<ac_int<32,false>>
+
+Top 內必須有：
+- in_fifo（input elastic FIFO）
+
+in_fifo 的角色是小型 decoupling FIFO，
+不是完整 payload buffer。
+其深度由 HLS / tool 設定，並記錄於 milestone report。
+
+================================================================
+3. 必要 blocks
+================================================================
+
+v12.1 正式要求以下 blocks：
+
+- Top
+- PreprocEmbedSPE
+- TransformerLayer
+- LayerNormBlock
+- FinalHead
+
+其中：
+- TransformerLayer 是單一硬體 layer，透過 time-multiplex 重複使用
+- LayerNormBlock 由 Top 插入於 mid LN / end LN
+- FinalHead 分為 Pass A / Pass B 兩個正式 phase
+
+================================================================
+4. 統一 block 介面策略
+================================================================
+
+4.1 本版採用的介面策略
+-----------------------
+v12.1 採用：
+
+Top 強控型 + block 接收 token_range / tile_range
+
+也就是：
+- Top 決定 phase、base、region、token 範圍、tile 範圍
+- block 不自行產生正式的共享 SRAM request protocol
+- block 只在被指派的工作單位內運作
+
+4.2 為何不採 block 自治 request 模式
+------------------------------------
+本版不把 block-to-Top request/rsp 當成正式 contract。
+若未來為 performance / overlap 需要引入，必須另立條款，不得在 v12.1 下默默擴張。
+
+4.3 介面欄位分級
+----------------
+本版 block 介面欄位分成三層：
+
+A. 必要控制欄位
+- start
+- done
+- err_valid
+- err_code
+
+B. 範圍與位置欄位
+- region/base/len 類資訊
+- token_begin
+- token_end
+- tile_begin
+- tile_end
+
+C. 執行模式欄位
+- layer_id
+- head_group_id（若適用）
+- phase_id
+- mode_flags（僅限主 spec 已定義的語意）
+
+================================================================
+5. 統一欄位定義
+================================================================
+
+5.1 token_begin, token_end
+--------------------------
+表示本次 block 工作的 token 範圍。
+採半開區間：
+
+[token_begin, token_end)
+
+規則：
+- token_begin <= token_end
+- 不得超出目前 active runtime shape 的 token 範圍
+- 空區間是否合法，由 Top phase 規則決定；block 不自行推測
+
+5.2 tile_begin, tile_end
+------------------------
+表示本次 block 工作的 tile 範圍。
+同樣採半開區間：
+
+[tile_begin, tile_end)
+
+規則：
+- tile 的物理意義依 block 類型而不同，但在同一 block 類型內必須固定
+- tile 的合法上限由 compile-time limits 與 runtime shape 共同決定
+- block 不得假設 tile 必然覆蓋完整向量
+
+5.3 phase_id
+------------
+phase_id 只描述正式 phase 邊界，不可濫用來隱藏額外 micro-state。
+例如：
+- Preproc ingest
+- KV materialization
+- Attention phase B
+- Mid LN
+- End LN
+- FinalHead Pass A
+- FinalHead Pass B
+
+5.4 region/base/len
+-------------------
+所有共享記憶體相關範圍資訊都由 Top 提供。
+block 不得自行推導出第二套與 Top 不一致的 base/len 規則。
+
+================================================================
+6. 各 block 的最低介面要求
+================================================================
+
+6.1 PreprocEmbedSPE
+-------------------
+最低需接收：
+- runtime cfg 只讀視圖或等價必要欄位
+- input source semantic selector（若適用）
+- x_work_base
+- token_begin, token_end
+- tile_begin, tile_end
+
+最低需保證：
+- 只在指定 token 範圍內寫入 X_WORK
+- 不把 check_parity 寫成共享 SRAM rolling RMW
+- 不假設完整 token 向量單拍成形
+
+6.2 TransformerLayer
+--------------------
+最低需接收：
+- layer_id
+- x_work_base
+- scratch_base
+- w_base 或等價 parameter base
+- token_begin, token_end
+- tile_begin, tile_end
+- phase_id
+
+最低需保證：
+- 依 Top 指定 phase 執行
+- 不要求額外的第二份主工作頁作為正確性前提
+- 不把共享 SRAM arbitration 私自內嵌成 block 自治規格
+
+6.3 LayerNormBlock
+------------------
+最低需接收：
+- x_work_base
+- token_begin, token_end
+- tile_begin, tile_end
+- phase_id（mid LN / end LN）
+
+最低需保證：
+- two-pass token-wise 風格
+- 不在同一 pass 對同一 token slice 同時讀寫
+- pass 邊界前不得宣稱 in-place 完成
+
+6.4 FinalHead
+-------------
+最低需接收：
+- x_work_base
+- final_scalar_base
+- w_base
+- token_begin, token_end
+- tile_begin, tile_end
+- phase_id（Pass A / Pass B）
+- outmode
+
+最低需保證：
+- Pass A 寫 FINAL_SCALAR_BUF
+- Pass B 讀 FINAL_SCALAR_BUF
+- 正常輸出直接走 data_out
+- 不把 logits 預設成大型 SRAM staging 流程
+
+================================================================
+7. block-local temporary 的規則
+================================================================
+
+7.1 允許的 local state
+----------------------
+允許：
+- scalar control state
+- tile accumulator
+- 當前 token / 當前 head 的小片段向量
+- local FIFO / local scratch
+- block-private local RAM backing store
+
+7.2 不建議的預設
+----------------
+不建議預設：
+- full-vector/full-head/full-token 全寄存器化
+- 未經說明即新增大型 persistent scratch
+- 把 width-dependent 物件直接視為應常駐 reg
+
+7.3 local state 與正式 contract 的關係
+--------------------------------------
+local state 屬 block 內部實作自由度，
+只要不破壞：
+- Top 所有權
+- 主 spec memory semantics
+- dataflow contract
+- overwrite / free-point 規則
+
+即可。
+
+================================================================
+8. ac_channel 的使用規則
+================================================================
+
+8.1 角色定位
+------------
+ac_channel 在本專案中主要用於：
+- Top 外部 4 channels
+- Top 內的 in_fifo
+- 合法的 point-to-point block streaming
+- 小型 decoupling FIFO
+
+8.2 不可誤用事項
+----------------
+不得把下列行為當成正式功能 contract：
+- 依賴 ac_channel 的 C-model 無限深度語意
+- 依賴 size() / available() 的非阻塞觀察結果作為正確性前提
+- 以 channel 行為偷渡多 writer / 多 reader arbitration
+
+8.3 正式仲裁位置
+----------------
+共享資源仲裁仍屬 Top。
+ac_channel 不是共享 SRAM arbitration 的替代品。
+
+================================================================
+9. 完成條件與錯誤回報
+================================================================
+
+9.1 start/done
+--------------
+block 完成條件應以：
+- 指派範圍內工作確實完成
+- 所有必要輸出已寫回或已串流送出
+- 不再保有未處理的 block-local pending state
+
+為準。
+
+9.2 err_valid/err_code
+----------------------
+若 block 偵測到：
+- 非法 range
+- 非法 phase
+- 與當前 cfg 不相容的操作
+- 內部不可恢復的一致性錯誤
+
+必須回報 err_valid/err_code 給 Top，
+由 Top 統一轉換成外部 ctrl_rsp 行為。
+
+9.3 block 不得直接產生外部錯誤回應
+----------------------------------
+sub-block 不得直接驅動外部 ctrl_rsp。
+外部協定回應一律由 Top 統一輸出。
+
+================================================================
+10. 變更控制
+================================================================
+
+10.1 需要另立條款的變更
+------------------------
+以下事項若要正式導入，必須先更新 spec / 本文件，再改程式：
+- block 自治 memory request/rsp protocol
+- 額外外部 channels
+- 第二套 receive state contract
+- 改變 token_range / tile_range 語意
+- 改變 FinalHead Pass A / Pass B 邊界
+- 改變 Top 對 SRAM 的唯一 ownership
+
+10.2 gate 關聯
+--------------
+本文件變更後，至少應同步檢查：
+- check_interface_lock
+- check_design_purity
+- check_tb_flow
+
+================================================================
+11. 本版明確採納的決議
+================================================================
+
+本文件對 v12.1 明確採納以下決議：
+
+1. block 介面採 Top 強控型
+2. block 收 base/cfg/token_range/tile_range
+3. in_fifo 為必要元件，但深度由 HLS/tool 設定
+4. TransformerLayer / LayerNormBlock / FinalHead 均不擁有共享 SRAM 仲裁權
+5. FinalHead 正式分為 Pass A / Pass B
+6. 正常輸出路徑以 direct data_out 為主
+7. 本版不把 block-internal request/rsp 當正式 contract
+
+================================================================
+12. 待後續文件補齊的事項
+================================================================
+
+以下事項不在本文件凍結，交由後續文件補充：
+
+- alias_group 詳表
+- free-point 詳表
+- layout_kind / storage_semantics
+- per-buffer producer / consumer 表
+- tile size compile-time limits
+- overlap 的 context 隔離細則

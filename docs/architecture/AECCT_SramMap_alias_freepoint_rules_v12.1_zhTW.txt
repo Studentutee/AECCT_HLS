@@ -1,0 +1,441 @@
+AECCT SramMap / Alias / Free-Point Rules v12.1（繁體中文版）
+
+Version: 2026-03-11
+Revision: v12.1 draftA
+Source baseline:
+- AECCT_HLS_Spec_v12.1_zhTW.txt
+- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+- AECCT_v12_M0-M24_plan_zhTW.txt
+
+================================================================
+0. 文件目的與定位
+================================================================
+
+本文件定義 AECCT_HLS v12.1 的 SramMap 語意規則，
+重點是收斂：
+
+- storage classes 的正式分類
+- alias / no-alias 規則
+- phase-safe overwrite 規則
+- major buffers 的 free-point 原則
+- generator 未完成前可先使用的語意欄位
+
+本文件是 v12.1 主 spec 的補充規則文件。
+若本文件與主 spec 衝突，以 AECCT_HLS_Spec_v12.1_zhTW.txt 為準。
+
+本文件目前不負責：
+- 實體 base offset 數值
+- bank 數量與 bank mapping
+- 實際位址對齊與 padding
+- 最終 generator 輸出格式的程式實作
+- 完整 multi-context overlap 資料表
+
+上述事項由：
+- SramMap.h / generator
+- WeightStreamOrder.h / generator
+- milestone report
+- 後續 overlap 細則文件
+
+負責。
+
+================================================================
+1. 核心原則
+================================================================
+
+1.1 先看值，再看落點
+----------------------
+邏輯值名稱與實體儲存名稱必須分離。
+
+正確例子：
+- Layer0_out 住在或映射到 X_WORK
+- s_t 寫入 FINAL_SCALAR_BUF
+
+不建議例子：
+- Layer0_out 就是 X_WORK
+- s_t 就是 FINAL_SCALAR_BUF
+
+1.2 先看 producer / consumer，再決定覆蓋
+-------------------------------------------
+任何 storage 的覆蓋與釋放，
+必須先看該值的 producer / consumer 關係與 liveness。
+
+1.3 free-point 原則
+-------------------
+只有當某值的所有 consumer 都完成讀取後，
+該 storage 才可被覆蓋或回收。
+
+1.4 Top 所有權
+---------------
+共享 SRAM 的所有權與正式記憶體語意由 Top 管理。
+sub-block 不得自行定義第二套 alias / overwrite 規則。
+
+1.5 單一 X_WORK 基線
+--------------------
+v12.1 採 single-X_WORK baseline。
+主 working buffer 收斂為單一實體 X_WORK。
+
+本規則不排斥：
+- block-local tile buffer
+- register tile
+- local FIFO
+- 合法的 SCRATCH 子區
+
+但本規則不要求第二份實體主工作頁作為正確性前提。
+
+================================================================
+2. Storage Classes
+================================================================
+
+2.1 正式 storage classes
+-------------------------
+v12.1 正式採用以下 storage classes：
+
+A. W_REGION
+- 權重 / 參數 / metadata 的 persistent 區
+
+B. X_WORK
+- 主 token × d 工作區
+- 用於 preproc_x、layer outputs、endLN_out 等主工作矩陣的實體落點
+
+C. SCRATCH
+- attention K/V
+- FinalHead scalar buffer
+- 其他合法 scratch 子區
+
+D. IO_REGION
+- input / output / debug / meta staging 的合法區域
+
+E. TOKEN_LOCAL / SMALL_SCRATCH
+- 小型短生命週期暫存
+- 以 tile / scalar state 為主
+- 不應膨脹成新的大型 page
+
+2.2 v12.1 建議的 alias_group 粒度
+---------------------------------
+在 generator 完成前，建議先使用下列語意 alias_group：
+
+- W_PERSIST
+- X_WORK
+- SCR_K
+- SCR_V
+- FINAL_SCALAR
+- IO_STAGING
+- LOCAL_ONLY
+
+說明：
+- alias_group 是語意層的歸類，不等於最終實體 bank 名稱
+- LOCAL_ONLY 表示 block-local，不屬共享主 SRAM alias 規格核心
+
+================================================================
+3. 各 storage class 規則
+================================================================
+
+3.1 W_REGION
+------------
+角色：
+- persistent parameter / metadata storage
+
+包含但不限於：
+- embedding / positional data
+- transformer weights
+- H_by_var / connectivity metadata
+- QUANT_PARAM metadata（如固定 s_x / inv_s_w）
+
+規則：
+- LOAD_W 或等價 parameter 載入完成後，W_REGION 不應被 runtime scratch 覆蓋
+- W_REGION 不與 runtime scratch alias
+- W_REGION 的 physical layout 應配合 WeightStreamOrder / layout_kind / mask_kind 描述
+
+3.2 X_WORK
+----------
+角色：
+- 主 token × d 工作區
+- 承載 preproc_x、attention/FFN/LN 後的主工作表示
+
+規則：
+- 採單一實體 X_WORK 基線
+- 可 phase-safe overwrite
+- 不要求第二份實體主工作頁
+- active / next 僅保留為 phase / producer-consumer 語意，不代表必須有雙頁 base
+- X_WORK 的覆蓋點以 producer / consumer / free-point 為準
+
+3.3 SCRATCH
+-----------
+角色：
+- 合法共享暫存區
+
+v12.1 至少包含：
+- SCR_K
+- SCR_V
+- FINAL_SCALAR_BUF
+
+可再包含：
+- 其他經明確定義的合法 scratch 子區
+
+規則：
+- SCR_K / SCR_V / FINAL_SCALAR_BUF 都屬 SCRATCH 類，但 free-point 不同
+- 若啟用 multi-context overlap，至少要做到 per-context live isolation
+- 不同 live contexts 的 X_WORK / SCRATCH live 子區不得 alias
+
+3.4 IO_REGION
+-------------
+角色：
+- input staging / output staging / debug / meta staging
+
+規則：
+- 若 input 或 output 需要落 SRAM，應明確落在 IO_REGION
+- 不得反向侵入 X_WORK 充當主工作區
+- 不得把 IO_REGION 當成 FinalHead 正常 readout 的替代主路徑
+
+3.5 TOKEN_LOCAL / SMALL_SCRATCH
+--------------------------------
+角色：
+- 小型短生命週期暫存
+
+典型內容：
+- TOKEN_BUF_TILE
+- Q_TILE
+- OUT_ACC_TILE
+- CURRENT_HEAD_CTX_TILE
+- SOFTMAX scalar state / accumulator tile
+
+規則：
+- 優先用 tile / scalar state / local FIFO / block-private local RAM
+- 不得把 width-dependent 物件預設膨脹成新的大型共享 page
+- 本類別多屬 block-local，自由度較高，但不得破壞 Top 的正式共享記憶體語意
+
+================================================================
+4. No-Alias 與 Phase-Safe Alias 規則
+================================================================
+
+4.1 明確 no-alias 規則
+-----------------------
+以下情況在 v12.1 明確禁止 alias：
+
+1. W_REGION 與 runtime SCRATCH
+2. W_REGION 與 X_WORK
+3. 不同 live contexts 的 X_WORK
+4. 不同 live contexts 的 SCRATCH live 子區
+5. FINAL_SCALAR_BUF 與仍在 live 的 X_WORK 主工作表示
+6. FINAL_SCALAR_BUF 與仍在 live 的 SCR_K / SCR_V
+
+4.2 可接受的 phase-safe alias
+--------------------------------
+以下僅在 free-point 成立後可接受：
+
+1. X_WORK 的舊值被新的 token 表示覆蓋
+2. 某些 scratch 子區在前一 phase consumer 全數完成後，被下一 phase scratch 重新使用
+3. block-local temporary 在當前 tile / token / head 完成後被重用
+
+4.3 判斷原則
+------------
+是否可 alias / overlay，必須同時滿足：
+- 前一值的所有 consumer 都完成
+- 新值不會回頭讀舊值
+- 不違反正式 phase 邊界
+- 不違反 Top 管理的 context live isolation
+
+================================================================
+5. Major Buffers 的 Producer / Consumer / Free-Point 規則
+================================================================
+
+5.1 X_WORK[token][:]
+--------------------
+典型 producer：
+- PreprocEmbedSPE
+- Attention output writeback
+- FFN / residual / LN writeback
+
+典型 consumer：
+- K/V materialization
+- Q / residual source read
+- Mid LN / End LN
+- FinalHead Pass A
+
+X_WORK[token][:] 的舊內容可被 attention output 覆蓋的條件：
+- 該 token 已完成 K/V build source 角色
+- 該 token 已完成 Q / residual source 所需讀取
+
+補充：
+- 在採用「K/V 全矩陣先 materialize」schedule 下，
+  KV_MAT 完成後可逐 token 進入 token-safe overwrite 區間
+- 不得把舊式雙頁切換當成 correctness 前提
+
+5.2 SCR_K / SCR_V
+-----------------
+典型 producer：
+- TransformerLayer 的 K/V materialization phase
+
+典型 consumer：
+- Attention score / weighted sum phases
+
+free-point：
+- 該 layer 全部 query token 的 attention 都完成後
+- 若採 per-context duplication，各 context 獨立管理釋放時機
+
+補充：
+- 在整張 K/V 尚未 materialize 完成前，不應覆蓋仍未被讀作 K/V source 的相關主工作資料
+
+5.3 FINAL_SCALAR_BUF
+--------------------
+典型 producer：
+- FinalHead Pass A
+
+典型 consumer：
+- FinalHead Pass B
+
+規則：
+- Pass A 寫 FINAL_SCALAR_BUF[token]
+- Pass B 讀 FINAL_SCALAR_BUF[token]
+- 在全部 class / output word 完成前，不應覆蓋 FINAL_SCALAR_BUF
+
+free-point：
+- FinalHead Pass B 完成後
+
+補充：
+- 一旦 token 的 s_t 已成功寫入 FINAL_SCALAR_BUF，
+  該 token 在 X_WORK 的最終表示可視需求釋放
+- X_WORK 不得被當成 FinalHead Pass A / Pass B 間的 readout staging
+
+5.4 IO_REGION staging
+---------------------
+典型 producer / consumer 視 mode 而定。
+
+規則：
+- 僅在明確需要 input/output/debug/meta staging 時使用
+- 不得默默變成主 datapath 的 backing store
+
+free-point：
+- 由對應 mode 的 output sequencing 或 debug transaction 完成條件決定
+
+5.5 Block-local temporary
+-------------------------
+典型 producer / consumer：
+- 同一 block 內部 phase / tile 之間
+
+free-point 例：
+- HEAD_CTX_BUF：對應 head 的 Wo_h partial accumulation 完成後即可釋放
+- OUT_ACC_TILE：該 tile 寫回後即可釋放
+- CURRENT_HEAD_CTX_TILE：當前 head 完成後即可釋放
+- SOFTMAX_ACC_TILE：對應 token / tile reduction 完成後即可釋放
+
+================================================================
+6. Layout Kind / Storage Semantics 的前置語意
+================================================================
+
+6.1 本文件先定語意，不定實體地址
+----------------------------------
+在 generator 完成前，本文件先凍結語意欄位，
+不手工維護 base offset / region size 數值。
+
+6.2 建議保留的語意欄位
+----------------------
+SramMap / WeightStreamOrder 後續至少應能表達：
+
+- alias_group
+- layout_kind
+- storage_semantics
+- logical_index_order
+- mask_kind（若適用）
+- producer_consumer_class
+- free_point_class
+
+6.3 v12.1 推薦的語意方向
+------------------------
+- X_WORK：single main working buffer / phase-safe overwrite
+- SCR_K / SCR_V：layer-scoped scratch
+- FINAL_SCALAR：finalhead pass-bridge scratch
+- W_REGION：persistent parameter region
+- IO_REGION：staging-only region
+
+================================================================
+7. 與 ac_channel / local buffer 的邊界
+================================================================
+
+7.1 ac_channel 不是共享 SRAM alias 規格的一部分
+-----------------------------------------------
+ac_channel 可用於：
+- Top 外部 4 channels
+- Top 內的 in_fifo
+- 合法 point-to-point block streaming
+- 小型 decoupling FIFO
+
+但它不是共享 SRAM alias / overwrite 規格本體。
+
+7.2 local buffer 不應被誤升格為共享 page
+------------------------------------------
+像 Q_TILE、OUT_ACC_TILE、SOFTMAX state 等 width-dependent 物件，
+應優先保留為 block-local temporary。
+
+除非另立條款，不應直接升格成新的大型共享 SRAM page。
+
+================================================================
+8. Multi-Context Overlap 的目前邊界
+================================================================
+
+8.1 v12.1 已凍結的 overlap 底線
+--------------------------------
+若啟用 multi-context overlap：
+- 至少支援 CTX0 / CTX1
+- 每個 live context 要有自己的 X_WORK live 區
+- 若採 S1 KV cache，則每個 live context 要有自己的 SCR_K / SCR_V live 區
+- 不同 live contexts 的 live 區不得 alias
+
+8.2 本文件暫不硬凍的事項
+--------------------------
+目前不直接凍結為硬規格：
+- 同一 context 內是否再做 full KV_A / KV_B optional ping-pong
+- 是否保存完整 per-head token × d feature map
+- 是否配置 full hidden T × D_FFN SRAM
+- 任一 width-dependent 物件一律升級成 SRAM
+- FINAL_SCALAR 是否在 overlap 模式下永遠 per-context duplication
+
+================================================================
+9. 實作與生成流程要求
+================================================================
+
+9.1 目前階段的要求
+-------------------
+在 generator 完成前，實作與文件至少要同步維護：
+- storage class 名稱
+- alias_group 草案
+- 主要 no-alias 規則
+- 主要 free-point 規則
+
+9.2 M16 對接方向
+-----------------
+到 SramMap / WeightStreamOrder generator 正式接上時，
+應把本文件中的：
+- alias_group
+- layout_kind
+- storage_semantics
+- free_point 類型
+
+轉成可生成、可檢查的正式欄位。
+
+================================================================
+10. 本版明確採納的決議
+================================================================
+
+本文件對 v12.1 明確採納以下決議：
+
+1. 採 single-X_WORK baseline
+2. W_REGION 與 runtime scratch 不得 alias
+3. X_WORK 僅能 phase-safe overwrite
+4. SCR_K / SCR_V 的 free-point 為該 layer 全部 query token 的 attention 完成後
+5. FINAL_SCALAR_BUF 的 free-point 為 FinalHead Pass B 完成後
+6. IO_REGION 僅作 staging，不得取代主工作區
+7. alias_group / layout_kind / storage_semantics 先定語意，實體地址留待 generator
+
+================================================================
+11. 待後續文件補齊的事項
+================================================================
+
+以下事項交由後續文件或 generator 補齊：
+
+- 實體 base offset / size / alignment
+- bank 切法
+- 完整 producer / consumer 表
+- 完整 free-point 檢查表
+- overlap 專用 context 隔離細則
+- WeightStreamOrder 各 section 的最終實體格式
