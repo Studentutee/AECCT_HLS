@@ -1,4 +1,6 @@
 #pragma once
+// SSOT: src/Top.h is the only Top contract definition.
+// design/AecctTop.h is wrapper/adapter only.
 // Top.h?謅??eader-only??// M6?謅?op-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
 // 1) one-command-per-call?謅Ｗ??????????????1 ??ctrl_cmd
 // 2) ST_CFG_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??cfg word?謅?rom data_in??// 3) ST_PARAM_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??param word?謅?rom data_in??// 4) ST_INFER_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??input word?謅?rom data_in??// 5) HALTED?謅Ｗ????ctrl ERR?謅?ㄝ???meta0/meta1 ??data_out
@@ -6,6 +8,8 @@
 #include "AecctTypes.h"
 #include "AecctUtil.h"
 #include "AecctProtocol.h"
+#include "AecctRanges.h"
+#include "AecctMemReq.h"
 #include "gen/SramMap.h"
 #include "gen/ModelDesc.h"
 #include "PreprocDescBringup.h"
@@ -78,6 +82,35 @@ namespace aecct {
         REG_OOR = 255
     };
 
+    enum ReceiverState : unsigned {
+        RX_NONE = 0,
+        RX_CFG = 1,
+        RX_PARAM = 2,
+        RX_INFER = 3
+    };
+
+    static const unsigned MEM_REQ_SLOTS = (unsigned)REQ_ID_COUNT;
+
+    struct MemArbRegs {
+        MemReq pending[MEM_REQ_SLOTS];
+        bool pending_valid[MEM_REQ_SLOTS];
+        u16_t rr_cursor[PRIO_CLASS_COUNT];
+        MemGrant grant_latched;
+        bool grant_valid;
+
+        void clear() {
+            for (unsigned i = 0; i < MEM_REQ_SLOTS; ++i) {
+                pending[i] = make_empty_mem_req();
+                pending_valid[i] = false;
+            }
+            for (unsigned p = 0; p < (unsigned)PRIO_CLASS_COUNT; ++p) {
+                rr_cursor[p] = 0;
+            }
+            grant_latched = make_empty_mem_grant();
+            grant_valid = false;
+        }
+    };
+
     struct HaltInfo {
         bool valid;
         u32_t halt_reason;
@@ -97,6 +130,7 @@ namespace aecct {
     // Persistent top-level internal registers.
     struct TopRegs {
         TopState state;
+        ReceiverState rx_state;
         bool w_base_set;
         u32_t w_base_word;
         u32_t param_count;
@@ -108,6 +142,15 @@ namespace aecct {
         u32_t infer_logits_base_word;
         u32_t infer_xpred_base_word;
         u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
+
+        // Top-controlled block contract placeholders (skeleton only).
+        PreprocBlockContract preproc_contract;
+        TransformerLayerContract transformer_contract;
+        LayerNormBlockContract layernorm_contract;
+        FinalHeadContract final_head_contract;
+
+        // Shared SRAM arbitration stub owned by Top.
+        MemArbRegs mem_arb;
 
         // M5?謅?ebug/halt ??撠?
         bool debug_armed;
@@ -135,6 +178,7 @@ namespace aecct {
 
         void clear() {
             state = ST_IDLE;
+            rx_state = RX_NONE;
             w_base_set = false;
             w_base_word = 0;
             param_count = 0;
@@ -148,6 +192,11 @@ namespace aecct {
             for (unsigned i = 0; i < INFER_IN_WORDS_EXPECTED; ++i) {
                 infer_input_shadow[i] = 0;
             }
+            clear_preproc_contract(preproc_contract);
+            clear_transformer_layer_contract(transformer_contract);
+            clear_layernorm_contract(layernorm_contract);
+            clear_final_head_contract(final_head_contract);
+            mem_arb.clear();
 
             debug_armed = false;
             dbg_trigger_sel = 0;
@@ -186,6 +235,35 @@ namespace aecct {
         return sram;
     }
 
+    // Internal input staging FIFO.
+    // Functional C++ model does not rely on finite depth; concrete depth is
+    // configured later by Catapult/HLS constraints.
+    static inline data_ch_t& top_in_fifo() {
+        static data_ch_t in_fifo;
+        return in_fifo;
+    }
+
+    static inline bool top_data_nb_read(data_ch_t& data_in, u32_t& word) {
+        if (top_in_fifo().nb_read(word)) {
+            return true;
+        }
+        u32_t staged;
+        if (!data_in.nb_read(staged)) {
+            return false;
+        }
+        top_in_fifo().write(staged);
+        return top_in_fifo().nb_read(word);
+    }
+
+    static inline u32_t top_data_read(data_ch_t& data_in) {
+        u32_t word;
+        if (top_in_fifo().nb_read(word)) {
+            return word;
+        }
+        top_in_fifo().write(data_in.read());
+        return top_in_fifo().read();
+    }
+
     // TB ??debug helper?謅????鞎?top ?豯殉?鞊堆???
     static inline TopState top_peek_state() { return top_regs().state; }
     static inline unsigned top_peek_cfg_count() { return (unsigned)top_regs().cfg_count.to_uint(); }
@@ -217,6 +295,53 @@ namespace aecct {
         if (a >= sram_map::BASE_SCRATCH_W && a < (sram_map::BASE_SCRATCH_W + sram_map::SIZE_SCRATCH_W)) { return REG_SCR; }
         if (a >= sram_map::W_REGION_BASE && a < (sram_map::W_REGION_BASE + sram_map::W_REGION_WORDS)) { return REG_W; }
         return REG_OOR;
+    }
+
+    static inline ReceiverState receiver_state_of(TopState state) {
+        if (state == ST_CFG_RX) { return RX_CFG; }
+        if (state == ST_PARAM_RX) { return RX_PARAM; }
+        if (state == ST_INFER_RX) { return RX_INFER; }
+        return RX_NONE;
+    }
+
+    static inline void refresh_receiver_state(TopRegs& regs) {
+        regs.rx_state = receiver_state_of(regs.state);
+    }
+
+    static inline void mem_arb_submit(TopRegs& regs, const MemReq& req) {
+        if (!req.valid) { return; }
+        unsigned slot = (unsigned)req.requester;
+        if (slot >= MEM_REQ_SLOTS) { return; }
+        regs.mem_arb.pending[slot] = req;
+        regs.mem_arb.pending_valid[slot] = true;
+    }
+
+    static inline bool mem_arb_grant_one(TopRegs& regs) {
+        regs.mem_arb.grant_latched = make_empty_mem_grant();
+        regs.mem_arb.grant_valid = false;
+
+        for (unsigned p = 0; p < (unsigned)PRIO_CLASS_COUNT; ++p) {
+            unsigned start = (unsigned)regs.mem_arb.rr_cursor[p].to_uint();
+            for (unsigned off = 0; off < MEM_REQ_SLOTS; ++off) {
+                unsigned slot = (start + off) % MEM_REQ_SLOTS;
+                if (!regs.mem_arb.pending_valid[slot]) { continue; }
+                const MemReq& req = regs.mem_arb.pending[slot];
+                if ((unsigned)req.prio != p) { continue; }
+
+                regs.mem_arb.grant_valid = true;
+                regs.mem_arb.grant_latched.valid = true;
+                regs.mem_arb.grant_latched.accept = true;
+                regs.mem_arb.grant_latched.requester = req.requester;
+                regs.mem_arb.grant_latched.granted_addr_word = req.addr_word;
+                regs.mem_arb.grant_latched.granted_len_words = req.len_words;
+                regs.mem_arb.grant_latched.reason = 0;
+
+                regs.mem_arb.pending_valid[slot] = false;
+                regs.mem_arb.rr_cursor[p] = (u16_t)((slot + 1u) % MEM_REQ_SLOTS);
+                return true;
+            }
+        }
+        return false;
     }
 
     static inline u32_t pack_init_pattern(unsigned region_id, unsigned local_idx) {
@@ -325,7 +450,7 @@ namespace aecct {
         ac_channel<ac_int<16, false> >& ctrl_rsp,
         ac_channel<ac_int<32, false> >& data_in
     ) {
-        u32_t dbg_word_in = data_in.read();
+        u32_t dbg_word_in = top_data_read(data_in);
         uint32_t dbg_word = (uint32_t)dbg_word_in.to_uint();
         uint32_t action = dbg_get_action(dbg_word);
         uint32_t trigger_sel = dbg_get_trigger_sel(dbg_word);
@@ -364,7 +489,7 @@ namespace aecct {
         ac_channel<ac_int<16, false> >& ctrl_rsp,
         ac_channel<ac_int<32, false> >& data_in
     ) {
-        u32_t dbg_word_in = data_in.read();
+        u32_t dbg_word_in = top_data_read(data_in);
         uint32_t dbg_word = (uint32_t)dbg_word_in.to_uint();
         uint32_t action = dbg_get_action(dbg_word);
 
@@ -439,7 +564,7 @@ namespace aecct {
     static inline void cfg_ingest_one_word(TopRegs& regs, ac_channel<ac_int<32, false> >& data_in) {
         if (regs.cfg_ready) { return; }
         u32_t w;
-        if (!data_in.nb_read(w)) { return; }
+        if (!top_data_nb_read(data_in, w)) { return; }
 
         unsigned idx = (unsigned)regs.cfg_count.to_uint();
         if (idx < CFG_WORDS_EXPECTED) {
@@ -466,7 +591,7 @@ namespace aecct {
         }
 
         u32_t w;
-        if (!data_in.nb_read(w)) { return; }
+        if (!top_data_nb_read(data_in, w)) { return; }
 
         uint32_t base = (uint32_t)regs.w_base_word.to_uint();
         uint32_t addr = base + idx;
@@ -708,7 +833,7 @@ namespace aecct {
         }
 
         u32_t w;
-        if (!data_in.nb_read(w)) { return; }
+        if (!top_data_nb_read(data_in, w)) { return; }
 
         sram[IN_BASE_WORD + idx] = w;
         regs.infer_input_shadow[idx] = w;
@@ -723,14 +848,26 @@ namespace aecct {
     }
 
     static inline void handle_read_mem(
+        TopRegs& regs,
         ac_channel<ac_int<16, false> >& ctrl_rsp,
         ac_channel<ac_int<32, false> >& data_in,
         ac_channel<ac_int<32, false> >& data_out,
         u32_t* sram
     ) {
         // READ_MEM ??憛敢?謅?ddr_word?頩?n_words?謅????塗?
-        u32_t addr_word_in = data_in.read();
-        u32_t len_words_in = data_in.read();
+        u32_t addr_word_in = top_data_read(data_in);
+        u32_t len_words_in = top_data_read(data_in);
+
+        MemReq req = make_empty_mem_req();
+        req.valid = true;
+        req.requester = REQ_DEBUG_READ_MEM;
+        req.prio = PRIO_DEBUG_READ_MEM;
+        req.is_write = false;
+        req.addr_word = addr_word_in;
+        req.len_words = len_words_in;
+        req.tag = 0;
+        mem_arb_submit(regs, req);
+        (void)mem_arb_grant_one(regs);
 
         unsigned long long addr_word = (unsigned long long)(uint32_t)addr_word_in.to_uint();
         unsigned long long len_words = (unsigned long long)(uint32_t)len_words_in.to_uint();
@@ -764,6 +901,9 @@ namespace aecct {
 
         TopRegs& regs = top_regs();
         u32_t* sram = top_sram();
+        (void)top_in_fifo(); // Ensure in_fifo exists in Top contract.
+        (void)mem_arb_grant_one(regs); // Deterministic arbiter stub step.
+        refresh_receiver_state(regs);
 
         ac_int<16, false> cmdw;
         bool has_cmd = ctrl_cmd.nb_read(cmdw);
@@ -788,7 +928,7 @@ namespace aecct {
                     ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
                 }
                 else if (op == (uint8_t)OP_SET_W_BASE) {
-                    u32_t w_base_in = data_in.read();
+                    u32_t w_base_in = top_data_read(data_in);
                     uint32_t w_base_word = (uint32_t)w_base_in.to_uint();
 
                     if (!is_param_base_in_w_region(w_base_word)) {
@@ -817,7 +957,7 @@ namespace aecct {
                     }
                 }
                 else if (op == (uint8_t)OP_SET_OUTMODE) {
-                    u32_t outmode_in = data_in.read();
+                    u32_t outmode_in = top_data_read(data_in);
                     uint32_t outmode = (uint32_t)outmode_in.to_uint();
                     if (!is_valid_outmode(outmode)) {
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
@@ -838,7 +978,7 @@ namespace aecct {
                     }
                 }
                 else if (op == (uint8_t)OP_READ_MEM) {
-                    handle_read_mem(ctrl_rsp, data_in, data_out, sram);
+                    handle_read_mem(regs, ctrl_rsp, data_in, data_out, sram);
                 }
                 else if (op == (uint8_t)OP_DEBUG_CFG) {
                     handle_debug_cfg_idle(regs, ctrl_rsp, data_in);
@@ -902,7 +1042,7 @@ namespace aecct {
             }
             else if (regs.state == ST_HALTED) {
                 if (op == (uint8_t)OP_READ_MEM) {
-                    handle_read_mem(ctrl_rsp, data_in, data_out, sram);
+                    handle_read_mem(regs, ctrl_rsp, data_in, data_out, sram);
                 }
                 else if (op == (uint8_t)OP_DEBUG_CFG) {
                     handle_debug_cfg_halted(regs, ctrl_rsp, data_in);
@@ -934,6 +1074,7 @@ namespace aecct {
                 infer_ingest_one_word(regs, data_in, ctrl_rsp, data_out, sram);
             }
         }
+        refresh_receiver_state(regs);
     }
 
 } // namespace aecct

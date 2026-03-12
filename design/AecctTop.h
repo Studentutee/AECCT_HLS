@@ -1,5 +1,6 @@
 #pragma once
 // Top-level class wrapper for HLS flow.
+// Contract SSOT is src/Top.h; this file must stay adapter-only.
 
 #include "AecctTypes.h"
 #include "Top.h"

@@ -46,6 +46,18 @@ namespace aecct {
     ST_HALTED        // debug halt placeholder
   };
 
+  // -------------------- Phase id --------------------
+  // Logical phase tags for Top-controlled block scheduling.
+  enum PhaseId : unsigned {
+    PHASE_PREPROC = 0,
+    PHASE_LAYER0,
+    PHASE_MID_LN,
+    PHASE_LAYER1,
+    PHASE_END_LN,
+    PHASE_FINAL_HEAD,
+    PHASE_DEBUG_READBACK
+  };
+
   // -------------------- Error code --------------------
   enum ErrCode : unsigned {
     ERR_OK = 0,

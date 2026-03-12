@@ -4,11 +4,41 @@
 #include <cstdint>
 
 #include "AecctTypes.h"
+#include "AecctProtocol.h"
+#include "AecctRanges.h"
 #include "AecctUtil.h"
 #include "LayerNormDesc.h"
 #include "QuantDesc.h"
 
 namespace aecct {
+
+struct LayerNormBlockContract {
+    bool start;
+    bool done;
+    bool err_valid;
+    u16_t err_code;
+    TokenRange token_range;
+    TileRange tile_range;
+    PhaseId phase_id;
+    u32_t x_work_base_word;
+    u32_t scratch_base_word;
+    u32_t gamma_base_word;
+    u32_t beta_base_word;
+};
+
+static inline void clear_layernorm_contract(LayerNormBlockContract& c) {
+    c.start = false;
+    c.done = false;
+    c.err_valid = false;
+    c.err_code = 0;
+    c.token_range = make_token_range(0, 0);
+    c.tile_range = make_tile_range(0, 0);
+    c.phase_id = PHASE_END_LN;
+    c.x_work_base_word = 0;
+    c.scratch_base_word = 0;
+    c.gamma_base_word = 0;
+    c.beta_base_word = 0;
+}
 
 struct LayerNormCfg {
     u32_t token_count;

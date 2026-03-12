@@ -9,20 +9,20 @@
 // - All addresses/sizes are in u32 words (1 word = 4 bytes).
 // - Alignment is defined in words.
 //
-// v11.5 update (scheme 1 / M2-2P):
-// - "Logical regions" are still fixed to 4 contention classes:
-//     * X_PAGE0, X_PAGE1, SCRATCH, W_REGION
-// - Physical implementation MAY be a single true 2-port SRAM macro.
-//   (Top arbitrates and schedules up to 2 accesses/cycle, one per port.)
-// - Therefore, this header uses ONE flat addr_word space; there is NO bank index here.
+// Step2 convergence note:
+// - Baseline storage semantics are single-X_WORK:
+//     * W_REGION, X_WORK, SCRATCH, IO_REGION
+// - Legacy dual-page names (X_PAGE0/X_PAGE1) are kept only as compatibility
+//   aliases for existing bring-up tests and transitional code paths.
+// - Physical implementation MAY still map to one flat SRAM word space.
 //
 // Notes:
-// - This map matches:
-//     * X ping-pong (X_PAGE0 / X_PAGE1)
-//     * SCRATCH S1: KV cache (SCR_K + SCR_V)
-//     * No dedicated DEBUG region (D1 debug is "halt + READ_MEM")
-//     * [legacy] Separate BIAS/WEIGHT regions kept for backward compatibility,
-//       while v11.4+ uses SET_W_BASE + unified PARAM stream.
+// - X_WORK is the only baseline shared working area.
+// - SCR_K / SCR_V / FINAL_SCALAR are SCRATCH sub-regions.
+// - [compat] X_PAGE0 / X_PAGE1 names remain aliases; they are not a separate
+//   baseline taxonomy in this step.
+// - No dedicated DEBUG SRAM region (D1 debug is "halt + READ_MEM").
+// - [legacy] Separate BIAS/WEIGHT regions are still exposed for compatibility.
 // ============================================================
 
 static const uint32_t ALIGN_WORDS = 16; // 64B alignment (16 words * 4B)
@@ -35,7 +35,31 @@ constexpr uint32_t align_up_words(uint32_t x, uint32_t a) {
 namespace sram_map {
 
 // ------------------------------------------------------------
-// Logical regions (contention classes)
+// Baseline storage taxonomy (single-X_WORK semantics)
+// ------------------------------------------------------------
+enum StorageClass : uint8_t {
+  CLASS_W_REGION = 0,
+  CLASS_X_WORK = 1,
+  CLASS_SCRATCH = 2,
+  CLASS_IO_REGION = 3,
+  CLASS_TOKEN_LOCAL = 4,
+  CLASS_SMALL_SCRATCH = 5,
+  CLASS_INVALID = 255
+};
+
+enum AliasGroup : uint8_t {
+  ALIAS_W_PERSIST = 0,
+  ALIAS_X_WORK = 1,
+  ALIAS_SCR_K = 2,
+  ALIAS_SCR_V = 3,
+  ALIAS_FINAL_SCALAR = 4,
+  ALIAS_IO_STAGING = 5,
+  ALIAS_LOCAL_ONLY = 6,
+  ALIAS_INVALID = 255
+};
+
+// ------------------------------------------------------------
+// Legacy compatibility region decode classes
 // ------------------------------------------------------------
 enum SramRegion : uint8_t {
   REG_X_PAGE0 = 0,
@@ -57,7 +81,11 @@ static const uint32_t SIZE_X_PING_W = X_PAGE_WORDS;
 static const uint32_t BASE_X_PONG_W = BASE_X_PING_W + SIZE_X_PING_W;
 static const uint32_t SIZE_X_PONG_W = X_PAGE_WORDS;
 
-// Optional aliases with region naming (same values as above)
+// Baseline single-X_WORK window (covers both legacy page aliases).
+static const uint32_t BASE_X_WORK_W = BASE_X_PING_W;
+static const uint32_t SIZE_X_WORK_W = (SIZE_X_PING_W + SIZE_X_PONG_W);
+
+// Legacy compatibility aliases (same values as above).
 static const uint32_t X_PAGE0_BASE_W = BASE_X_PING_W;
 static const uint32_t X_PAGE0_WORDS  = SIZE_X_PING_W;
 static const uint32_t X_PAGE1_BASE_W = BASE_X_PONG_W;
@@ -121,6 +149,11 @@ static const uint32_t PARAM_BASE_DEFAULT = W_REGION_BASE;
 // ----------------------------
 static const uint32_t END_W = BASE_W_W + SIZE_W_W;
 
+// IO_REGION is channel-oriented in current bring-up path, so SRAM window is
+// kept as an empty placeholder for taxonomy completeness.
+static const uint32_t IO_REGION_BASE_W = END_W;
+static const uint32_t IO_REGION_WORDS = 0;
+
 // Minimum required SRAM depth (words) for this memory map.
 static const uint32_t SRAM_WORDS_MIN_REQUIRED = END_W;
 
@@ -141,6 +174,14 @@ static inline SramRegion region_of_addr(uint32_t addr_w) {
   if (in_range(addr_w, BASE_SCRATCH_W, SIZE_SCRATCH_W)) return REG_SCRATCH;
   if (in_range(addr_w, W_REGION_BASE, W_REGION_WORDS)) return REG_W_REGION;
   return REG_INVALID;
+}
+
+static inline StorageClass storage_class_of_addr(uint32_t addr_w) {
+  if (in_range(addr_w, BASE_X_WORK_W, SIZE_X_WORK_W)) return CLASS_X_WORK;
+  if (in_range(addr_w, BASE_SCRATCH_W, SIZE_SCRATCH_W)) return CLASS_SCRATCH;
+  if (in_range(addr_w, W_REGION_BASE, W_REGION_WORDS)) return CLASS_W_REGION;
+  if (in_range(addr_w, IO_REGION_BASE_W, IO_REGION_WORDS)) return CLASS_IO_REGION;
+  return CLASS_INVALID;
 }
 
 } // namespace sram_map
