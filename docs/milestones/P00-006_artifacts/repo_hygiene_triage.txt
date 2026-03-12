@@ -1,0 +1,154 @@
+P00-006 Repo Hygiene Triage
+Date: 2026-03-12
+Repo: C:\Users\Peter\source\repos\AECCT_HLS
+
+Issue: HYG-001
+- Description: .gitignore missing `reports/`
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+    - Command: python scripts/check_repo_hygiene.py --repo-root .
+    - Output: ".gitignore missing `reports/`"
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - Command: if (Select-String -Path .gitignore -Pattern 'reports/' -SimpleMatch) ...
+    - Output: "MISSING reports/"
+  - docs/milestones/P00-005_artifacts/build.log
+    - Output also contains ".gitignore missing `reports/`"
+- Scope: repo root governance file (`.gitignore`)
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: 低風險機械修補，可獨立小 patch 完成。
+
+Issue: HYG-002
+- Description: utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+    - Output contains BOM finding on `.vs/...`
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - Command: git check-ignore -v .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+    - Output: matched by `.gitignore:37:.vs/`
+  - docs/milestones/P00-005_artifacts/build.log
+    - Output also contains same BOM finding
+- Scope: local IDE cache path under `.vs/`
+- Source classification: pre-existing
+- Action classification: waiver
+- Rationale: 目前屬 ignored IDE cache，非產品程式碼；先列 waiver，後續可搭配 checker 策略一起決策。
+
+Issue: HYG-003
+- Description: archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+    - Output contains archive finding
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - Command: git check-ignore -v AECCT_ac_ref/AECCT_ac_ref.zip
+    - Output: matched by `.gitignore:377:*.zip`
+  - docs/milestones/P00-005_artifacts/build.log
+    - Output also contains same archive finding
+- Scope: historical archive artifact under `AECCT_ac_ref/`
+- Source classification: pre-existing
+- Action classification: waiver
+- Rationale: 牽涉歷史保留策略，先走 waiver baseline，避免本輪擴大清理範圍。
+
+Issue: HYG-004
+- Description: utf8-bom found: AECCT_ac_ref/include/RefModel.h
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+    - Output contains BOM finding
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - Command: git ls-files --error-unmatch "AECCT_ac_ref/include/RefModel.h"
+    - Command: git log --oneline -n 3 -- "AECCT_ac_ref/include/RefModel.h"
+  - docs/milestones/P00-005_artifacts/build.log
+    - Output also contains same BOM finding
+- Scope: tracked reference-model header
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: UTF-8 no-BOM 轉檔屬機械操作，可低風險處理。
+
+Issue: HYG-005
+- Description: utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - `git ls-files --error-unmatch "AECCT_ac_ref/include/SoftmaxApprox.h"`
+    - `git log --oneline -n 3 -- "AECCT_ac_ref/include/SoftmaxApprox.h"`
+  - docs/milestones/P00-005_artifacts/build.log
+- Scope: tracked reference-model header
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: 與 HYG-004 同型，機械轉檔即可。
+
+Issue: HYG-006
+- Description: utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - `git ls-files --error-unmatch "AECCT_ac_ref/src/RefModel.cpp"`
+    - `git log --oneline -n 3 -- "AECCT_ac_ref/src/RefModel.cpp"`
+  - docs/milestones/P00-005_artifacts/build.log
+- Scope: tracked reference-model source
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: 與 HYG-004 同型，機械轉檔即可。
+
+Issue: HYG-007
+- Description: utf8-bom found: tools/check_ref_approx_rules.py
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - `git ls-files --error-unmatch "tools/check_ref_approx_rules.py"`
+    - `git log --oneline -n 3 -- "tools/check_ref_approx_rules.py"`
+  - docs/milestones/P00-005_artifacts/build.log
+- Scope: tracked tooling script
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: 腳本檔 BOM 去除為低風險機械修復。
+
+Issue: HYG-008
+- Description: utf8-bom found: tools/compare_checkpoints.py
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - `git ls-files --error-unmatch "tools/compare_checkpoints.py"`
+    - `git log --oneline -n 3 -- "tools/compare_checkpoints.py"`
+  - docs/milestones/P00-005_artifacts/build.log
+- Scope: tracked tooling script
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: 腳本檔 BOM 去除為低風險機械修復。
+
+Issue: HYG-009
+- Description: utf8-bom found: tools/gen_ref_lut.py
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - `git ls-files --error-unmatch "tools/gen_ref_lut.py"`
+    - `git log --oneline -n 3 -- "tools/gen_ref_lut.py"`
+  - docs/milestones/P00-005_artifacts/build.log
+- Scope: tracked tooling script
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: 腳本檔 BOM 去除為低風險機械修復。
+
+Issue: HYG-010
+- Description: utf8-bom found: tools/run_algorithm_ref_step0.py
+- Evidence:
+  - docs/milestones/P00-006_artifacts/hygiene.log
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - `git ls-files --error-unmatch "tools/run_algorithm_ref_step0.py"`
+    - `git log --oneline -n 3 -- "tools/run_algorithm_ref_step0.py"`
+  - docs/milestones/P00-005_artifacts/build.log
+- Scope: tracked tooling script
+- Source classification: pre-existing
+- Action classification: cleanup-now
+- Rationale: 腳本檔 BOM 去除為低風險機械修復。
+
+Issue: HYG-011
+- Description: check_repo_hygiene currently scans gitignored paths and reports them
+- Evidence:
+  - scripts/check_repo_hygiene.py
+    - uses `repo.rglob("*")` and does not filter by `.gitignore` / tracked list
+  - docs/milestones/P00-006_artifacts/supporting_checks.log
+    - `git check-ignore -v` confirms `.vs/...` and `*.zip` are ignored
+- Scope: hygiene checker policy/implementation
+- Source classification: pre-existing
+- Action classification: defer
+- Rationale: 需先決策 gate policy（掃全工作樹或掃 tracked-only）再做工具修改。

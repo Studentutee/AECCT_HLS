@@ -1,0 +1,15 @@
+existing file patched:
+- none
+
+new file added:
+- docs/milestones/P00-006_report.md
+- docs/milestones/P00-006_artifacts/file_manifest.txt
+- docs/milestones/P00-006_artifacts/diff.patch
+- docs/milestones/P00-006_artifacts/hygiene.log
+- docs/milestones/P00-006_artifacts/supporting_checks.log
+- docs/milestones/P00-006_artifacts/repo_hygiene_triage.txt
+- docs/milestones/P00-006_artifacts/repo_hygiene_waiver_baseline.txt
+- docs/milestones/P00-006_artifacts/verdict.txt
+
+generated file regenerated:
+- none

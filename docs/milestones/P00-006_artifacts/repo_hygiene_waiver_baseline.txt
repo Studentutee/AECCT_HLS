@@ -1,0 +1,18 @@
+P00-006 Repo Hygiene Waiver Baseline (Initial)
+Date: 2026-03-12
+
+Item: HYG-002 (.vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt BOM finding)
+- Reason for waiver: `.vs/` 為 IDE cache 且已被 `.gitignore` 忽略；目前 checker 對 ignored 路徑仍報告。
+- Impact: `check_repo_hygiene` 目前會持續 FAIL；對設計正確性無直接影響。
+- Owner: TBD (governance + tooling)
+- Revisit condition: 決策 checker policy（尊重 `.gitignore` 或要求清空本地 ignored cache）後處置。
+- Suggested deadline / milestone: P00-007
+- Blocks PASS: yes (repo hygiene gate dimension)
+
+Item: HYG-003 (AECCT_ac_ref/AECCT_ac_ref.zip archive finding)
+- Reason for waiver: 歷史遺留壓縮檔，移除/替代策略需先確認 ref 資產管理方式。
+- Impact: `check_repo_hygiene` 目前會持續 FAIL；對本輪 triage 交付無功能阻斷。
+- Owner: TBD (repo owner)
+- Revisit condition: 完成壓縮檔治理決策（移除、改外部 artifact、或調整 gate 規則）。
+- Suggested deadline / milestone: P00-007
+- Blocks PASS: yes (repo hygiene gate dimension)

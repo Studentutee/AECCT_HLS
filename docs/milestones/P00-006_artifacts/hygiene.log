@@ -1,0 +1,66 @@
+﻿=== P00-006 Hygiene Log ===
+Date: 2026-03-12 12:34:56 +08:00
+WorkingDir: C:\Users\Peter\source\repos\AECCT_HLS
+
+Command: python scripts/check_repo_hygiene.py --repo-root .
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+ExitCode: 1
+
+Command: powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\run_gates.ps1
+PASS: check_design_purity
+PASS: check_interface_lock
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+ExitCode: 1
+
+=== Re-run After P00-006 Docs Creation ===
+Date: 2026-03-12 12:45:58 +08:00
+
+Command: python scripts/check_repo_hygiene.py --repo-root .
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+ExitCode: 1
+
+Command: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_gates.ps1
+PASS: check_design_purity
+PASS: check_interface_lock
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+ExitCode: 1

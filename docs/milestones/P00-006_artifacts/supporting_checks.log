@@ -1,0 +1,157 @@
+﻿=== P00-006 Supporting Checks ===
+Date: 2026-03-12 12:35:30 +08:00
+WorkingDir: C:\Users\Peter\source\repos\AECCT_HLS
+
+Command: rg -n "^trace/|^dumps/|^build/|^out/|^dist/|^logs/|^reports/|^archives/|\\*\\.zip|\\*\\.tar$|\\*\\.tar\\.gz|\\*\\.tgz|\\*\\.gz" .gitignore -S
+371:trace/
+372:dumps/
+373:build/
+374:out/
+375:dist/
+376:archives/
+ExitCode: 0
+
+Command: git log --oneline -n 5 -- .gitignore
+49cea47 設計端移除 weights.h，權重改用 SRAM PARAM 讀取
+44869dc P16 合規收斂：設計 HLS-safe、治理強化
+90c2248 refactor: reorganize project structure and fix include paths
+bca709b Revert "PreprocEmbedSPE/weights全面升級為64bit ac_fixed"
+ba97bbf PreprocEmbedSPE/weights全面升級為64bit ac_fixed
+ExitCode: 0
+
+Command: git check-ignore -v .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt AECCT_ac_ref/AECCT_ac_ref.zip
+.gitignore:37:.vs/	.vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+.gitignore:377:*.zip	AECCT_ac_ref/AECCT_ac_ref.zip
+ExitCode: 0
+
+Command: git ls-files --error-unmatch "AECCT_ac_ref/include/RefModel.h"
+AECCT_ac_ref/include/RefModel.h
+ExitCode: 0
+
+Command: git log --oneline -n 3 -- "AECCT_ac_ref/include/RefModel.h"
+2abaa8e 新增 C++ 參考模型與自動化比對工具
+ExitCode: 0
+
+Command: git ls-files --error-unmatch "AECCT_ac_ref/include/SoftmaxApprox.h"
+AECCT_ac_ref/include/SoftmaxApprox.h
+ExitCode: 0
+
+Command: git log --oneline -n 3 -- "AECCT_ac_ref/include/SoftmaxApprox.h"
+b17e7e9 LayerNorm/Softmax 全面改為 LUT 近似運算
+ExitCode: 0
+
+Command: git ls-files --error-unmatch "AECCT_ac_ref/src/RefModel.cpp"
+AECCT_ac_ref/src/RefModel.cpp
+ExitCode: 0
+
+Command: git log --oneline -n 3 -- "AECCT_ac_ref/src/RefModel.cpp"
+27d49fa Softmax 單次通過對齊與 INT8 量化邊界修正
+b17e7e9 LayerNorm/Softmax 全面改為 LUT 近似運算
+2abaa8e 新增 C++ 參考模型與自動化比對工具
+ExitCode: 0
+
+Command: git ls-files --error-unmatch "tools/check_ref_approx_rules.py"
+tools/check_ref_approx_rules.py
+ExitCode: 0
+
+Command: git log --oneline -n 3 -- "tools/check_ref_approx_rules.py"
+b17e7e9 LayerNorm/Softmax 全面改為 LUT 近似運算
+ExitCode: 0
+
+Command: git ls-files --error-unmatch "tools/compare_checkpoints.py"
+tools/compare_checkpoints.py
+ExitCode: 0
+
+Command: git log --oneline -n 3 -- "tools/compare_checkpoints.py"
+2abaa8e 新增 C++ 參考模型與自動化比對工具
+ExitCode: 0
+
+Command: git ls-files --error-unmatch "tools/gen_ref_lut.py"
+tools/gen_ref_lut.py
+ExitCode: 0
+
+Command: git log --oneline -n 3 -- "tools/gen_ref_lut.py"
+b17e7e9 LayerNorm/Softmax 全面改為 LUT 近似運算
+ExitCode: 0
+
+Command: git ls-files --error-unmatch "tools/run_algorithm_ref_step0.py"
+tools/run_algorithm_ref_step0.py
+ExitCode: 0
+
+Command: git log --oneline -n 3 -- "tools/run_algorithm_ref_step0.py"
+2abaa8e 新增 C++ 參考模型與自動化比對工具
+ExitCode: 0
+
+Command: git status --short --untracked-files=all
+?? docs/milestones/P00-006_artifacts/hygiene.log
+?? docs/milestones/P00-006_artifacts/supporting_checks.log
+ExitCode: 0
+
+Command: rg -n "reports/|logs/|\*\.zip|\*\.tar|\*\.tgz|\*\.gz" .gitignore -S
+'logs' is not recognized as an internal or external command,
+operable program or batch file.
+ExitCode: 255
+
+Command: git status --short --ignored -- .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt AECCT_ac_ref/AECCT_ac_ref.zip
+!! .vs/
+!! AECCT_ac_ref/AECCT_ac_ref.zip
+ExitCode: 0
+
+Command: rg -n 'trace/|dumps/|build/|out/|dist/|logs/|reports/|archives/|\*\.zip|\*\.tar$|\*\.tar\.gz|\*\.tgz|\*\.gz' .gitignore -S
+200:# except build/, which is used as an MSBuild target.
+201:!**/[Pp]ackages/build/
+363:/trace/layer0_attn_K_step0.h
+364:/trace/layer0_attn_Q_step0.h
+365:/trace/layer0_attn_V_step0.h
+366:/trace/embed_node_embed_step0.h
+367:/trace/norm_mid_out_step0.h
+371:trace/
+372:dumps/
+373:build/
+374:out/
+375:dist/
+376:archives/
+377:*.zip
+378:*.tar
+379:*.tar.gz
+380:*.tgz
+381:*.gz
+386:# - We intentionally DO NOT ignore *.log or logs/ so evidence can be shared via GitHub ZIP.
+387:# - We still ignore heavy artifacts like build/ outputs, archives, and trace datasets.
+391:/data/trace/
+392:/trace/
+ExitCode: 0
+
+Command: if (Select-String -Path .gitignore -Pattern 'reports/' -SimpleMatch) {'FOUND reports/'} else {'MISSING reports/'}
+MISSING reports/
+ExitCode: N/A (PowerShell cmdlet pipeline; result captured above)
+
+Command: Get-Content docs/milestones/P00-005_artifacts/build.log | Select-String -Pattern 'check_repo_hygiene|\.gitignore missing|utf8-bom found|archive in repo'
+Command: python scripts/check_repo_hygiene.py --repo-root .
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+FAIL: check_repo_hygiene
+.gitignore missing `reports/`
+utf8-bom found: .vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt
+archive in repo: AECCT_ac_ref/AECCT_ac_ref.zip
+utf8-bom found: AECCT_ac_ref/include/RefModel.h
+utf8-bom found: AECCT_ac_ref/include/SoftmaxApprox.h
+utf8-bom found: AECCT_ac_ref/src/RefModel.cpp
+utf8-bom found: tools/check_ref_approx_rules.py
+utf8-bom found: tools/compare_checkpoints.py
+utf8-bom found: tools/gen_ref_lut.py
+utf8-bom found: tools/run_algorithm_ref_step0.py
+ExitCode: N/A (PowerShell cmdlet pipeline; result captured above)
+
+Command: git status --short --untracked-files=all | rg -n '^(.. )?(include/|src/|design/|tb/)' -N
+NO_MATCH (no technical file touched in include/src/design/tb)
+ExitCode: 1 (rg no matches)
