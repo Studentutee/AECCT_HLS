@@ -1,0 +1,18 @@
+=== P00-007 Run Log ===
+Date: 2026-03-12 14:47:45 +08:00
+WorkingDir: C:\Users\Peter\source\repos\AECCT_HLS
+
+Command: cmd /c .\\build\\tmp_tb_top_m0_p007.exe (run #1)
+PASS: tb_top_m0
+ExitCode: 0
+
+Command: cmd /c .\\build\\tmp_tb_top_m0_p007.exe (run #2)
+PASS: tb_top_m0
+ExitCode: 0
+
+Command: cmd /c .\\build\\tmp_tb_top_m0_p007.exe (run #3)
+PASS: tb_top_m0
+ExitCode: 0
+
+SKIPPED: tb_top_m1 runtime not required in P00-007 (compile-only by scope).
+SKIPPED: tb_top_m2 runtime not required in P00-007 (compile-only by scope).

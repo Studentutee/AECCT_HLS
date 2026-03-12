@@ -1,0 +1,13 @@
+existing file patched:
+- none
+
+new file added:
+- docs/milestones/P00-007_report.md
+- docs/milestones/P00-007_artifacts/file_manifest.txt
+- docs/milestones/P00-007_artifacts/diff.patch
+- docs/milestones/P00-007_artifacts/build.log
+- docs/milestones/P00-007_artifacts/run_tb.log
+- docs/milestones/P00-007_artifacts/verdict.txt
+
+generated file regenerated:
+- none
