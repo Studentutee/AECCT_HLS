@@ -1,0 +1,374 @@
+GOVERNANCE_ENTRYPOINT_zhTW.txt
+================================
+
+文件定位
+--------
+本文件是 AECCT_HLS 專案的「治理入口文件」。
+用途是讓新對話、新任務、新接手者能在最短時間內知道：
+
+1. 先看哪幾份文件
+2. 每份文件各自負責什麼
+3. 開新 Codex / ChatGPT 任務時，最少要附哪些文件
+4. 驗收時最低要看哪些證據
+5. 哪些文件屬於日常核心，哪些屬於治理查核時再讀
+
+本文件不是：
+- 專案目前狀態摘要（那是 PROJECT_STATUS_zhTW.txt）
+- 任務下法與驗收細則全文（那是 AECCT_PROJECT_WORKFLOW_v1_zhTW.txt）
+- HLS / Catapult 實作規範（那是 Catapult_C++_CodeGen_Guide_for_Codex_v3.txt）
+- 長期里程碑規劃（那是 AECCT_v12_M0-M24_plan_zhTW.txt）
+
+====================================================================
+1. Authority Order（建議權威閱讀順序）
+====================================================================
+
+若你要開始一個新任務，建議先依下列順序對齊：
+
+1. docs/process/PROJECT_STATUS_zhTW.txt
+   - 用途：快速了解目前做到哪、哪些完成、哪些 open、下一步是什麼
+
+2. docs/process/AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+   - 用途：任務下法、Authority Bundle、Scope Lock、DoD、驗收、evidence、closure 規則
+
+3. docs/reference/Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+   - 用途：若本次任務涉及 code / patch / HLS / Catapult，可合成寫法與硬體導向風格基準
+
+4. docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt
+   - 用途：主規格、正式 contract、正式硬體行為定義
+
+5. docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+   - 用途：邏輯資料流、實體落點、micro-architecture 收斂參考
+
+6. docs/architecture/AECCT_module_interface_rules_v12.1_zhTW.txt
+   - 用途：Top / sub-block 責任、module 介面規則、range/base/phase 契約
+
+7. docs/architecture/AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+   - 用途：SramMap、alias、overwrite、free-point、storage class 規則
+
+8. docs/milestones/AECCT_v12_M0-M24_plan_zhTW.txt
+   - 用途：長期里程碑路線圖與任務依賴關係
+
+補充：
+- 若任務直接依賴特定 artifact / metadata，必須額外明確指定，不能只說「照 repo 文件」。
+
+====================================================================
+2. 文件角色分工
+====================================================================
+
+2.1 日常核心文件（平常最常用）
+--------------------------------
+A. PROJECT_STATUS_zhTW.txt
+- 快速接手與目前狀態摘要
+- 回答：
+  - 現在做到哪？
+  - 哪些完成？
+  - 哪些 open？
+  - 下一步最推薦做什麼？
+
+B. AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+- 任務工作流與治理主文件
+- 回答：
+  - 任務怎麼下？
+  - scope 怎麼鎖？
+  - 完成後怎麼驗收？
+  - 什麼情況才算 PASS / closure？
+
+C. Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+- Code 生成與 HLS / Catapult 風格規範
+- 回答：
+  - 可合成子集合怎麼寫？
+  - class / block / inline / TB 骨架怎麼寫？
+  - AC datatype / ac_channel 的習慣與禁區是什麼？
+
+2.2 規格與架構文件（implementation / spec 任務常用）
+----------------------------------------------------
+D. AECCT_HLS_Spec_v12.1_zhTW.txt
+- 主 spec；正式 contract / 硬體行為以此為準
+
+E. AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+- 邏輯資料流與實體落點/覆蓋方式的架構指南
+
+F. AECCT_module_interface_rules_v12.1_zhTW.txt
+- Top 與 sub-block 的介面責任分界與統一欄位
+
+G. AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+- shared SRAM 語意、storage classes、alias/no-alias、free-point 規則
+
+2.3 規劃文件（規劃 / 排下一步時常用）
+------------------------------------
+H. AECCT_v12_M0-M24_plan_zhTW.txt
+- 長期里程碑與任務路線圖
+
+2.4 治理查核文件（不是每次都要讀）
+----------------------------------
+I. docs/milestones/TRACEABILITY_MAP_v12.1.md
+- 文件 / milestone / evidence 的對照索引
+
+J. docs/milestones/CLOSURE_MATRIX_v12.1.md
+- formal closure / PASS / PARTIAL / OPEN 的盤點表
+
+說明：
+- I / J 很有價值，但不是每次新任務都必讀的最小文件包
+- 比較適合在 audit / 關帳 / progress review / governance 任務時再讀
+
+====================================================================
+3. 新任務最小文件包（Minimum Task Bundle）
+====================================================================
+
+3.1 所有任務最少建議附
+----------------------
+- docs/process/PROJECT_STATUS_zhTW.txt
+- docs/process/AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+3.2 若是 code / patch / HLS 任務，再加
+--------------------------------------
+- docs/reference/Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+
+3.3 若任務涉及正式規格 / 實作邊界 / memory semantics，再加
+----------------------------------------------------------
+- docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt
+- docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+- docs/architecture/AECCT_module_interface_rules_v12.1_zhTW.txt
+- docs/architecture/AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+
+3.4 若任務涉及長期規劃 / milestone 路線，再加
+---------------------------------------------
+- docs/milestones/AECCT_v12_M0-M24_plan_zhTW.txt
+
+3.5 若任務依賴特定 artifact / metadata，必須明確附加
+---------------------------------------------------
+例如：
+- gen/ternary_p11c_export.json
+- kQuantLinearMeta
+- TernaryCodebook
+- 特定 milestone report / verdict / file manifest
+- 特定 generator 輸出
+
+原則：
+- 不可只寫「遵守 repo 文件」
+- 必須把本次真正要依賴的 authority 明確列出
+
+====================================================================
+4. 任務啟動最低要求
+====================================================================
+
+每次交給 Codex / ChatGPT 的任務，至少應明確寫出：
+
+1. Goal
+   - 這次要完成什麼
+
+2. Scope In
+   - 這次允許做的事
+
+3. Scope Out
+   - 這次不允許做的事
+
+4. Authority Bundle
+   - 這次要依循哪些文件 / artifact / metadata
+
+5. Definition of Done（DoD）
+   - 什麼情況才算完成
+
+6. Deliverables
+   - 最後必須回報哪些東西
+
+7. Repro / Test Plan
+   - 怎麼 build / run / 驗證
+
+詳細寫法請回到：
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+====================================================================
+5. 驗收最低要求（Execution-Evidence Rule）
+====================================================================
+
+本專案對 code 任務的最低驗收規則如下：
+
+完成 ≠ 文字摘要完成
+
+凡是 code change / patch / checker / preview / milestone 子任務聲稱完成時，
+至少必須同時看到：
+
+1. Files changed
+2. Build / run command
+3. Actual execution evidence
+
+若沒有 execution evidence，
+最多只能算：
+- 聲明
+- 初步回報
+- 摘要合理
+
+不能直接算正式完成。
+
+補充：
+- 小任務 / checker / preview 可採輕量治理
+- 但只要是 code 任務，execution evidence 仍屬驗收必要項
+- 若尚未執行，必須明確寫：
+  - not executed
+
+詳細規則請回到：
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+====================================================================
+6. 任務類型與對應閱讀建議
+====================================================================
+
+6.1 docs-only / status / index 類任務
+--------------------------------------
+優先閱讀：
+- PROJECT_STATUS_zhTW.txt
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+6.2 checker / preview 類任務
+-----------------------------
+優先閱讀：
+- PROJECT_STATUS_zhTW.txt
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+- 視需要補：
+  - 主 spec
+  - 對應 architecture / rules
+  - 特定 artifact / metadata
+
+6.3 code / patch / HLS 任務
+---------------------------
+優先閱讀：
+- PROJECT_STATUS_zhTW.txt
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+- Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+- 再依任務內容補：
+  - spec / architecture / interface rules / srammap rules
+
+6.4 main path / live migration / runtime 任務
+---------------------------------------------
+優先閱讀：
+- PROJECT_STATUS_zhTW.txt
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+- Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+- AECCT_HLS_Spec_v12.1_zhTW.txt
+- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+- AECCT_module_interface_rules_v12.1_zhTW.txt
+- AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+
+6.5 governance / audit / closure 類任務
+---------------------------------------
+優先閱讀：
+- PROJECT_STATUS_zhTW.txt
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+- TRACEABILITY_MAP_v12.1.md
+- CLOSURE_MATRIX_v12.1.md
+- 對應 milestone reports / verdict / artifacts
+
+====================================================================
+7. ChatGPT / Reviewer 的固定判讀口徑
+====================================================================
+
+7.1 不能混淆「驗證基礎設施進展」與「主路徑功能進展」
+----------------------------------------------------
+例如：
+- 新增 checker / preview / parser validation
+屬於：
+- 驗證基礎設施的進展
+
+不代表：
+- live migration 已完成
+- main path 已接好
+- numeric closure 已完成
+
+7.2 證據不足時的正確說法
+------------------------
+若只有摘要、沒有 build/run evidence，
+應明確說：
+- 目前只能判斷方向合理
+- 目前只能判斷摘要與 spec 大致一致
+- 不能直接判定為正式完成
+
+7.3 不要把 scope 守住，誤解成主系統功能前進很多
+-----------------------------------------------
+例如：
+- 只新增 1 支 checker TB
+可以代表：
+- 該子任務範圍控制正確
+- preview / checker 基礎設施前進了
+
+但不能自動代表：
+- live path 更完整
+- main system 已大幅前進
+
+====================================================================
+8. GPT 專案資料來源建議
+====================================================================
+
+8.1 建議常駐核心文件
+--------------------
+建議常駐在 GPT 專案資料來源的核心文件：
+
+- PROJECT_STATUS_zhTW.txt
+- AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+- Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+- AECCT_HLS_Spec_v12.1_zhTW.txt
+- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+- AECCT_module_interface_rules_v12.1_zhTW.txt
+- AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+- AECCT_v12_M0-M24_plan_zhTW.txt
+- 本文件 GOVERNANCE_ENTRYPOINT_zhTW.txt
+
+8.2 第二層文件（可放，但非每次最小必需）
+----------------------------------------
+- TRACEABILITY_MAP_v12.1.md
+- CLOSURE_MATRIX_v12.1.md
+- AC datatype / Catapult 相關 reference PDF（若常查）
+
+8.3 過渡 / 歷史文件
+------------------
+若某份文件的內容已被新主文件吸收，
+則不建議再列為核心常駐 authority。
+可保留作歷史參考，但不要與主文件並列成雙重 authority。
+
+====================================================================
+9. 使用建議
+====================================================================
+
+9.1 新對話 / 新接手時
+--------------------
+先讀：
+1. 本文件
+2. PROJECT_STATUS_zhTW.txt
+3. AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+再依任務需要補：
+- CodeGen Guide
+- spec / architecture / rules
+- M0-M24 plan
+- traceability / closure matrix
+
+9.2 開新任務時
+--------------
+不要只說：
+- 請遵守 repo 文件
+
+建議直接在 prompt 中明確列：
+- Authority Bundle
+- Scope Lock
+- DoD
+- Deliverables
+- Repro / Test Plan
+
+9.3 驗收時
+----------
+若希望 reviewer / ChatGPT 進入較嚴格驗收模式，
+可直接說：
+- 請照 execution-evidence 規則驗收
+- 不要只看摘要，幫我檢查 files changed、build/run 指令、實際執行證據
+
+====================================================================
+10. 一句話版核心原則
+====================================================================
+
+本專案的治理入口原則是：
+
+先用 PROJECT_STATUS 對齊當前位置，
+再用 PROJECT_WORKFLOW 對齊任務與驗收規則，
+若涉及 code 再用 CodeGen Guide 對齊寫法，
+若涉及正式規格與記憶體語意，再補 spec / architecture / rules，
+而所有 code 任務的完成都必須有 execution evidence，不能只看摘要。
