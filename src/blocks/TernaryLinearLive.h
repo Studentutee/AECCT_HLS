@@ -10,16 +10,17 @@
 
 namespace aecct {
 
-static inline QuantLinearMeta ternary_linear_live_l0_wq_meta() {
-    return kQuantLinearMeta[(uint32_t)QLM_L0_WQ];
+static inline QuantLinearMeta ternary_linear_live_meta(QuantLinearMatrixId matrix_id) {
+    return kQuantLinearMeta[(uint32_t)matrix_id];
 }
 
-static inline bool ternary_linear_live_l0_wq_read_inv_sw_bits(
+static inline bool ternary_linear_live_read_inv_sw_bits(
     const u32_t* sram,
     u32_t param_base_word,
+    QuantLinearMatrixId matrix_id,
     u32_t& out_inv_sw_bits
 ) {
-    const QuantLinearMeta meta = ternary_linear_live_l0_wq_meta();
+    const QuantLinearMeta meta = ternary_linear_live_meta(matrix_id);
     const uint32_t param_base = (uint32_t)param_base_word.to_uint();
     const ParamMeta inv_meta = kParamMeta[meta.inv_sw_param_id];
     if (inv_meta.len_w == 0u) {
@@ -29,14 +30,15 @@ static inline bool ternary_linear_live_l0_wq_read_inv_sw_bits(
     return true;
 }
 
-static inline bool ternary_linear_live_l0_wq_decode_code(
+static inline bool ternary_linear_live_decode_code(
     const u32_t* sram,
     u32_t param_base_word,
+    QuantLinearMatrixId matrix_id,
     uint32_t out_idx,
     uint32_t in_idx,
     uint32_t& out_code
 ) {
-    const QuantLinearMeta meta = ternary_linear_live_l0_wq_meta();
+    const QuantLinearMeta meta = ternary_linear_live_meta(matrix_id);
     if (out_idx >= meta.rows || in_idx >= meta.cols) {
         return false;
     }
@@ -65,15 +67,16 @@ static inline bool ternary_linear_live_l0_wq_decode_code(
     return true;
 }
 
-static inline bool ternary_linear_live_l0_wq_decode_weight(
+static inline bool ternary_linear_live_decode_weight(
     const u32_t* sram,
     u32_t param_base_word,
+    QuantLinearMatrixId matrix_id,
     uint32_t out_idx,
     uint32_t in_idx,
     quant_w_t& out_w
 ) {
     uint32_t code = 0u;
-    if (!ternary_linear_live_l0_wq_decode_code(sram, param_base_word, out_idx, in_idx, code)) {
+    if (!ternary_linear_live_decode_code(sram, param_base_word, matrix_id, out_idx, in_idx, code)) {
         return false;
     }
 
@@ -92,19 +95,20 @@ static inline bool ternary_linear_live_l0_wq_decode_weight(
     return false;
 }
 
-static inline bool ternary_linear_live_l0_wq_compute_q_elem(
+static inline bool ternary_linear_live_compute_q_elem(
     const u32_t* sram,
     u32_t param_base_word,
+    QuantLinearMatrixId matrix_id,
     u32_t x_row_base_word,
     uint32_t out_idx,
     u32_t& out_q_bits,
     u32_t& out_inv_sw_bits
 ) {
-    const QuantLinearMeta meta = ternary_linear_live_l0_wq_meta();
+    const QuantLinearMeta meta = ternary_linear_live_meta(matrix_id);
     if (out_idx >= meta.rows) {
         return false;
     }
-    if (!ternary_linear_live_l0_wq_read_inv_sw_bits(sram, param_base_word, out_inv_sw_bits)) {
+    if (!ternary_linear_live_read_inv_sw_bits(sram, param_base_word, matrix_id, out_inv_sw_bits)) {
         return false;
     }
 
@@ -118,7 +122,7 @@ static inline bool ternary_linear_live_l0_wq_compute_q_elem(
     quant_acc_t acc = 0;
     for (uint32_t in = 0; in < meta.cols; ++in) {
         quant_w_t w = 0;
-        if (!ternary_linear_live_l0_wq_decode_weight(sram, param_base_word, out_idx, in, w)) {
+        if (!ternary_linear_live_decode_weight(sram, param_base_word, matrix_id, out_idx, in, w)) {
             return false;
         }
         quant_act_t x = quant_act_from_bits(sram[x_base + in]);
@@ -127,6 +131,94 @@ static inline bool ternary_linear_live_l0_wq_compute_q_elem(
 
     out_q_bits = quant_bits_from_acc(acc / inv_sw);
     return true;
+}
+
+static inline QuantLinearMeta ternary_linear_live_l0_wq_meta() {
+    return ternary_linear_live_meta(QLM_L0_WQ);
+}
+
+static inline bool ternary_linear_live_l0_wq_read_inv_sw_bits(
+    const u32_t* sram,
+    u32_t param_base_word,
+    u32_t& out_inv_sw_bits
+) {
+    return ternary_linear_live_read_inv_sw_bits(sram, param_base_word, QLM_L0_WQ, out_inv_sw_bits);
+}
+
+static inline bool ternary_linear_live_l0_wq_decode_code(
+    const u32_t* sram,
+    u32_t param_base_word,
+    uint32_t out_idx,
+    uint32_t in_idx,
+    uint32_t& out_code
+) {
+    return ternary_linear_live_decode_code(sram, param_base_word, QLM_L0_WQ, out_idx, in_idx, out_code);
+}
+
+static inline bool ternary_linear_live_l0_wq_decode_weight(
+    const u32_t* sram,
+    u32_t param_base_word,
+    uint32_t out_idx,
+    uint32_t in_idx,
+    quant_w_t& out_w
+) {
+    return ternary_linear_live_decode_weight(sram, param_base_word, QLM_L0_WQ, out_idx, in_idx, out_w);
+}
+
+static inline bool ternary_linear_live_l0_wq_compute_q_elem(
+    const u32_t* sram,
+    u32_t param_base_word,
+    u32_t x_row_base_word,
+    uint32_t out_idx,
+    u32_t& out_q_bits,
+    u32_t& out_inv_sw_bits
+) {
+    return ternary_linear_live_compute_q_elem(
+        sram, param_base_word, QLM_L0_WQ, x_row_base_word, out_idx, out_q_bits, out_inv_sw_bits);
+}
+
+static inline QuantLinearMeta ternary_linear_live_l0_wk_meta() {
+    return ternary_linear_live_meta(QLM_L0_WK);
+}
+
+static inline bool ternary_linear_live_l0_wk_read_inv_sw_bits(
+    const u32_t* sram,
+    u32_t param_base_word,
+    u32_t& out_inv_sw_bits
+) {
+    return ternary_linear_live_read_inv_sw_bits(sram, param_base_word, QLM_L0_WK, out_inv_sw_bits);
+}
+
+static inline bool ternary_linear_live_l0_wk_decode_code(
+    const u32_t* sram,
+    u32_t param_base_word,
+    uint32_t out_idx,
+    uint32_t in_idx,
+    uint32_t& out_code
+) {
+    return ternary_linear_live_decode_code(sram, param_base_word, QLM_L0_WK, out_idx, in_idx, out_code);
+}
+
+static inline bool ternary_linear_live_l0_wk_decode_weight(
+    const u32_t* sram,
+    u32_t param_base_word,
+    uint32_t out_idx,
+    uint32_t in_idx,
+    quant_w_t& out_w
+) {
+    return ternary_linear_live_decode_weight(sram, param_base_word, QLM_L0_WK, out_idx, in_idx, out_w);
+}
+
+static inline bool ternary_linear_live_l0_wk_compute_q_elem(
+    const u32_t* sram,
+    u32_t param_base_word,
+    u32_t x_row_base_word,
+    uint32_t out_idx,
+    u32_t& out_q_bits,
+    u32_t& out_inv_sw_bits
+) {
+    return ternary_linear_live_compute_q_elem(
+        sram, param_base_word, QLM_L0_WK, x_row_base_word, out_idx, out_q_bits, out_inv_sw_bits);
 }
 
 } // namespace aecct

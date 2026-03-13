@@ -24,6 +24,43 @@ static inline quant_acc_t attn_inv_sqrt_d_head(uint32_t d_head) {
     return fp.template convert_to_ac_fixed<32, 12, true, AC_RND, AC_SAT>(false);
 }
 
+static inline bool attn_live_qkv_gate_ok(
+    const QuantLinearMeta& meta,
+    QuantLinearMatrixId expected_matrix_id,
+    uint32_t param_base_word,
+    uint32_t token_count,
+    uint32_t d_model
+) {
+    if (param_base_word == 0u || token_count == 0u) {
+        return false;
+    }
+    if (meta.matrix_id != (uint32_t)expected_matrix_id) {
+        return false;
+    }
+    if (meta.layout_kind != (uint32_t)QLAYOUT_TERNARY_W_OUT_IN) {
+        return false;
+    }
+    if (meta.rows != d_model || meta.cols != d_model) {
+        return false;
+    }
+    if (meta.num_weights != (meta.rows * meta.cols)) {
+        return false;
+    }
+    if (meta.payload_words_2b == 0u) {
+        return false;
+    }
+    if (meta.payload_words_2b != ternary_payload_words_2b(meta.num_weights)) {
+        return false;
+    }
+    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > 16u) {
+        return false;
+    }
+    if (meta.last_word_valid_count != ternary_last_word_valid_count(meta.num_weights)) {
+        return false;
+    }
+    return true;
+}
+
 template<unsigned STAGE_MODE>
 static inline void AttnLayer0(
     u32_t* sram,
@@ -53,12 +90,15 @@ static inline void AttnLayer0(
     quant_acc_t inv_sqrt_d_head = attn_inv_sqrt_d_head(d_head);
 
     if constexpr (STAGE_MODE == ATTN_STAGE_QKV || STAGE_MODE == ATTN_STAGE_FULL) {
+        const uint32_t param_base = (uint32_t)param_base_word.to_uint();
         const QuantLinearMeta live_q_meta = ternary_linear_live_l0_wq_meta();
+        const QuantLinearMeta live_k_meta = ternary_linear_live_l0_wk_meta();
         const bool live_q_enabled =
-            ((uint32_t)param_base_word.to_uint() != 0u) &&
-            (token_count != 0u) &&
-            (d_model == live_q_meta.cols);
+            attn_live_qkv_gate_ok(live_q_meta, QLM_L0_WQ, param_base, token_count, d_model);
+        const bool live_k_enabled =
+            attn_live_qkv_gate_ok(live_k_meta, QLM_L0_WK, param_base, token_count, d_model);
         bool live_q_ok = live_q_enabled;
+        bool live_k_ok = live_k_enabled;
         u32_t live_q_inv_sw_bits = (u32_t)0u;
 
         for (uint32_t i = 0; i < tensor_words; ++i) {
@@ -105,6 +145,39 @@ static inline void AttnLayer0(
             sram[(uint32_t)sc.q_sx_base_word.to_uint()] = bits_from_fp32(fp32_one());
         } else {
             sram[(uint32_t)sc.q_sx_base_word.to_uint()] = live_q_inv_sw_bits;
+        }
+
+        if (live_k_enabled) {
+            const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
+            for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
+                const uint32_t x_row_base = x_in_base + t * d_model;
+                const uint32_t k_row_base = k_base + t * d_model;
+                const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
+                for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
+                    u32_t k_bits = 0;
+                    u32_t k_inv_sw_bits = 0;
+                    if (!ternary_linear_live_l0_wk_compute_q_elem(
+                            sram,
+                            param_base_word,
+                            (u32_t)x_row_base,
+                            out,
+                            k_bits,
+                            k_inv_sw_bits)) {
+                        live_k_ok = false;
+                        break;
+                    }
+                    sram[k_row_base + out] = k_bits;
+                    sram[k_act_q_row_base + out] = k_bits;
+                }
+            }
+            if (!live_k_ok) {
+                const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
+                for (uint32_t i = 0; i < tensor_words; ++i) {
+                    u32_t x = sram[x_in_base + i];
+                    sram[k_base + i] = x;
+                    sram[k_act_q_base + i] = x;
+                }
+            }
         }
     }
 
