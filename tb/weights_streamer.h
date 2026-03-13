@@ -15,6 +15,7 @@
 #ifndef __SYNTHESIS__
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 #include "ac_channel.h"
@@ -209,6 +210,29 @@ static inline void tb_emit_fp32_words_from_fp64(ac_channel<TDATA> &data_in,
 }
 
 template <class TDATA>
+static inline bool tb_emit_inv_sw_words_from_fp64(ac_channel<TDATA> &data_in,
+                                                 const double *src,
+                                                 const uint32_t src_numel,
+                                                 const uint32_t stream_len_w,
+                                                 const WeightId wid) {
+  uint32_t i = 0u;
+  for (; i < src_numel; ++i) {
+    const double s_w = src[i];
+    if (s_w == 0.0) {
+      std::fprintf(stderr,
+                   "[tb][weights_streamer] ERROR: inv_s_w conversion failed (s_w==0), WeightId=%u, idx=%u\n",
+                   (unsigned)wid, (unsigned)i);
+      return false;
+    }
+    tb_write_u32(data_in, tb_fp32_bits_from_double(1.0 / s_w));
+  }
+  if (stream_len_w > src_numel) {
+    tb_emit_padding_zeros(data_in, stream_len_w - src_numel);
+  }
+  return true;
+}
+
+template <class TDATA>
 static inline void tb_emit_bitpack_words(ac_channel<TDATA> &data_in,
                                         const ac_int<1,false> *bits,
                                         const uint32_t num_bits,
@@ -308,6 +332,10 @@ static inline bool tb_send_load_w_unified_param(ac_channel<TCTRL> &ctrl_cmd,
       const double *ptr = tb_lookup_weight_fp64(wid, numel);
       if (!ptr || numel == 0u) {
         tb_emit_padding_zeros(data_in, meta.len_w);
+      } else if (is_quant_linear_inv_sw_weight_slot(wid)) {
+        if (!tb_emit_inv_sw_words_from_fp64(data_in, ptr, numel, meta.len_w, wid)) {
+          return false;
+        }
       } else {
         tb_emit_fp32_words_from_fp64(data_in, ptr, numel, meta.len_w);
       }

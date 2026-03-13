@@ -66,11 +66,66 @@ struct ParamMeta {
   uint32_t d3;         // dim3
 };
 
+// ------------------------------------------------------------
+// v12.1 Phase A: ternary quantized-linear semantic metadata (additive only)
+// ------------------------------------------------------------
+enum TernaryCodebook : uint32_t {
+  TERNARY_CODE_ZERO = 0u, // 0b00
+  TERNARY_CODE_POS  = 1u, // 0b01
+  TERNARY_CODE_NEG  = 3u, // 0b11
+  TERNARY_CODE_RSVD = 2u  // 0b10 (reserved/illegal)
+};
+
+enum QuantLinearMatrixId : uint32_t {
+  QLM_L0_WQ = 0u,
+  QLM_L0_WK = 1u,
+  QLM_L0_WV = 2u,
+  QLM_L0_WO = 3u,
+  QLM_L0_WFF1 = 4u,
+  QLM_L0_WFF2 = 5u,
+  QLM_L1_WQ = 6u,
+  QLM_L1_WK = 7u,
+  QLM_L1_WV = 8u,
+  QLM_L1_WO = 9u,
+  QLM_L1_WFF1 = 10u,
+  QLM_L1_WFF2 = 11u,
+  QUANT_LINEAR_MATRIX_COUNT = 12u
+};
+
+enum QuantLinearLayoutKind : uint32_t {
+  QLAYOUT_TERNARY_W_OUT_IN = 0u
+};
+
+struct QuantLinearMeta {
+  uint32_t matrix_id;            // QuantLinearMatrixId
+  uint32_t weight_param_id;      // unified PARAM id: kParamMeta[*].id
+  uint32_t inv_sw_param_id;      // unified PARAM id: legacy *_S_W slot carrier
+  uint32_t rows;
+  uint32_t cols;
+  uint32_t num_weights;
+  uint32_t payload_words_2b;     // ceil(num_weights / 16)
+  uint32_t last_word_valid_count;// 1..16, 16 means full last word
+  uint32_t layout_kind;          // QuantLinearLayoutKind
+};
+
+static inline constexpr uint32_t ternary_payload_words_2b(const uint32_t num_weights) {
+  return (num_weights + 15u) / 16u;
+}
+
+static inline constexpr uint32_t ternary_last_word_valid_count(const uint32_t num_weights) {
+  const uint32_t rem = (num_weights % 16u);
+  return (rem == 0u) ? 16u : rem;
+}
+
 
 
 // ----------------------------
 // [legacy] WEIGHT stream (separated LOAD_W)
 // ----------------------------
+// NOTE (v12.1 Phase A semantic convergence):
+// - Keep legacy *_S_W identifiers and offsets unchanged.
+// - Stream semantic for quantized-linear *_S_W sections is inv_s_w carrier.
+// - Name stays *_S_W for backward compatibility only.
 enum WeightId : uint32_t {
   BCH_H_BITPACK = 0,
   SRC_EMBED = 1,
@@ -249,7 +304,7 @@ static const uint32_t PARAM_COUNT = (BIAS_COUNT + WEIGHT_COUNT);
 static const uint32_t EXP_LEN_PARAM_WORDS = (EXP_LEN_BIAS_WORDS + EXP_LEN_W_WORDS);
 static_assert((EXP_LEN_PARAM_WORDS % W_LANES) == 0, "EXP_LEN_PARAM_WORDS must be multiple of W_LANES");
 
-static const ParamMeta kParamMeta[PARAM_COUNT] = {
+static constexpr ParamMeta kParamMeta[PARAM_COUNT] = {
   /* DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_BIAS */ { 0u, 0u, 0u, 32u, 0u, 1u, 32u, 0u, 0u, 0u },
   /* DECODER_LAYERS_0_SELF_ATTN_LINEARS_1_BIAS */ { 1u, 0u, 32u, 32u, 0u, 1u, 32u, 0u, 0u, 0u },
   /* DECODER_LAYERS_0_SELF_ATTN_LINEARS_2_BIAS */ { 2u, 0u, 64u, 32u, 0u, 1u, 32u, 0u, 0u, 0u },
@@ -320,6 +375,120 @@ static const ParamMeta kParamMeta[PARAM_COUNT] = {
   /* OUT_FC_WEIGHT */ { 67u, 0u, 27840u, 4728u, 0u, 2u, 63u, 75u, 0u, 0u },
   /* LPE_TOKEN */ { 68u, 0u, 32568u, 600u, 0u, 2u, 75u, 8u, 0u, 0u },
 };
+
+// Explicit WeightId -> unified PARAM id mapping.
+// Do not assume numeric relation between WeightId and PARAM id.
+static const uint32_t kWeightIdToParamId[WEIGHT_COUNT] = {
+  20u, // BCH_H_BITPACK
+  21u, // SRC_EMBED
+  22u, // SRC_MASK
+  23u, // QUANT_SX_8
+  24u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_WEIGHT
+  25u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_DELTA
+  26u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_S_W
+  27u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_1_WEIGHT
+  28u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_1_DELTA
+  29u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_1_S_W
+  30u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_2_WEIGHT
+  31u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_2_DELTA
+  32u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_2_S_W
+  33u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_3_WEIGHT
+  34u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_3_DELTA
+  35u, // DECODER_LAYERS_0_SELF_ATTN_LINEARS_3_S_W
+  36u, // DECODER_LAYERS_0_FEED_FORWARD_W_1_WEIGHT
+  37u, // DECODER_LAYERS_0_FEED_FORWARD_W_1_DELTA
+  38u, // DECODER_LAYERS_0_FEED_FORWARD_W_1_S_W
+  39u, // DECODER_LAYERS_0_FEED_FORWARD_W_2_WEIGHT
+  40u, // DECODER_LAYERS_0_FEED_FORWARD_W_2_DELTA
+  41u, // DECODER_LAYERS_0_FEED_FORWARD_W_2_S_W
+  42u, // DECODER_LAYERS_0_SUBLAYER_0_NORM_WEIGHT
+  43u, // DECODER_LAYERS_0_SUBLAYER_1_NORM_WEIGHT
+  44u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_0_WEIGHT
+  45u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_0_DELTA
+  46u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_0_S_W
+  47u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_1_WEIGHT
+  48u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_1_DELTA
+  49u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_1_S_W
+  50u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_2_WEIGHT
+  51u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_2_DELTA
+  52u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_2_S_W
+  53u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_3_WEIGHT
+  54u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_3_DELTA
+  55u, // DECODER_LAYERS_1_SELF_ATTN_LINEARS_3_S_W
+  56u, // DECODER_LAYERS_1_FEED_FORWARD_W_1_WEIGHT
+  57u, // DECODER_LAYERS_1_FEED_FORWARD_W_1_DELTA
+  58u, // DECODER_LAYERS_1_FEED_FORWARD_W_1_S_W
+  59u, // DECODER_LAYERS_1_FEED_FORWARD_W_2_WEIGHT
+  60u, // DECODER_LAYERS_1_FEED_FORWARD_W_2_DELTA
+  61u, // DECODER_LAYERS_1_FEED_FORWARD_W_2_S_W
+  62u, // DECODER_LAYERS_1_SUBLAYER_0_NORM_WEIGHT
+  63u, // DECODER_LAYERS_1_SUBLAYER_1_NORM_WEIGHT
+  64u, // DECODER_NORM_WEIGHT
+  65u, // DECODER_NORM2_WEIGHT
+  66u, // ONED_FINAL_EMBED_0_WEIGHT
+  67u, // OUT_FC_WEIGHT
+  68u  // LPE_TOKEN
+};
+static_assert((uint32_t)WEIGHT_COUNT == (sizeof(kWeightIdToParamId) / sizeof(kWeightIdToParamId[0])),
+              "kWeightIdToParamId size mismatch");
+
+static inline bool weight_id_to_param_id(const WeightId wid, uint32_t &out_param_id) {
+  const uint32_t idx = (uint32_t)wid;
+  if (idx >= (uint32_t)WEIGHT_COUNT) {
+    return false;
+  }
+  out_param_id = kWeightIdToParamId[idx];
+  return true;
+}
+
+// v12.1 frozen quantized-linear matrices only (12 entries):
+//   layer0: self_attn linears 0..3, feed_forward w_1/w_2
+//   layer1: self_attn linears 0..3, feed_forward w_1/w_2
+static constexpr QuantLinearMeta kQuantLinearMeta[QUANT_LINEAR_MATRIX_COUNT] = {
+  { QLM_L0_WQ,   24u, 26u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L0_WK,   27u, 29u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L0_WV,   30u, 32u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L0_WO,   33u, 35u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L0_WFF1, 36u, 38u, 128u,  32u,  4096u, ternary_payload_words_2b(4096u), ternary_last_word_valid_count(4096u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L0_WFF2, 39u, 41u,  32u, 128u,  4096u, ternary_payload_words_2b(4096u), ternary_last_word_valid_count(4096u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L1_WQ,   44u, 46u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L1_WK,   47u, 49u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L1_WV,   50u, 52u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L1_WO,   53u, 55u,  32u,  32u,  1024u, ternary_payload_words_2b(1024u), ternary_last_word_valid_count(1024u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L1_WFF1, 56u, 58u, 128u,  32u,  4096u, ternary_payload_words_2b(4096u), ternary_last_word_valid_count(4096u), QLAYOUT_TERNARY_W_OUT_IN },
+  { QLM_L1_WFF2, 59u, 61u,  32u, 128u,  4096u, ternary_payload_words_2b(4096u), ternary_last_word_valid_count(4096u), QLAYOUT_TERNARY_W_OUT_IN },
+};
+
+static_assert((uint32_t)QUANT_LINEAR_MATRIX_COUNT == (sizeof(kQuantLinearMeta) / sizeof(kQuantLinearMeta[0])),
+              "kQuantLinearMeta size mismatch");
+static_assert(kParamMeta[24u].id == 24u, "kParamMeta id mismatch at 24");
+static_assert(kParamMeta[26u].id == 26u, "kParamMeta id mismatch at 26");
+static_assert(kParamMeta[59u].id == 59u, "kParamMeta id mismatch at 59");
+static_assert(kParamMeta[61u].id == 61u, "kParamMeta id mismatch at 61");
+static_assert((32u * 32u) == 1024u, "rows*cols mismatch for 32x32");
+static_assert((128u * 32u) == 4096u, "rows*cols mismatch for 128x32");
+static_assert((32u * 128u) == 4096u, "rows*cols mismatch for 32x128");
+static_assert((ternary_last_word_valid_count(1024u) >= 1u) && (ternary_last_word_valid_count(1024u) <= 16u),
+              "last_word_valid_count out of range");
+static_assert((ternary_last_word_valid_count(4096u) >= 1u) && (ternary_last_word_valid_count(4096u) <= 16u),
+              "last_word_valid_count out of range");
+
+static inline const QuantLinearMeta* lookup_quant_linear_meta_by_inv_sw_param_id(const uint32_t param_id) {
+  for (uint32_t i = 0u; i < (uint32_t)QUANT_LINEAR_MATRIX_COUNT; ++i) {
+    if (kQuantLinearMeta[i].inv_sw_param_id == param_id) {
+      return &kQuantLinearMeta[i];
+    }
+  }
+  return (const QuantLinearMeta*)0;
+}
+
+static inline bool is_quant_linear_inv_sw_weight_slot(const WeightId wid) {
+  uint32_t param_id = 0u;
+  if (!weight_id_to_param_id(wid, param_id)) {
+    return false;
+  }
+  return (lookup_quant_linear_meta_by_inv_sw_param_id(param_id) != (const QuantLinearMeta*)0);
+}
 
 
 // [legacy] Word address in SRAM for a BIAS tensor (separated flow)
