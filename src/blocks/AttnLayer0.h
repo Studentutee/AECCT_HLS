@@ -8,6 +8,7 @@
 #include "AttnDescBringup.h"
 #include "QuantDesc.h"
 #include "SoftmaxApprox.h"
+#include "TernaryLinearLive.h"
 
 namespace aecct {
 
@@ -29,7 +30,8 @@ static inline void AttnLayer0(
     const AttnCfg& cfg,
     u32_t x_in_base_word,
     u32_t attn_out_base_word,
-    const AttnScratch& sc
+    const AttnScratch& sc,
+    u32_t param_base_word = (u32_t)0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -51,16 +53,59 @@ static inline void AttnLayer0(
     quant_acc_t inv_sqrt_d_head = attn_inv_sqrt_d_head(d_head);
 
     if constexpr (STAGE_MODE == ATTN_STAGE_QKV || STAGE_MODE == ATTN_STAGE_FULL) {
+        const QuantLinearMeta live_q_meta = ternary_linear_live_l0_wq_meta();
+        const bool live_q_enabled =
+            ((uint32_t)param_base_word.to_uint() != 0u) &&
+            (token_count != 0u) &&
+            (d_model == live_q_meta.cols);
+        bool live_q_ok = live_q_enabled;
+        u32_t live_q_inv_sw_bits = (u32_t)0u;
+
         for (uint32_t i = 0; i < tensor_words; ++i) {
             u32_t x = sram[x_in_base + i];
-            sram[q_base + i] = x;
             sram[k_base + i] = x;
             sram[v_base + i] = x;
-            sram[(uint32_t)sc.q_act_q_base_word.to_uint() + i] = x;
             sram[(uint32_t)sc.k_act_q_base_word.to_uint() + i] = x;
             sram[(uint32_t)sc.v_act_q_base_word.to_uint() + i] = x;
         }
-        sram[(uint32_t)sc.q_sx_base_word.to_uint()] = bits_from_fp32(fp32_one());
+
+        if (live_q_enabled) {
+            const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
+            for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+                const uint32_t x_row_base = x_in_base + t * d_model;
+                const uint32_t q_row_base = q_base + t * d_model;
+                const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
+                for (uint32_t out = 0; out < live_q_meta.rows; ++out) {
+                    u32_t q_bits = 0;
+                    u32_t inv_sw_bits = 0;
+                    if (!ternary_linear_live_l0_wq_compute_q_elem(
+                            sram,
+                            param_base_word,
+                            (u32_t)x_row_base,
+                            out,
+                            q_bits,
+                            inv_sw_bits)) {
+                        live_q_ok = false;
+                        break;
+                    }
+                    sram[q_row_base + out] = q_bits;
+                    sram[q_act_q_row_base + out] = q_bits;
+                    live_q_inv_sw_bits = inv_sw_bits;
+                }
+            }
+        }
+
+        if (!live_q_ok) {
+            const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
+            for (uint32_t i = 0; i < tensor_words; ++i) {
+                u32_t x = sram[x_in_base + i];
+                sram[q_base + i] = x;
+                sram[q_act_q_base + i] = x;
+            }
+            sram[(uint32_t)sc.q_sx_base_word.to_uint()] = bits_from_fp32(fp32_one());
+        } else {
+            sram[(uint32_t)sc.q_sx_base_word.to_uint()] = live_q_inv_sw_bits;
+        }
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
