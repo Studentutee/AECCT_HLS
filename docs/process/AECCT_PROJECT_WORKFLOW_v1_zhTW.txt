@@ -1,0 +1,452 @@
+AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+=================================
+
+文件定位
+--------
+本文件是 AECCT_HLS 專案的「工作流 + 治理」主文件。
+用途是整合原本分散的：
+- Codex / ChatGPT 任務下法（Spell / Task Authoring）
+- 驗收規則（Governance / Acceptance / Evidence / Closure）
+
+本文件回答四件事：
+1. 新任務要怎麼下
+2. 任務範圍要怎麼鎖
+3. 完成之後要怎麼驗收
+4. 什麼情況才算 closure / PASS
+
+本文件不是：
+- 專案目前狀態摘要（那是 PROJECT_STATUS_zhTW.txt）
+- 長期里程碑規劃（那是 AECCT_v12_M0-M24_plan_zhTW.txt）
+- Catapult/HLS 實作細節規範（那是 Catapult_C++_CodeGen_Guide_for_Codex_v3.txt）
+
+建議搭配閱讀順序
+----------------
+1. GOVERNANCE_ENTRYPOINT_zhTW.txt
+2. PROJECT_STATUS_zhTW.txt
+3. 本文件 AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+4. Catapult_C++_CodeGen_Guide_for_Codex_v3.txt（若本次任務涉及 code）
+5. AECCT_v12_M0-M24_plan_zhTW.txt（若本次任務涉及整體規劃 / 里程碑）
+
+==================================================
+Part A：Task Authoring（如何開任務）
+==================================================
+
+A1. 任務下法的基本原則
+----------------------
+每次交付給 Codex / ChatGPT 的任務，都應明確提供以下資訊：
+
+1. Goal
+   - 這次要完成什麼
+   - 是 code、docs、checker、preview、live migration、還是 closure 類任務
+
+2. Scope
+   - 這次可以動哪些檔案 / 模組
+   - 哪些檔案 / 模組禁止修改
+
+3. Authority Bundle
+   - 本次任務要遵循的權威文件 / artifact / metadata 是哪些
+   - 若未提供 authority，代理容易自行猜測
+
+4. Definition of Done（DoD）
+   - 完成的最低條件是什麼
+   - 要有什麼行為、產物、測試、證據
+
+5. Deliverables
+   - 最後要回傳哪些東西
+   - 例如：Summary / Files changed / How to run / Expected output / Limitations
+
+6. Scope Lock / Non-Goals
+   - 明確說哪些事情這次不要做
+   - 避免代理順手擴 scope
+
+A2. 建議固定任務模板
+--------------------
+每次開任務時，至少建議包含以下段落：
+
+- Summary
+- Goal
+- Authority Bundle
+- Scope In
+- Scope Out
+- File Constraints
+- Implementation Requirements
+- Test Plan / Repro
+- Acceptance Criteria
+- Non-Goals
+- Required Completion Report Format
+
+A3. Authority Bundle 的使用方式
+-------------------------------
+Authority Bundle 是每次任務的基準集合。
+原則是：不要假設代理會自己去 repo 找到正確文件。
+
+依任務類型，建議最少附下列文件：
+
+(1) 所有任務都建議附
+- PROJECT_STATUS_zhTW.txt
+- 本文件 AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+(2) code / patch / HLS 任務再加
+- Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+
+(3) milestone / 規劃 / 長期路線任務再加
+- AECCT_v12_M0-M24_plan_zhTW.txt
+
+(4) 若任務依賴特定 artifact / metadata
+必須明確指定，例如：
+- gen/ternary_p11c_export.json
+- kQuantLinearMeta
+- TernaryCodebook
+- 特定 spec / frozen baseline
+
+A4. Scope Lock 的寫法
+---------------------
+每次任務應明確寫出：
+
+In Scope：
+- 這次允許做的事
+
+Out of Scope：
+- 這次不允許做的事
+
+常見 Out of Scope 範例：
+- 不做 live migration
+- 不改 main path
+- 不改 Top / dispatcher / block graph
+- 不改 gen/*
+- 不改 docs/*
+- 不做 unrelated cleanup
+- 不做 broad refactor
+- 不做 quant policy change
+- 不做 algorithm redesign
+
+A5. Change Budget 原則
+----------------------
+若這次任務是小 patch / checker / preview / docs-only，
+應明確限制變更預算，例如：
+
+- 只允許新增 1 個檔案
+- 或只允許修改 task-local 小範圍檔案
+- 除非 build absolutely unavoidable，否則不得增加第二個檔案
+- 不可順手做 unrelated cleanup
+
+A6. 對不同類型任務的下法
+------------------------
+(1) docs-only / status / index 類任務
+- 重點：文件定位、章節清楚、不要假裝 code 有完成
+- 可以不要求 build/run
+- 但要要求內容與 repo evidence 一致
+
+(2) checker / preview 類任務
+- 重點：非 live、範圍小、evidence-first
+- 要求 parser/decode/check/report 行為明確
+- 要求 build/run 與 execution evidence
+
+(3) main path / live migration 類任務
+- 重點：功能切入點最小化
+- 明確指定只能做 first cut，不可一次全開
+- 要求 exact file list、build/run evidence、limitations
+
+(4) closure / PASS / milestone 關帳任務
+- 重點：不能只看存在性，要看 formal evidence
+- 要求 report / artifacts / verdict / manifest / build/run evidence
+
+A7. Completion Report 建議格式
+-----------------------------
+建議固定要求回報以下欄位：
+
+1. Summary
+2. Files changed
+3. Build command
+4. Run command
+5. Actual execution output excerpt
+6. Limitations
+
+若未執行，必須明確寫：
+- not executed
+
+==================================================
+Part B：Acceptance / Evidence / Closure（如何驗收）
+==================================================
+
+B1. 核心原則
+------------
+在本專案中：
+
+完成 ≠ 文字摘要完成
+
+凡是 code change / patch / checker / preview / milestone 子任務聲稱完成時，
+不能只看摘要，必須把 execution evidence 視為驗收的一部分。
+
+B2. 最低驗收必要項
+------------------
+對於 code 任務，至少需要同時看到：
+
+1. Files changed
+2. Build / run command
+3. Actual execution evidence
+
+若缺少 execution evidence，最多只能算：
+- 聲明
+- 初步回報
+- 摘要合理
+
+不能直接算正式完成。
+
+B3. Execution Evidence 的定義
+----------------------------
+可接受的 execution evidence 例子：
+
+- 實際 console output
+- log 摘要
+- PASS / FAIL summary
+- 可對照的執行結果片段
+- 若有正式 artifact，也可包含：
+  - build.log
+  - run_tb.log
+  - verdict.txt
+
+不可接受的情況：
+- 只有「已實測」的口頭聲明
+- 只有預期輸出樣式，沒有真實執行結果
+- 只有 code，沒有 build/run 證據
+
+B4. 若尚未執行
+--------------
+若任務實作完成但尚未執行，
+必須明確標註：
+- not executed
+
+不得把「看起來應該能跑」當成已驗證成功。
+
+B5. 輕量治理與正式治理的分級
+----------------------------
+Level 1：小任務 / preview / checker / docs-only
+- 可採輕量治理
+- 不一定強制更新 milestones / logs
+- 但若是 code 任務，execution evidence 仍屬驗收必要項
+
+Level 2：main path / live migration / runtime path 任務
+- 除最低驗收必要項外，建議再要求：
+  - task-local report
+  - limitation 說明
+  - 可重跑命令
+  - 必要時更新相關 milestone artifacts
+
+Level 3：正式 closure / milestone PASS / runtime closure
+- 需更完整證據包
+- 建議包含：
+  - report
+  - artifacts
+  - verdict
+  - file manifest
+  - build/run evidence
+
+B6. 驗收時 ChatGPT / reviewer 應主動檢查的事
+--------------------------------------------
+1. 改了哪些檔案
+2. scope 有沒有守住
+3. 有沒有偷偷擴 scope
+4. build/run 指令是否可重跑
+5. 是否有 actual execution evidence
+6. 是否真的做到 spec 要求，而不是只做表面檢查
+7. limitations 是否說清楚
+
+B7. 證據不足時的正確說法
+------------------------
+若證據不足，應明確說：
+
+- 目前只能判斷方向合理
+- 目前只能判斷摘要與 spec 大致一致
+- 不能直接判定為正式完成
+- 若要正式驗收，仍需 build/run evidence
+
+不要在證據不足時說得太滿。
+
+B8. 關於 untracked file 的注意事項
+---------------------------------
+若這次變更只新增新檔案，而尚未 git add，
+可能會出現：
+
+- git status --short 顯示 ?? new_file
+- git diff --name-only 為空
+
+這種情況不能只看 git diff。
+應同時看：
+- git status --short
+- 實際檔案存在
+- build/run evidence
+
+B9. 對 Codex 回報的標準看法
+--------------------------
+若 Codex 回報包含：
+- Summary
+- Files changed
+- How to run
+- Expected checker output
+- Limitations
+
+這些是好的交付摘要，
+但若沒有：
+- 實際 build log
+- 實際 run log
+- execution evidence excerpt
+
+則不應直接判定已完成正式驗收。
+
+==================================================
+Part C：Closure Rules（什麼情況才算 PASS / 關帳）
+==================================================
+
+C1. Formal PASS 與存在性的區別
+-----------------------------
+本專案應嚴格區分：
+
+(1) 實作存在
+- code / docs / checker 有寫出來
+
+(2) 能執行
+- build/run 成功
+
+(3) formal PASS / closure
+- 有完整 evidence
+- 與任務 scope / milestone intent 對齊
+- 所需 artifacts / report / verdict 具備
+
+不要把「有 code」直接等同於「任務 closure」。
+
+C2. Preview / Checker 類任務的 closure 標準
+------------------------------------------
+像 parser/checker/preview 類任務，
+若已具備：
+- scope 守住
+- code 完成
+- build/run 成功
+- execution evidence 存在
+- limitation 說明清楚
+
+通常可視為該 task-local scope 已完成。
+
+但這不代表：
+- live migration 已完成
+- main path 已完成
+- numeric closure 已完成
+
+C3. Main Path / Runtime 類任務的 closure 標準
+--------------------------------------------
+若任務碰 main path / runtime path，
+除 code 與 execution evidence 外，
+還應確認：
+- 功能切入點是否與任務目標一致
+- 是否為最小可驗證切片
+- limitation 是否明說
+- 是否有對應 task-local report 或 evidence 包
+
+C4. Milestone 關帳標準
+---------------------
+若任務是 milestone closure，
+建議至少檢查：
+- milestone report
+- artifacts
+- verdict
+- file manifest
+- build.log
+- run log / test log
+- 與最新 frozen baseline 對齊
+
+若 evidence 缺失，應標為：
+- PARTIAL
+- OPEN
+- NON-LIVE-VALIDATED
+- FROZEN-DOCS
+而不是直接 PASS。
+
+==================================================
+Part D：專案特定口徑
+==================================================
+
+D1. 本專案是硬體/HLS 專案
+------------------------
+本專案用於 C++ 高階合成實現硬體。
+寫 code、驗收、判讀進度時，都應採硬體思維。
+
+固定傾向：
+- 資料流明確
+- indexing 明確
+- boundary handling 明確
+- metadata binding 明確
+- 最小且可驗證的修改
+- 不鼓勵無必要的大重構
+
+D2. 對 ternary packed path 類任務的口徑
+--------------------------------------
+像 P00-011D 這類任務的本質是：
+- consumer-side preview/checker
+
+它的價值在於驗證：
+- parser
+- 2-bit decode semantics
+- tail / last_word_valid_count
+- logical reconstruction order
+- inv_s_w binding
+
+這類任務屬於：
+- 驗證基礎設施的進展
+
+不等於：
+- 主路徑功能大幅前進
+- live runtime integration 完成
+
+評估時應明確分辨：
+- 檢測儀器的進展
+- 引擎本體的進展
+
+D3. 行列(Matrix) 用語
+--------------------
+本專案討論 matrix / tensor mapping 時，建議明確使用：
+- 列(Row)
+- 行(Colume)
+
+例如：
+- W[列(Row)=out][行(Colume)=in]
+
+D4. 語言與說明偏好
+------------------
+- 使用者偏好繁體中文
+- 若內容較專業，建議附中文解釋
+- 對專業工具或流程，說明時應盡量清楚列出依據
+
+==================================================
+Part E：實務建議（如何真的用這份文件）
+==================================================
+
+E1. 新任務最小文件包
+--------------------
+開新任務時，最少建議附：
+- PROJECT_STATUS_zhTW.txt
+- 本文件 AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+若是 code 任務，再加：
+- Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
+
+若是里程碑 / 長期規劃任務，再加：
+- AECCT_v12_M0-M24_plan_zhTW.txt
+
+E2. 驗收口令建議
+----------------
+之後若希望 ChatGPT 進入較嚴格的驗收模式，
+可直接說：
+
+- 請照 execution-evidence 規則驗收
+- 不要只看摘要，幫我檢查 files changed、build/run 指令、實際執行證據
+- 照我們現在的輕量治理習慣驗收
+
+E3. 一句話版核心原則
+--------------------
+在這個專案裡，聲稱完成的 code 任務，
+至少要有：
+- 檔案變更
+- 可重跑命令
+- 實際執行證據
+
+否則只能算摘要，不算完成證據。
