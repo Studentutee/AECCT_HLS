@@ -6,7 +6,7 @@
     "WeightStreamOrder.h"
   ],
   "generator": "tools/gen_headers.py",
-  "input_hash": "6a5d5c53332436ff1c117639f3e718a50593e653db8870af3699a21c6d08fb3f",
+  "input_hash": "19462bd0f5ecbc94687b1fe8fb2fb900102d437d6859a43a6bb8e7d43c1b9a6a",
   "inputs": [
     {
       "bytes": 2138,
@@ -24,9 +24,9 @@
       "sha256": "797ed4fd82c06a1865d68894b38534a8c2361d0e7993f86550faa7521bfdfd3d"
     },
     {
-      "bytes": 34414,
+      "bytes": 37345,
       "path": "include/WeightStreamOrder.h",
-      "sha256": "ee1c3aa67719dbcfe52259a58b419db5259887ac4b568ae79b16ffc162a4c216"
+      "sha256": "337f7ecdbf50eaf13c24f53abbbd81f46e078929e111cc3710b1c15c93915f16"
     }
   ],
   "outputs": [
@@ -61,9 +61,9 @@
       "sha256": "701fec37abec18cc189f30c7c66310d9b4bc0d2ba8351208f9ce5c2bf4fb18ae"
     },
     {
-      "bytes": 34559,
+      "bytes": 37490,
       "path": "gen/include/WeightStreamOrder.h",
-      "sha256": "eb021674551c6aa25ed76e38cd2032076473783e3a276575222ab761c263da50"
+      "sha256": "f303fff6b0f22528ec5a70e6aace7f3a5fa09ab14b61a9e4d1ac1d7cbfd47cf1"
     },
     {
       "bytes": 112,
@@ -71,5 +71,5 @@
       "sha256": "2da8a5daef89bb7e73c7edca9577588af47bed61f2aa2bc3de750fc93b9957ea"
     }
   ],
-  "version_tag": "v12.1+424092b"
+  "version_tag": "v12.1+9959423"
 }

@@ -98,7 +98,7 @@ static inline const double* tb_lookup_weight_fp64(const WeightId id, uint32_t &o
   switch (id) {
     case BCH_H_BITPACK: out_numel = 0u; return (const double*)0;
     case SRC_EMBED: out_numel = (uint32_t)w_src_embed_numel; return w_src_embed;
-    case SRC_MASK: out_numel = (uint32_t)w_src_mask_numel; return w_src_mask;
+    case SRC_MASK: out_numel = 0u; return (const double*)0;
     case QUANT_SX_8: out_numel = 8u; return tb_quant_sx_8;
     case DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_WEIGHT: out_numel = (uint32_t)w_decoder_layers_0_self_attn_linears_0_weight_numel; return w_decoder_layers_0_self_attn_linears_0_weight;
     case DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_DELTA: out_numel = (uint32_t)w_decoder_layers_0_self_attn_linears_0_delta_numel; return w_decoder_layers_0_self_attn_linears_0_delta;
@@ -229,6 +229,83 @@ static inline bool tb_emit_inv_sw_words_from_fp64(ac_channel<TDATA> &data_in,
   if (stream_len_w > src_numel) {
     tb_emit_padding_zeros(data_in, stream_len_w - src_numel);
   }
+  return true;
+}
+
+static inline bool tb_ternary_code_from_fp64(const double v, uint32_t& out_code) {
+  if (v == 1.0) {
+    out_code = (uint32_t)TERNARY_CODE_POS;
+    return true;
+  }
+  if (v == 0.0) {
+    out_code = (uint32_t)TERNARY_CODE_ZERO;
+    return true;
+  }
+  if (v == -1.0) {
+    out_code = (uint32_t)TERNARY_CODE_NEG;
+    return true;
+  }
+  return false;
+}
+
+static inline bool tb_pack_ternary_words_from_fp64(const double *src,
+                                                  const uint32_t src_numel,
+                                                  const uint32_t expected_num_weights,
+                                                  uint32_t *out_payload,
+                                                  const uint32_t out_capacity_words,
+                                                  uint32_t& out_payload_words,
+                                                  uint32_t& out_last_word_valid_count) {
+  out_payload_words = 0u;
+  out_last_word_valid_count = 0u;
+  if (!src || !out_payload) {
+    return false;
+  }
+  if (expected_num_weights == 0u || src_numel != expected_num_weights) {
+    return false;
+  }
+
+  out_payload_words = ternary_payload_words_2b(expected_num_weights);
+  out_last_word_valid_count = ternary_last_word_valid_count(expected_num_weights);
+  if (out_capacity_words < out_payload_words) {
+    return false;
+  }
+
+  for (uint32_t w = 0u; w < out_payload_words; ++w) {
+    out_payload[w] = 0u;
+  }
+
+  for (uint32_t idx = 0u; idx < expected_num_weights; ++idx) {
+    uint32_t code = 0u;
+    if (!tb_ternary_code_from_fp64(src[idx], code)) {
+      return false;
+    }
+    const uint32_t word_idx = (idx >> 4);          // /16
+    const uint32_t shift = ((idx & 15u) << 1);     // *2
+    out_payload[word_idx] |= ((code & 0x3u) << shift);
+  }
+
+  if (out_last_word_valid_count < 16u) {
+    const uint32_t valid_bits = (out_last_word_valid_count << 1);
+    const uint32_t mask = (1u << valid_bits) - 1u;
+    out_payload[out_payload_words - 1u] &= mask;
+  }
+
+  return true;
+}
+
+static inline bool tb_decode_ternary_code_at(const uint32_t* payload,
+                                           const uint32_t payload_words,
+                                           const uint32_t weight_idx,
+                                           uint32_t& out_code) {
+  if (!payload) {
+    return false;
+  }
+  const uint32_t word_idx = (weight_idx >> 4);      // /16
+  if (word_idx >= payload_words) {
+    return false;
+  }
+  const uint32_t shift = ((weight_idx & 15u) << 1); // *2
+  out_code = (payload[word_idx] >> shift) & 0x3u;
   return true;
 }
 

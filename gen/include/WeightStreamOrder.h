@@ -490,6 +490,59 @@ static inline bool is_quant_linear_inv_sw_weight_slot(const WeightId wid) {
   return (lookup_quant_linear_meta_by_inv_sw_param_id(param_id) != (const QuantLinearMeta*)0);
 }
 
+static inline bool quant_linear_weight_param_id_to_weight_id(const uint32_t param_id, WeightId& out_wid) {
+  switch (param_id) {
+    case 24u: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_WEIGHT; return true;
+    case 27u: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_1_WEIGHT; return true;
+    case 30u: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_2_WEIGHT; return true;
+    case 33u: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_3_WEIGHT; return true;
+    case 36u: out_wid = DECODER_LAYERS_0_FEED_FORWARD_W_1_WEIGHT; return true;
+    case 39u: out_wid = DECODER_LAYERS_0_FEED_FORWARD_W_2_WEIGHT; return true;
+    case 44u: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_0_WEIGHT; return true;
+    case 47u: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_1_WEIGHT; return true;
+    case 50u: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_2_WEIGHT; return true;
+    case 53u: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_3_WEIGHT; return true;
+    case 56u: out_wid = DECODER_LAYERS_1_FEED_FORWARD_W_1_WEIGHT; return true;
+    case 59u: out_wid = DECODER_LAYERS_1_FEED_FORWARD_W_2_WEIGHT; return true;
+    default: return false;
+  }
+}
+
+static inline const QuantLinearMeta* lookup_quant_linear_meta_by_weight_param_id(const uint32_t param_id) {
+  for (uint32_t i = 0u; i < (uint32_t)QUANT_LINEAR_MATRIX_COUNT; ++i) {
+    if (kQuantLinearMeta[i].weight_param_id == param_id) {
+      return &kQuantLinearMeta[i];
+    }
+  }
+  return (const QuantLinearMeta*)0;
+}
+
+static inline bool is_quant_linear_weight_slot(const WeightId wid) {
+  uint32_t param_id = 0u;
+  if (!weight_id_to_param_id(wid, param_id)) {
+    return false;
+  }
+  return (lookup_quant_linear_meta_by_weight_param_id(param_id) != (const QuantLinearMeta*)0);
+}
+
+static inline bool quant_linear_matrix_id_to_weight_id(const uint32_t matrix_id, WeightId& out_wid) {
+  switch (matrix_id) {
+    case QLM_L0_WQ: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_WEIGHT; return true;
+    case QLM_L0_WK: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_1_WEIGHT; return true;
+    case QLM_L0_WV: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_2_WEIGHT; return true;
+    case QLM_L0_WO: out_wid = DECODER_LAYERS_0_SELF_ATTN_LINEARS_3_WEIGHT; return true;
+    case QLM_L0_WFF1: out_wid = DECODER_LAYERS_0_FEED_FORWARD_W_1_WEIGHT; return true;
+    case QLM_L0_WFF2: out_wid = DECODER_LAYERS_0_FEED_FORWARD_W_2_WEIGHT; return true;
+    case QLM_L1_WQ: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_0_WEIGHT; return true;
+    case QLM_L1_WK: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_1_WEIGHT; return true;
+    case QLM_L1_WV: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_2_WEIGHT; return true;
+    case QLM_L1_WO: out_wid = DECODER_LAYERS_1_SELF_ATTN_LINEARS_3_WEIGHT; return true;
+    case QLM_L1_WFF1: out_wid = DECODER_LAYERS_1_FEED_FORWARD_W_1_WEIGHT; return true;
+    case QLM_L1_WFF2: out_wid = DECODER_LAYERS_1_FEED_FORWARD_W_2_WEIGHT; return true;
+    default: return false;
+  }
+}
+
 
 // [legacy] Word address in SRAM for a BIAS tensor (separated flow)
 static inline uint32_t bias_addr_word(BiasId id) {
