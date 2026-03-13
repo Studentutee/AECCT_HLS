@@ -5,7 +5,6 @@
 #include "SoftmaxApproxLutData.h"
 
 static inline softmax_x_t softmax_clamp_x(softmax_x_t x) {
-#pragma hls_inline
   const softmax_x_t neg_t = softmax_x_t(-SoftmaxApproxCfg::SOFTMAX_NEG_T);
   if (x > softmax_x_t(0)) x = softmax_x_t(0);
   if (x < neg_t) x = neg_t;
@@ -13,7 +12,6 @@ static inline softmax_x_t softmax_clamp_x(softmax_x_t x) {
 }
 
 static inline softmax_idx_t softmax_exp_idx(softmax_x_t x_clamped) {
-#pragma hls_inline
   const softmax_x_t mag = softmax_x_t(0) - x_clamped;
   softmax_x_t idx_f = mag * SOFTMAX_EXP_IDX_SCALE;
   int idx_i = (idx_f + softmax_x_t(0.5)).to_int();
@@ -24,14 +22,12 @@ static inline softmax_idx_t softmax_exp_idx(softmax_x_t x_clamped) {
 }
 
 static inline softmax_exp_t softmax_exp_lut(softmax_x_t x) {
-#pragma hls_inline
   softmax_x_t x_c = softmax_clamp_x(x);
   softmax_idx_t idx = softmax_exp_idx(x_c);
   return g_exp_lut[idx];
 }
 
 static inline softmax_sum_t softmax_eps() {
-#pragma hls_inline
   const int k = SoftmaxApproxCfg::EPS_POW2_NEG;
   softmax_sum_t eps = softmax_sum_t(1);
   eps = eps >> k;
@@ -39,14 +35,12 @@ static inline softmax_sum_t softmax_eps() {
 }
 
 static inline softmax_sum_t softmax_sum_floor(softmax_sum_t sumexp) {
-#pragma hls_inline
   softmax_sum_t eps = softmax_eps();
   if (sumexp < eps) sumexp = eps;
   return sumexp;
 }
 
 static inline softmax_idx_t softmax_rcp_idx(softmax_sum_t sumexp_safe) {
-#pragma hls_inline
   const softmax_sum_t one = softmax_sum_t(1);
   const softmax_sum_t maxv = softmax_sum_t(SOFTMAX_SUMEXP_MAX);
   softmax_sum_t s = sumexp_safe;
@@ -64,7 +58,6 @@ static inline softmax_idx_t softmax_rcp_idx(softmax_sum_t sumexp_safe) {
 }
 
 static inline softmax_inv_t softmax_rcp_lut(softmax_sum_t sumexp) {
-#pragma hls_inline
   softmax_sum_t s = softmax_sum_floor(sumexp);
   softmax_idx_t idx = softmax_rcp_idx(s);
   softmax_inv_t inv0 = g_rcp_lut[idx];
@@ -81,7 +74,6 @@ static inline void SoftmaxApprox(
     softmax_prob_t probs_out[MAX_LEN],
     unsigned len
 ) {
-#pragma hls_inline
   if (len == 0u) {
     return;
   }

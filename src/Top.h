@@ -897,8 +897,6 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_in,
         ac_channel<ac_int<32, false> >& data_out
     ) {
-#pragma HLS inline // Catapult-friendly: allow inlining
-
         TopRegs& regs = top_regs();
         u32_t* sram = top_sram();
         (void)top_in_fifo(); // Ensure in_fifo exists in Top contract.
