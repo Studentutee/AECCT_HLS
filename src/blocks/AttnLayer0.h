@@ -93,12 +93,16 @@ static inline void AttnLayer0(
         const uint32_t param_base = (uint32_t)param_base_word.to_uint();
         const QuantLinearMeta live_q_meta = ternary_linear_live_l0_wq_meta();
         const QuantLinearMeta live_k_meta = ternary_linear_live_l0_wk_meta();
+        const QuantLinearMeta live_v_meta = ternary_linear_live_l0_wv_meta();
         const bool live_q_enabled =
             attn_live_qkv_gate_ok(live_q_meta, QLM_L0_WQ, param_base, token_count, d_model);
         const bool live_k_enabled =
             attn_live_qkv_gate_ok(live_k_meta, QLM_L0_WK, param_base, token_count, d_model);
+        const bool live_v_enabled =
+            attn_live_qkv_gate_ok(live_v_meta, QLM_L0_WV, param_base, token_count, d_model);
         bool live_q_ok = live_q_enabled;
         bool live_k_ok = live_k_enabled;
+        bool live_v_ok = live_v_enabled;
         u32_t live_q_inv_sw_bits = (u32_t)0u;
 
         for (uint32_t i = 0; i < tensor_words; ++i) {
@@ -176,6 +180,39 @@ static inline void AttnLayer0(
                     u32_t x = sram[x_in_base + i];
                     sram[k_base + i] = x;
                     sram[k_act_q_base + i] = x;
+                }
+            }
+        }
+
+        if (live_v_enabled) {
+            const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
+            for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
+                const uint32_t x_row_base = x_in_base + t * d_model;
+                const uint32_t v_row_base = v_base + t * d_model;
+                const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
+                for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
+                    u32_t v_bits = 0;
+                    u32_t v_inv_sw_bits = 0;
+                    if (!ternary_linear_live_l0_wv_compute_q_elem(
+                            sram,
+                            param_base_word,
+                            (u32_t)x_row_base,
+                            out,
+                            v_bits,
+                            v_inv_sw_bits)) {
+                        live_v_ok = false;
+                        break;
+                    }
+                    sram[v_row_base + out] = v_bits;
+                    sram[v_act_q_row_base + out] = v_bits;
+                }
+            }
+            if (!live_v_ok) {
+                const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
+                for (uint32_t i = 0; i < tensor_words; ++i) {
+                    u32_t x = sram[x_in_base + i];
+                    sram[v_base + i] = x;
+                    sram[v_act_q_base + i] = x;
                 }
             }
         }

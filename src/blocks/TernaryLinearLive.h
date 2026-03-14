@@ -221,4 +221,48 @@ static inline bool ternary_linear_live_l0_wk_compute_q_elem(
         sram, param_base_word, QLM_L0_WK, x_row_base_word, out_idx, out_q_bits, out_inv_sw_bits);
 }
 
+static inline QuantLinearMeta ternary_linear_live_l0_wv_meta() {
+    return ternary_linear_live_meta(QLM_L0_WV);
+}
+
+static inline bool ternary_linear_live_l0_wv_read_inv_sw_bits(
+    const u32_t* sram,
+    u32_t param_base_word,
+    u32_t& out_inv_sw_bits
+) {
+    return ternary_linear_live_read_inv_sw_bits(sram, param_base_word, QLM_L0_WV, out_inv_sw_bits);
+}
+
+static inline bool ternary_linear_live_l0_wv_decode_code(
+    const u32_t* sram,
+    u32_t param_base_word,
+    uint32_t out_idx,
+    uint32_t in_idx,
+    uint32_t& out_code
+) {
+    return ternary_linear_live_decode_code(sram, param_base_word, QLM_L0_WV, out_idx, in_idx, out_code);
+}
+
+static inline bool ternary_linear_live_l0_wv_decode_weight(
+    const u32_t* sram,
+    u32_t param_base_word,
+    uint32_t out_idx,
+    uint32_t in_idx,
+    quant_w_t& out_w
+) {
+    return ternary_linear_live_decode_weight(sram, param_base_word, QLM_L0_WV, out_idx, in_idx, out_w);
+}
+
+static inline bool ternary_linear_live_l0_wv_compute_q_elem(
+    const u32_t* sram,
+    u32_t param_base_word,
+    u32_t x_row_base_word,
+    uint32_t out_idx,
+    u32_t& out_q_bits,
+    u32_t& out_inv_sw_bits
+) {
+    return ternary_linear_live_compute_q_elem(
+        sram, param_base_word, QLM_L0_WV, x_row_base_word, out_idx, out_q_bits, out_inv_sw_bits);
+}
+
 } // namespace aecct
