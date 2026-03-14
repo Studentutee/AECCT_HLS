@@ -1,5 +1,5 @@
 Catapult / CCS (C++ Base) C++ Code 生成指引（給 Codex 當參考）
-Version: v3.0 (2026-02-27)  // includes v1+v2 full content + addendum integrated
+Version: v3.1 (2026-03-15)  // includes v1+v2 full content + addendum integrated + bring-up pitfalls integrated
 
 本文件目的
 - 讓自動產碼工具（例如 Codex）在產生 Catapult 可合成的 C++（HLS C++）時，有一致的「可合成子集合（synthesizable subset）」與「程式骨架（templates）」可依循。
@@ -239,6 +239,13 @@ CCS_MAIN(int argc, char **argv) {
 - 若你要做共享記憶體 + 兩個子 block 的同步，可用 ac_shared + ac_sync。
   手冊示例：catapult_useref.pdf p.41（ac_sync / ac_shared 範例）。
 
+4.4 Leaf top / block 介面的已知 bring-up pitfall（Codex 必讀）
+- 對 Catapult 的正式介面邊界（例如 `#pragma hls_design top`、`#pragma hls_design interface`、`CCS_BLOCK(run)`）而言，`u32_t *sram` 這種 generic raw pointer 介面，常會被工具視為較鬆散的 external/shared memory 抽象；對 leaf-kernel bring-up 較不穩定。
+- 若此介面真正目的是「把 leaf kernel 需要的固定資料視窗送進去」，優先改成固定大小 array / matrix 加明確 scalar metadata，例如 `u32_t x_row[N]`、`u32_t payload_words[M]`、`u32_t out_row[N]`。
+- 不要把 system-level 的 `whole SRAM + base offsets` 抽象直接搬到 leaf top。leaf top 應優先表達「固定邊界、靜態可分析」的資料契約，而不是新的 generic SRAM owner。
+- raw pointer 較適合用在非介面 helper function、或已受控的 internal plumbing；不要把它當成 leaf top 預設 contract。
+- 即使 C/C++ 語言層面上 `T a[N]` 參數會 decay 成 pointer，對 HLS 介面而言，固定尺寸 array 仍提供較清楚的 interface shape 與靜態分析訊號；請優先保留這種寫法。
+
 ------------------------------------------------------------------------------
 5) loop / array / memory 的可合成寫法重點
 
@@ -338,6 +345,12 @@ CCS_MAIN(int argc, char **argv) {
 7.2 若需要在 design 裡放 debug（不建議常態）
 - 使用 #ifndef __SYNTHESIS__ 包住 debug 行為，避免進 synthesis。
 - 但更乾淨的做法仍是：debug 放 TB。
+
+7.3 SCVerify / Questa TB 入口與結束方式的已知 pitfall
+- TB 優先採 class-based 結構：`CCS_MAIN(...)` 只負責建立 TB class、呼叫 `run_all()`、最後用 `CCS_RETURN(err)` 返回。
+- 不要在 SCVerify/Questa testbench helper 中依賴 `std::exit()` 作為主要結束方式；某些 SystemC/Questa include 會以 macro 形式處理 `exit(...)`，容易造成 namespace collision 或前處理器展開問題。
+- 若 helper 需要回報失敗，優先回傳 `int` / `bool` 給 `CCS_MAIN` 的主流程統一收斂。
+- `mc_scverify.h` 仍必須保持在最後一個 include 之後、任何 function/class definition 之前；不要在 bring-up hotfix 中破壞這個骨架。
 
 ------------------------------------------------------------------------------
 8) Codex 產碼「硬性規格」（請當成生成約束）

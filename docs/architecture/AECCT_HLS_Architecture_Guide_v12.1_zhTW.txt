@@ -1,6 +1,6 @@
 AECCT_HLS_Architecture_Guide（繁體中文版）
-Version: 2026-03-09
-Revision: v12.1 guideC（邏輯資料流 + 實體落點／覆蓋方式整編版；補入 native linear quant v1 + 單一 X_WORK）
+Version: 2026-03-15
+Revision: v12.1 guideD（邏輯資料流 + 實體落點／覆蓋方式整編版；補入 native linear quant v1 + 單一 X_WORK + operator selection notes）
 Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_physical_storage_and_overwrite_zhTW.txt + native linear quant v1 決策
 
 ====================================================================
@@ -80,6 +80,17 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
   - kernel 輸出回到 FP32
 - embed、LPE token、LayerNorm、softmax、residual、FinalEmbedding、OUT_FC、logits / x_pred 在 v1 均維持 FP32 邏輯語意。
 - grouping / zone、SET_QCFG、動態 scale update、E4M3 等僅保留為未來方向，不屬於 v1 主邏輯。
+
+2.3.1 Operator selection / scale path 的架構原則
+- 「少用除法器」在本專案屬於 architecture / datapath 決策，不是單純 code style 規則。是否避免 runtime divide，必須在演算法與微架構設計階段先決定。
+- 若某比例項本質上是 persistent parameter 或 per-matrix fixed metadata（例如 v1 native linear quant 的 `inv_s_w`），推薦把 reciprocal/inverse 視為參數資料的一部分，隨 metadata 一起儲存與載入，運算路徑優先以 multiply 實現，而不是在 leaf kernel 內臨時放入 generic divider。
+- 若某運算本質上需要動態倒數 / 正規化（例如 softmax、LayerNorm 或其他 runtime normalization），則必須明確選擇架構方案：
+  - 直接 divider
+  - reciprocal LUT / piecewise approximation
+  - Newton-Raphson / 其他 iterative reciprocal
+  - 其他可證明數值與 QoR 合理的替代路徑
+- 上述方案的選型應以 latency、面積、功耗、pipeline 深度、scratch 需求、以及數值誤差預算共同決定；不得僅因工具排程困難，就在未經架構確認下把 `/` 任意替換成另一種近似法。
+- v1 native linear quant 路徑下，`s_x` / `inv_s_x` / `inv_s_w` 屬 scale metadata 與 local cache 問題；softmax / LayerNorm / FinalHead 等 FP32 路徑若未正式定義 reciprocal 策略，仍以其原始邏輯語意為先，不在本版自動降格為某種特定近似硬體。
 
 2.4 Input ingest / check_parity 的實體收斂
 - check_parity 的主體建議放在 block-private local array / local RAM backing store。
