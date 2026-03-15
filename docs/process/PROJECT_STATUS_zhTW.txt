@@ -16,7 +16,7 @@ Version: 2026-03-15
 - Step 2 skeleton / contract bring-up 已收斂，m0 smoke 可重現；m1/m2 在既有任務中屬 compile-compatible 證據。
 - docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
 - ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）；Phase A/B/C 的 non-live 對齊亦已存在。
-- ternary live-cut 主線已推進至 P00-011F~P00-011K，且 P00-011L-A 已接受為「repo-tracked 本地 smoke 修復完成」：P11J/P11K 本地 smoke 可跑，且 repo-tracked P11K split-interface top 不再對 `mc_scverify.h` 有本地 hard dependency。
+- ternary live-cut mainline 已接受至 P00-011L-C；P00-011L-A / P00-011L-B / P00-011L-C 皆為 local smoke scope accepted（repo-tracked path），Catapult / SCVerify deferred。
 - Catapult / SCVerify 驗證刻意 deferred，將與後續同 family 項目一起做批次驗證；因此目前不等同 full Catapult closure。
 - global/repo-wide governance open items 仍存在，尚未等同全域 closure。
 
@@ -53,12 +53,14 @@ Version: 2026-03-15
 - [P00-011J] — tiny HLS-prep leaf-kernel + smoke TB + handoff bundle — ACCEPTED（local smoke path established）
 - [P00-011K] — local HLS top wrapper + wrapper smoke + handoff refresh — ACCEPTED（local wrapper smoke established）
 - [P00-011L-A] — repo-tracked split-interface row-kernel top local smoke repair — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011L-B] — same-family extension of split-interface local top for L0_WK + L0_WV — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011L-C] — TB-local family common smoke for L0_WQ / L0_WK / L0_WV — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
 - [M0] — M0 formal closure evidence pack — PASS（global governance open items tracked outside M0 blocking scope）
 
 ====================================================================
 5. Current Open Items
 ====================================================================
-- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A 尚未執行；目前僅接受 local smoke scope。
+- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C is still deferred; current acceptance remains local smoke scope.
 - ternary live-cut 主線雖已推進到 L0_WQ/WK/WV 與 local top smoke，但尚未等同 live runtime full closure，也尚未完成更大範圍 family migration。
 - repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
 - m1/m2 runtime closure 尚未完成（目前主證據重心仍在 m0 baseline 與 task-local ternary smoke）。
@@ -68,9 +70,9 @@ Version: 2026-03-15
 ====================================================================
 6. Recommended Next Step
 ====================================================================
-1. 以同 family / 同驗證入口為單位繼續收斂下一批 ternary live-cut 項目，維持 repo-tracked source + TB 為正式路徑。
-2. 等累積到值得一起驗的一包後，再一次性執行 Catapult / SCVerify 驗證，避免為單一小修反覆切換本地/伺服器環境。
-3. 持續同步更新 `PROJECT_STATUS`、`CLOSURE_MATRIX`、`TRACEABILITY_MAP` 與 task-local report，明確分開 local acceptance 與 deferred closure。
+1. 優先延續 local-scope implementation / validation bundles，維持 repo-tracked source + TB 為正式路徑。
+2. 持續以 repo-tracked local smoke acceptance 為主，避免把 task-local acceptance 誤寫成 full closure。
+3. Catapult / SCVerify closure 維持 deferred，待後續有明確要求再啟動。
 
 ====================================================================
 7. Reading Order for Future Work
@@ -80,4 +82,4 @@ Version: 2026-03-15
 3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`）。
 4. 讀 architecture / module_interface / srammap rules。
 5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
-6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A）。
+6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C）。

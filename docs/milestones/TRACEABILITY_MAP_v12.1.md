@@ -16,7 +16,7 @@
 | Topic | Current Claim | Source of Truth / Evidence | Main Files | Evidence Type | Notes |
 |---|---|---|---|---|---|
 | Governance entry / authority | `GOVERNANCE_ENTRYPOINT.txt` 已作為 repo 治理入口並定義 authority order。 | `GOVERNANCE_ENTRYPOINT.txt` | `GOVERNANCE_ENTRYPOINT.txt` | governance entry | P00-012 以工作項名稱追蹤；repo 無同名正式 report。 |
-| Current project progress | 專案目前狀態已有單點摘要，可快速判讀主線進度與 open items。 | `docs/process/PROJECT_STATUS_zhTW.txt` | `docs/process/PROJECT_STATUS_zhTW.txt` | status summary | 2026-03-15 已補記 P00-011F~P00-011L-A local acceptance / deferred closure。 |
+| Current project progress | 專案目前狀態已有單點摘要，可快速判讀主線進度與 open items。 | `docs/process/PROJECT_STATUS_zhTW.txt` | `docs/process/PROJECT_STATUS_zhTW.txt` | status summary | 2026-03-16 已補記 P00-011F~P00-011L-C local acceptance / deferred closure。 |
 | v12.1 docs baseline freeze | v12.1 文件基線已完成 docs-only freeze。 | `docs/milestones/P00-008_report.md` + `docs/milestones/P00-008_artifacts/verdict.txt` | `docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`<br>`docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt` | milestone report | 屬 `FROZEN-DOCS`，非 implementation closure。 |
 | M0 closure | M0 formal closure 已完成，且明確區分 M0 與全域治理 open items。 | `docs/milestones/M0_report.md` + `docs/milestones/M0_artifacts/verdict.txt` | `docs/milestones/M0_report.md`<br>`docs/milestones/M0_artifacts/closure_checklist.txt` | milestone report | M0 scope 已關閉。 |
 | Pragma hygiene cleanup | project pragma 已收斂為合法 top/interface 形態。 | 現況程式碼檢查（pragma scan） | `design/AecctTop.h` | source implementation | P00-010 以工作項名稱追蹤；無同名正式 report。 |
@@ -25,20 +25,22 @@
 | Ternary Phase C (offline export artifact) | 已有 standalone exporter，並產生 machine-readable artifact。 | `tb/tb_ternary_export_p11c.cpp` + `gen/ternary_p11c_export.json` | `tb/tb_ternary_export_p11c.cpp`<br>`gen/ternary_p11c_export.json` | generated artifact | P00-011C 為工作項名稱引用。 |
 | Ternary live source-side cut chain (F~I) | L0_WQ/WK/WV 的 source-side live cut 已在目前 codebase 推進到 `ATTN_STAGE_QKV`。 | 現況程式碼檢查（leaf helper + `AttnLayer0` call-site + `p11f..p11i` TB） | `src/blocks/TernaryLiveQkvLeafKernel.h`<br>`src/blocks/AttnLayer0.h`<br>`tb/tb_ternary_live_cut_p11f.cpp`<br>`tb/tb_ternary_live_cut_p11i.cpp` | source implementation | repo 內尚未補齊對應 milestone report；應搭配 `PROJECT_STATUS_zhTW.txt` 閱讀其 accepted/deferred 口徑。 |
 | Ternary local smoke path (J / K / L-A) | repo-tracked leaf/local-top/split-interface P11K 本地 smoke 已可執行，且本地不再硬依賴 `mc_scverify.h`；接受範圍限 local smoke。 | `docs/milestones/P00-011L-A_report.md` + `src/blocks/TernaryLiveQkvLeafKernelTop.h` + `tb/tb_ternary_live_leaf_top_smoke_p11k.cpp` | `docs/milestones/P00-011L-A_report.md`<br>`src/blocks/TernaryLiveQkvLeafKernelTop.h`<br>`tb/tb_ternary_live_leaf_smoke_p11j.cpp`<br>`tb/tb_ternary_live_leaf_top_smoke_p11k.cpp` | task-local report + source implementation | Catapult / SCVerify validation deferred；不應誤讀成 full closure。 |
+| Ternary split-interface same-family extension (L-B) | L0_WK / L0_WV split-interface local top 已以同族擴展方式接受，接受範圍限 local smoke。 | `docs/milestones/P00-011L-B_report.md` + repo-tracked source/TB | `docs/milestones/P00-011L-B_report.md`<br>`src/blocks/TernaryLiveQkvLeafKernel.h`<br>`src/blocks/TernaryLiveQkvLeafKernelTop.h`<br>`tb/tb_ternary_live_leaf_top_smoke_p11l_b.cpp` | local smoke evidence / task-local report | implementation/local smoke accepted；Catapult / SCVerify deferred。 |
+| Ternary TB-local family common smoke (L-C) | WQ/WK/WV split-interface top 以 TB-local common driver 收斂，接受範圍限 local smoke。 | `docs/milestones/P00-011L-C_report.md` + repo-tracked TB | `docs/milestones/P00-011L-C_report.md`<br>`tb/tb_ternary_live_leaf_top_smoke_p11l_c.cpp` | local smoke evidence / task-local report | commonization 僅在 TB 內；Catapult / SCVerify deferred。 |
 | Open items: m1/m2 runtime closure | m1/m2 runtime closure 仍未正式完成。 | `docs/process/PROJECT_STATUS_zhTW.txt` | `docs/process/PROJECT_STATUS_zhTW.txt` | status summary | 目前為 open item。 |
 | Open items: full numeric closure | full numeric correctness closure 尚未達成。 | `docs/process/PROJECT_STATUS_zhTW.txt` | `docs/process/PROJECT_STATUS_zhTW.txt` | status summary | 目前為 open item。 |
-| Open items: live ternary migration | live ternary packed payload migration 尚未完成。 | Phase A/B/C + F~L-A 現況 | `include/WeightStreamOrder.h`<br>`src/blocks/TernaryLiveQkvLeafKernel.h`<br>`src/blocks/TernaryLiveQkvLeafKernelTop.h`<br>`tb/tb_ternary_live_leaf_top_smoke_p11k.cpp` | source implementation + task-local report | 已有 non-live 與 local smoke 進展，但尚未 full live closure。 |
+| Open items: live ternary migration | live ternary packed payload migration 尚未完成。 | Phase A/B/C + F~L-C 現況 | `include/WeightStreamOrder.h`<br>`src/blocks/TernaryLiveQkvLeafKernel.h`<br>`src/blocks/TernaryLiveQkvLeafKernelTop.h`<br>`tb/tb_ternary_live_leaf_top_smoke_p11k.cpp`<br>`tb/tb_ternary_live_leaf_top_smoke_p11l_b.cpp`<br>`tb/tb_ternary_live_leaf_top_smoke_p11l_c.cpp` | source implementation + task-local report | 已有 non-live 與 local smoke 進展，但尚未 full live closure。 |
 
 ## 4. Fast Path for New Conversations
 1. `GOVERNANCE_ENTRYPOINT.txt`  
 2. `docs/process/PROJECT_STATUS_zhTW.txt`  
 3. `docs/milestones/CLOSURE_MATRIX_v12.1.md`  
 4. `docs/milestones/TRACEABILITY_MAP_v12.1.md`  
-5. 若任務與 ternary live-cut / local smoke 直接相關，再讀 `docs/milestones/P00-011L-A_report.md` 與對應 `src/blocks` / `tb` 正式檔。  
+5. 若任務與 ternary live-cut / local smoke 直接相關，再讀 `docs/milestones/P00-011L-A_report.md`、`docs/milestones/P00-011L-B_report.md`、`docs/milestones/P00-011L-C_report.md` 與對應 `src/blocks` / `tb` 正式檔。  
 
 ## 5. Known Gaps
 - m1/m2 runtime closure 尚未正式完成。  
 - full numeric closure 尚未完成。  
 - live ternary packed payload migration 尚未完成。  
-- P00-011J / P00-011K / P00-011L-A 目前僅接受 local smoke scope，Catapult / SCVerify 驗證仍待後續批次執行。  
+- P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C 目前僅接受 local smoke scope，Catapult / SCVerify 驗證仍待後續批次執行。  
 - global governance open items 仍需後續 cleanup/waiver resolution。  
