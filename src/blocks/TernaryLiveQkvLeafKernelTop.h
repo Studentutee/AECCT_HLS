@@ -8,6 +8,10 @@
 #include <mc_scverify.h>
 #endif
 
+#ifndef CCS_BLOCK
+#define CCS_BLOCK(name) name
+#endif
+
 namespace aecct {
 
 #pragma hls_design top

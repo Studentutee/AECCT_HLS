@@ -1,5 +1,5 @@
 PROJECT STATUS (zhTW)
-Version: 2026-03-12
+Version: 2026-03-15
 
 ====================================================================
 1. 文件定位
@@ -7,6 +7,7 @@ Version: 2026-03-12
 - 本文件是「當前專案狀態摘要」，用於快速接手與進度對齊。
 - 本文件不是主規格（spec），也不是 milestone verdict 原文。
 - 正式規格以 spec / architecture / rules 文件為準；任務結論以各 milestone report + artifacts verdict 為準。
+- 若某些較新的 task-local acceptance 尚未完整鏡像成正式 milestone bundle，應明確標示 scope 與 deferred 項，不可把 local smoke 當成 full closure。
 
 ====================================================================
 2. Current Overall Status
@@ -14,7 +15,9 @@ Version: 2026-03-12
 - M0 formal closure 已完成（PASS），M0 skeleton/contract/smoke baseline 已具正式證據鏈。
 - Step 2 skeleton / contract bring-up 已收斂，m0 smoke 可重現；m1/m2 在既有任務中屬 compile-compatible 證據。
 - docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
-- ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）。
+- ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）；Phase A/B/C 的 non-live 對齊亦已存在。
+- ternary live-cut 主線已推進至 P00-011F~P00-011K，且 P00-011L-A 已接受為「repo-tracked 本地 smoke 修復完成」：P11J/P11K 本地 smoke 可跑，且 repo-tracked P11K split-interface top 不再對 `mc_scverify.h` 有本地 hard dependency。
+- Catapult / SCVerify 驗證刻意 deferred，將與後續同 family 項目一起做批次驗證；因此目前不等同 full Catapult closure。
 - global/repo-wide governance open items 仍存在，尚未等同全域 closure。
 
 ====================================================================
@@ -34,34 +37,47 @@ Version: 2026-03-12
   - W[out][in] 為數學表示；in contiguous 僅指實體線性化
 
 ====================================================================
-4. Completed Milestones / Patch Tasks
+4. Completed / Accepted Milestones / Patch Tasks
 ====================================================================
 - [P00-005] — Step 2 治理補件與證據收斂 — PARTIAL（technical direction aligned；governance closure pending）
 - [P00-006] — Repo hygiene triage / waiver baseline 建立 — PASS（triage 完成；hygiene gate 仍 open）
 - [P00-007] — Step 2 m0 smoke stabilization / M0 closure prep — PASS（m0 smoke reproduced；m1/m2 compile compatibility pass）
 - [P00-008] — Ternary weight SRAM storage docs freeze（docs-only） — PASS（implementation change not included）
+- [P00-011A] — `_S_W` semantic alignment to `inv_s_w` carrier — PASS（non-live semantic / metadata alignment）
+- [P00-011B] — ternary pack/decode preview（TB-only） — NON-LIVE-VALIDATED（preview / self-check path）
+- [P00-011C] — offline export artifact — NON-LIVE-VALIDATED（machine-readable export exists）
+- [P00-011F] — design-side reusable helper for L0_WQ — ACCEPTED（current accepted progress ledger）
+- [P00-011G] — first source-side call-site cut for L0_WQ — ACCEPTED（current accepted progress ledger）
+- [P00-011H] — same-family extension to L0_WQ + L0_WK — ACCEPTED（current accepted progress ledger）
+- [P00-011I] — `ATTN_STAGE_QKV` 完成 L0_WQ + L0_WK + L0_WV live cut — ACCEPTED（current accepted progress ledger）
+- [P00-011J] — tiny HLS-prep leaf-kernel + smoke TB + handoff bundle — ACCEPTED（local smoke path established）
+- [P00-011K] — local HLS top wrapper + wrapper smoke + handoff refresh — ACCEPTED（local wrapper smoke established）
+- [P00-011L-A] — repo-tracked split-interface row-kernel top local smoke repair — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
 - [M0] — M0 formal closure evidence pack — PASS（global governance open items tracked outside M0 blocking scope）
 
 ====================================================================
 5. Current Open Items
 ====================================================================
+- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A 尚未執行；目前僅接受 local smoke scope。
+- ternary live-cut 主線雖已推進到 L0_WQ/WK/WV 與 local top smoke，但尚未等同 live runtime full closure，也尚未完成更大範圍 family migration。
 - repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
-- m1/m2 runtime closure 尚未完成（目前主證據重心在 m0 baseline 與 M0 closure）。
+- m1/m2 runtime closure 尚未完成（目前主證據重心仍在 m0 baseline 與 task-local ternary smoke）。
 - full numeric correctness / full algorithm closure 尚未完成。
-- ternary SRAM freeze 規格雖已文件凍結，WeightStreamOrder / loader / generator 的完整實作落地與回歸仍待後續任務。
+- ternary SRAM freeze 規格雖已文件凍結，WeightStreamOrder / loader / generator 的完整 live 落地與回歸仍待後續任務。
 
 ====================================================================
 6. Recommended Next Step
 ====================================================================
-1. 啟動「ternary SRAM format 實作對齊」任務：收斂 WeightStreamOrder / loader / generator 與現行 frozen docs。
-2. 啟動「m1/m2 runtime closure」任務：在不回灌 M0 範圍的前提下建立獨立證據包。
-3. 啟動「global hygiene cleanup/waiver resolution」任務：關閉 repo-wide governance open items。
+1. 以同 family / 同驗證入口為單位繼續收斂下一批 ternary live-cut 項目，維持 repo-tracked source + TB 為正式路徑。
+2. 等累積到值得一起驗的一包後，再一次性執行 Catapult / SCVerify 驗證，避免為單一小修反覆切換本地/伺服器環境。
+3. 持續同步更新 `PROJECT_STATUS`、`CLOSURE_MATRIX`、`TRACEABILITY_MAP` 與 task-local report，明確分開 local acceptance 與 deferred closure。
 
 ====================================================================
 7. Reading Order for Future Work
 ====================================================================
 1. 先讀本文件（PROJECT_STATUS）。
-2. 讀主 spec（AECCT_HLS_Spec_v12.1_zhTW.txt）。
-3. 讀 architecture / module_interface / srammap rules。
-4. 讀最新 milestone 報告與 verdict（P00-005~P00-008、M0）。
-5. 最後再進入 code/tb 與下一個里程碑任務。
+2. 讀治理工作流（`docs/process/AECCT_PROJECT_WORKFLOW_v1_zhTW.txt`）。
+3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`）。
+4. 讀 architecture / module_interface / srammap rules。
+5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
+6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A）。
