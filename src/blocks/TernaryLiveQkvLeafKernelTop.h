@@ -1,5 +1,5 @@
 #pragma once
-// Local Catapult-friendly top wrapper for P11J live ternary WQ row kernel.
+// Local Catapult-friendly split-interface top wrapper for P11J live ternary WQ row kernel.
 
 #include "AecctTypes.h"
 #include "TernaryLiveQkvLeafKernel.h"
@@ -13,21 +13,23 @@ namespace aecct {
 #pragma hls_design top
 class TernaryLiveL0WqRowTop {
 public:
+    TernaryLiveL0WqRowTop() {}
+
 #pragma hls_design interface
-    bool run(
-        u32_t* sram,
-        u32_t param_base_word,
-        u32_t x_row_base_word,
-        u32_t out_row_base_word,
-        u32_t out_act_q_row_base_word,
+    bool CCS_BLOCK(run)(
+        const u32_t x_row[kTernaryLiveL0WqCols],
+        const u32_t payload_words[kTernaryLiveL0WqPayloadWords],
+        u32_t inv_sw_bits,
+        u32_t out_row[kTernaryLiveL0WqRows],
+        u32_t out_act_q_row[kTernaryLiveL0WqRows],
         u32_t& out_inv_sw_bits
     ) {
-        return ternary_live_l0_wq_materialize_row_kernel(
-            sram,
-            param_base_word,
-            x_row_base_word,
-            out_row_base_word,
-            out_act_q_row_base_word,
+        return ternary_live_l0_wq_materialize_row_kernel_split(
+            x_row,
+            payload_words,
+            inv_sw_bits,
+            out_row,
+            out_act_q_row,
             out_inv_sw_bits);
     }
 };
