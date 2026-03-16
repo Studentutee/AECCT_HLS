@@ -104,72 +104,209 @@ function Read-P11nSig {
     }
 }
 
-function Invoke-PreSynthCheck {
+function To-RepoRelativePath {
     param(
         [string]$RepoRoot,
-        [string]$ScriptRelPath
+        [string]$Path
+    )
+
+    $root = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd('\')
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if ($full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $rel = $full.Substring($root.Length).TrimStart('\', '/')
+        return ($rel -replace '\\', '/')
+    }
+    return ($Path -replace '\\', '/')
+}
+
+function Invoke-CheckScript {
+    param(
+        [string]$RepoRoot,
+        [string]$ScriptRelPath,
+        [string]$CheckKey,
+        [System.Collections.IDictionary]$StatusTable,
+        [string[]]$ExtraArgs = @()
     )
 
     $scriptPath = Join-Path $RepoRoot $ScriptRelPath
     if (-not (Test-Path $scriptPath)) {
-        throw "pre-synth check script missing: $ScriptRelPath"
+        $StatusTable[$CheckKey] = 'FAIL'
+        throw "check script missing: $ScriptRelPath"
     }
 
-    Write-Host ("[p11o][PRECHECK] start {0}" -f $ScriptRelPath)
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot
+    Write-Host ("[p11p][PRECHECK] start {0}" -f $CheckKey)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot @ExtraArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "pre-synth check failed: $ScriptRelPath (exit=$LASTEXITCODE)"
+        $StatusTable[$CheckKey] = 'FAIL'
+        throw "check script failed: $ScriptRelPath (exit=$LASTEXITCODE)"
     }
-    Write-Host ("[p11o][PRECHECK] pass {0}" -f $ScriptRelPath)
+    $StatusTable[$CheckKey] = 'PASS'
+    Write-Host ("[p11p][PRECHECK] pass {0}" -f $CheckKey)
 }
 
-function Write-WarningSummary {
+function Write-WarningSummaryP11P {
     param(
-        [string]$BuildDirPath
+        [string]$RepoRoot,
+        [string[]]$BuildLogs,
+        [string]$OutPath
     )
 
-    Write-Host "[p11o][WARN_SUMMARY] begin"
-    try {
-        $buildLogs = Get-ChildItem -Path $BuildDirPath -File -Filter 'build_*.log' -ErrorAction SilentlyContinue | Sort-Object Name
-        if (-not $buildLogs -or $buildLogs.Count -eq 0) {
-            Write-Host "[p11o][WARN_SUMMARY] no build logs found"
-            Write-Host "[p11o][WARN_SUMMARY] policy=summary-only-nonblocking"
-            Write-Host "[p11o][WARN_SUMMARY] end"
-            return
+    $lines = New-Object System.Collections.Generic.List[string]
+    $perLog = [ordered]@{}
+    $totalWarnings = 0
+
+    $lines.Add('[p11p][WARN_SUMMARY] begin')
+    foreach ($logPath in $BuildLogs) {
+        if (-not (Test-Path $logPath)) {
+            throw "required build log missing for warning summary: $logPath"
         }
+        $warnHits = Select-String -Path $logPath -Pattern '\bwarning\b' -AllMatches -CaseSensitive:$false
+        $warnCount = ($warnHits | Measure-Object).Count
+        $totalWarnings += $warnCount
 
-        $total = 0
-        foreach ($log in $buildLogs) {
-            $warnHits = Select-String -Path $log.FullName -Pattern '\bwarning\b' -AllMatches -CaseSensitive:$false
-            $warnCount = ($warnHits | Measure-Object).Count
-            $total += $warnCount
+        $rel = To-RepoRelativePath -RepoRoot $RepoRoot -Path $logPath
+        $perLog[$rel] = $warnCount
+        $lines.Add(("[p11p][WARN_SUMMARY] {0}: warnings={1}" -f $rel, $warnCount))
 
-            Write-Host ("[p11o][WARN_SUMMARY] {0}: warnings={1}" -f $log.Name, $warnCount)
-            if ($warnCount -gt 0) {
-                $samples = $warnHits | Select-Object -First 2
-                foreach ($sample in $samples) {
-                    Write-Host ("[p11o][WARN_SAMPLE] {0}: {1}" -f $log.Name, $sample.Line.Trim())
-                }
+        if ($warnCount -gt 0) {
+            $samples = $warnHits | Select-Object -First 2
+            foreach ($sample in $samples) {
+                $lines.Add(("[p11p][WARN_SAMPLE] {0}: {1}" -f $rel, $sample.Line.Trim()))
             }
         }
-        Write-Host ("[p11o][WARN_SUMMARY] total_warnings={0}" -f $total)
-        Write-Host "[p11o][WARN_SUMMARY] policy=summary-only-nonblocking"
     }
-    catch {
-        Write-Host ("[p11o][WARN_SUMMARY] skipped due to parser error: {0}" -f $_.Exception.Message)
-        Write-Host "[p11o][WARN_SUMMARY] policy=summary-only-nonblocking"
+
+    $lines.Add(("[p11p][WARN_SUMMARY] total_warnings={0}" -f $totalWarnings))
+    $lines.Add('[p11p][WARN_SUMMARY] policy=allowlist-only-nonblocking')
+    $lines.Add('[p11p][WARN_SUMMARY] end')
+
+    $lines | Set-Content -Path $OutPath -Encoding UTF8
+    foreach ($line in $lines) {
+        Write-Host $line
     }
-    Write-Host "[p11o][WARN_SUMMARY] end"
+
+    return [ordered]@{
+        total_warnings = $totalWarnings
+        per_log = $perLog
+        policy = 'allowlist-only-nonblocking'
+    }
 }
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+function Write-EvidenceManifest {
+    param(
+        [string]$OutPath,
+        [string]$TaskId,
+        [string]$Overall,
+        [hashtable]$Artifacts
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('# EVIDENCE_MANIFEST_p11p')
+    $lines.Add(("task_id: {0}" -f $TaskId))
+    $lines.Add(("overall: {0}" -f $Overall))
+    $lines.Add(("build_dir: {0}" -f $Artifacts['build_dir']))
+    $lines.Add(("one_shot_run_log: {0}" -f $Artifacts['one_shot_run_log']))
+    $lines.Add(("warning_summary: {0}" -f $Artifacts['warning_summary']))
+    $lines.Add(("summary_markdown: {0}" -f $Artifacts['summary_markdown']))
+    $lines.Add(("verdict_json: {0}" -f $Artifacts['verdict_json']))
+    $lines.Add('core_raw_run_logs:')
+    foreach ($item in $Artifacts['core_raw_run_logs']) {
+        $lines.Add(("- {0}" -f $item))
+    }
+
+    $lines | Set-Content -Path $OutPath -Encoding UTF8
+}
+
+function Write-EvidenceSummary {
+    param(
+        [string]$OutPath,
+        [string]$TaskId,
+        [string]$Overall,
+        [hashtable]$Prechecks,
+        [hashtable]$Regression,
+        [hashtable]$Compares,
+        [hashtable]$Artifacts,
+        [hashtable]$WarningSummary
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add(("# {0} Evidence Summary" -f $TaskId))
+    $lines.Add('')
+    $lines.Add(('overall: `{0}`' -f $Overall))
+    $lines.Add('')
+
+    $lines.Add('## Prechecks')
+    foreach ($k in $Prechecks.Keys) {
+        $lines.Add(('- `{0}`: `{1}`' -f $k, $Prechecks[$k]))
+    }
+    $lines.Add('')
+
+    $lines.Add('## Regression')
+    foreach ($k in $Regression.Keys) {
+        $lines.Add(('- `{0}`: `{1}`' -f $k, $Regression[$k]))
+    }
+    $lines.Add('')
+
+    $lines.Add('## Compares')
+    foreach ($k in $Compares.Keys) {
+        $cmpJson = $Compares[$k] | ConvertTo-Json -Compress -Depth 8
+        $lines.Add(('- `{0}`: `{1}`' -f $k, $cmpJson))
+    }
+    $lines.Add('')
+
+    $lines.Add('## Warning Summary')
+    $lines.Add(('- `total_warnings`: `{0}`' -f $WarningSummary['total_warnings']))
+    $lines.Add(('- `policy`: `{0}`' -f $WarningSummary['policy']))
+    $lines.Add('')
+
+    $lines.Add('## Artifacts')
+    foreach ($k in $Artifacts.Keys) {
+        $v = $Artifacts[$k]
+        if ($v -is [System.Array]) {
+            $lines.Add(('- `{0}`:' -f $k))
+            foreach ($entry in $v) {
+                $lines.Add(('  - `{0}`' -f $entry))
+            }
+        }
+        else {
+            $lines.Add(('- `{0}`: `{1}`' -f $k, $v))
+        }
+    }
+
+    $lines | Set-Content -Path $OutPath -Encoding UTF8
+}
+
+function Write-VerdictJson {
+    param(
+        [string]$OutPath,
+        [string]$TaskId,
+        [string]$Overall,
+        [hashtable]$Prechecks,
+        [hashtable]$Regression,
+        [hashtable]$Compares,
+        [hashtable]$Artifacts
+    )
+
+    $payload = [ordered]@{
+        task_id = $TaskId
+        overall = $Overall
+        prechecks = $Prechecks
+        regression = $Regression
+        compares = $Compares
+        artifacts = $Artifacts
+    }
+    $payload | ConvertTo-Json -Depth 12 | Set-Content -Path $OutPath -Encoding UTF8
+}
+
+$taskId = 'P00-011P'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 Push-Location $repoRoot
 try {
     New-Item -ItemType Directory -Force -Path $BuildDir > $null
 
-    Invoke-PreSynthCheck -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_design_purity.ps1'
-    Invoke-PreSynthCheck -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_interface_lock.ps1'
-    Invoke-PreSynthCheck -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_macro_hygiene.ps1'
+    $prechecks = [ordered]@{}
+    $regression = [ordered]@{}
+    $compares = [ordered]@{}
 
     $exeP11j = Join-Path $BuildDir 'tb_ternary_live_leaf_smoke_p11j.exe'
     $exeP11k = Join-Path $BuildDir 'tb_ternary_live_leaf_top_smoke_p11k.exe'
@@ -197,6 +334,17 @@ try {
     $logRunP11mMacro = Join-Path $BuildDir 'run_p11m_macro.log'
     $logRunP11nBaseline = Join-Path $BuildDir 'run_p11n_baseline.log'
     $logRunP11nMacro = Join-Path $BuildDir 'run_p11n_macro.log'
+
+    $warningSummaryPath = Join-Path $BuildDir 'warning_summary_p11p.txt'
+    $evidenceSummaryPath = Join-Path $BuildDir 'EVIDENCE_SUMMARY_p11p.md'
+    $evidenceManifestPath = Join-Path $BuildDir 'EVIDENCE_MANIFEST_p11p.txt'
+    $verdictJsonPath = Join-Path $BuildDir 'verdict_p11p.json'
+    $expectedOneShotRunLog = Join-Path $BuildDir 'run_p11p_regression.log'
+
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_repo_hygiene.ps1' -CheckKey 'check_repo_hygiene_pre' -StatusTable $prechecks -ExtraArgs @('-Phase', 'pre', '-BuildDir', $BuildDir)
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_design_purity.ps1' -CheckKey 'check_design_purity' -StatusTable $prechecks
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_interface_lock.ps1' -CheckKey 'check_interface_lock' -StatusTable $prechecks
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_macro_hygiene.ps1' -CheckKey 'check_macro_hygiene' -StatusTable $prechecks
 
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_smoke_p11j.cpp' $exeP11j $logBuildP11j
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_top_smoke_p11k.cpp' $exeP11k $logBuildP11k
@@ -231,10 +379,25 @@ try {
     Require-PassString $logRunP11nMacro '[p11n][PASS] source-side WK integration path exact-match equivalent to split-interface local top'
     Require-PassString $logRunP11nMacro '[p11n][PASS] source-side WV integration path exact-match equivalent to split-interface local top'
 
+    $regression['p11j'] = 'PASS'
+    $regression['p11k'] = 'PASS'
+    $regression['p11l_b'] = 'PASS'
+    $regression['p11l_c'] = 'PASS'
+    $regression['p11m_baseline'] = 'PASS'
+    $regression['p11m_macro'] = 'PASS'
+    $regression['p11n_baseline'] = 'PASS'
+    $regression['p11n_macro'] = 'PASS'
+    $regression['final_pass_string'] = 'PASS'
+
     $kvBaseline = Read-KvSig $logRunP11mBaseline
     $kvMacro = Read-KvSig $logRunP11mMacro
     if ($kvBaseline.K -ne $kvMacro.K -or $kvBaseline.V -ne $kvMacro.V) {
         throw "KV signature mismatch baseline vs macro: baseline(K=$($kvBaseline.K),V=$($kvBaseline.V)) macro(K=$($kvMacro.K),V=$($kvMacro.V))"
+    }
+    $compares['p11m_kv_signature_equal'] = [ordered]@{
+        status = 'PASS'
+        baseline = [ordered]@{ K = $kvBaseline.K; V = $kvBaseline.V }
+        macro = [ordered]@{ K = $kvMacro.K; V = $kvMacro.V }
     }
 
     $p11nBaseline = Read-P11nSig $logRunP11nBaseline
@@ -242,8 +405,56 @@ try {
     if ($p11nBaseline.WK -ne $p11nMacro.WK -or $p11nBaseline.WV -ne $p11nMacro.WV) {
         throw "P11N signature mismatch baseline vs macro: baseline(WK=$($p11nBaseline.WK),WV=$($p11nBaseline.WV)) macro(WK=$($p11nMacro.WK),WV=$($p11nMacro.WV))"
     }
+    $compares['p11n_wk_wv_signature_equal'] = [ordered]@{
+        status = 'PASS'
+        baseline = [ordered]@{ WK = $p11nBaseline.WK; WV = $p11nBaseline.WV }
+        macro = [ordered]@{ WK = $p11nMacro.WK; WV = $p11nMacro.WV }
+    }
 
-    Write-WarningSummary -BuildDirPath $BuildDir
+    $allowedBuildLogs = @(
+        $logBuildP11j,
+        $logBuildP11k,
+        $logBuildP11lb,
+        $logBuildP11lc,
+        $logBuildP11mBaseline,
+        $logBuildP11mMacro,
+        $logBuildP11nBaseline,
+        $logBuildP11nMacro
+    )
+    $warningSummary = Write-WarningSummaryP11P -RepoRoot $repoRoot -BuildLogs $allowedBuildLogs -OutPath $warningSummaryPath
+
+    $artifacts = [ordered]@{
+        build_dir = To-RepoRelativePath -RepoRoot $repoRoot -Path $BuildDir
+        one_shot_run_log = To-RepoRelativePath -RepoRoot $repoRoot -Path $expectedOneShotRunLog
+        warning_summary = To-RepoRelativePath -RepoRoot $repoRoot -Path $warningSummaryPath
+        summary_markdown = To-RepoRelativePath -RepoRoot $repoRoot -Path $evidenceSummaryPath
+        manifest = To-RepoRelativePath -RepoRoot $repoRoot -Path $evidenceManifestPath
+        verdict_json = To-RepoRelativePath -RepoRoot $repoRoot -Path $verdictJsonPath
+        core_raw_run_logs = @(
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11j),
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11k),
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11lb),
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11lc),
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11mBaseline),
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11mMacro),
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11nBaseline),
+            (To-RepoRelativePath -RepoRoot $repoRoot -Path $logRunP11nMacro)
+        )
+    }
+
+    $prechecks['check_repo_hygiene_post'] = 'PENDING'
+    $overall = 'PENDING_POSTCHECK'
+
+    Write-EvidenceManifest -OutPath $evidenceManifestPath -TaskId $taskId -Overall $overall -Artifacts $artifacts
+    Write-EvidenceSummary -OutPath $evidenceSummaryPath -TaskId $taskId -Overall $overall -Prechecks $prechecks -Regression $regression -Compares $compares -Artifacts $artifacts -WarningSummary $warningSummary
+    Write-VerdictJson -OutPath $verdictJsonPath -TaskId $taskId -Overall $overall -Prechecks $prechecks -Regression $regression -Compares $compares -Artifacts $artifacts
+
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_repo_hygiene.ps1' -CheckKey 'check_repo_hygiene_post' -StatusTable $prechecks -ExtraArgs @('-Phase', 'post', '-BuildDir', $BuildDir)
+
+    $overall = 'PASS'
+    Write-EvidenceManifest -OutPath $evidenceManifestPath -TaskId $taskId -Overall $overall -Artifacts $artifacts
+    Write-EvidenceSummary -OutPath $evidenceSummaryPath -TaskId $taskId -Overall $overall -Prechecks $prechecks -Regression $regression -Compares $compares -Artifacts $artifacts -WarningSummary $warningSummary
+    Write-VerdictJson -OutPath $verdictJsonPath -TaskId $taskId -Overall $overall -Prechecks $prechecks -Regression $regression -Compares $compares -Artifacts $artifacts
 
     Write-Host "PASS: run_p11l_local_regression"
     exit 0
