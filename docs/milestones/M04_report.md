@@ -1,4 +1,4 @@
-# M04 Report
+﻿# M04 Report
 
 ## Goal/DoD
 - Align `tb_top_m4` to v11.7.2 contract for `OP_SET_W_BASE` success response (`RSP_OK`).

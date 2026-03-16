@@ -1,1 +1,1 @@
-PASS: design-side weights.h removed in ALLOW design files, tb_top_m4 run passed, and gates passed.
+﻿PASS: design-side weights.h removed in ALLOW design files, tb_top_m4 run passed, and gates passed.

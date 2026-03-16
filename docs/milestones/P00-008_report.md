@@ -1,4 +1,4 @@
-# P00-008 Report — Ternary Weight SRAM Storage Spec Update (docs-only)
+﻿# P00-008 Report — Ternary Weight SRAM Storage Spec Update (docs-only)
 
 ## Goal / Scope
 - 任務目標：將 ternary weight 在 SRAM 的存放規格正式補入現有 docs，並收斂為可審核的凍結條文。

@@ -1,4 +1,4 @@
-# P00-011L-D Report — QKV Local-Smoke Consolidation Super Bundle
+﻿# P00-011L-D Report — QKV Local-Smoke Consolidation Super Bundle
 
 ## Goal / Scope
 - 目標：在 local smoke scope 內完成 QKV split-interface family 的中型整包收斂。

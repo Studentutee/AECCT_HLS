@@ -1,4 +1,4 @@
-M tb/tb_top_m5.cpp - Align OP_SET_W_BASE success expectation to RSP_OK and fix mojibake-swallowed statements/comments.
+﻿M tb/tb_top_m5.cpp - Align OP_SET_W_BASE success expectation to RSP_OK and fix mojibake-swallowed statements/comments.
 A docs/milestones/M05_report.md - Add M05 patch report with repro commands and results.
 A docs/milestones/M05_artifacts/build.log - Record m5 compile output and gates output.
 A docs/milestones/M05_artifacts/run_tb.log - Record m5 runtime output.

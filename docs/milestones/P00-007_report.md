@@ -1,4 +1,4 @@
-# P00-007 Report
+﻿# P00-007 Report
 
 ## Goal / Scope
 - 任務目標: 將 Step 2 skeleton/contract bring-up 收斂為可重現的 `tb_top_m0` smoke baseline，作為 M0 closure 前置準備。

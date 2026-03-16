@@ -2,99 +2,99 @@
 Version: 2026-03-16
 
 ====================================================================
-1. ?辣摰?
+1. 文件定位
 ====================================================================
-- ?祆?隞嗆???獢???閬??冽敹恍???脣漲撠???
-- ?祆?隞嗡??臭蜓閬嚗pec嚗?銋???milestone verdict ????
-- 甇??閬隞?spec / architecture / rules ?辣?箸?嚗遙??隢誑??milestone report + artifacts verdict ?箸???
-- ?交?鈭??啁? task-local acceptance 撠摰?∪??迤撘?milestone bundle嚗??Ⅱ璅內 scope ??deferred ??銝??local smoke ?嗆? full closure??
+- 本文件是「當前專案狀態摘要」，用於快速接手與進度對齊。
+- 本文件不是主規格（spec），也不是 milestone verdict 原文。
+- 正式規格以 spec / architecture / rules 文件為準；任務結論以各 milestone report + artifacts verdict 為準。
+- 若某些較新的 task-local acceptance 尚未完整鏡像成正式 milestone bundle，應明確標示 scope 與 deferred 項，不可把 local smoke 當成 full closure。
 
 ====================================================================
 2. Current Overall Status
 ====================================================================
-- M0 formal closure 撌脣???PASS嚗?M0 skeleton/contract/smoke baseline 撌脣甇??霅???
-- Step 2 skeleton / contract bring-up 撌脫??m0 smoke ?舫??橘?m1/m2 ?冽?遙?葉撅?compile-compatible 霅???
-- docs baseline 撌脫? v12.1嚗 single-X_WORK?EAD_MEM state gating?odule/srammap 閬?銝?游???
-- ternary weight SRAM storage 閬撌脣???docs-only ??嚗00-008嚗?Phase A/B/C ??non-live 撠?鈭血歇摮??
-- ternary live-cut mainline 撌脫? P00-011Q嚗00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R ? local-only accepted progress嚗ocal smoke / local static checks scope, repo-tracked path嚗?Catapult / SCVerify deferred??
-- P00-011L-D 撌脫憓?repo-tracked Windows local regression script嚗蒂隞?`build\p11l_d\*.log` 摰? p11j/p11k/p11l_b/p11l_c ?憚?? PASS??
-- `build\p11l_d_probe` ?? preflight / baseline probe嚗?雿 P00-011L-D acceptance evidence??
-- P00-011M 撌脣???WQ source-side integration slice嚗ocal-only嚗?隞?dual-binary嚗aseline/macro嚗撘?霅?`KV_SIG` 銝?湛?銝血 macro build 銝?霅?`Q/Q_act_q/Q_sx` ??`TernaryLiveL0WqRowTop` direct reference exact-match嚗迤撘?evidence 靘???`build\p11m\*.log`??
-- P00-011N 撌脣???WK/WV source-side integration slice嚗ocal-only嚗?隞?family unified dual-binary嚗aseline/macro嚗撘?霅?`WK_SIG/WV_SIG` 銝?湛?銝血 macro build 銝?霅?WK/WV source-side integration 撠?split-interface local top direct reference exact-match嚗WQ_SIG` ??頛鞈?銝???compare gate嚗迤撘?evidence 靘???`build\p11n\*.log`??
-- P00-011O 撌脣???synthesis-safe local gate + regression hardening嚗ocal-only嚗?one-shot ?亥? `build\p11n\run_p11o_regression.log` ???嗆? pre-synth checks banner ??regression verdict嚗蒂靽? `p11j/p11k/p11l_b/p11l_c/p11m/p11n` coverage嚗arning ??summary 銝蔣??exit code??
-- P00-011P 撌脣???reproducible evidence bundle + repo hygiene fail-fast gate嚗ocal-only嚗?one-shot `build\p11n\run_p11p_regression.log` ???箏? bundle嚗anifest/summary/warning/verdict JSON嚗?`warning_summary_p11p.txt` ?絞閮?allowlist build logs嚗蒂??`check_repo_hygiene.ps1 -Phase post` 撽? verdict ??parse ??manifest 敹?璇??
-- P00-011Q 撌脣???Local-Only Handoff Freeze + Static Boundary Lock嚗憓?handoff-boundary ?辣??`scripts/check_handoff_surface.ps1`嚗re/post嚗??? accepted local-only handoff surface嚗蒂隞?`build\p11q\check_handoff_surface.log` + `build\p11q\run_p11p_regression.log` ?? execution evidence嚗ocal smoke / local static checks != full Catapult closure嚗eferred items are intentional??
-- P00-011R completed as first Catapult-facing compile-prep probe (single-slice representative), local compiler evidence only, not Catapult closure, not SCVerify closure; accepted local-only progress remains valid and P00-011Q freeze boundary remains authoritative baseline.
-- Catapult / SCVerify 撽??餅? deferred嚗???蝥? family ?銝韏瑕??寞活撽?嚗?甇斤??蝑? full Catapult closure??
-- global/repo-wide governance open items 隞??剁?撠蝑??典? closure??
+- M0 formal closure 已完成（PASS），M0 skeleton/contract/smoke baseline 已具正式證據鏈。
+- Step 2 skeleton / contract bring-up 已收斂，m0 smoke 可重現；m1/m2 在既有任務中屬 compile-compatible 證據。
+- docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
+- ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）；Phase A/B/C 的 non-live 對齊亦已存在。
+- ternary live-cut mainline 已接受至 P00-011R；P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R 皆為 local-only accepted progress（repo-tracked path），其中 P00-011R 的定位是 first Catapult-facing compile-prep probe（single-slice representative, local compiler evidence only），Catapult / SCVerify 仍 deferred。
+- P00-011L-D 已新增 repo-tracked Windows local regression script，並以 `build\p11l_d\*.log` 完成 p11j/p11k/p11l_b/p11l_c 同輪重跑 PASS。
+- `build\p11l_d_probe` 僅作 preflight / baseline probe，不作為 P00-011L-D acceptance evidence。
+- P00-011M 已完成 WQ source-side integration slice（local-only）：以 dual-binary（baseline/macro）方式驗證 `KV_SIG` 一致，並在 macro build 下驗證 `Q/Q_act_q/Q_sx` 與 `TernaryLiveL0WqRowTop` direct reference exact-match；正式 evidence 來源為 `build\p11m\*.log`。
+- P00-011N 已完成 WK/WV source-side integration slice（local-only）：以 family unified dual-binary（baseline/macro）方式驗證 `WK_SIG/WV_SIG` 一致，並在 macro build 下驗證 WK/WV source-side integration 對 split-interface local top direct reference exact-match；`WQ_SIG` 僅作輔助資訊不列入 compare gate；正式 evidence 來源為 `build\p11n\*.log`。
+- P00-011O 已完成 synthesis-safe local gate + regression hardening（local-only）：one-shot 日誌 `build\p11n\run_p11o_regression.log` 同檔收斂 pre-synth checks banner 與 regression verdict，並保留 `p11j/p11k/p11l_b/p11l_c/p11m/p11n` coverage；warning 僅 summary 不影響 exit code。
+- P00-011P 已完成 reproducible evidence bundle + repo hygiene fail-fast gate（local-only）：one-shot `build\p11n\run_p11p_regression.log` 生成固定 bundle（manifest/summary/warning/verdict JSON），`warning_summary_p11p.txt` 僅統計 allowlist build logs，並由 `check_repo_hygiene.ps1 -Phase post` 驗證 verdict 可 parse 與 manifest 必要條目。
+- P00-011Q 已完成 Local-Only Handoff Freeze + Static Boundary Lock：新增 handoff-boundary 文件與 `scripts/check_handoff_surface.ps1`（pre/post），凍結 accepted local-only handoff surface，並以 `build\p11q\check_handoff_surface.log` + `build\p11q\run_p11p_regression.log` 提供 execution evidence；local smoke / local static checks != full Catapult closure，deferred items are intentional。
+- P00-011R 已完成 first Catapult-facing compile-prep probe：新增 single-slice（`L0_WQ`）compile-prep top、class-based TB、compile-prep static checker 與 local runner，並以 `build\p11r\check_compile_prep_surface.log`、`build\p11r\run_p11r_compile_prep.log`、`build\p11r\build_p11r_compile_prep.log` 與 `build\p11r\run_p11p_regression.log` 提供本地編譯/執行證據；此項仍屬 local compiler evidence only，不等同 Catapult closure 或 SCVerify closure。
+- Catapult / SCVerify 驗證刻意 deferred，將與後續同 family 項目一起做批次驗證；因此目前不等同 full Catapult closure。
+- global/repo-wide governance open items 仍存在，尚未等同全域 closure。
 
 ====================================================================
-3. Frozen Baseline嚗歇???箇?嚗?
+3. Frozen Baseline（已凍結基線）
 ====================================================================
-- Top ?臬銝 SRAM owner嚗鈭?SRAM 隞脰???lifetime/free-point ??Top 蝞∠???
-- 憭 4-channel contract ?箏?嚗trl_cmd / ctrl_rsp / data_in / data_out??
-- block contract ??Top 撘瑟??base/cfg/token_range/tile_range/phase_id嚗?
-- single-X_WORK baseline 撌脣?蝯?W_REGION ??runtime scratch 銝?alias??
-- FinalHead 甇????Pass A / Pass B嚗ass bridge ?賣 SCRATCH.FINAL_SCALAR_BUF??
-- READ_MEM state gating 撌脣?蝯?IDLE/HALTED ??嚗ctive state ??RSP_ERR(ERR_BAD_STATE)嚗??data_out 瘛瑟???
-- ternary SRAM storage 閬??撌脣?蝯?
-  - codebook嚗?0=0??1=+1??1=-1??0 illegal
-  - 2-bit packing??2-bit word=16 weights?SB-first
-  - last_word_valid_count=1..16嚗遛頛?16嚗ail padding=0
-  - per-matrix inv_s_w?atrix record嚗ogical section format嚗????箏? physical base offset嚗?
-  - W[out][in] ?箸摮貉”蝷綽?in contiguous ??撖阡?蝺批?
+- Top 是唯一 SRAM owner；共享 SRAM 仲裁與 lifetime/free-point 由 Top 管理。
+- 外部 4-channel contract 固定：ctrl_cmd / ctrl_rsp / data_in / data_out。
+- block contract 採 Top 強控型（base/cfg/token_range/tile_range/phase_id）。
+- single-X_WORK baseline 已凍結；W_REGION 與 runtime scratch 不 alias。
+- FinalHead 正式為 Pass A / Pass B，Pass bridge 落於 SCRATCH.FINAL_SCALAR_BUF。
+- READ_MEM state gating 已凍結：IDLE/HALTED 合法；active state 回 RSP_ERR(ERR_BAD_STATE)，避免 data_out 混流。
+- ternary SRAM storage 規格摘要已凍結：
+  - codebook：00=0、01=+1、11=-1、10 illegal
+  - 2-bit packing、32-bit word=16 weights、LSB-first
+  - last_word_valid_count=1..16（滿載=16）、tail padding=0
+  - per-matrix inv_s_w、matrix record（logical section format，非手動固定 physical base offset）
+  - W[out][in] 為數學表示；in contiguous 僅指實體線性化
 
 ====================================================================
 4. Completed / Accepted Milestones / Patch Tasks
 ====================================================================
-- [P00-005] ??Step 2 瘝餌?鋆辣???????PARTIAL嚗echnical direction aligned嚗overnance closure pending嚗?
-- [P00-006] ??Repo hygiene triage / waiver baseline 撱箇? ??PASS嚗riage 摰?嚗ygiene gate 隞?open嚗?
-- [P00-007] ??Step 2 m0 smoke stabilization / M0 closure prep ??PASS嚗0 smoke reproduced嚗1/m2 compile compatibility pass嚗?
-- [P00-008] ??Ternary weight SRAM storage docs freeze嚗ocs-only嚗???PASS嚗mplementation change not included嚗?
-- [P00-011A] ??`_S_W` semantic alignment to `inv_s_w` carrier ??PASS嚗on-live semantic / metadata alignment嚗?
-- [P00-011B] ??ternary pack/decode preview嚗B-only嚗???NON-LIVE-VALIDATED嚗review / self-check path嚗?
-- [P00-011C] ??offline export artifact ??NON-LIVE-VALIDATED嚗achine-readable export exists嚗?
-- [P00-011F] ??design-side reusable helper for L0_WQ ??ACCEPTED嚗urrent accepted progress ledger嚗?
-- [P00-011G] ??first source-side call-site cut for L0_WQ ??ACCEPTED嚗urrent accepted progress ledger嚗?
-- [P00-011H] ??same-family extension to L0_WQ + L0_WK ??ACCEPTED嚗urrent accepted progress ledger嚗?
-- [P00-011I] ??`ATTN_STAGE_QKV` 摰? L0_WQ + L0_WK + L0_WV live cut ??ACCEPTED嚗urrent accepted progress ledger嚗?
-- [P00-011J] ??tiny HLS-prep leaf-kernel + smoke TB + handoff bundle ??ACCEPTED嚗ocal smoke path established嚗?
-- [P00-011K] ??local HLS top wrapper + wrapper smoke + handoff refresh ??ACCEPTED嚗ocal wrapper smoke established嚗?
-- [P00-011L-A] ??repo-tracked split-interface row-kernel top local smoke repair ??ACCEPTED嚗ocal smoke scope嚗atapult / SCVerify deferred嚗?
-- [P00-011L-B] ??same-family extension of split-interface local top for L0_WK + L0_WV ??ACCEPTED嚗ocal smoke scope嚗atapult / SCVerify deferred嚗?
-- [P00-011L-C] ??TB-local family common smoke for L0_WQ / L0_WK / L0_WV ??ACCEPTED嚗ocal smoke scope嚗atapult / SCVerify deferred嚗?
-- [P00-011L-D] ??QKV local-smoke consolidation super bundle嚗indows local regression packaging + governance sync嚗???ACCEPTED嚗ocal smoke scope嚗atapult / SCVerify deferred嚗?
-- [P00-011M] ??WQ source-side integration slice + dual-binary KV signature validation嚗ocal-only嚗???ACCEPTED嚗ocal smoke scope嚗atapult / SCVerify deferred嚗?
-- [P00-011N] ??WK/WV source-side integration slice + family unified dual-binary signature validation嚗ocal-only嚗???ACCEPTED嚗ocal smoke scope嚗atapult / SCVerify deferred嚗?
-- [P00-011O] ??synthesis-safe local bundle + regression hardening + governance closure prep嚗ocal-only嚗???ACCEPTED嚗ocal smoke scope嚗atapult / SCVerify deferred嚗?
-- [P00-011P] ??reproducible evidence bundle + repo hygiene gate + single-command handoff pack嚗ocal-only嚗???ACCEPTED嚗ocal smoke / local static checks scope嚗atapult / SCVerify deferred嚗?
-- [P00-011Q] ??Local-Only Handoff Freeze + Static Boundary Lock嚗ocal-only嚗???ACCEPTED嚗ocal smoke / local static checks scope嚗atapult / SCVerify deferred嚗ot full Catapult closure嚗?
-- [P00-011R] — First Catapult-Facing Compile-Prep Probe (single-slice, local compiler only) — ACCEPTED (local compile-prep probe scope; not Catapult closure; not SCVerify closure).
-- [M0] ??M0 formal closure evidence pack ??PASS嚗lobal governance open items tracked outside M0 blocking scope嚗?
+- [P00-005] — Step 2 治理補件與證據收斂 — PARTIAL（technical direction aligned；governance closure pending）
+- [P00-006] — Repo hygiene triage / waiver baseline 建立 — PASS（triage 完成；hygiene gate 仍 open）
+- [P00-007] — Step 2 m0 smoke stabilization / M0 closure prep — PASS（m0 smoke reproduced；m1/m2 compile compatibility pass）
+- [P00-008] — Ternary weight SRAM storage docs freeze（docs-only） — PASS（implementation change not included）
+- [P00-011A] — `_S_W` semantic alignment to `inv_s_w` carrier — PASS（non-live semantic / metadata alignment）
+- [P00-011B] — ternary pack/decode preview（TB-only） — NON-LIVE-VALIDATED（preview / self-check path）
+- [P00-011C] — offline export artifact — NON-LIVE-VALIDATED（machine-readable export exists）
+- [P00-011F] — design-side reusable helper for L0_WQ — ACCEPTED（current accepted progress ledger）
+- [P00-011G] — first source-side call-site cut for L0_WQ — ACCEPTED（current accepted progress ledger）
+- [P00-011H] — same-family extension to L0_WQ + L0_WK — ACCEPTED（current accepted progress ledger）
+- [P00-011I] — `ATTN_STAGE_QKV` 完成 L0_WQ + L0_WK + L0_WV live cut — ACCEPTED（current accepted progress ledger）
+- [P00-011J] — tiny HLS-prep leaf-kernel + smoke TB + handoff bundle — ACCEPTED（local smoke path established）
+- [P00-011K] — local HLS top wrapper + wrapper smoke + handoff refresh — ACCEPTED（local wrapper smoke established）
+- [P00-011L-A] — repo-tracked split-interface row-kernel top local smoke repair — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011L-B] — same-family extension of split-interface local top for L0_WK + L0_WV — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011L-C] — TB-local family common smoke for L0_WQ / L0_WK / L0_WV — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011L-D] — QKV local-smoke consolidation super bundle（Windows local regression packaging + governance sync） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011M] — WQ source-side integration slice + dual-binary KV signature validation（local-only） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011N] — WK/WV source-side integration slice + family unified dual-binary signature validation（local-only） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011O] — synthesis-safe local bundle + regression hardening + governance closure prep（local-only） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011P] — reproducible evidence bundle + repo hygiene gate + single-command handoff pack（local-only） — ACCEPTED（local smoke / local static checks scope；Catapult / SCVerify deferred）
+- [P00-011Q] — Local-Only Handoff Freeze + Static Boundary Lock（local-only） — ACCEPTED（local smoke / local static checks scope；Catapult / SCVerify deferred；not full Catapult closure）
+- [P00-011R] — first Catapult-facing compile-prep probe（single-slice representative, local compiler only） — ACCEPTED（compile-prep probe scope；Catapult / SCVerify deferred；not full closure）
+- [M0] — M0 formal closure evidence pack — PASS（global governance open items tracked outside M0 blocking scope）
 
 ====================================================================
 5. Current Open Items
 ====================================================================
-- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R is still deferred; current acceptance remains local-only progress under local smoke / local static checks scope.
-- ternary live-cut 銝餌??歇?券脣 L0_WQ/WK/WV ??local top smoke嚗?撠蝑? live runtime full closure嚗?撠摰??游之蝭? family migration??
-- repo/global governance open items 撠?典? closure嚗ygiene cleanup / waiver resolution 隞?敺?隞餃?嚗?
-- m1/m2 runtime closure 撠摰?嚗?蜓霅???隞 m0 baseline ??task-local ternary smoke嚗?
-- full numeric correctness / full algorithm closure 撠摰???
-- ternary SRAM freeze 閬?歇?辣??嚗eightStreamOrder / loader / generator ????live ?賢??甇訾?敺?蝥遙??
+- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R is still deferred; current acceptance remains local-only progress under local smoke / local static checks / compile-prep probe scope.
+- ternary live-cut 主線雖已推進到 L0_WQ/WK/WV、local top smoke 與單一 slice compile-prep probe，但尚未等同 live runtime full closure，也尚未完成更大範圍 family migration。
+- repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
+- m1/m2 runtime closure 尚未完成（目前主證據重心仍在 m0 baseline 與 task-local ternary smoke / compile-prep probe）。
+- full numeric correctness / full algorithm closure 尚未完成。
+- ternary SRAM freeze 規格雖已文件凍結，WeightStreamOrder / loader / generator 的完整 live 落地與回歸仍待後續任務。
 
 ====================================================================
 6. Recommended Next Step
 ====================================================================
-1. ?芸?撱嗥? local-scope implementation / validation bundles嚗雁??repo-tracked source + TB ?箸迤撘楝敺?
-2. ??隞?repo-tracked local smoke acceptance ?箔蜓嚗?? task-local acceptance 隤文神??full closure??
-3. Catapult / SCVerify closure 蝬剜? deferred嚗?敺???蝣箄?瘙?????
+1. 在 `P00-011Q` freeze boundary 與 `P00-011R` compile-prep probe 基礎上，延續同 family 的最小 compile-prep / validation bundles，維持 repo-tracked source + TB 為正式路徑。
+2. 持續以 repo-tracked local smoke / local static checks / compile-prep probe acceptance 為主，避免把 task-local acceptance 誤寫成 full closure。
+3. Catapult / SCVerify closure 維持 deferred，待同 family probe 累積到足夠批次後再啟動。
 
 ====================================================================
 7. Reading Order for Future Work
 ====================================================================
-1. ???祆?隞塚?PROJECT_STATUS嚗?
-2. 霈瘝餌?撌乩?瘚?`docs/process/AECCT_PROJECT_WORKFLOW_v1_zhTW.txt`嚗?
-3. 霈銝?spec嚗docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`嚗?
-4. 霈 architecture / module_interface / srammap rules??
-5. 霈 closure / traceability 蝝Ｗ?嚗CLOSURE_MATRIX_v12.1.md`?TRACEABILITY_MAP_v12.1.md`嚗?
-6. ?敺??脣???ternary task-local source / TB / report嚗?交 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q嚗?
+1. 先讀本文件（PROJECT_STATUS）。
+2. 讀治理工作流（`docs/process/AECCT_PROJECT_WORKFLOW_v1_zhTW.txt`）。
+3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`）。
+4. 讀 architecture / module_interface / srammap rules。
+5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
+6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R）。

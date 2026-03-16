@@ -1,4 +1,4 @@
-# P00-003 Report
+﻿# P00-003 Report
 
 ## Goal/DoD
 - Align `CFG_COMMIT` success response to v11.7.2: `RSP_OK(OP_CFG_COMMIT)`.

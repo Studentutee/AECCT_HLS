@@ -1,4 +1,4 @@
-M AECCT_ac_ref/synth/RefStep0Synth.cpp - Synth attention softmax moved to online single-pass update in both regions; added boundary-only INT8 activation saturation helper; kept FinalHead semantics and conservative logical-name comments.
+﻿M AECCT_ac_ref/synth/RefStep0Synth.cpp - Synth attention softmax moved to online single-pass update in both regions; added boundary-only INT8 activation saturation helper; kept FinalHead semantics and conservative logical-name comments.
 M AECCT_ac_ref/src/RefModel.cpp - Added boundary-only INT8 activation saturation helper in native linear helpers; attention accumulation switched to online softmax update with trace-only probability materialization retained for minimality.
 A docs/milestones/PREF-001_report.md - PREF-001 scope, alignment summary, deferred mismatches, patch-local verification, and environment limitations.
 A docs/milestones/PREF-001_artifacts/diff.patch - Scoped code diff for PREF-001.

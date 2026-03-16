@@ -1,4 +1,4 @@
-# P00-009 Report
+﻿# P00-009 Report
 
 ## Goal / Scope
 - Goal: 初始化 `docs/process/PROJECT_STATUS_zhTW.txt`，建立可快速接手的專案狀態摘要。

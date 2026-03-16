@@ -1,4 +1,4 @@
-# P00-011L-A Report — Repo-Tracked Split-Interface Local Smoke Repair
+﻿# P00-011L-A Report — Repo-Tracked Split-Interface Local Smoke Repair
 
 ## Goal / Scope
 - 目標：修復 repo-tracked `tb/tb_ternary_live_leaf_top_smoke_p11k.cpp` 與 `src/blocks/TernaryLiveQkvLeafKernelTop.h`，讓 split-interface P11K smoke 在無 `mc_scverify.h` 的本地環境可 build + run。

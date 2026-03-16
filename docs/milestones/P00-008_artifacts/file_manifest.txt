@@ -1,4 +1,4 @@
-P00-008 file manifest (reconciliation run)
+﻿P00-008 file manifest (reconciliation run)
 
 existing file patched
 - docs/milestones/P00-008_report.md

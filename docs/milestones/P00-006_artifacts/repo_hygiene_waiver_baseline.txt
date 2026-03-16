@@ -1,4 +1,4 @@
-P00-006 Repo Hygiene Waiver Baseline (Initial)
+﻿P00-006 Repo Hygiene Waiver Baseline (Initial)
 Date: 2026-03-12
 
 Item: HYG-002 (.vs/AECCT_HLS.slnx/v18/HierarchyCache.v1.txt BOM finding)

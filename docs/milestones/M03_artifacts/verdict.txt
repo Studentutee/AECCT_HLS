@@ -1,1 +1,1 @@
-PASS: tb_top_m3 build+run and gates passed.
+﻿PASS: tb_top_m3 build+run and gates passed.

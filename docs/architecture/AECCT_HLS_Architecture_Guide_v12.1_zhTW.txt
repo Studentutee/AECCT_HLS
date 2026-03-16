@@ -1,4 +1,4 @@
-AECCT_HLS_Architecture_Guide（繁體中文版）
+﻿AECCT_HLS_Architecture_Guide（繁體中文版）
 Version: 2026-03-15
 Revision: v12.1 guideD（邏輯資料流 + 實體落點／覆蓋方式整編版；補入 native linear quant v1 + 單一 X_WORK + operator selection notes）
 Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_physical_storage_and_overwrite_zhTW.txt + native linear quant v1 決策

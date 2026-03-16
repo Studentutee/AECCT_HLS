@@ -1,1 +1,1 @@
-PASS: ternary weight SRAM storage documentation update completed. No implementation change is included in P00-008.
+﻿PASS: ternary weight SRAM storage documentation update completed. No implementation change is included in P00-008.

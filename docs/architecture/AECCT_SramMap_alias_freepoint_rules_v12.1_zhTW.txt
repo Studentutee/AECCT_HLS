@@ -1,4 +1,4 @@
-AECCT SramMap / Alias / Free-Point Rules v12.1（繁體中文版）
+﻿AECCT SramMap / Alias / Free-Point Rules v12.1（繁體中文版）
 
 Version: 2026-03-11
 Revision: v12.1 draftA

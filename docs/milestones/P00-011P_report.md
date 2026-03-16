@@ -1,4 +1,4 @@
-# P00-011P Report - Reproducible Evidence Bundle + Repo Hygiene Gate + Single-Command Handoff Pack (Local-Only)
+﻿# P00-011P Report - Reproducible Evidence Bundle + Repo Hygiene Gate + Single-Command Handoff Pack (Local-Only)
 
 ## 1. Summary
 - Completed P00-011P in local-only scope without changing public signatures, Top contract, block graph, dispatcher, quant policy, or algorithm semantics.

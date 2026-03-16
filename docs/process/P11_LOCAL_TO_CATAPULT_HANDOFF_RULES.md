@@ -1,4 +1,4 @@
-# P11 Local to Catapult Handoff Rules
+﻿# P11 Local to Catapult Handoff Rules
 
 ## Purpose
 - Freeze the accepted local-only handoff boundary for the QKV live-cut family.

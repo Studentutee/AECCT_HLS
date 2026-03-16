@@ -1,4 +1,4 @@
-# P00-011L-B Report — WK/WV Same-Family Split-Interface Local Top Extension
+﻿# P00-011L-B Report — WK/WV Same-Family Split-Interface Local Top Extension
 
 ## Goal / Scope
 - 目標：把既有 `L0_WQ` split-interface local top 擴展到 `L0_WK + L0_WV`。

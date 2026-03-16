@@ -1,4 +1,4 @@
-M .gitignore - Repository hygiene configuration update.
+﻿M .gitignore - Repository hygiene configuration update.
 M gen/ModelDesc.h - Generated model/map headers refreshed by pipeline.
 M gen/ModelShapes.h - Generated model/map headers refreshed by pipeline.
 M gen/SramMap.h - Generated model/map headers refreshed by pipeline.

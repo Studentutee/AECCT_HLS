@@ -1,4 +1,4 @@
-M0 Formal Closure Checklist
+﻿M0 Formal Closure Checklist
 Evidence baseline commit: 390d49c
 
 Columns:

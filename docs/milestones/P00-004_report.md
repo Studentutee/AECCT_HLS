@@ -1,4 +1,4 @@
-# P00-004 Report
+﻿# P00-004 Report
 
 ## Goal/DoD
 - Remove design-side `weights.h` dependency from allowed design files.

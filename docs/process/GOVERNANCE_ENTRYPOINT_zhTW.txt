@@ -1,4 +1,4 @@
-GOVERNANCE_ENTRYPOINT_zhTW.txt
+﻿GOVERNANCE_ENTRYPOINT_zhTW.txt
 ================================
 
 文件定位

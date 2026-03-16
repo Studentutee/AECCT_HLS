@@ -1,4 +1,4 @@
-PATCH_ID: PREF-001
+﻿PATCH_ID: PREF-001
 DATE: 2026-03-10
 SCOPE: algorithm-ref alignment (synth-first, minimal scope)
 

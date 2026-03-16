@@ -1,4 +1,4 @@
-M src/Top.h - Change CFG_COMMIT success response from DONE to OK.
+﻿M src/Top.h - Change CFG_COMMIT success response from DONE to OK.
 M tb/tb_top_m3.cpp - Change CFG_COMMIT success expectations to RSP_OK and normalize header comment.
 M tb/tb_top_m6.cpp - Change CFG_COMMIT success expectation to RSP_OK and restore swallowed OP_SOFT_RESET call in Case 5.
 M tb/tb_top_m9.cpp - Change CFG_COMMIT success expectation to RSP_OK and add trace-optional guards.

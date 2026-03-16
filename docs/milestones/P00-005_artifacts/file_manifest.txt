@@ -1,4 +1,4 @@
-M README.md - existing file patched (AUTO block updated for P00-005 Step 2 status/commands/limits).
+﻿M README.md - existing file patched (AUTO block updated for P00-005 Step 2 status/commands/limits).
 A docs/milestones/P00-005_report.md - new file added (P00-005 governance report).
 A docs/milestones/P00-005_artifacts/build.log - new file added (build/gate evidence with environment metadata).
 A docs/milestones/P00-005_artifacts/run_tb.log - new file added (tb_top_m0 smoke evidence + skipped runtime notes).

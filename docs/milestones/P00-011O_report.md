@@ -1,4 +1,4 @@
-# P00-011O Report - Synthesis-Safe Local Bundle + Regression Hardening + Governance Closure Prep (Local-Only)
+﻿# P00-011O Report - Synthesis-Safe Local Bundle + Regression Hardening + Governance Closure Prep (Local-Only)
 
 ## 1. Summary
 - Completed local-only pre-synth gate integration without changing public signatures, Top contract, algorithm, quant policy, block graph, or dispatcher behavior.

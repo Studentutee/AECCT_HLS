@@ -1,4 +1,4 @@
-# P00-011Q Report - Local-Only Handoff Freeze + Static Boundary Lock
+﻿# P00-011Q Report - Local-Only Handoff Freeze + Static Boundary Lock
 
 ## Summary
 - Delivered a minimal handoff freeze for the accepted local-only QKV live-cut family.

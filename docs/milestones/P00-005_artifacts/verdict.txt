@@ -1,1 +1,1 @@
-PARTIAL: technical direction aligned, governance closure pending (check_repo_hygiene FAIL with pre-existing findings).
+﻿PARTIAL: technical direction aligned, governance closure pending (check_repo_hygiene FAIL with pre-existing findings).

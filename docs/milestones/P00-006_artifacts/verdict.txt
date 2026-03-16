@@ -1,2 +1,2 @@
-PASS: hygiene triage and waiver baseline completed.
+﻿PASS: hygiene triage and waiver baseline completed.
 Repo hygiene gate remains open; cleanup/waiver resolution pending.

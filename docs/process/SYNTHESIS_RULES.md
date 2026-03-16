@@ -1,4 +1,4 @@
-# SYNTHESIS_RULES
+﻿# SYNTHESIS_RULES
 
 ## Purpose
 - Define a local-only synthesis-safe gate for pre-synth hygiene checks and regression entry.

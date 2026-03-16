@@ -1,4 +1,4 @@
-# M0 Formal Closure Report
+﻿# M0 Formal Closure Report
 
 ## Goal / Scope
 - Goal: 完成 M0 formal closure evidence pack，正式收斂 Step 2 skeleton/contract baseline 與 m0 smoke 可重現性。

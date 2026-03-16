@@ -1,4 +1,4 @@
-# P00-011N Report — WK/WV Source-Side Integration Slice + Family Unified Dual-Binary Signature Validation (Local-Only)
+﻿# P00-011N Report — WK/WV Source-Side Integration Slice + Family Unified Dual-Binary Signature Validation (Local-Only)
 
 ## 1. Summary
 - Completed `P00-011N` in local smoke scope without regressing accepted `P00-011M` behavior.

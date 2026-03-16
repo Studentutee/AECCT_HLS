@@ -1,4 +1,4 @@
-M src/Top.h - Align CFG_COMMIT success response from RSP_DONE to RSP_OK in ST_CFG_RX.
+﻿M src/Top.h - Align CFG_COMMIT success response from RSP_DONE to RSP_OK in ST_CFG_RX.
 M tb/tb_top_m3.cpp - Align CFG_COMMIT success expectation to RSP_OK and convert header comment to English.
 A docs/milestones/M03_report.md - Add M03 patch report.
 A docs/milestones/M03_artifacts/build.log - Record m3 build output and gates output.

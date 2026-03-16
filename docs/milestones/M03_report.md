@@ -1,4 +1,4 @@
-# M03 Report
+﻿# M03 Report
 
 ## Goal/DoD
 - Align `CFG_COMMIT` success response contract to `RSP_OK` in Top and M03 TB expectations.

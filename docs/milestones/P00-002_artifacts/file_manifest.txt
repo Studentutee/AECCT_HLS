@@ -1,4 +1,4 @@
-M tb/tb_top_m4.cpp - Update SET_W_BASE expectation to RSP_OK and restore statements swallowed by mojibake comments.
+﻿M tb/tb_top_m4.cpp - Update SET_W_BASE expectation to RSP_OK and restore statements swallowed by mojibake comments.
 M tb/tb_top_m5.cpp - Update SET_W_BASE expectation to RSP_OK and restore statements swallowed by mojibake comments.
 M README.md - AUTO block updated with P00-002 build/run commands and validation stamp.
 A docs/milestones/P00-002_report.md - Patch-level report with scope, repro, and results.

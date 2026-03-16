@@ -1,4 +1,4 @@
-AECCT_HLS_Spec（繁體中文版）
+﻿AECCT_HLS_Spec（繁體中文版）
 Version: 2026-03-09
 Revision: v12.1 revC（硬體規格版；量化策略收斂為 AECCT 原生 linear quant v1 + 單一 X_WORK）
 Source baseline: AECCT_HLS_Spec_v12_zhTW.txt + v12.1 pending/logical/physical 分流整編 + native linear quant v1 決策

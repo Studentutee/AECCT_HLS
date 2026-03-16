@@ -1,4 +1,4 @@
-# P00-011M Report — WQ Source-Side Integration Slice + Dual-Binary KV Signature Validation (Local-Only)
+﻿# P00-011M Report — WQ Source-Side Integration Slice + Dual-Binary KV Signature Validation (Local-Only)
 
 ## Goal / Scope
 - 目標：在 local smoke scope 內，將 `AttnLayer0<ATTN_STAGE_QKV>` 的 `L0_WQ` source-side path 接到 split-interface local top（單一 integration slice）。

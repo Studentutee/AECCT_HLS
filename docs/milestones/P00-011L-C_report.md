@@ -1,4 +1,4 @@
-# P00-011L-C Report — TB-Local Family Common Smoke for QKV Split-Interface Tops
+﻿# P00-011L-C Report — TB-Local Family Common Smoke for QKV Split-Interface Tops
 
 ## Goal / Scope
 - 目標：以 TB-local common driver 整理 `L0_WQ / L0_WK / L0_WV` split-interface local top smoke。
