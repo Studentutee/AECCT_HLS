@@ -104,10 +104,72 @@ function Read-P11nSig {
     }
 }
 
+function Invoke-PreSynthCheck {
+    param(
+        [string]$RepoRoot,
+        [string]$ScriptRelPath
+    )
+
+    $scriptPath = Join-Path $RepoRoot $ScriptRelPath
+    if (-not (Test-Path $scriptPath)) {
+        throw "pre-synth check script missing: $ScriptRelPath"
+    }
+
+    Write-Host ("[p11o][PRECHECK] start {0}" -f $ScriptRelPath)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $scriptPath -RepoRoot $RepoRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "pre-synth check failed: $ScriptRelPath (exit=$LASTEXITCODE)"
+    }
+    Write-Host ("[p11o][PRECHECK] pass {0}" -f $ScriptRelPath)
+}
+
+function Write-WarningSummary {
+    param(
+        [string]$BuildDirPath
+    )
+
+    Write-Host "[p11o][WARN_SUMMARY] begin"
+    try {
+        $buildLogs = Get-ChildItem -Path $BuildDirPath -File -Filter 'build_*.log' -ErrorAction SilentlyContinue | Sort-Object Name
+        if (-not $buildLogs -or $buildLogs.Count -eq 0) {
+            Write-Host "[p11o][WARN_SUMMARY] no build logs found"
+            Write-Host "[p11o][WARN_SUMMARY] policy=summary-only-nonblocking"
+            Write-Host "[p11o][WARN_SUMMARY] end"
+            return
+        }
+
+        $total = 0
+        foreach ($log in $buildLogs) {
+            $warnHits = Select-String -Path $log.FullName -Pattern '\bwarning\b' -AllMatches -CaseSensitive:$false
+            $warnCount = ($warnHits | Measure-Object).Count
+            $total += $warnCount
+
+            Write-Host ("[p11o][WARN_SUMMARY] {0}: warnings={1}" -f $log.Name, $warnCount)
+            if ($warnCount -gt 0) {
+                $samples = $warnHits | Select-Object -First 2
+                foreach ($sample in $samples) {
+                    Write-Host ("[p11o][WARN_SAMPLE] {0}: {1}" -f $log.Name, $sample.Line.Trim())
+                }
+            }
+        }
+        Write-Host ("[p11o][WARN_SUMMARY] total_warnings={0}" -f $total)
+        Write-Host "[p11o][WARN_SUMMARY] policy=summary-only-nonblocking"
+    }
+    catch {
+        Write-Host ("[p11o][WARN_SUMMARY] skipped due to parser error: {0}" -f $_.Exception.Message)
+        Write-Host "[p11o][WARN_SUMMARY] policy=summary-only-nonblocking"
+    }
+    Write-Host "[p11o][WARN_SUMMARY] end"
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Push-Location $repoRoot
 try {
     New-Item -ItemType Directory -Force -Path $BuildDir > $null
+
+    Invoke-PreSynthCheck -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_design_purity.ps1'
+    Invoke-PreSynthCheck -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_interface_lock.ps1'
+    Invoke-PreSynthCheck -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_macro_hygiene.ps1'
 
     $exeP11j = Join-Path $BuildDir 'tb_ternary_live_leaf_smoke_p11j.exe'
     $exeP11k = Join-Path $BuildDir 'tb_ternary_live_leaf_top_smoke_p11k.exe'
@@ -180,6 +242,8 @@ try {
     if ($p11nBaseline.WK -ne $p11nMacro.WK -or $p11nBaseline.WV -ne $p11nMacro.WV) {
         throw "P11N signature mismatch baseline vs macro: baseline(WK=$($p11nBaseline.WK),WV=$($p11nBaseline.WV)) macro(WK=$($p11nMacro.WK),WV=$($p11nMacro.WV))"
     }
+
+    Write-WarningSummary -BuildDirPath $BuildDir
 
     Write-Host "PASS: run_p11l_local_regression"
     exit 0

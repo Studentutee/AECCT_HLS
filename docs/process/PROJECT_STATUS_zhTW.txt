@@ -16,11 +16,12 @@ Version: 2026-03-16
 - Step 2 skeleton / contract bring-up 已收斂，m0 smoke 可重現；m1/m2 在既有任務中屬 compile-compatible 證據。
 - docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
 - ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）；Phase A/B/C 的 non-live 對齊亦已存在。
-- ternary live-cut mainline 已接受至 P00-011N；P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N 皆為 local smoke scope accepted（repo-tracked path），Catapult / SCVerify deferred。
+- ternary live-cut mainline 已接受至 P00-011O；P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O 皆為 local smoke scope accepted（repo-tracked path），Catapult / SCVerify deferred。
 - P00-011L-D 已新增 repo-tracked Windows local regression script，並以 `build\p11l_d\*.log` 完成 p11j/p11k/p11l_b/p11l_c 同輪重跑 PASS。
 - `build\p11l_d_probe` 僅作 preflight / baseline probe，不作為 P00-011L-D acceptance evidence。
 - P00-011M 已完成 WQ source-side integration slice（local-only）：以 dual-binary（baseline/macro）方式驗證 `KV_SIG` 一致，並在 macro build 下驗證 `Q/Q_act_q/Q_sx` 與 `TernaryLiveL0WqRowTop` direct reference exact-match；正式 evidence 來源為 `build\p11m\*.log`。
 - P00-011N 已完成 WK/WV source-side integration slice（local-only）：以 family unified dual-binary（baseline/macro）方式驗證 `WK_SIG/WV_SIG` 一致，並在 macro build 下驗證 WK/WV source-side integration 對 split-interface local top direct reference exact-match；`WQ_SIG` 僅作輔助資訊不列入 compare gate；正式 evidence 來源為 `build\p11n\*.log`。
+- P00-011O 已完成 synthesis-safe local gate + regression hardening（local-only）：one-shot 日誌 `build\p11n\run_p11o_regression.log` 同檔收斂 pre-synth checks banner 與 regression verdict，並保留 `p11j/p11k/p11l_b/p11l_c/p11m/p11n` coverage；warning 僅 summary 不影響 exit code。
 - Catapult / SCVerify 驗證刻意 deferred，將與後續同 family 項目一起做批次驗證；因此目前不等同 full Catapult closure。
 - global/repo-wide governance open items 仍存在，尚未等同全域 closure。
 
@@ -62,12 +63,13 @@ Version: 2026-03-16
 - [P00-011L-D] — QKV local-smoke consolidation super bundle（Windows local regression packaging + governance sync） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
 - [P00-011M] — WQ source-side integration slice + dual-binary KV signature validation（local-only） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
 - [P00-011N] — WK/WV source-side integration slice + family unified dual-binary signature validation（local-only） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
+- [P00-011O] — synthesis-safe local bundle + regression hardening + governance closure prep（local-only） — ACCEPTED（local smoke scope；Catapult / SCVerify deferred）
 - [M0] — M0 formal closure evidence pack — PASS（global governance open items tracked outside M0 blocking scope）
 
 ====================================================================
 5. Current Open Items
 ====================================================================
-- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N is still deferred; current acceptance remains local smoke scope.
+- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O is still deferred; current acceptance remains local smoke scope.
 - ternary live-cut 主線雖已推進到 L0_WQ/WK/WV 與 local top smoke，但尚未等同 live runtime full closure，也尚未完成更大範圍 family migration。
 - repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
 - m1/m2 runtime closure 尚未完成（目前主證據重心仍在 m0 baseline 與 task-local ternary smoke）。
@@ -89,4 +91,4 @@ Version: 2026-03-16
 3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`）。
 4. 讀 architecture / module_interface / srammap rules。
 5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
-6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N）。
+6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O）。
