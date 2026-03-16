@@ -9,6 +9,7 @@
 #include "QuantDesc.h"
 #include "SoftmaxApprox.h"
 #include "TernaryLinearLive.h"
+#include "TernaryLiveQkvLeafKernelTop.h"
 
 namespace aecct {
 
@@ -115,6 +116,58 @@ static inline void AttnLayer0(
 
         if (live_q_enabled) {
             const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
+#if defined(AECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE)
+            const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
+            const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
+            if (live_q_meta.rows != kTernaryLiveL0WqRows ||
+                live_q_meta.cols != kTernaryLiveL0WqCols ||
+                live_q_meta.payload_words_2b != kTernaryLiveL0WqPayloadWords ||
+                live_q_payload_meta.len_w < kTernaryLiveL0WqPayloadWords ||
+                live_q_inv_meta.len_w == 0u) {
+                live_q_ok = false;
+            }
+            u32_t payload_words[kTernaryLiveL0WqPayloadWords];
+            u32_t x_row[kTernaryLiveL0WqCols];
+            u32_t out_row[kTernaryLiveL0WqRows];
+            u32_t out_act_q_row[kTernaryLiveL0WqRows];
+            if (live_q_ok) {
+                const uint32_t payload_base = param_base + live_q_payload_meta.offset_w;
+                for (uint32_t i = 0u; i < kTernaryLiveL0WqPayloadWords; ++i) {
+                    payload_words[i] = sram[payload_base + i];
+                }
+                const uint32_t inv_sw_addr = param_base + live_q_inv_meta.offset_w;
+                const u32_t live_q_inv_sw_input = sram[inv_sw_addr];
+                TernaryLiveL0WqRowTop live_q_top;
+                for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+                    const uint32_t x_row_base = x_in_base + t * d_model;
+                    const uint32_t q_row_base = q_base + t * d_model;
+                    const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
+                    for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
+                        x_row[in] = sram[x_row_base + in];
+                    }
+                    u32_t out_inv_sw_bits = (u32_t)0u;
+                    if (!live_q_top.run(
+                            x_row,
+                            payload_words,
+                            live_q_inv_sw_input,
+                            out_row,
+                            out_act_q_row,
+                            out_inv_sw_bits)) {
+                        live_q_ok = false;
+                        break;
+                    }
+                    if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_q_inv_sw_input.to_uint()) {
+                        live_q_ok = false;
+                        break;
+                    }
+                    for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
+                        sram[q_row_base + out] = out_row[out];
+                        sram[q_act_q_row_base + out] = out_act_q_row[out];
+                    }
+                    live_q_inv_sw_bits = out_inv_sw_bits;
+                }
+            }
+#else
             for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
                 const uint32_t x_row_base = x_in_base + t * d_model;
                 const uint32_t q_row_base = q_base + t * d_model;
@@ -137,6 +190,7 @@ static inline void AttnLayer0(
                     live_q_inv_sw_bits = inv_sw_bits;
                 }
             }
+#endif
         }
 
         if (!live_q_ok) {
