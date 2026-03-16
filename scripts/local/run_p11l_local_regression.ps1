@@ -1,5 +1,5 @@
 param(
-    [string]$BuildDir = "build\p11m"
+    [string]$BuildDir = "build\p11n"
 )
 
 Set-StrictMode -Version Latest
@@ -75,6 +75,35 @@ function Read-KvSig {
     }
 }
 
+function Read-P11nSig {
+    param(
+        [string]$LogPath
+    )
+
+    $wkLine = Select-String -Path $LogPath -Pattern '^\[p11n\]\[WK_SIG\] K=0x[0-9A-Fa-f]{16}$' | Select-Object -First 1
+    if (-not $wkLine) {
+        throw "WK_SIG line missing in $LogPath"
+    }
+    $wvLine = Select-String -Path $LogPath -Pattern '^\[p11n\]\[WV_SIG\] V=0x[0-9A-Fa-f]{16}$' | Select-Object -First 1
+    if (-not $wvLine) {
+        throw "WV_SIG line missing in $LogPath"
+    }
+
+    $wkMatch = [regex]::Match($wkLine.Line, '^\[p11n\]\[WK_SIG\] K=(0x[0-9A-Fa-f]{16})$')
+    if (-not $wkMatch.Success) {
+        throw "WK_SIG parse failure in $LogPath"
+    }
+    $wvMatch = [regex]::Match($wvLine.Line, '^\[p11n\]\[WV_SIG\] V=(0x[0-9A-Fa-f]{16})$')
+    if (-not $wvMatch.Success) {
+        throw "WV_SIG parse failure in $LogPath"
+    }
+
+    return @{
+        WK = $wkMatch.Groups[1].Value.ToUpperInvariant()
+        WV = $wvMatch.Groups[1].Value.ToUpperInvariant()
+    }
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Push-Location $repoRoot
 try {
@@ -86,6 +115,8 @@ try {
     $exeP11lc = Join-Path $BuildDir 'tb_ternary_live_leaf_top_smoke_p11l_c.exe'
     $exeP11mBaseline = Join-Path $BuildDir 'tb_ternary_live_source_integration_smoke_p11m_baseline.exe'
     $exeP11mMacro = Join-Path $BuildDir 'tb_ternary_live_source_integration_smoke_p11m_macro.exe'
+    $exeP11nBaseline = Join-Path $BuildDir 'tb_ternary_live_family_source_integration_smoke_p11n_baseline.exe'
+    $exeP11nMacro = Join-Path $BuildDir 'tb_ternary_live_family_source_integration_smoke_p11n_macro.exe'
 
     $logBuildP11j = Join-Path $BuildDir 'build_p11j.log'
     $logBuildP11k = Join-Path $BuildDir 'build_p11k.log'
@@ -93,6 +124,8 @@ try {
     $logBuildP11lc = Join-Path $BuildDir 'build_p11l_c.log'
     $logBuildP11mBaseline = Join-Path $BuildDir 'build_p11m_baseline.log'
     $logBuildP11mMacro = Join-Path $BuildDir 'build_p11m_macro.log'
+    $logBuildP11nBaseline = Join-Path $BuildDir 'build_p11n_baseline.log'
+    $logBuildP11nMacro = Join-Path $BuildDir 'build_p11n_macro.log'
 
     $logRunP11j = Join-Path $BuildDir 'run_p11j.log'
     $logRunP11k = Join-Path $BuildDir 'run_p11k.log'
@@ -100,6 +133,8 @@ try {
     $logRunP11lc = Join-Path $BuildDir 'run_p11l_c.log'
     $logRunP11mBaseline = Join-Path $BuildDir 'run_p11m_baseline.log'
     $logRunP11mMacro = Join-Path $BuildDir 'run_p11m_macro.log'
+    $logRunP11nBaseline = Join-Path $BuildDir 'run_p11n_baseline.log'
+    $logRunP11nMacro = Join-Path $BuildDir 'run_p11n_macro.log'
 
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_smoke_p11j.cpp' $exeP11j $logBuildP11j
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_top_smoke_p11k.cpp' $exeP11k $logBuildP11k
@@ -107,6 +142,8 @@ try {
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_top_smoke_p11l_c.cpp' $exeP11lc $logBuildP11lc
     Invoke-ClBuild 'tb\tb_ternary_live_source_integration_smoke_p11m.cpp' $exeP11mBaseline $logBuildP11mBaseline
     Invoke-ClBuild 'tb\tb_ternary_live_source_integration_smoke_p11m.cpp' $exeP11mMacro $logBuildP11mMacro @('/DAECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE=1')
+    Invoke-ClBuild 'tb\tb_ternary_live_family_source_integration_smoke_p11n.cpp' $exeP11nBaseline $logBuildP11nBaseline
+    Invoke-ClBuild 'tb\tb_ternary_live_family_source_integration_smoke_p11n.cpp' $exeP11nMacro $logBuildP11nMacro @('/DAECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE=1')
 
     Invoke-ExeRun $exeP11j $logRunP11j
     Invoke-ExeRun $exeP11k $logRunP11k
@@ -114,6 +151,8 @@ try {
     Invoke-ExeRun $exeP11lc $logRunP11lc
     Invoke-ExeRun $exeP11mBaseline $logRunP11mBaseline
     Invoke-ExeRun $exeP11mMacro $logRunP11mMacro
+    Invoke-ExeRun $exeP11nBaseline $logRunP11nBaseline
+    Invoke-ExeRun $exeP11nMacro $logRunP11nMacro
 
     Require-PassString $logRunP11j 'PASS: tb_ternary_live_leaf_smoke_p11j'
     Require-PassString $logRunP11k 'PASS: tb_ternary_live_leaf_top_smoke_p11k'
@@ -123,11 +162,23 @@ try {
     Require-PassString $logRunP11mMacro 'PASS: tb_ternary_live_source_integration_smoke_p11m'
     Require-PassString $logRunP11mMacro '[p11m][PASS] source-side WQ integration path exact-match equivalent to split-interface local top'
     Require-PassString $logRunP11mMacro '[p11m][PASS] K/V fallback retained under WQ-only integration slice'
+    Require-PassString $logRunP11nBaseline 'PASS: tb_ternary_live_family_source_integration_smoke_p11n'
+    Require-PassString $logRunP11nMacro 'PASS: tb_ternary_live_family_source_integration_smoke_p11n'
+    Require-PassString $logRunP11nBaseline '[p11n][PASS] WK/WV fallback retained under WK/WV-only integration slice'
+    Require-PassString $logRunP11nMacro '[p11n][PASS] WK/WV fallback retained under WK/WV-only integration slice'
+    Require-PassString $logRunP11nMacro '[p11n][PASS] source-side WK integration path exact-match equivalent to split-interface local top'
+    Require-PassString $logRunP11nMacro '[p11n][PASS] source-side WV integration path exact-match equivalent to split-interface local top'
 
     $kvBaseline = Read-KvSig $logRunP11mBaseline
     $kvMacro = Read-KvSig $logRunP11mMacro
     if ($kvBaseline.K -ne $kvMacro.K -or $kvBaseline.V -ne $kvMacro.V) {
         throw "KV signature mismatch baseline vs macro: baseline(K=$($kvBaseline.K),V=$($kvBaseline.V)) macro(K=$($kvMacro.K),V=$($kvMacro.V))"
+    }
+
+    $p11nBaseline = Read-P11nSig $logRunP11nBaseline
+    $p11nMacro = Read-P11nSig $logRunP11nMacro
+    if ($p11nBaseline.WK -ne $p11nMacro.WK -or $p11nBaseline.WV -ne $p11nMacro.WV) {
+        throw "P11N signature mismatch baseline vs macro: baseline(WK=$($p11nBaseline.WK),WV=$($p11nBaseline.WV)) macro(WK=$($p11nMacro.WK),WV=$($p11nMacro.WV))"
     }
 
     Write-Host "PASS: run_p11l_local_regression"

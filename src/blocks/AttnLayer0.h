@@ -207,6 +207,83 @@ static inline void AttnLayer0(
 
         if (live_k_enabled) {
             const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
+#if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
+            bool use_k_split_top = true;
+            const ParamMeta live_k_payload_meta = kParamMeta[live_k_meta.weight_param_id];
+            const ParamMeta live_k_inv_meta = kParamMeta[live_k_meta.inv_sw_param_id];
+            if (live_k_meta.rows != kTernaryLiveL0WkRows ||
+                live_k_meta.cols != kTernaryLiveL0WkCols ||
+                live_k_meta.payload_words_2b != kTernaryLiveL0WkPayloadWords ||
+                live_k_payload_meta.len_w < kTernaryLiveL0WkPayloadWords ||
+                live_k_inv_meta.len_w == 0u) {
+                use_k_split_top = false;
+            }
+
+            if (use_k_split_top) {
+                u32_t payload_words[kTernaryLiveL0WkPayloadWords];
+                u32_t x_row[kTernaryLiveL0WkCols];
+                u32_t out_row[kTernaryLiveL0WkRows];
+                u32_t out_act_q_row[kTernaryLiveL0WkRows];
+                const uint32_t payload_base = param_base + live_k_payload_meta.offset_w;
+                for (uint32_t i = 0u; i < kTernaryLiveL0WkPayloadWords; ++i) {
+                    payload_words[i] = sram[payload_base + i];
+                }
+                const uint32_t inv_sw_addr = param_base + live_k_inv_meta.offset_w;
+                const u32_t live_k_inv_sw_input = sram[inv_sw_addr];
+                TernaryLiveL0WkRowTop live_k_top;
+                for (uint32_t t = 0; t < token_count; ++t) {
+                    const uint32_t x_row_base = x_in_base + t * d_model;
+                    const uint32_t k_row_base = k_base + t * d_model;
+                    const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
+                    for (uint32_t in = 0u; in < kTernaryLiveL0WkCols; ++in) {
+                        x_row[in] = sram[x_row_base + in];
+                    }
+                    u32_t out_inv_sw_bits = (u32_t)0u;
+                    if (!live_k_top.run(
+                            x_row,
+                            payload_words,
+                            live_k_inv_sw_input,
+                            out_row,
+                            out_act_q_row,
+                            out_inv_sw_bits)) {
+                        use_k_split_top = false;
+                        break;
+                    }
+                    if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_k_inv_sw_input.to_uint()) {
+                        use_k_split_top = false;
+                        break;
+                    }
+                    for (uint32_t out = 0u; out < kTernaryLiveL0WkRows; ++out) {
+                        sram[k_row_base + out] = out_row[out];
+                        sram[k_act_q_row_base + out] = out_act_q_row[out];
+                    }
+                }
+            }
+
+            if (!use_k_split_top) {
+                for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
+                    const uint32_t x_row_base = x_in_base + t * d_model;
+                    const uint32_t k_row_base = k_base + t * d_model;
+                    const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
+                    for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
+                        u32_t k_bits = 0;
+                        u32_t k_inv_sw_bits = 0;
+                        if (!ternary_linear_live_l0_wk_compute_q_elem(
+                                sram,
+                                param_base_word,
+                                (u32_t)x_row_base,
+                                out,
+                                k_bits,
+                                k_inv_sw_bits)) {
+                            live_k_ok = false;
+                            break;
+                        }
+                        sram[k_row_base + out] = k_bits;
+                        sram[k_act_q_row_base + out] = k_bits;
+                    }
+                }
+            }
+#else
             for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
                 const uint32_t x_row_base = x_in_base + t * d_model;
                 const uint32_t k_row_base = k_base + t * d_model;
@@ -228,6 +305,7 @@ static inline void AttnLayer0(
                     sram[k_act_q_row_base + out] = k_bits;
                 }
             }
+#endif
             if (!live_k_ok) {
                 const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
                 for (uint32_t i = 0; i < tensor_words; ++i) {
@@ -240,6 +318,83 @@ static inline void AttnLayer0(
 
         if (live_v_enabled) {
             const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
+#if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
+            bool use_v_split_top = true;
+            const ParamMeta live_v_payload_meta = kParamMeta[live_v_meta.weight_param_id];
+            const ParamMeta live_v_inv_meta = kParamMeta[live_v_meta.inv_sw_param_id];
+            if (live_v_meta.rows != kTernaryLiveL0WvRows ||
+                live_v_meta.cols != kTernaryLiveL0WvCols ||
+                live_v_meta.payload_words_2b != kTernaryLiveL0WvPayloadWords ||
+                live_v_payload_meta.len_w < kTernaryLiveL0WvPayloadWords ||
+                live_v_inv_meta.len_w == 0u) {
+                use_v_split_top = false;
+            }
+
+            if (use_v_split_top) {
+                u32_t payload_words[kTernaryLiveL0WvPayloadWords];
+                u32_t x_row[kTernaryLiveL0WvCols];
+                u32_t out_row[kTernaryLiveL0WvRows];
+                u32_t out_act_q_row[kTernaryLiveL0WvRows];
+                const uint32_t payload_base = param_base + live_v_payload_meta.offset_w;
+                for (uint32_t i = 0u; i < kTernaryLiveL0WvPayloadWords; ++i) {
+                    payload_words[i] = sram[payload_base + i];
+                }
+                const uint32_t inv_sw_addr = param_base + live_v_inv_meta.offset_w;
+                const u32_t live_v_inv_sw_input = sram[inv_sw_addr];
+                TernaryLiveL0WvRowTop live_v_top;
+                for (uint32_t t = 0; t < token_count; ++t) {
+                    const uint32_t x_row_base = x_in_base + t * d_model;
+                    const uint32_t v_row_base = v_base + t * d_model;
+                    const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
+                    for (uint32_t in = 0u; in < kTernaryLiveL0WvCols; ++in) {
+                        x_row[in] = sram[x_row_base + in];
+                    }
+                    u32_t out_inv_sw_bits = (u32_t)0u;
+                    if (!live_v_top.run(
+                            x_row,
+                            payload_words,
+                            live_v_inv_sw_input,
+                            out_row,
+                            out_act_q_row,
+                            out_inv_sw_bits)) {
+                        use_v_split_top = false;
+                        break;
+                    }
+                    if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_v_inv_sw_input.to_uint()) {
+                        use_v_split_top = false;
+                        break;
+                    }
+                    for (uint32_t out = 0u; out < kTernaryLiveL0WvRows; ++out) {
+                        sram[v_row_base + out] = out_row[out];
+                        sram[v_act_q_row_base + out] = out_act_q_row[out];
+                    }
+                }
+            }
+
+            if (!use_v_split_top) {
+                for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
+                    const uint32_t x_row_base = x_in_base + t * d_model;
+                    const uint32_t v_row_base = v_base + t * d_model;
+                    const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
+                    for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
+                        u32_t v_bits = 0;
+                        u32_t v_inv_sw_bits = 0;
+                        if (!ternary_linear_live_l0_wv_compute_q_elem(
+                                sram,
+                                param_base_word,
+                                (u32_t)x_row_base,
+                                out,
+                                v_bits,
+                                v_inv_sw_bits)) {
+                            live_v_ok = false;
+                            break;
+                        }
+                        sram[v_row_base + out] = v_bits;
+                        sram[v_act_q_row_base + out] = v_bits;
+                    }
+                }
+            }
+#else
             for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
                 const uint32_t x_row_base = x_in_base + t * d_model;
                 const uint32_t v_row_base = v_base + t * d_model;
@@ -261,6 +416,7 @@ static inline void AttnLayer0(
                     sram[v_act_q_row_base + out] = v_bits;
                 }
             }
+#endif
             if (!live_v_ok) {
                 const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
                 for (uint32_t i = 0; i < tensor_words; ++i) {
