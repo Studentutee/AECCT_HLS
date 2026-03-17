@@ -1,4 +1,4 @@
-﻿AECCT Module Interface Rules v12.1（繁體中文版）
+AECCT Module Interface Rules v12.1（繁體中文版）
 
 Version: 2026-03-11
 Revision: v12.1 draftA
@@ -317,6 +317,38 @@ ac_channel 在本專案中主要用於：
 ----------------
 共享資源仲裁仍屬 Top。
 ac_channel 不是共享 SRAM arbitration 的替代品。
+
+8.4 Top-managed stream / window 骨架（單埠單 bank 基線）
+------------------------------------------------------
+本版在共享 SRAM 介面上採下列收斂方式：
+- Top 是唯一共享 SRAM owner，負責從共享 SRAM 取資料、餵入 block、收回結果並決定寫回時機。
+- 高層 block 的正式資料流預設為：
+  - in_ch  ：Top -> block
+  - out_ch ：block -> Top
+- 讀寫方向不同，不得共用同一條 ac_channel。
+- leaf kernel 不以 whole-SRAM raw pointer 作正式介面；優先採固定大小 array / local buffer。
+
+8.5 packet / sequence 的正式語意
+-------------------------------
+在 phase_id、token_range、tile_range 已由 Top 明示的前提下：
+- 正式資料粒度以 tile / window 為主，不以任意單 word 存取作為正式 contract。
+- packet 預設採最小內容：
+  - payload
+  - last
+- 多數語意應由：
+  - phase_id
+  - block 類型
+  - token_begin / token_end
+  - tile_begin / tile_end
+  - 第幾筆資料（sequence index）
+  共同推出，不預設把 kind / base / region / token_id / head_id 重複塞入每筆 packet。
+- 若某 phase 不能只靠 sequence index 唯一判斷語意，應先拆 phase 或另立最小補充欄位，不得默默膨脹成肥 packet。
+
+8.6 local temporary 的大小邊界
+-----------------------------
+- 允許 local 的正式粒度以 tile / scalar state 為主。
+- 不得把 full-token、full-head、或其他直接隨模型尺寸成長的大型物件，當作 formal local baseline。
+- 小型 accumulator、decode buffer、softmax scalar state、single-tile temporary 應優先留在 regs / local buffer / local FIFO。
 
 ================================================================
 9. 完成條件與錯誤回報

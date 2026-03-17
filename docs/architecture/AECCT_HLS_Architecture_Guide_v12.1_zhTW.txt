@@ -109,6 +109,7 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - SCRATCH：attention K/V、FinalHead 與其他合法 scratch 子區的共用暫存區；SCR_K / SCR_V / FINAL_SCALAR_BUF 都屬此類。
 - IO_REGION：input / output / debug / meta staging 的合法區域。
 - TOKEN_LOCAL / SMALL_SCRATCH：小型短生命週期暫存，應以 tile / scalar state 為主，而非膨脹成新的大型 page。
+- 正式 local baseline 僅允許 tile / scalar 粒度；不把 full-token、full-head 或其他隨模型尺寸直接成長的物件，當作 formal local。
 - QUANT_PARAM metadata（位於 W_REGION 內）：v1 的固定 s_x / inv_s_w 與相關 metadata；屬 persistent parameter data。
 - DATA_OUT path：正常輸出以 direct streaming 為主，不預設大型中間 SRAM 緩衝。
 
@@ -194,10 +195,12 @@ input_y
   - 產生 var_feature[v] = abs(y[v])
   - 由 sign(y[v]) 產生 hard_bit[v]
   - 使用 H-by-var / column-access 的觀點更新 check_parity[c]
+  - 同一個 y[v] 輸入後，Top 應緊接送入該 variable 對應的 embedding / parameter window（或等價固定順序資料），以維持順序資料流
 
 1. Check 端特徵完成（Check-side feature finalize）
 - 當所有 input_y 都處理完成後：
   - 將 check_parity[c] 轉成 check_feature[c]，其值域為 {+1, -1}
+- variable-side 的「y[v] 後接 embedding / parameter window」順序，不改變 check-side finalize 必須等全部 input_y 完成的前提。
 
 2. node_feature 形成
 - node_feature 由下列兩部分組成：
@@ -547,6 +550,9 @@ G. DATA_OUT 路徑
 3. Layer ℓ / Phase A：K/V build
 - 邏輯值：K[token][:]、V[token][:]
 - 建議實體落點：SCRATCH.SCR_K / SCRATCH.SCR_V
+- 建議 stream order（同一 phase 內固定 deterministic 順序）：
+  - Top -> block：X tile -> Wk tile -> Wv tile
+  - block -> Top：K tile -> V tile
 - 讀寫：
   - 讀 X_WORK[token][:]
   - 讀 W_REGION 中的 Wk / Wv（或合併 QKV 權重中的 K / V 部分）
@@ -571,6 +577,9 @@ G. DATA_OUT 路徑
   - 每個 head 的 context：HEAD_CTX_BUF 或更進一步直接接 Wo_h
   - Wo partial 累加：OUT_ACC_D / OUT_ACC_TILE
   - token 最終 attention output：可回寫 X_WORK[token][:]，或先進 token-local 緩衝後再覆蓋回去
+- 建議 stream order（對每個 q_token 固定 deterministic 順序）：
+  - Top -> block：Q-source tile -> Wq tile -> K/V scan window -> mask window -> Wo tile
+  - block -> Top：attention sublayer 已完成 residual 的 token tile
 - 讀寫：
   - 讀 X_WORK[q_token][:]
   - 讀 SCRATCH 中的 SCR_K / SCR_V
@@ -582,6 +591,7 @@ G. DATA_OUT 路徑
     1) K/V build 所需讀取
     2) 該 token 的 Q / residual source 所需讀取
     才允許覆蓋成新的 attention_out[token][:]
+  - 本版在 layer 內對 X_WORK 的正式主結果寫回，原則上以 residual 完成後為準；未加 residual 的中間值不作 X_WORK 正式寫回
   - 在你目前採用的「K/V 全矩陣先 materialize」schedule 下，KV_MAT 完成後即可逐 token 進行覆蓋，不必再保留第二份主工作頁
   - 不建議保存整張 8 × token × d 的 per-head feature map
   - 單一 token 的 HEAD_CTX_BUF 若僅服務當前 head 的 Wo partial accumulation，則該 head 完成後即可立即釋放其對應片段
@@ -592,6 +602,9 @@ G. DATA_OUT 路徑
   - activation
   - FFN2 output
   - layer output
+- 建議 stream order（同一 token / tile 內固定 deterministic 順序）：
+  - Top -> block：X tile -> Wff1 tile -> Wff2 tile
+  - block -> Top：已完成 residual 的 layer-output tile
 - 建議實體落點：
   - FFN1 hidden：FFN1_TILE_BUF
   - activation：可與 FFN1_TILE_BUF 共用，或以同一 tile buffer 覆蓋
