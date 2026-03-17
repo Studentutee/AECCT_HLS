@@ -349,6 +349,7 @@ try {
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_weightstreamorder_continuity.ps1' -CheckKey 'check_qkv_weightstreamorder_continuity_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_export_artifact_continuity.ps1' -CheckKey 'check_qkv_export_artifact_continuity_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_export_consumer_semantics.ps1' -CheckKey 'check_qkv_export_consumer_semantics_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_runtime_handoff_continuity.ps1' -CheckKey 'check_qkv_runtime_handoff_continuity_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
 
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_smoke_p11j.cpp' $exeP11j $logBuildP11j
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_top_smoke_p11k.cpp' $exeP11k $logBuildP11k
@@ -451,6 +452,7 @@ try {
     $prechecks['check_qkv_weightstreamorder_continuity_post'] = 'PENDING'
     $prechecks['check_qkv_export_artifact_continuity_post'] = 'PENDING'
     $prechecks['check_qkv_export_consumer_semantics_post'] = 'PENDING'
+    $prechecks['check_qkv_runtime_handoff_continuity_post'] = 'PENDING'
     $overall = 'PENDING_POSTCHECK'
 
     Write-EvidenceManifest -OutPath $evidenceManifestPath -TaskId $taskId -Overall $overall -Artifacts $artifacts
@@ -461,6 +463,7 @@ try {
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_weightstreamorder_continuity.ps1' -CheckKey 'check_qkv_weightstreamorder_continuity_post' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'post')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_export_artifact_continuity.ps1' -CheckKey 'check_qkv_export_artifact_continuity_post' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'post')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_export_consumer_semantics.ps1' -CheckKey 'check_qkv_export_consumer_semantics_post' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'post')
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_runtime_handoff_continuity.ps1' -CheckKey 'check_qkv_runtime_handoff_continuity_post' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'post')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_repo_hygiene.ps1' -CheckKey 'check_repo_hygiene_post' -StatusTable $prechecks -ExtraArgs @('-Phase', 'post', '-BuildDir', $BuildDir)
 
     $overall = 'PASS'
