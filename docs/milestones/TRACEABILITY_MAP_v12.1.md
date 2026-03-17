@@ -58,3 +58,8 @@
 - live ternary packed payload migration 尚未完成。  
 - P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X / P00-011Y 目前為 accepted local-only progress（local smoke / local static checks / compile-prep probe / compile-time SSOT consolidation / payload-metadata SSOT bridge / WeightStreamOrder continuity fence / exported-artifact continuity fence / export-consumer semantic continuity fence / local runtime-handoff continuity fence scope），Catapult / SCVerify 驗證仍待後續批次執行。  
 - global governance open items 仍需後續 cleanup/waiver resolution。  
+
+## P00-011Z Addendum (2026-03-17)
+| Item | Intent | Evidence | Primary Files | Evidence Type | Notes |
+|---|---|---|---|---|---|
+| QKV local runtime-consume probe (Z) | Add a read-only local runtime probe for `L0_WQ/L0_WK/L0_WV` that consumes accepted authority-chain metadata without introducing a second authority source. | `docs/milestones/P00-011Z_report.md` + `build\p11z\run_p11z_runtime_probe.log` + `build\p11z\run_p11l_regression.log` | `tb/tb_ternary_qkv_runtime_probe_p11z.cpp`<br>`scripts/local/run_p11z_runtime_probe.ps1`<br>`scripts/local/run_p11l_local_regression.ps1` | local runtime consume probe evidence | local-only; not Catapult closure; not SCVerify closure; `P00-011Q` remains authoritative; `P00-011R/S/T/U/V/W/X/Y` remain valid baselines. |

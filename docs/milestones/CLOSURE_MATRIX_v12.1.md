@@ -55,3 +55,8 @@ ternary 主線已完成 Phase A/B/C 的 non-live 收斂，並進一步把 L0_WQ/
 1. 沿同 family 與同驗證入口繼續推進下一批 ternary live-cut / local-top / compile-prep 項目，維持 repo-tracked source + TB 為正式成果。  
 2. 等累積到一個值得一起驗的批次後，再一次性做 Catapult / SCVerify bring-up，避免為單一小修反覆切環境。  
 3. 補齊 task-local report / evidence 索引，讓 local acceptance 與 deferred closure 在 repo 內可追溯。  
+
+## P00-011Z Addendum (2026-03-17)
+| Milestone | Scope | Status | Evidence | Primary Files | Notes |
+|---|---|---|---|---|---|
+| QKV Local Runtime-Consume Probe (Z) | Read-only runtime-facing consume probe for `L0_WQ/L0_WK/L0_WV`, consuming accepted authority-chain metadata and mapping continuity. | NON-LIVE-VALIDATED | `P00-011Z_report.md` + `build\p11z\run_p11z_runtime_probe.log` + `build\p11z\run_p11l_regression.log` | `tb/tb_ternary_qkv_runtime_probe_p11z.cpp`<br>`scripts/local/run_p11z_runtime_probe.ps1`<br>`scripts/local/run_p11l_local_regression.ps1`<br>`gen/ternary_p11c_export.json`<br>`gen/include/WeightStreamOrder.h` | local-only; not Catapult closure; not SCVerify closure; `P00-011Q` remains authoritative; `P00-011R/S/T/U/V/W/X/Y` remain valid baselines. |

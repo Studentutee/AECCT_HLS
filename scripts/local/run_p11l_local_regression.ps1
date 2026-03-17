@@ -334,6 +334,7 @@ try {
     $logRunP11mMacro = Join-Path $BuildDir 'run_p11m_macro.log'
     $logRunP11nBaseline = Join-Path $BuildDir 'run_p11n_baseline.log'
     $logRunP11nMacro = Join-Path $BuildDir 'run_p11n_macro.log'
+    $logRunP11zProbe = Join-Path $BuildDir 'run_p11z_runtime_probe.log'
 
     $warningSummaryPath = Join-Path $BuildDir 'warning_summary_p11p.txt'
     $evidenceSummaryPath = Join-Path $BuildDir 'EVIDENCE_SUMMARY_p11p.md'
@@ -350,6 +351,12 @@ try {
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_export_artifact_continuity.ps1' -CheckKey 'check_qkv_export_artifact_continuity_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_export_consumer_semantics.ps1' -CheckKey 'check_qkv_export_consumer_semantics_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_runtime_handoff_continuity.ps1' -CheckKey 'check_qkv_runtime_handoff_continuity_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
+
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts/local/run_p11z_runtime_probe.ps1') -BuildDir $BuildDir
+    if ($LASTEXITCODE -ne 0) {
+        throw "run_p11z_runtime_probe failed (exit=$LASTEXITCODE)"
+    }
+    Require-PassString $logRunP11zProbe 'PASS: run_p11z_runtime_probe'
 
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_smoke_p11j.cpp' $exeP11j $logBuildP11j
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_top_smoke_p11k.cpp' $exeP11k $logBuildP11k
@@ -392,6 +399,7 @@ try {
     $regression['p11m_macro'] = 'PASS'
     $regression['p11n_baseline'] = 'PASS'
     $regression['p11n_macro'] = 'PASS'
+    $regression['p11z_runtime_probe'] = 'PASS'
     $regression['final_pass_string'] = 'PASS'
 
     $kvBaseline = Read-KvSig $logRunP11mBaseline
