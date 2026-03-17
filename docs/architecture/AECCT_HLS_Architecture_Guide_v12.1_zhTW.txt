@@ -278,14 +278,20 @@ Attention 邏輯子流程（單一 token 視角）
 
 X_in[q][:]
   -> Q(q)
-  -> 與串流進來的 K(:) 做內積
-  -> base mask + comparator 派生出的 connectivity rule
+  -> 逐一檢查每個 candidate K(:) 對應的 base mask + comparator 派生出的 connectivity rule
+  -> 對 allow 的 q→k pair 形成有效 score（Q(q) 與 K(:) 的內積 / score accumulation）
+  -> blocked pair 不參與有效 score / softmax 更新
   -> single-pass online softmax 狀態更新
   -> weighted V accumulation
   -> 對每個 head 產生 ctx_h
   -> Wo_h partial multiply
   -> 累加到 out_acc[:]
   -> 得到 attention_out[q][:]
+
+補充：
+- 上述流程描述的是邏輯語意：只有 allow 的 q→k pair 參與有效 attention 計算。
+- 在 micro-architecture 上，若 allow / block 可提早確定，允許在完整 Q·K MAC 前先 gate，以避免對 blocked pair 做無效運算。
+- 因此，本文件不要求「先把所有 pair 的完整 score 都算完，再套 rule」。
 
 重要的邏輯註記
 --------------
