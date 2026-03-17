@@ -27,6 +27,7 @@
 - `P00-011X` accepted (`QKV export-consumer semantic continuity fence`, `local-only`, `validation-only semantic continuity checks for repo-tracked export consumer interpretation`)
 - `P00-011Y` accepted (`QKV local runtime-handoff fence`, `local-only`, `validation-only continuity checks for runtime-facing handoff expectations derived from the accepted authority chain`)
 - `P00-011Z` accepted (`QKV local runtime-consume probe`, `local-only`, `read-only runtime-facing consume probe for L0_WQ/L0_WK/L0_WV derived from the accepted authority chain`)
+- `P00-011AA` accepted (`QKV formal LOAD_W bridge + READ_MEM roundtrip`, `local-only`, `formal runtime-path bridge coverage for L0_WQ/L0_WK/L0_WV with externally observable SET_W_BASE -> LOAD_W -> READ_MEM evidence`)
 - Mainline state remains local-only.
 - local-only progress is valid.
 - local smoke / local static checks != full Catapult closure.
@@ -42,6 +43,7 @@
 - P00-011X local-only export-consumer semantic continuity fence remains valid.
 - P00-011Y local-only runtime-handoff continuity fence remains valid.
 - P00-011Z local-only runtime-consume probe remains valid.
+- P00-011AA local-only formal LOAD_W bridge + READ_MEM roundtrip remains valid.
 
 ## Accepted Handoff Surface
 - Design-side source artifacts:
@@ -88,6 +90,9 @@
 - `tb/tb_ternary_qkv_runtime_probe_p11z.cpp`
 - `scripts/local/run_p11z_runtime_probe.ps1`
 - `docs/milestones/P00-011Z_report.md`
+- `tb/tb_qkv_formal_loadw_bridge_p11aa.cpp`
+- `scripts/local/run_p11aa_qkv_loadw_bridge.ps1`
+- `docs/milestones/P00-011AA_report.md`
 - Governance and evidence references:
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
@@ -129,6 +134,8 @@
 - P00-011Y is not SCVerify closure.
 - P00-011Z is not Catapult closure.
 - P00-011Z is not SCVerify closure.
+- P00-011AA is not Catapult closure.
+- P00-011AA is not SCVerify closure.
 - Full runtime closure remains deferred.
 - Full numeric correctness closure remains deferred.
 - Full family migration closure remains deferred.
@@ -157,4 +164,5 @@
 - `P00-011X` is a local-only export-consumer semantic continuity fence task that checks matrix_id-driven interpretation semantics on the repo-tracked export consumer surface against the accepted SSOT + WeightStreamOrder + export-artifact continuity chain.
 - `P00-011Y` is a local-only runtime-handoff continuity fence task that derives a single runtime-facing QKV handoff expectation from the accepted SSOT + WeightStreamOrder + exported-artifact + export-consumer continuity chain, without introducing a second authority source.
 - `P00-011Z` is a local-only runtime-consume probe task that performs read-only matrix_id-driven consumption checks for `L0_WQ/L0_WK/L0_WV` against the accepted runtime-handoff authority chain, without introducing a second authority source.
+- `P00-011AA` is a local-only formal LOAD_W bridge task that validates `SET_W_BASE -> LOAD_W -> READ_MEM` roundtrip behavior for `L0_WQ/L0_WK/L0_WV` with formal-path negative cases and probe-side semantic validation-only cases, without claiming attention/runtime full closure.
 - Use this boundary to stage later Catapult-prep tasks with explicit new evidence gates.
