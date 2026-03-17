@@ -16,7 +16,7 @@ Version: 2026-03-17
 - Step 2 skeleton / contract bring-up 已收斂，m0 smoke 可重現；m1/m2 在既有任務中屬 compile-compatible 證據。
 - docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
 - ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）；Phase A/B/C 的 non-live 對齊亦已存在。
-- ternary live-cut mainline 已接受至 P00-011W；P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W 皆為 local-only accepted progress（repo-tracked path），其中 P00-011R 的定位是 first Catapult-facing compile-prep probe（single-slice representative, local compiler evidence only），P00-011S 的定位是 WK/WV family compile-prep expansion（family representative, local compiler evidence only），P00-011T 的定位是 QKV shape SSOT consolidation（compile-time shape SSOT, runtime validation only, local compiler evidence only），P00-011U 的定位是 QKV payload-metadata SSOT bridge（local-only，runtime metadata guard expectations validate against compile-time SSOT chain），P00-011V 的定位是 QKV WeightStreamOrder continuity fence（local-only，validation-only continuity checks against authoritative local-build metadata），P00-011W 的定位是 QKV exported-artifact / loader-facing continuity fence（local-only，validation-only checks against repo-tracked offline export metadata），Catapult / SCVerify 仍 deferred。
+- ternary live-cut mainline 已接受至 P00-011X；P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X 皆為 local-only accepted progress（repo-tracked path），其中 P00-011R 的定位是 first Catapult-facing compile-prep probe（single-slice representative, local compiler evidence only），P00-011S 的定位是 WK/WV family compile-prep expansion（family representative, local compiler evidence only），P00-011T 的定位是 QKV shape SSOT consolidation（compile-time shape SSOT, runtime validation only, local compiler evidence only），P00-011U 的定位是 QKV payload-metadata SSOT bridge（local-only，runtime metadata guard expectations validate against compile-time SSOT chain），P00-011V 的定位是 QKV WeightStreamOrder continuity fence（local-only，validation-only continuity checks against authoritative local-build metadata），P00-011W 的定位是 QKV exported-artifact / loader-facing continuity fence（local-only，validation-only checks against repo-tracked offline export metadata），P00-011X 的定位是 QKV export-consumer semantic continuity fence（local-only，validation-only semantic checks for matrix_id-driven consumer interpretation），Catapult / SCVerify 仍 deferred。
 - P00-011L-D 已新增 repo-tracked Windows local regression script，並以 `build\p11l_d\*.log` 完成 p11j/p11k/p11l_b/p11l_c 同輪重跑 PASS。
 - `build\p11l_d_probe` 僅作 preflight / baseline probe，不作為 P00-011L-D acceptance evidence。
 - P00-011M 已完成 WQ source-side integration slice（local-only）：以 dual-binary（baseline/macro）方式驗證 `KV_SIG` 一致，並在 macro build 下驗證 `Q/Q_act_q/Q_sx` 與 `TernaryLiveL0WqRowTop` direct reference exact-match；正式 evidence 來源為 `build\p11m\*.log`。
@@ -30,6 +30,7 @@ Version: 2026-03-17
 - P00-011U 已完成 QKV payload-metadata SSOT bridge：在既有 compile-time shape SSOT 基礎上集中 `ExpectedNumWeights/ExpectedPayloadWords/ExpectedLastWordValidCount` expectation chain，並將 `TernaryLiveQkvLeafKernel.h` 與 `AttnLayer0.h` 的 metadata guard compare 常數重導向到 `kQkvCtExpected...`；新增 `scripts/check_qkv_payload_metadata_ssot.ps1`（pre/post）並掛入 `scripts/local/run_p11l_local_regression.ps1` pre/post checks；以 `build\p11u\check_qkv_payload_metadata_ssot.log`、`build\p11u\run_p11r_wrapper.log`、`build\p11u\run_p11s_wrapper.log`、`build\p11u\run_p11l_regression.log` 提供本地證據；此項明確為 local-only，不等同 Catapult closure 或 SCVerify closure。
 - P00-011V 已完成 QKV WeightStreamOrder continuity fence：新增 validation-only continuity fence header（`src/blocks/TernaryLiveQkvWeightStreamOrderContinuityFence.h`）直接對齊 `gen/WeightStreamOrder.h` / `gen/include/WeightStreamOrder.h` 的 `kQuantLinearMeta`（L0_WQ/L0_WK/L0_WV）並以 compile-time static_assert 檢查 `matrix_id/rows/cols/num_weights/payload_words_2b/last_word_valid_count` 連續性；新增 `scripts/check_qkv_weightstreamorder_continuity.ps1`（pre/post）並掛入 `scripts/local/run_p11l_local_regression.ps1` pre/post checks；以 `build\p11v\check_qkv_weightstreamorder_continuity.log`、`build\p11v\run_p11r_wrapper.log`、`build\p11v\run_p11s_wrapper.log`、`build\p11v\run_p11l_regression.log` 提供本地證據；此項明確為 local-only，不等同 Catapult closure 或 SCVerify closure。
 - P00-011W 已完成 QKV exported-artifact / loader-facing continuity fence：新增 `scripts/check_qkv_export_artifact_continuity.ps1`（pre/post）以 `matrix_id`-based 方式比對 `gen/ternary_p11c_export.json` 的 `L0_WQ/L0_WK/L0_WV` metadata 與 `gen/include/WeightStreamOrder.h`（數值化解析 `payload_words_2b/last_word_valid_count` expression forms）的一致性，並掛入 `scripts/local/run_p11l_local_regression.ps1` pre/post checks；以 `build\p11w\check_qkv_export_artifact_continuity.log`、`build\p11w\run_p11r_wrapper.log`、`build\p11w\run_p11s_wrapper.log`、`build\p11w\run_p11l_regression.log` 提供本地證據；此項明確為 local-only，不等同 Catapult closure 或 SCVerify closure。
+- P00-011X 已完成 QKV export-consumer semantic continuity fence：新增 `scripts/check_qkv_export_consumer_semantics.ps1`（pre/post）以 matrix_id-driven 語意檢查驗證 `tb/tb_ternary_export_p11c.cpp` 對 `L0_WQ/L0_WK/L0_WV` 的 consumer-side identity/lookup 與 `rows/cols/num_weights/payload_words_2b/last_word_valid_count` interpretation 持續對齊既有 SSOT + WeightStreamOrder + exported artifact chain，並掛入 `scripts/local/run_p11l_local_regression.ps1` pre/post checks；以 `build\p11x\check_qkv_export_consumer_semantics.log`、`build\p11x\run_p11r_wrapper.log`、`build\p11x\run_p11s_wrapper.log`、`build\p11x\run_p11l_regression.log` 提供本地證據；此項明確為 local-only，不等同 Catapult closure 或 SCVerify closure。
 - P00-011Q handoff freeze remains authoritative。
 - P00-011R WQ compile-prep probe remains valid baseline。
 - P00-011S WK/WV family compile-prep expansion remains valid baseline。
@@ -37,6 +38,7 @@ Version: 2026-03-17
 - P00-011U QKV payload-metadata SSOT bridge remains valid baseline。
 - P00-011V QKV WeightStreamOrder continuity fence remains valid baseline。
 - P00-011W QKV exported-artifact / loader-facing continuity fence remains valid baseline。
+- P00-011X QKV export-consumer semantic continuity fence remains valid baseline。
 - Catapult / SCVerify 驗證刻意 deferred，將與後續同 family 項目一起做批次驗證；因此目前不等同 full Catapult closure。
 - global/repo-wide governance open items 仍存在，尚未等同全域 closure。
 
@@ -87,12 +89,13 @@ Version: 2026-03-17
 - [P00-011U] — QKV payload-metadata SSOT bridge（local-only） — ACCEPTED（payload-metadata expectation SSOT bridge scope；Catapult / SCVerify deferred；not full closure）
 - [P00-011V] — QKV WeightStreamOrder continuity fence（local-only） — ACCEPTED（validation-only continuity fence scope；Catapult / SCVerify deferred；not full closure）
 - [P00-011W] — QKV exported-artifact / loader-facing continuity fence（local-only） — ACCEPTED（validation-only export-artifact continuity fence scope；Catapult / SCVerify deferred；not full closure）
+- [P00-011X] — QKV export-consumer semantic continuity fence（local-only） — ACCEPTED（validation-only export-consumer semantic continuity fence scope；Catapult / SCVerify deferred；not full closure）
 - [M0] — M0 formal closure evidence pack — PASS（global governance open items tracked outside M0 blocking scope）
 
 ====================================================================
 5. Current Open Items
 ====================================================================
-- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W is still deferred; current acceptance remains local-only progress under local smoke / local static checks / compile-prep probe / compile-time SSOT consolidation / payload-metadata SSOT bridge / WeightStreamOrder continuity fence / exported-artifact continuity fence scope.
+- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X is still deferred; current acceptance remains local-only progress under local smoke / local static checks / compile-prep probe / compile-time SSOT consolidation / payload-metadata SSOT bridge / WeightStreamOrder continuity fence / exported-artifact continuity fence / export-consumer semantic continuity fence scope.
 - ternary live-cut 主線雖已推進到 L0_WQ/WK/WV、local top smoke 與單一 slice compile-prep probe，但尚未等同 live runtime full closure，也尚未完成更大範圍 family migration。
 - repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
 - m1/m2 runtime closure 尚未完成（目前主證據重心仍在 m0 baseline 與 task-local ternary smoke / compile-prep probe）。
@@ -102,7 +105,7 @@ Version: 2026-03-17
 ====================================================================
 6. Recommended Next Step
 ====================================================================
-1. 在 `P00-011Q` freeze boundary 與 `P00-011R`/`P00-011S` compile-prep probe、`P00-011T` compile-time SSOT consolidation、`P00-011U` payload-metadata SSOT bridge、`P00-011V` WeightStreamOrder continuity fence、`P00-011W` exported-artifact continuity fence 基礎上，延續同 family 的最小 compile-prep / validation bundles，維持 repo-tracked source + TB 為正式路徑。
+1. 在 `P00-011Q` freeze boundary 與 `P00-011R`/`P00-011S` compile-prep probe、`P00-011T` compile-time SSOT consolidation、`P00-011U` payload-metadata SSOT bridge、`P00-011V` WeightStreamOrder continuity fence、`P00-011W` exported-artifact continuity fence、`P00-011X` export-consumer semantic continuity fence 基礎上，延續同 family 的最小 compile-prep / validation bundles，維持 repo-tracked source + TB 為正式路徑。
 2. 持續以 repo-tracked local smoke / local static checks / compile-prep probe acceptance 為主，避免把 task-local acceptance 誤寫成 full closure。
 3. Catapult / SCVerify closure 維持 deferred，待同 family probe 累積到足夠批次後再啟動。
 
@@ -114,4 +117,4 @@ Version: 2026-03-17
 3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`）。
 4. 讀 architecture / module_interface / srammap rules。
 5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
-6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R/L-S/L-T/L-U/L-V/L-W）。
+6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R/L-S/L-T/L-U/L-V/L-W/L-X）。

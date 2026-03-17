@@ -24,6 +24,7 @@
 - `P00-011U` accepted (`QKV payload-metadata SSOT bridge`, `local-only`, `runtime metadata guard expectations validated against compile-time SSOT chain`)
 - `P00-011V` accepted (`QKV WeightStreamOrder continuity fence`, `local-only`, `validation-only continuity checks against authoritative local-build metadata`)
 - `P00-011W` accepted (`QKV exported-artifact / loader-facing continuity fence`, `local-only`, `validation-only continuity checks against repo-tracked export artifact metadata`)
+- `P00-011X` accepted (`QKV export-consumer semantic continuity fence`, `local-only`, `validation-only semantic continuity checks for repo-tracked export consumer interpretation`)
 - Mainline state remains local-only.
 - local-only progress is valid.
 - local smoke / local static checks != full Catapult closure.
@@ -36,6 +37,7 @@
 - P00-011U local-only payload-metadata SSOT bridge remains valid.
 - P00-011V local-only WeightStreamOrder continuity fence remains valid.
 - P00-011W local-only exported-artifact / loader-facing continuity fence remains valid.
+- P00-011X local-only export-consumer semantic continuity fence remains valid.
 
 ## Accepted Handoff Surface
 - Design-side source artifacts:
@@ -75,6 +77,8 @@
 - `docs/milestones/P00-011V_report.md`
 - `scripts/check_qkv_export_artifact_continuity.ps1`
 - `docs/milestones/P00-011W_report.md`
+- `scripts/check_qkv_export_consumer_semantics.ps1`
+- `docs/milestones/P00-011X_report.md`
 - Governance and evidence references:
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
@@ -110,6 +114,8 @@
 - P00-011V is not SCVerify closure.
 - P00-011W is not Catapult closure.
 - P00-011W is not SCVerify closure.
+- P00-011X is not Catapult closure.
+- P00-011X is not SCVerify closure.
 - Full runtime closure remains deferred.
 - Full numeric correctness closure remains deferred.
 - Full family migration closure remains deferred.
@@ -135,4 +141,5 @@
 - `P00-011U` is a local-only payload-metadata SSOT bridge task that keeps runtime validation scoped to accepted metadata guards.
 - `P00-011V` is a local-only WeightStreamOrder continuity fence task that checks compile-time continuity against the authoritative local-build metadata surface.
 - `P00-011W` is a local-only exported-artifact / loader-facing continuity fence task that checks repo-tracked offline artifact metadata against the accepted SSOT + WeightStreamOrder continuity chain.
+- `P00-011X` is a local-only export-consumer semantic continuity fence task that checks matrix_id-driven interpretation semantics on the repo-tracked export consumer surface against the accepted SSOT + WeightStreamOrder + export-artifact continuity chain.
 - Use this boundary to stage later Catapult-prep tasks with explicit new evidence gates.
