@@ -5,6 +5,7 @@
 
 #include "AecctTypes.h"
 #include "TernaryLiveQkvLeafKernelShapeConfig.h"
+#include "TernaryLiveQkvWeightStreamOrderContinuityFence.h"
 #include "TernaryLinearLive.h"
 #include "gen/WeightStreamOrder.h"
 
