@@ -19,11 +19,13 @@
 - `P00-011P` accepted (`local smoke / local static checks scope`)
 - `P00-011Q` accepted (`local smoke / local static checks scope`, handoff freeze baseline)
 - `P00-011R` accepted (`first Catapult-facing compile-prep probe`, `single-slice representative`, `local compiler evidence only`)
+- `P00-011S` accepted (`WK/WV family compile-prep expansion`, `family representative`, `local compiler evidence only`)
 - Mainline state remains local-only.
 - local-only progress is valid.
 - local smoke / local static checks != full Catapult closure.
 - accepted local-only progress remains valid.
-- P00-011Q freeze boundary remains authoritative.
+- P00-011Q handoff freeze remains authoritative.
+- P00-011R WQ compile-prep probe remains valid baseline.
 
 ## Accepted Handoff Surface
 - Design-side source artifacts:
@@ -49,6 +51,10 @@
 - `scripts/check_compile_prep_surface.ps1`
 - `scripts/local/run_p11r_compile_prep.ps1`
 - `docs/milestones/P00-011R_report.md`
+- `tb/tb_ternary_live_leaf_top_compile_prep_family_p11s.cpp`
+- `scripts/check_compile_prep_family_surface.ps1`
+- `scripts/local/run_p11s_compile_prep_family.ps1`
+- `docs/milestones/P00-011S_report.md`
 - Governance and evidence references:
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
@@ -74,6 +80,8 @@
 - Catapult / SCVerify deferred by design.
 - P00-011R is not Catapult closure.
 - P00-011R is not SCVerify closure.
+- P00-011S is not Catapult closure.
+- P00-011S is not SCVerify closure.
 - Full runtime closure remains deferred.
 - Full numeric correctness closure remains deferred.
 - Full family migration closure remains deferred.
@@ -93,5 +101,6 @@
 - Treat the accepted local-only chain as valid progress and a stable handoff baseline.
 - Do not relabel local smoke/local static checks as full closure.
 - Do not narrow already accepted scope of `P00-011M/N/O/P`.
-- Keep `P00-011Q` as the authoritative freeze boundary while advancing compile-prep probes such as `P00-011R`.
+- Keep `P00-011Q` as the authoritative freeze boundary while advancing compile-prep probes such as `P00-011R` and `P00-011S`.
+- `P00-011S` is a WK/WV family compile-prep expansion with local compiler evidence only.
 - Use this boundary to stage later Catapult-prep tasks with explicit new evidence gates.
