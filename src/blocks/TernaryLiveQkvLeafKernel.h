@@ -32,13 +32,40 @@ static inline bool ternary_live_qkv_materialize_row_kernel_impl(
     if (meta.num_weights != (meta.rows * meta.cols)) {
         return false;
     }
+    uint32_t expected_num_weights = 0u;
+    uint32_t expected_payload_words = 0u;
+    uint32_t expected_last_word_valid_count = 0u;
+    if (matrix_id == QLM_L0_WQ) {
+        expected_num_weights = kQkvCtExpectedL0WqNumWeights;
+        expected_payload_words = kQkvCtExpectedL0WqPayloadWords;
+        expected_last_word_valid_count = kQkvCtExpectedL0WqLastWordValidCount;
+    } else if (matrix_id == QLM_L0_WK) {
+        expected_num_weights = kQkvCtExpectedL0WkNumWeights;
+        expected_payload_words = kQkvCtExpectedL0WkPayloadWords;
+        expected_last_word_valid_count = kQkvCtExpectedL0WkLastWordValidCount;
+    } else if (matrix_id == QLM_L0_WV) {
+        expected_num_weights = kQkvCtExpectedL0WvNumWeights;
+        expected_payload_words = kQkvCtExpectedL0WvPayloadWords;
+        expected_last_word_valid_count = kQkvCtExpectedL0WvLastWordValidCount;
+    } else {
+        return false;
+    }
+    if (meta.num_weights != expected_num_weights) {
+        return false;
+    }
     if (meta.payload_words_2b == 0u) {
+        return false;
+    }
+    if (meta.payload_words_2b != expected_payload_words) {
         return false;
     }
     if (meta.payload_words_2b != ternary_payload_words_2b(meta.num_weights)) {
         return false;
     }
-    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > 16u) {
+    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > kQkvCtPackedWordElems) {
+        return false;
+    }
+    if (meta.last_word_valid_count != expected_last_word_valid_count) {
         return false;
     }
     if (meta.last_word_valid_count != ternary_last_word_valid_count(meta.num_weights)) {
@@ -89,19 +116,25 @@ static inline bool ternary_live_l0_wq_materialize_row_kernel_split(
     if (meta.layout_kind != (uint32_t)QLAYOUT_TERNARY_W_OUT_IN) {
         return false;
     }
-    if (meta.rows != kTernaryLiveL0WqRows || meta.cols != kTernaryLiveL0WqCols) {
+    if (meta.rows != kQkvCtSupportedL0WqRows || meta.cols != kQkvCtSupportedL0WqCols) {
         return false;
     }
     if (meta.num_weights != (meta.rows * meta.cols)) {
         return false;
     }
-    if (meta.payload_words_2b != kTernaryLiveL0WqPayloadWords) {
+    if (meta.num_weights != kQkvCtExpectedL0WqNumWeights) {
+        return false;
+    }
+    if (meta.payload_words_2b != kQkvCtExpectedL0WqPayloadWords) {
         return false;
     }
     if (meta.payload_words_2b != ternary_payload_words_2b(meta.num_weights)) {
         return false;
     }
-    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > 16u) {
+    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > kQkvCtPackedWordElems) {
+        return false;
+    }
+    if (meta.last_word_valid_count != kQkvCtExpectedL0WqLastWordValidCount) {
         return false;
     }
     if (meta.last_word_valid_count != ternary_last_word_valid_count(meta.num_weights)) {
@@ -165,19 +198,25 @@ static inline bool ternary_live_l0_wk_materialize_row_kernel_split(
     if (meta.layout_kind != (uint32_t)QLAYOUT_TERNARY_W_OUT_IN) {
         return false;
     }
-    if (meta.rows != kTernaryLiveL0WkRows || meta.cols != kTernaryLiveL0WkCols) {
+    if (meta.rows != kQkvCtSupportedL0WkRows || meta.cols != kQkvCtSupportedL0WkCols) {
         return false;
     }
     if (meta.num_weights != (meta.rows * meta.cols)) {
         return false;
     }
-    if (meta.payload_words_2b != kTernaryLiveL0WkPayloadWords) {
+    if (meta.num_weights != kQkvCtExpectedL0WkNumWeights) {
+        return false;
+    }
+    if (meta.payload_words_2b != kQkvCtExpectedL0WkPayloadWords) {
         return false;
     }
     if (meta.payload_words_2b != ternary_payload_words_2b(meta.num_weights)) {
         return false;
     }
-    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > 16u) {
+    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > kQkvCtPackedWordElems) {
+        return false;
+    }
+    if (meta.last_word_valid_count != kQkvCtExpectedL0WkLastWordValidCount) {
         return false;
     }
     if (meta.last_word_valid_count != ternary_last_word_valid_count(meta.num_weights)) {
@@ -241,19 +280,25 @@ static inline bool ternary_live_l0_wv_materialize_row_kernel_split(
     if (meta.layout_kind != (uint32_t)QLAYOUT_TERNARY_W_OUT_IN) {
         return false;
     }
-    if (meta.rows != kTernaryLiveL0WvRows || meta.cols != kTernaryLiveL0WvCols) {
+    if (meta.rows != kQkvCtSupportedL0WvRows || meta.cols != kQkvCtSupportedL0WvCols) {
         return false;
     }
     if (meta.num_weights != (meta.rows * meta.cols)) {
         return false;
     }
-    if (meta.payload_words_2b != kTernaryLiveL0WvPayloadWords) {
+    if (meta.num_weights != kQkvCtExpectedL0WvNumWeights) {
+        return false;
+    }
+    if (meta.payload_words_2b != kQkvCtExpectedL0WvPayloadWords) {
         return false;
     }
     if (meta.payload_words_2b != ternary_payload_words_2b(meta.num_weights)) {
         return false;
     }
-    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > 16u) {
+    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > kQkvCtPackedWordElems) {
+        return false;
+    }
+    if (meta.last_word_valid_count != kQkvCtExpectedL0WvLastWordValidCount) {
         return false;
     }
     if (meta.last_word_valid_count != ternary_last_word_valid_count(meta.num_weights)) {

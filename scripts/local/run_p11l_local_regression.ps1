@@ -345,6 +345,7 @@ try {
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_design_purity.ps1' -CheckKey 'check_design_purity' -StatusTable $prechecks
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_interface_lock.ps1' -CheckKey 'check_interface_lock' -StatusTable $prechecks
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_macro_hygiene.ps1' -CheckKey 'check_macro_hygiene' -StatusTable $prechecks
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_payload_metadata_ssot.ps1' -CheckKey 'check_qkv_payload_metadata_ssot_pre' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'pre')
 
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_smoke_p11j.cpp' $exeP11j $logBuildP11j
     Invoke-ClBuild 'tb\tb_ternary_live_leaf_top_smoke_p11k.cpp' $exeP11k $logBuildP11k
@@ -443,12 +444,14 @@ try {
     }
 
     $prechecks['check_repo_hygiene_post'] = 'PENDING'
+    $prechecks['check_qkv_payload_metadata_ssot_post'] = 'PENDING'
     $overall = 'PENDING_POSTCHECK'
 
     Write-EvidenceManifest -OutPath $evidenceManifestPath -TaskId $taskId -Overall $overall -Artifacts $artifacts
     Write-EvidenceSummary -OutPath $evidenceSummaryPath -TaskId $taskId -Overall $overall -Prechecks $prechecks -Regression $regression -Compares $compares -Artifacts $artifacts -WarningSummary $warningSummary
     Write-VerdictJson -OutPath $verdictJsonPath -TaskId $taskId -Overall $overall -Prechecks $prechecks -Regression $regression -Compares $compares -Artifacts $artifacts
 
+    Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_qkv_payload_metadata_ssot.ps1' -CheckKey 'check_qkv_payload_metadata_ssot_post' -StatusTable $prechecks -ExtraArgs @('-OutDir', $BuildDir, '-Phase', 'post')
     Invoke-CheckScript -RepoRoot $repoRoot -ScriptRelPath 'scripts/check_repo_hygiene.ps1' -CheckKey 'check_repo_hygiene_post' -StatusTable $prechecks -ExtraArgs @('-Phase', 'post', '-BuildDir', $BuildDir)
 
     $overall = 'PASS'

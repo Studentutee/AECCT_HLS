@@ -182,19 +182,25 @@ $shapeText = Get-Content -Path (Join-Path $repo $shapeRel) -Raw
 $kernelText = Get-Content -Path (Join-Path $repo $kernelRel) -Raw
 $prepTopText = Get-Content -Path (Join-Path $repo $prepTopRel) -Raw
 
-$shapeConstants = @(
+$shapeConstantsNumeric = @(
     "kQkvCtSupportedL0WqRows",
     "kQkvCtSupportedL0WqCols",
-    "kQkvCtSupportedL0WqPayloadWords",
     "kQkvCtSupportedL0WkRows",
     "kQkvCtSupportedL0WkCols",
-    "kQkvCtSupportedL0WkPayloadWords",
     "kQkvCtSupportedL0WvRows",
-    "kQkvCtSupportedL0WvCols",
+    "kQkvCtSupportedL0WvCols"
+)
+foreach ($name in $shapeConstantsNumeric) {
+    Require-Regex -Text $shapeText -Pattern ("(?m)^\s*static\s+constexpr\s+uint32_t\s+{0}\s*=\s*\d+u\s*;" -f [System.Text.RegularExpressions.Regex]::Escape($name)) -Reason ("missing compile-time SSOT constant: {0}" -f $name)
+}
+
+$shapeConstantsExpr = @(
+    "kQkvCtSupportedL0WqPayloadWords",
+    "kQkvCtSupportedL0WkPayloadWords",
     "kQkvCtSupportedL0WvPayloadWords"
 )
-foreach ($name in $shapeConstants) {
-    Require-Regex -Text $shapeText -Pattern ("(?m)^\s*static\s+constexpr\s+uint32_t\s+{0}\s*=\s*\d+u\s*;" -f [System.Text.RegularExpressions.Regex]::Escape($name)) -Reason ("missing compile-time SSOT constant: {0}" -f $name)
+foreach ($name in $shapeConstantsExpr) {
+    Require-Regex -Text $shapeText -Pattern ("(?m)^\s*static\s+constexpr\s+uint32_t\s+{0}\s*=\s*[^;]+\s*;" -f [System.Text.RegularExpressions.Regex]::Escape($name)) -Reason ("missing compile-time SSOT constant: {0}" -f $name)
 }
 
 $aliasPairs = @(

@@ -9,6 +9,7 @@
 #include "QuantDesc.h"
 #include "SoftmaxApprox.h"
 #include "TernaryLinearLive.h"
+#include "TernaryLiveQkvLeafKernelShapeConfig.h"
 #include "TernaryLiveQkvLeafKernelTop.h"
 
 namespace aecct {
@@ -53,7 +54,7 @@ static inline bool attn_live_qkv_gate_ok(
     if (meta.payload_words_2b != ternary_payload_words_2b(meta.num_weights)) {
         return false;
     }
-    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > 16u) {
+    if (meta.last_word_valid_count == 0u || meta.last_word_valid_count > kQkvCtPackedWordElems) {
         return false;
     }
     if (meta.last_word_valid_count != ternary_last_word_valid_count(meta.num_weights)) {
@@ -119,10 +120,10 @@ static inline void AttnLayer0(
 #if defined(AECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE)
             const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
             const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
-            if (live_q_meta.rows != kTernaryLiveL0WqRows ||
-                live_q_meta.cols != kTernaryLiveL0WqCols ||
-                live_q_meta.payload_words_2b != kTernaryLiveL0WqPayloadWords ||
-                live_q_payload_meta.len_w < kTernaryLiveL0WqPayloadWords ||
+            if (live_q_meta.rows != kQkvCtSupportedL0WqRows ||
+                live_q_meta.cols != kQkvCtSupportedL0WqCols ||
+                live_q_meta.payload_words_2b != kQkvCtExpectedL0WqPayloadWords ||
+                live_q_payload_meta.len_w < kQkvCtExpectedL0WqPayloadWords ||
                 live_q_inv_meta.len_w == 0u) {
                 live_q_ok = false;
             }
@@ -211,10 +212,10 @@ static inline void AttnLayer0(
             bool use_k_split_top = true;
             const ParamMeta live_k_payload_meta = kParamMeta[live_k_meta.weight_param_id];
             const ParamMeta live_k_inv_meta = kParamMeta[live_k_meta.inv_sw_param_id];
-            if (live_k_meta.rows != kTernaryLiveL0WkRows ||
-                live_k_meta.cols != kTernaryLiveL0WkCols ||
-                live_k_meta.payload_words_2b != kTernaryLiveL0WkPayloadWords ||
-                live_k_payload_meta.len_w < kTernaryLiveL0WkPayloadWords ||
+            if (live_k_meta.rows != kQkvCtSupportedL0WkRows ||
+                live_k_meta.cols != kQkvCtSupportedL0WkCols ||
+                live_k_meta.payload_words_2b != kQkvCtExpectedL0WkPayloadWords ||
+                live_k_payload_meta.len_w < kQkvCtExpectedL0WkPayloadWords ||
                 live_k_inv_meta.len_w == 0u) {
                 use_k_split_top = false;
             }
@@ -322,10 +323,10 @@ static inline void AttnLayer0(
             bool use_v_split_top = true;
             const ParamMeta live_v_payload_meta = kParamMeta[live_v_meta.weight_param_id];
             const ParamMeta live_v_inv_meta = kParamMeta[live_v_meta.inv_sw_param_id];
-            if (live_v_meta.rows != kTernaryLiveL0WvRows ||
-                live_v_meta.cols != kTernaryLiveL0WvCols ||
-                live_v_meta.payload_words_2b != kTernaryLiveL0WvPayloadWords ||
-                live_v_payload_meta.len_w < kTernaryLiveL0WvPayloadWords ||
+            if (live_v_meta.rows != kQkvCtSupportedL0WvRows ||
+                live_v_meta.cols != kQkvCtSupportedL0WvCols ||
+                live_v_meta.payload_words_2b != kQkvCtExpectedL0WvPayloadWords ||
+                live_v_payload_meta.len_w < kQkvCtExpectedL0WvPayloadWords ||
                 live_v_inv_meta.len_w == 0u) {
                 use_v_split_top = false;
             }
