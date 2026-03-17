@@ -20,12 +20,15 @@
 - `P00-011Q` accepted (`local smoke / local static checks scope`, handoff freeze baseline)
 - `P00-011R` accepted (`first Catapult-facing compile-prep probe`, `single-slice representative`, `local compiler evidence only`)
 - `P00-011S` accepted (`WK/WV family compile-prep expansion`, `family representative`, `local compiler evidence only`)
+- `P00-011T` accepted (`QKV shape SSOT consolidation`, `compile-time shape SSOT`, `runtime validation only`, `local compiler evidence only`)
 - Mainline state remains local-only.
 - local-only progress is valid.
 - local smoke / local static checks != full Catapult closure.
 - accepted local-only progress remains valid.
 - P00-011Q handoff freeze remains authoritative.
+- P00-011Q freeze boundary remains authoritative.
 - P00-011R WQ compile-prep probe remains valid baseline.
+- P00-011S WK/WV family compile-prep expansion remains valid baseline.
 
 ## Accepted Handoff Surface
 - Design-side source artifacts:
@@ -55,6 +58,9 @@
 - `scripts/check_compile_prep_family_surface.ps1`
 - `scripts/local/run_p11s_compile_prep_family.ps1`
 - `docs/milestones/P00-011S_report.md`
+- `src/blocks/TernaryLiveQkvLeafKernelShapeConfig.h`
+- `scripts/check_qkv_shape_ssot.ps1`
+- `docs/milestones/P00-011T_report.md`
 - Governance and evidence references:
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
@@ -82,6 +88,8 @@
 - P00-011R is not SCVerify closure.
 - P00-011S is not Catapult closure.
 - P00-011S is not SCVerify closure.
+- P00-011T is not Catapult closure.
+- P00-011T is not SCVerify closure.
 - Full runtime closure remains deferred.
 - Full numeric correctness closure remains deferred.
 - Full family migration closure remains deferred.
@@ -103,4 +111,5 @@
 - Do not narrow already accepted scope of `P00-011M/N/O/P`.
 - Keep `P00-011Q` as the authoritative freeze boundary while advancing compile-prep probes such as `P00-011R` and `P00-011S`.
 - `P00-011S` is a WK/WV family compile-prep expansion with local compiler evidence only.
+- `P00-011T` is a QKV shape SSOT consolidation task with compile-time shape SSOT and runtime validation only.
 - Use this boundary to stage later Catapult-prep tasks with explicit new evidence gates.

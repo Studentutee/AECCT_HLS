@@ -4,20 +4,11 @@
 #include <cstdint>
 
 #include "AecctTypes.h"
+#include "TernaryLiveQkvLeafKernelShapeConfig.h"
 #include "TernaryLinearLive.h"
 #include "gen/WeightStreamOrder.h"
 
 namespace aecct {
-
-static constexpr uint32_t kTernaryLiveL0WqRows = 32u;
-static constexpr uint32_t kTernaryLiveL0WqCols = 32u;
-static constexpr uint32_t kTernaryLiveL0WqPayloadWords = 64u;
-static constexpr uint32_t kTernaryLiveL0WkRows = 32u;
-static constexpr uint32_t kTernaryLiveL0WkCols = 32u;
-static constexpr uint32_t kTernaryLiveL0WkPayloadWords = 64u;
-static constexpr uint32_t kTernaryLiveL0WvRows = 32u;
-static constexpr uint32_t kTernaryLiveL0WvCols = 32u;
-static constexpr uint32_t kTernaryLiveL0WvPayloadWords = 64u;
 
 static inline bool ternary_live_qkv_materialize_row_kernel_impl(
     u32_t* sram,
@@ -91,9 +82,7 @@ static inline bool ternary_live_l0_wq_materialize_row_kernel_split(
     u32_t& out_inv_sw_bits
 ) {
     const QuantLinearMeta meta = ternary_linear_live_l0_wq_meta();
-    static_assert(kTernaryLiveL0WqRows == 32u, "P00-011L-A assumes L0_WQ rows=32");
-    static_assert(kTernaryLiveL0WqCols == 32u, "P00-011L-A assumes L0_WQ cols=32");
-    static_assert(kTernaryLiveL0WqPayloadWords == 64u, "P00-011L-A assumes L0_WQ payload_words=64");
+    // Runtime metadata validates against compile-time SSOT for this supported build.
     if (meta.matrix_id != (uint32_t)QLM_L0_WQ) {
         return false;
     }
@@ -169,9 +158,7 @@ static inline bool ternary_live_l0_wk_materialize_row_kernel_split(
     u32_t& out_inv_sw_bits
 ) {
     const QuantLinearMeta meta = ternary_linear_live_l0_wk_meta();
-    static_assert(kTernaryLiveL0WkRows == 32u, "P00-011L-B assumes L0_WK rows=32");
-    static_assert(kTernaryLiveL0WkCols == 32u, "P00-011L-B assumes L0_WK cols=32");
-    static_assert(kTernaryLiveL0WkPayloadWords == 64u, "P00-011L-B assumes L0_WK payload_words=64");
+    // Runtime metadata validates against compile-time SSOT for this supported build.
     if (meta.matrix_id != (uint32_t)QLM_L0_WK) {
         return false;
     }
@@ -247,9 +234,7 @@ static inline bool ternary_live_l0_wv_materialize_row_kernel_split(
     u32_t& out_inv_sw_bits
 ) {
     const QuantLinearMeta meta = ternary_linear_live_l0_wv_meta();
-    static_assert(kTernaryLiveL0WvRows == 32u, "P00-011L-B assumes L0_WV rows=32");
-    static_assert(kTernaryLiveL0WvCols == 32u, "P00-011L-B assumes L0_WV cols=32");
-    static_assert(kTernaryLiveL0WvPayloadWords == 64u, "P00-011L-B assumes L0_WV payload_words=64");
+    // Runtime metadata validates against compile-time SSOT for this supported build.
     if (meta.matrix_id != (uint32_t)QLM_L0_WV) {
         return false;
     }

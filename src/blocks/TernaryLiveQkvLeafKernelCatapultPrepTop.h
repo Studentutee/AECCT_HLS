@@ -1,7 +1,8 @@
 #pragma once
-// P00-011R/P00-011S: dedicated Catapult-facing compile-prep top wrappers for L0_WQ/L0_WK/L0_WV rows.
+// P00-011R/P00-011S/P00-011T: dedicated Catapult-facing compile-prep top wrappers for L0_WQ/L0_WK/L0_WV rows.
 
 #include "AecctTypes.h"
+#include "TernaryLiveQkvLeafKernelShapeConfig.h"
 #include "TernaryLiveQkvLeafKernel.h"
 
 #if __has_include(<mc_scverify.h>)
