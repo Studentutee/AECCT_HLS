@@ -71,7 +71,8 @@ static inline void AttnLayer0(
     u32_t attn_out_base_word,
     const AttnScratch& sc,
     u32_t param_base_word = (u32_t)0,
-    bool kv_prebuilt_from_top_managed = false
+    bool kv_prebuilt_from_top_managed = false,
+    bool q_prebuilt_from_top_managed = false
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -107,6 +108,9 @@ static inline void AttnLayer0(
         bool live_k_ok = live_k_enabled;
         bool live_v_ok = live_v_enabled;
         u32_t live_q_inv_sw_bits = (u32_t)0u;
+        // P11AD mainline hook: when Top has already materialized Q, skip only
+        // actual Q materialization work and keep other stage side effects intact.
+        const bool skip_q_materialization = q_prebuilt_from_top_managed;
         // P11AC mainline hook: when Top has already materialized K/V, skip only
         // K/V materialization work and keep all other stage side effects intact.
         const bool skip_kv_materialization = kv_prebuilt_from_top_managed;
@@ -121,7 +125,7 @@ static inline void AttnLayer0(
             }
         }
 
-        if (live_q_enabled) {
+        if (!skip_q_materialization && live_q_enabled) {
             const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE)
             const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
@@ -200,16 +204,18 @@ static inline void AttnLayer0(
 #endif
         }
 
-        if (!live_q_ok) {
-            const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
-            for (uint32_t i = 0; i < tensor_words; ++i) {
-                u32_t x = sram[x_in_base + i];
-                sram[q_base + i] = x;
-                sram[q_act_q_base + i] = x;
+        if (!skip_q_materialization) {
+            if (!live_q_ok) {
+                const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
+                for (uint32_t i = 0; i < tensor_words; ++i) {
+                    u32_t x = sram[x_in_base + i];
+                    sram[q_base + i] = x;
+                    sram[q_act_q_base + i] = x;
+                }
+                sram[(uint32_t)sc.q_sx_base_word.to_uint()] = bits_from_fp32(fp32_one());
+            } else {
+                sram[(uint32_t)sc.q_sx_base_word.to_uint()] = live_q_inv_sw_bits;
             }
-            sram[(uint32_t)sc.q_sx_base_word.to_uint()] = bits_from_fp32(fp32_one());
-        } else {
-            sram[(uint32_t)sc.q_sx_base_word.to_uint()] = live_q_inv_sw_bits;
         }
 
         if (!skip_kv_materialization && live_k_enabled) {

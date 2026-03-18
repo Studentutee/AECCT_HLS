@@ -12,7 +12,9 @@ enum AttnTopManagedPacketKind : unsigned {
     ATTN_PKT_WK = 1u,
     ATTN_PKT_WV = 2u,
     ATTN_PKT_K = 3u,
-    ATTN_PKT_V = 4u
+    ATTN_PKT_V = 4u,
+    ATTN_PKT_WQ = 5u,
+    ATTN_PKT_Q = 6u
 };
 
 static const unsigned ATTN_TOP_MANAGED_TILE_WORDS = (unsigned)kQkvCtSupportedL0WkCols;

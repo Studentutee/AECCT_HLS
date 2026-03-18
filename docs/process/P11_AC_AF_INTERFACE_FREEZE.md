@@ -31,8 +31,20 @@
 - Notes: freeze is minimal and only for downstream AC~AF local bring-up continuity.
 
 ### G-AD-IF (to be filled when AD interface freeze lands)
-- Status: pending
-- Freeze scope: pending
+- Status: landed (local-only evidence cycle; AD mainline Q wiring)
+- Freeze scope:
+- `AttnTopManagedPacket.kind` extends with `ATTN_PKT_WQ` and `ATTN_PKT_Q` only
+- `AttnTopManagedPacket` fields remain unchanged
+- Integrated call path identifiers:
+- `run_transformer_layer_loop -> run_p11ad_layer0_top_managed_q -> attn_phasea_top_managed_q_mainline`
+- `TransformerLayer(..., q_prebuilt_from_top_managed=true) -> AttnLayer0(..., q_prebuilt_from_top_managed=true)`
+- Acceptance lock:
+- `MAINLINE_Q_PATH_TAKEN PASS`
+- `FALLBACK_NOT_TAKEN PASS`
+- `fallback_taken = false`
+- Q-side freeze assumptions for AE-impl:
+- Q acceptance path writes to `sc.q_base_word`, `sc.q_act_q_base_word`, `sc.q_sx_base_word`
+- no alternate temporary destination in acceptance path
 
 ### G-AE-IF (to be filled when AE interface freeze lands)
 - Status: pending
