@@ -70,7 +70,8 @@ static inline void AttnLayer0(
     u32_t x_in_base_word,
     u32_t attn_out_base_word,
     const AttnScratch& sc,
-    u32_t param_base_word = (u32_t)0
+    u32_t param_base_word = (u32_t)0,
+    bool kv_prebuilt_from_top_managed = false
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -106,13 +107,18 @@ static inline void AttnLayer0(
         bool live_k_ok = live_k_enabled;
         bool live_v_ok = live_v_enabled;
         u32_t live_q_inv_sw_bits = (u32_t)0u;
+        // P11AC mainline hook: when Top has already materialized K/V, skip only
+        // K/V materialization work and keep all other stage side effects intact.
+        const bool skip_kv_materialization = kv_prebuilt_from_top_managed;
 
-        for (uint32_t i = 0; i < tensor_words; ++i) {
-            u32_t x = sram[x_in_base + i];
-            sram[k_base + i] = x;
-            sram[v_base + i] = x;
-            sram[(uint32_t)sc.k_act_q_base_word.to_uint() + i] = x;
-            sram[(uint32_t)sc.v_act_q_base_word.to_uint() + i] = x;
+        if (!skip_kv_materialization) {
+            for (uint32_t i = 0; i < tensor_words; ++i) {
+                u32_t x = sram[x_in_base + i];
+                sram[k_base + i] = x;
+                sram[v_base + i] = x;
+                sram[(uint32_t)sc.k_act_q_base_word.to_uint() + i] = x;
+                sram[(uint32_t)sc.v_act_q_base_word.to_uint() + i] = x;
+            }
         }
 
         if (live_q_enabled) {
@@ -206,7 +212,7 @@ static inline void AttnLayer0(
             sram[(uint32_t)sc.q_sx_base_word.to_uint()] = live_q_inv_sw_bits;
         }
 
-        if (live_k_enabled) {
+        if (!skip_kv_materialization && live_k_enabled) {
             const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
             bool use_k_split_top = true;
@@ -317,7 +323,7 @@ static inline void AttnLayer0(
             }
         }
 
-        if (live_v_enabled) {
+        if (!skip_kv_materialization && live_v_enabled) {
             const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
             bool use_v_split_top = true;

@@ -92,6 +92,8 @@ function Require-TextContains {
 
 $required = @(
     "include/AttnTopManagedPackets.h",
+    "src/Top.h",
+    "src/blocks/AttnLayer0.h",
     "src/blocks/AttnPhaseATopManagedKv.h",
     "tb/tb_kv_build_stream_stage_p11ac.cpp",
     "scripts/check_p11ac_phasea_surface.ps1",
@@ -106,8 +108,19 @@ $pktText = Get-Content -Path (Join-Path $repo "include/AttnTopManagedPackets.h")
 Require-TextContains -Text $pktText -Needle "Provisional internal packet contract for AC bring-up" -Reason "packet contract must remain provisional wording"
 Require-TextContains -Text $pktText -Needle "Freeze only after G-AC evidence" -Reason "packet freeze wording missing"
 
+$topText = Get-Content -Path (Join-Path $repo "src/Top.h") -Raw
+Require-TextContains -Text $topText -Needle "P11AC_MAINLINE_TOP_CALLSITE" -Reason "Top mainline callsite marker missing"
+Require-TextContains -Text $topText -Needle "attn_phasea_top_managed_kv_mainline" -Reason "Top helper callsite missing"
+
+$attnText = Get-Content -Path (Join-Path $repo "src/blocks/AttnLayer0.h") -Raw
+Require-TextContains -Text $attnText -Needle "kv_prebuilt_from_top_managed" -Reason "AttnLayer0 top-managed hook missing"
+Require-TextContains -Text $attnText -Needle "skip_kv_materialization" -Reason "AttnLayer0 K/V materialization skip guard missing"
+
 $runnerText = Get-Content -Path (Join-Path $repo "scripts/local/run_p11ac_phasea_top_managed.ps1") -Raw
 Require-TextContains -Text $runnerText -Needle "PASS: run_p11ac_phasea_top_managed" -Reason "runner PASS banner missing"
+Require-TextContains -Text $runnerText -Needle "MAINLINE_PATH_TAKEN PASS" -Reason "runner must gate on mainline path banner"
+Require-TextContains -Text $runnerText -Needle "FALLBACK_NOT_TAKEN PASS" -Reason "runner must gate on fallback-not-taken banner"
+Require-TextContains -Text $runnerText -Needle "fallback_taken = false" -Reason "runner must gate on fallback false evidence"
 
 if ($Phase -eq "post") {
     $reportText = Get-Content -Path (Join-Path $repo "docs/milestones/P00-011AC_report.md") -Raw

@@ -46,6 +46,7 @@ Version: 2026-03-18
 - P00-011Z QKV local runtime-consume probe remains valid baseline.
 - P00-011AA QKV formal LOAD_W bridge + READ_MEM roundtrip remains valid baseline.
 - P00-011AB Phase-A K/V materialization staging proof remains valid baseline.
+- P00-011AC 已完成 Phase-A Top-managed K/V design-mainline wiring（local-only）：`Top.h` 的 `run_transformer_layer_loop` 透過 `run_p11ac_layer0_top_managed_kv -> attn_phasea_top_managed_kv_mainline` 將已落地 helper/provisional packet flow接入目前 local target layer 主線，並以 `TransformerLayer(... kv_prebuilt_from_top_managed)` / `AttnLayer0(... kv_prebuilt_from_top_managed)` 最小 hook 避免重做 K/V materialization；以 `build\p11ac_final\check_p11ac_phasea_surface.log`（pre/post）、`build\p11ac_final\p11ac\run.log`、`build\p11ac_final\wrappers\p11l\EVIDENCE_SUMMARY_p11p.md` 提供本地證據；completion acceptance 明確要求 `MAINLINE_PATH_TAKEN PASS` + `FALLBACK_NOT_TAKEN PASS` + `fallback_taken = false`；此項明確為 local-only，不等同 Catapult closure 或 SCVerify closure。
 - Catapult / SCVerify 驗證刻意 deferred，將與後續同 family 項目一起做批次驗證；因此目前不等同 full Catapult closure。
 - global/repo-wide governance open items 仍存在，尚未等同全域 closure。
 
@@ -101,12 +102,13 @@ Version: 2026-03-18
 - [P00-011Z] - QKV local runtime-consume probe (local-only) - ACCEPTED (read-only runtime-facing consume probe scope for L0_WQ/L0_WK/L0_WV; Catapult / SCVerify deferred; not full closure)
 - [P00-011AA] — QKV formal LOAD_W bridge + READ_MEM roundtrip（local-only） — ACCEPTED（formal runtime-path bridge coverage scope for L0_WQ/L0_WK/L0_WV；Catapult / SCVerify deferred；not full closure）
 - [P00-011AB] — Phase-A K/V materialization staging proof（local-only） — ACCEPTED（X_WORK + Wk/Wv -> SCR_K/SCR_V staging proof scope with strict stream/memory ordering, single-read X reuse, exact writeback compare；Catapult / SCVerify deferred；not full closure）
+- [P00-011AC] — Phase-A Top-managed K/V design-mainline wiring finalize（local-only） — ACCEPTED（`Top.h` mainline call path wired: `run_transformer_layer_loop -> run_p11ac_layer0_top_managed_kv -> attn_phasea_top_managed_kv_mainline`; minimal `TransformerLayer`/`AttnLayer0` integration hook; completion acceptance requires `MAINLINE_PATH_TAKEN PASS` + `FALLBACK_NOT_TAKEN PASS` + `fallback_taken = false`; Catapult / SCVerify deferred；not full closure）
 - [M0] — M0 formal closure evidence pack — PASS（global governance open items tracked outside M0 blocking scope）
 
 ====================================================================
 5. Current Open Items
 ====================================================================
-- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X / P00-011Y / P00-011Z / P00-011AA / P00-011AB is still deferred; current acceptance remains local-only progress under local smoke / local static checks / compile-prep probe / compile-time SSOT consolidation / payload-metadata SSOT bridge / WeightStreamOrder continuity fence / exported-artifact continuity fence / export-consumer semantic continuity fence / local runtime-handoff continuity fence / local runtime-consume probe / formal LOAD_W bridge scope / Phase-A K/V materialization staging proof scope.
+- Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X / P00-011Y / P00-011Z / P00-011AA / P00-011AB / P00-011AC is still deferred; current acceptance remains local-only progress under local smoke / local static checks / compile-prep probe / compile-time SSOT consolidation / payload-metadata SSOT bridge / WeightStreamOrder continuity fence / exported-artifact continuity fence / export-consumer semantic continuity fence / local runtime-handoff continuity fence / local runtime-consume probe / formal LOAD_W bridge scope / Phase-A K/V materialization staging proof scope / Phase-A Top-managed K/V design-mainline wiring scope.
 - ternary live-cut 主線雖已推進到 L0_WQ/WK/WV、local top smoke 與單一 slice compile-prep probe，但尚未等同 live runtime full closure，也尚未完成更大範圍 family migration。
 - repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
 - m1/m2 runtime closure 尚未完成（目前主證據重心仍在 m0 baseline 與 task-local ternary smoke / compile-prep probe）。
@@ -128,6 +130,6 @@ Version: 2026-03-18
 3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`）。
 4. 讀 architecture / module_interface / srammap rules。
 5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
-6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R/L-S/L-T/L-U/L-V/L-W/L-X/L-Y/L-Z/L-AA/L-AB）。
+6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R/L-S/L-T/L-U/L-V/L-W/L-X/L-Y/L-Z/L-AA/L-AB/L-AC）。
 
 

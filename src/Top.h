@@ -21,6 +21,7 @@
 #include "gen/WeightStreamOrder.h"
 #include "blocks/PreprocEmbedSPE.h"
 #include "blocks/LayerNormBlock.h"
+#include "blocks/AttnPhaseATopManagedKv.h"
 #include "blocks/TransformerLayer.h"
 #include "blocks/FinalHead.h"
 #include <cstdint>
@@ -142,6 +143,8 @@ namespace aecct {
         u32_t infer_logits_base_word;
         u32_t infer_xpred_base_word;
         u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
+        bool p11ac_mainline_path_taken;
+        bool p11ac_fallback_taken;
 
         // Top-controlled block contract placeholders (skeleton only).
         PreprocBlockContract preproc_contract;
@@ -192,6 +195,8 @@ namespace aecct {
             for (unsigned i = 0; i < INFER_IN_WORDS_EXPECTED; ++i) {
                 infer_input_shadow[i] = 0;
             }
+            p11ac_mainline_path_taken = false;
+            p11ac_fallback_taken = false;
             clear_preproc_contract(preproc_contract);
             clear_transformer_layer_contract(transformer_contract);
             clear_layernorm_contract(layernorm_contract);
@@ -287,6 +292,8 @@ namespace aecct {
     static inline bool top_peek_infer_mid_valid() { return top_regs().infer_mid_valid; }
     static inline u32_t top_peek_infer_logits_base_word() { return top_regs().infer_logits_base_word; }
     static inline u32_t top_peek_infer_xpred_base_word() { return top_regs().infer_xpred_base_word; }
+    static inline bool top_peek_p11ac_mainline_path_taken() { return top_regs().p11ac_mainline_path_taken; }
+    static inline bool top_peek_p11ac_fallback_taken() { return top_regs().p11ac_fallback_taken; }
 
     static inline RegionId decode_region(const u32_t& addr_word) {
         unsigned a = (unsigned)addr_word.to_uint();
@@ -670,6 +677,39 @@ namespace aecct {
         }
     }
 
+    static inline bool run_p11ac_layer0_top_managed_kv(
+        u32_t* sram,
+        const CfgRegs& cfg,
+        u32_t x_in_base_word,
+        const LayerScratch& sc,
+        const LayerParamBase& pb,
+        bool& fallback_taken
+    ) {
+        AttnCfg attn_cfg;
+        attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        attn_cfg.d_model = cfg.d_model;
+        attn_cfg.n_heads = cfg.n_heads;
+        uint32_t d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)attn_cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        attn_cfg.d_model = (u32_t)d_model;
+        attn_cfg.n_heads = (u32_t)n_heads;
+        attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+        // P11AC_MAINLINE_TOP_CALLSITE
+        return attn_phasea_top_managed_kv_mainline(
+            sram,
+            pb.param_base_word,
+            x_in_base_word,
+            attn_cfg,
+            sc.attn,
+            fallback_taken
+        );
+    }
+
     static inline void load_mid_or_end_norm_params(
         bool is_mid_norm,
         u32_t* sram,
@@ -728,10 +768,29 @@ namespace aecct {
         u32_t x_out_base = alternate_x_page(x_in_base);
         bool mid_valid = false;
         static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
+        regs.p11ac_mainline_path_taken = false;
+        regs.p11ac_fallback_taken = false;
 
         for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
+            bool kv_prebuilt_from_top_managed = false;
+
+            // P11AC mainline wiring is intentionally scoped to the current
+            // local-only target layer path to keep integration additive.
+            if (lid == 0u) {
+                bool fallback_taken = true;
+                kv_prebuilt_from_top_managed = run_p11ac_layer0_top_managed_kv(
+                    sram,
+                    cfg,
+                    x_in_base,
+                    sc,
+                    pb,
+                    fallback_taken
+                );
+                regs.p11ac_mainline_path_taken = kv_prebuilt_from_top_managed;
+                regs.p11ac_fallback_taken = fallback_taken;
+            }
 
             TransformerLayer(
                 sram,
@@ -740,7 +799,8 @@ namespace aecct {
                 x_in_base,
                 x_out_base,
                 sc,
-                pb
+                pb,
+                kv_prebuilt_from_top_managed
             );
 
             x_in_base = x_out_base;

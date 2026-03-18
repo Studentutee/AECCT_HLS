@@ -76,7 +76,8 @@ static inline void TransformerLayer(
     u32_t x_in_base_word,
     u32_t x_out_base_word,
     const LayerScratch& sc,
-    const LayerParamBase& pb
+    const LayerParamBase& pb,
+    bool kv_prebuilt_from_top_managed = false
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -96,7 +97,9 @@ static inline void TransformerLayer(
         attn_cfg,
         x_in_base_word,
         sc.attn_out_base_word,
-        sc.attn
+        sc.attn,
+        (u32_t)0,
+        kv_prebuilt_from_top_managed
     );
 
     FfnCfg ffn_cfg;

@@ -71,7 +71,21 @@ try {
     Invoke-ClBuild -Source 'tb\tb_kv_build_stream_stage_p11ac.cpp' -ExeOut $exePath -LogOut $buildLog
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
-    Require-PassString -LogPath $runLog -Needle 'PASS: tb_kv_build_stream_stage_p11ac'
+    $requiredPassLines = @(
+        'PASS: tb_kv_build_stream_stage_p11ac',
+        'STREAM_ORDER PASS',
+        'MEMORY_ORDER PASS',
+        'SINGLE_READ_X_REUSE PASS',
+        'EXACT_SCR_KV_COMPARE PASS',
+        'NO_SPURIOUS_WRITE PASS',
+        'SOURCE_PRESERVATION PASS',
+        'MAINLINE_PATH_TAKEN PASS',
+        'FALLBACK_NOT_TAKEN PASS',
+        'fallback_taken = false'
+    )
+    foreach ($line in $requiredPassLines) {
+        Require-PassString -LogPath $runLog -Needle $line
+    }
 
     Add-Content -Path $runLog -Value 'PASS: run_p11ac_phasea_top_managed' -Encoding UTF8
 
