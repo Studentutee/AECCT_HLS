@@ -1,4 +1,4 @@
-# P00-011S Report - WK/WV Family Compile-Prep Expansion (Local Compiler Only)
+﻿# P00-011S Report - WK/WV Family Compile-Prep Expansion (Local Compiler Only)
 
 ## Summary
 - `P00-011S` is a `WK/WV family compile-prep expansion` built on accepted `P00-011Q`/`P00-011R` baselines.
@@ -26,7 +26,7 @@
 - `tb/tb_ternary_live_leaf_top_compile_prep_family_p11s.cpp`
 - `scripts/check_compile_prep_family_surface.ps1`
 - `scripts/local/run_p11s_compile_prep_family.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -90,3 +90,4 @@
 - The dedicated family compile-prep wrappers/TB/checker/runner provide auditable WK/WV compile-prep evidence in the same governance style as P00-011R.
 - The new family probe reduces bring-up risk for later Catapult/SCVerify family runs by pre-validating compile-prep skeleton rules and local compile/run behavior.
 - The task intentionally remains non-closure work: useful for later Catapult family prep, but not Catapult closure and not SCVerify closure.
+

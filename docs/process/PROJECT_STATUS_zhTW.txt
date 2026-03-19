@@ -141,5 +141,5 @@ Version: 2026-03-19
 4. 讀 architecture / module_interface / srammap rules。
 5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
 6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R/L-S/L-T/L-U/L-V/L-W/L-X/L-Y/L-Z/L-AA/L-AB/L-AC/L-AD）。
-7. 若要 review 新 code，先讀對應 reviewer guide / readability sidecar，再進原始碼，可大幅降低 Catapult/HLS code review 成本。
-
+7. 若要 review 新 code，先讀 `docs/review/` reviewer kit（guide/checklist/cross-check/rolemap/verdict/quickcheck），再進原始碼，可大幅降低 Catapult/HLS code review 成本。
+8. 若任務需要追溯 task-local handoff/freeze 脈絡，再讀 `docs/handoff/` supporting docs（不與 process core authority 並列）。

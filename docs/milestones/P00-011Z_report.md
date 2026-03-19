@@ -1,4 +1,4 @@
-## Summary
+﻿## Summary
 - `P00-011Z` adds a local-only, read-only runtime consume probe for `L0_WQ/L0_WK/L0_WV`.
 - The probe consumes `gen/ternary_p11c_export.json` and validates continuity against authoritative `kQuantLinearMeta` in `gen/include/WeightStreamOrder.h`.
 - This milestone remains `local-only`, `not Catapult closure`, and `not SCVerify closure`.
@@ -20,7 +20,7 @@
 - `tb/tb_ternary_qkv_runtime_probe_p11z.cpp`
 - `scripts/local/run_p11z_runtime_probe.ps1`
 - `scripts/local/run_p11l_local_regression.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -94,3 +94,4 @@
 ## Why useful for later local runtime consume work but not closure
 - The probe demonstrates matrix_id-driven runtime-facing metadata consumption readiness for QKV on repo-tracked artifacts and authoritative metadata.
 - It does not perform Catapult/SCVerify or full runtime execution closure, so it is not formal closure.
+

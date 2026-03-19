@@ -1,4 +1,4 @@
-## Summary
+﻿## Summary
 - P00-011U extends the accepted P00-011T compile-time shape SSOT into a QKV payload-metadata expectation SSOT bridge.
 - Scope remains local-only and additive: no algorithm change, no public signature change, no top contract change.
 - This milestone is explicitly not Catapult closure and not SCVerify closure.
@@ -20,7 +20,7 @@
 - scripts/check_qkv_shape_ssot.ps1
 - scripts/check_qkv_payload_metadata_ssot.ps1
 - scripts/local/run_p11l_local_regression.ps1
-- docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md
+- docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md
 - docs/process/PROJECT_STATUS_zhTW.txt
 - docs/milestones/TRACEABILITY_MAP_v12.1.md
 - docs/milestones/CLOSURE_MATRIX_v12.1.md
@@ -83,3 +83,4 @@
 - The bridge removes payload-metadata expectation drift risk by consolidating the active source chain and adding static drift checks.
 - This improves handoff readiness for later Catapult-facing work while remaining local-only.
 - It does not prove Catapult compile/run closure, SCVerify closure, full numeric closure, or full live migration closure.
+

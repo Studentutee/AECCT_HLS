@@ -11,7 +11,7 @@
 
 ## Scope
 - In scope:
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `scripts/check_handoff_surface.ps1`
 - `docs/milestones/P00-011Q_report.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
@@ -25,7 +25,7 @@
 - no source/TB semantic edits
 
 ## Files changed
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `scripts/check_handoff_surface.ps1`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
@@ -42,7 +42,7 @@
 ## Actual execution evidence excerpt
 - `build\p11q\check_handoff_surface.log`:
 - `[p11q] phase=pre`
-- `[p11q][WARN] pending-track file accepted in working tree: docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `[p11q][WARN] pending-track file accepted in working tree: docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `PASS: check_handoff_surface`
 - `build\p11q\run_p11p_regression.log`:
 - `PASS: check_repo_hygiene`
@@ -76,3 +76,4 @@
 - It freezes the accepted local-only handoff surface and role boundaries so later Catapult-prep can consume a stable baseline.
 - It adds a maintainable fail-fast checker to catch boundary misuse and wording drift early.
 - It intentionally does not substitute for Catapult/SCVerify evidence, so this remains preparation work rather than closure.
+

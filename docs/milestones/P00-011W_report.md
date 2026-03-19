@@ -1,4 +1,4 @@
-## Summary
+﻿## Summary
 - `P00-011W` extends the accepted QKV continuity chain (`P00-011U` payload-metadata SSOT bridge + `P00-011V` WeightStreamOrder continuity fence) to the repo-tracked exported artifact surface (`gen/ternary_p11c_export.json`) for `L0_WQ/L0_WK/L0_WV`.
 - Scope stays validation-only and local-only; mismatch policy is fail-only (no artifact rewrite, no generator regeneration).
 - This task remains `local-only`, `not Catapult closure`, and `not SCVerify closure`.
@@ -21,7 +21,7 @@
 ## Files changed
 - `scripts/check_qkv_export_artifact_continuity.ps1`
 - `scripts/local/run_p11l_local_regression.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -118,3 +118,4 @@
 - This task adds a direct checker bridge from accepted QKV SSOT + WeightStreamOrder continuity to repo-tracked exported JSON metadata for `L0_WQ/L0_WK/L0_WV`.
 - It prevents silent drift in `matrix_id/rows/cols/num_weights/payload_words_2b/last_word_valid_count` across checked local surfaces.
 - It does not execute Catapult/SCVerify and therefore does not constitute formal closure.
+

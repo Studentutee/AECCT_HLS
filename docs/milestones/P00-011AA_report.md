@@ -1,4 +1,4 @@
-## Summary
+﻿## Summary
 - `P00-011AA` adds a local-only formal runtime-path bridge probe for `L0_WQ/L0_WK/L0_WV` over `SET_W_BASE -> LOAD_W -> READ_MEM`.
 - Negative coverage is split into two explicit layers:
 - A. formal-path negatives (`LOAD_W` without base, incomplete length behavior, follow-up command rejection during incomplete load).
@@ -21,7 +21,7 @@
 ## Files changed
 - `tb/tb_qkv_formal_loadw_bridge_p11aa.cpp`
 - `scripts/local/run_p11aa_qkv_loadw_bridge.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -128,3 +128,4 @@
 ## Why useful for later formal runtime bridge work but not closure
 - This milestone proves accepted QKV authority-chain payload/metadata can be consumed through the formal `SET_W_BASE -> LOAD_W -> READ_MEM` runtime path with exact-word roundtrip evidence.
 - It does not include Catapult/SCVerify, attention compute closure, or full runtime closure, so it is not formal closure.
+

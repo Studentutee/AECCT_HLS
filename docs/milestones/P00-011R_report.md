@@ -25,7 +25,7 @@
 - `tb/tb_ternary_live_leaf_top_compile_prep_p11r.cpp`
 - `scripts/check_compile_prep_surface.ps1`
 - `scripts/local/run_p11r_compile_prep.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -78,3 +78,4 @@
 - The dedicated compile-prep surface/TB/checker/runner establish a formal handoff-oriented probe that is closer to Catapult-facing bring-up than local smoke alone.
 - The probe creates auditable static/compile/run evidence for later Catapult/SCVerify tasks.
 - It intentionally remains non-closure work: not Catapult closure, not SCVerify closure.
+

@@ -21,7 +21,7 @@
 - `src/blocks/TernaryLiveQkvLeafKernel.h`
 - `scripts/check_qkv_weightstreamorder_continuity.ps1`
 - `scripts/local/run_p11l_local_regression.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -94,3 +94,4 @@
 - The fence makes QKV SSOT expectations compile-time checked against authoritative local-build `kQuantLinearMeta` entries for `QLM_L0_WQ/QLM_L0_WK/QLM_L0_WV`.
 - This reduces metadata drift risk before future loader/generator/Catapult stages.
 - It does not execute Catapult/SCVerify and therefore does not constitute formal closure.
+

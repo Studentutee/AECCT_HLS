@@ -1,12 +1,12 @@
-# REVIEWER_GUIDE_QKV_MAINLINE_zhTW
+﻿# REVIEWER_GUIDE_QKV_MAINLINE_zhTW
 Date: 2026-03-19
 
 ## 1. 文件定位（累積版）
 - 本文件是 **累積式 reviewer-facing guide**，對目前 accepted local-only Q/KV mainline 路徑做導讀。
 - 本文件不是單一 round completion report；內容應持續 merge-forward，不覆蓋既有有效導讀。
 - 本版明確以以下內容為合併來源：
-  - Round 1 guide baseline：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@0001a68`
-  - Round 2 guide baseline：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@b2079e3`
+  - Round 1 guide baseline（historical pre-relayout path）：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@0001a68`
+  - Round 2 guide baseline（historical pre-relayout path）：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@b2079e3`
 - Round 1 低層導讀保留原則：
   - 以既有 reviewer-guide/既有回報可追溯內容為 source of truth。
   - 不用當前 code 註解重新推導或重寫 Round 1 低層語意。
@@ -43,11 +43,11 @@ Date: 2026-03-19
 - `src/blocks/TernaryLiveQkvLeafKernelCatapultPrepTop.h`
 - `src/blocks/TernaryLiveQkvLeafKernelShapeConfig.h`
 - Companion docs（Debt Sprint 3）：
-  - `docs/process/REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md`
-  - `docs/process/ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md`
-  - `docs/process/TERNARY_LEAF_ROLEMAP_zhTW.md`
-  - `docs/process/REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md`
-  - `docs/process/TOP_TRANSFORMER_QUICKCHECK_zhTW.md`
+  - `docs/review/REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md`
+  - `docs/review/ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md`
+  - `docs/review/TERNARY_LEAF_ROLEMAP_zhTW.md`
+  - `docs/review/REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md`
+  - `docs/review/TOP_TRANSFORMER_QUICKCHECK_zhTW.md`
 
 <a id="first-pass-review-order"></a>
 ## 3. First-Pass Review Order
@@ -232,3 +232,4 @@ Date: 2026-03-19
 - 目前剩餘項目屬 optional enhancement（非 blocking debt）：
   - 針對特定 review 場景（例如 Catapult GUI 專項）補更細的「問答式範本」
   - 視後續任務需要，新增針對新 mainline 工作的增量 sidecar（docs-only）
+

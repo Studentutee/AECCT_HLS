@@ -14,11 +14,10 @@
 
 目前工作重點
 --------
-目前前線優先順序不是新開 AE/AF 類延伸實作，而是先償還 reviewer-facing understanding debt / readability backfill。
-重點包括：
-- 補 design-side 主要路徑的 reviewer guide / dataflow note / loop-role note
-- 將 Catapult GUI 可讀性需要的 loop label 納入日常 handoff
-- 讓 execution PASS 與 reviewer-understood 兩件事明確分開
+目前 reviewer-facing debt/paydown 已完成核心收斂，重點改為：
+- 維持文件結構清楚（process/review/handoff/archive 分層）
+- 保持 reviewer kit 可快速導航、可重用
+- 讓 execution PASS 與 reviewer-understood 兩件事持續分開管理（避免 overclaim）
 
 本文件不是：
 - 專案目前狀態摘要（那是 PROJECT_STATUS_zhTW.txt）
@@ -118,6 +117,26 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 說明：
 - I / J 很有價值，但不是每次新任務都必讀的最小文件包
 - 比較適合在 audit / 關帳 / progress review / governance 任務時再讀
+
+2.5 Reviewer Kit（docs/review，reviewer-facing acceleration）
+---------------------------------------------------------
+- docs/review/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md
+- docs/review/REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md
+- docs/review/ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md
+- docs/review/TERNARY_LEAF_ROLEMAP_zhTW.md
+- docs/review/REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md
+- docs/review/TOP_TRANSFORMER_QUICKCHECK_zhTW.md
+- 用途：加速 reviewer first-pass / deeper-pass，不取代 governance core authority
+
+2.6 Handoff / Archive（補充層，不列核心 authority）
+------------------------------------------------
+- handoff supporting docs（docs/handoff）：
+  - docs/handoff/P11_AC_AF_EXECUTION_PLAN.md
+  - docs/handoff/P11_AC_AF_INTERFACE_FREEZE.md
+  - docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md
+- transitional/addendum archive（docs/process/archive）：
+  - docs/process/archive/READABILITY_GOVERNANCE_ADDENDUM_zhTW.md
+- 用途：保留任務脈絡與歷史治理補充，不與 process core 並列成雙重 authority
 
 ====================================================================
 3. 新任務最小文件包（Minimum Task Bundle；細節以 WORKFLOW 為準）

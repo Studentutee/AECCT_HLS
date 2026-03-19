@@ -1,4 +1,4 @@
-# P00-011T Report - QKV Shape SSOT Consolidation (Compile-Time SSOT + Runtime Validation Clarification)
+﻿# P00-011T Report - QKV Shape SSOT Consolidation (Compile-Time SSOT + Runtime Validation Clarification)
 
 ## Summary
 - `P00-011T` delivers `QKV shape SSOT consolidation` for the current QKV live-cut / compile-prep chain.
@@ -24,7 +24,7 @@
 - `src/blocks/TernaryLiveQkvLeafKernel.h`
 - `src/blocks/TernaryLiveQkvLeafKernelCatapultPrepTop.h`
 - `scripts/check_qkv_shape_ssot.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -99,3 +99,4 @@
 - The compile-time SSOT removes scattered local shape freezes and gives one authoritative shape definition point for current QKV compile-prep surfaces.
 - The runtime-validation boundary is now explicit: runtime metadata/config validates against compile-time supported shape.
 - This improves readiness for later tiling/generalization work, but it is still non-closure work and does not prove Catapult/SCVerify closure.
+

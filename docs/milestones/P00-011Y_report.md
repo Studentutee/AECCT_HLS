@@ -1,4 +1,4 @@
-## Summary
+﻿## Summary
 - `P00-011Y` adds a local-only runtime-handoff continuity fence for `L0_WQ/L0_WK/L0_WV`.
 - The checker validates matrix_id-driven runtime-facing handoff expectations from the accepted authority chain (`P00-011Q/R/S/T/U/V/W/X`) without introducing a second authority source.
 - This milestone remains `local-only`, `not Catapult closure`, and `not SCVerify closure`.
@@ -18,7 +18,7 @@
 ## Files changed
 - `scripts/check_qkv_runtime_handoff_continuity.ps1`
 - `scripts/local/run_p11l_local_regression.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -87,3 +87,4 @@
 ## Why useful for later local runtime-handoff fence but not closure
 - This milestone reduces handoff-metadata drift by checking one runtime-facing expectation path from existing accepted authorities.
 - It does not perform Catapult or SCVerify, and therefore is not closure.
+

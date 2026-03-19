@@ -1,4 +1,4 @@
-# P00-011AC Report - Phase-A Top-Managed K/V Design-Mainline Wiring Finalize (Local-Only)
+﻿# P00-011AC Report - Phase-A Top-Managed K/V Design-Mainline Wiring Finalize (Local-Only)
 
 ## Acceptance Summary
 
@@ -80,7 +80,7 @@ The important acceptance meaning is not merely that the AC helper exists, but th
 - `tb/tb_kv_build_stream_stage_p11ac.cpp`
 - `scripts/check_p11ac_phasea_surface.ps1`
 - `scripts/local/run_p11ac_phasea_top_managed.ps1`
-- `docs/process/P11_AC_AF_INTERFACE_FREEZE.md`
+- `docs/handoff/P11_AC_AF_INTERFACE_FREEZE.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -105,3 +105,4 @@ The important acceptance meaning is not merely that the AC helper exists, but th
   - `TransformerLayer` propagates `kv_prebuilt_from_top_managed` (default `false`; backward-compatible)
   - `AttnLayer0` uses `kv_prebuilt_from_top_managed` to skip only actual K/V materialization work while preserving non-K/V stage side effects and unchanged Q behavior
 - Completion acceptance now requires explicit runtime proof that the new mainline path was taken and that fallback was not taken.
+

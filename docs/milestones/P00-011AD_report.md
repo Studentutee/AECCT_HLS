@@ -1,4 +1,4 @@
-# P00-011AD Report - Q Path Mainline Wiring (Local-Only)
+﻿# P00-011AD Report - Q Path Mainline Wiring (Local-Only)
 
 ## Acceptance Summary
 
@@ -67,7 +67,7 @@ This acceptance does **not** claim:
 - `tb/tb_q_path_impl_p11ad.cpp`
 - `scripts/check_p11ad_impl_surface.ps1`
 - `scripts/local/run_p11ad_impl_q_path.ps1`
-- `docs/process/P11_AC_AF_INTERFACE_FREEZE.md`
+- `docs/handoff/P11_AC_AF_INTERFACE_FREEZE.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -101,3 +101,4 @@ This acceptance does **not** claim:
 
 ## Explicit incomplete items
 - None within AD-impl scope.
+

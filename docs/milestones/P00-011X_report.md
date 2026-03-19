@@ -1,4 +1,4 @@
-## Summary
+﻿## Summary
 - `P00-011X` extends the accepted `P00-011U/V/W` continuity chain to export-consumer semantic interpretation for `L0_WQ/L0_WK/L0_WV`.
 - The task adds a local-only validation checker for matrix_id-driven consumer semantics on `tb/tb_ternary_export_p11c.cpp`.
 - This milestone remains `local-only`, `not Catapult closure`, and `not SCVerify closure`.
@@ -18,7 +18,7 @@
 ## Files changed
 - `scripts/check_qkv_export_consumer_semantics.ps1`
 - `scripts/local/run_p11l_local_regression.ps1`
-- `docs/process/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
+- `docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md`
 - `docs/process/PROJECT_STATUS_zhTW.txt`
 - `docs/milestones/TRACEABILITY_MAP_v12.1.md`
 - `docs/milestones/CLOSURE_MATRIX_v12.1.md`
@@ -83,3 +83,4 @@
 - The checker locks matrix_id-driven consumer semantics for `L0_WQ/L0_WK/L0_WV` against the accepted SSOT + WeightStreamOrder + exported-artifact chain.
 - This reduces interpretation drift risk before later runtime and Catapult/SCVerify stages.
 - It does not execute Catapult/SCVerify and is therefore not formal closure.
+
