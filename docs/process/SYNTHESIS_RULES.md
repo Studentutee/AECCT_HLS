@@ -1,4 +1,4 @@
-﻿# SYNTHESIS_RULES
+# SYNTHESIS_RULES
 
 ## Purpose
 - Define a local-only synthesis-safe gate for pre-synth hygiene checks and regression entry.
@@ -23,6 +23,14 @@ If any script returns non-zero:
 - Warnings from build logs are summarized only.
 - Warning summary must not change the exit code.
 - Only structural violations are blockers.
+
+## Readability / Architecture Visibility Policy
+- 對 design-side synthesis path，review 可讀性屬正式治理項，不再視為純美化。
+- design-side `.h/.cpp` 註解以 ASCII/英文為主；中文導讀請放 repo-tracked docs / report / reviewer guide，避免 Catapult/editor/log 亂碼。
+- 新增或修改的 design code，應補最小 intent comment：block 角色、I/O 資料流、ownership / fallback / write-back boundary。
+- design-side `for` loop 原則上需使用穩定 label（`NAME: for (...) {}`）；特別是會在 Catapult Architecture / Schedule GUI 中觀察的 loop，不應省略。
+- 巢狀 loop label 不得重名，應反映 phase / row / col / mac / load / store 等角色。
+- 本規則目前先作為 reviewer-ready handoff 要求；若後續新增自動 checker，才再升級為 fail-fast pre-synth gate。
 
 ## Macro Hygiene Policy
 - Approved local macros:

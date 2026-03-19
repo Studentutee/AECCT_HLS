@@ -1,4 +1,4 @@
-﻿# EVIDENCE_BUNDLE_RULES
+# EVIDENCE_BUNDLE_RULES
 
 ## Purpose
 - Define the local-only reproducible evidence bundle for P00-011P one-shot regression handoff.
@@ -8,6 +8,16 @@
 - Local-only gate and artifacts.
 - Catapult and SCVerify remain deferred unless explicitly requested.
 - This bundle does not replace existing raw logs.
+
+## Reviewer-Facing Sidecar (for future design-code tasks)
+- 若任務有修改 design-side code，除 raw logs 外，建議另附 reviewer guide / readability sidecar。
+- sidecar 應摘要：
+  - files changed
+  - public interface / signature 是否變動
+  - input -> intermediate -> output 的資料流
+  - touched buffer / SRAM / channel / ownership boundary
+  - 最值得 reviewer 看的 3~5 個 code 片段與中文說明
+- 此 sidecar 是 reviewer-ready handoff 的推薦輸出；不追溯要求既有 `p11p` 歷史 bundle 重補。
 
 ## Required Bundle Outputs
 - `build\p11n\EVIDENCE_MANIFEST_p11p.txt`

@@ -28,6 +28,16 @@ Version: v3.1 (2026-03-15)  // includes v1+v2 full content + addendum integrated
 - 不要使用 using 來做 type alias（除非你明確要求）。
 - 若需要型態占位符（template parameter），請使用名字：ac_type。
 
+0.4 可讀性 / Review 友善規範（Catapult-safe readability）
+- design-side `.h/.cpp` 註解以 ASCII / 英文為主，避免 Catapult editor、compile log、diff viewer 出現亂碼或編碼不一致。
+- 中文說明不要硬塞進 HLS-sensitive design code；請放到 repo-tracked docs、milestone report、reviewer guide 或 sidecar 導讀。
+- 新增或修改 design block 時，至少要補：
+  (A) file-level short header（這個 block 做什麼 / 不做什麼）
+  (B) function/block-level intent comment（資料從哪裡進、到哪裡出）
+  (C) ownership / fallback / bypass / write-back boundary 的短說明
+- 註解要描述「硬體意圖」與「資料流角色」，不要只重述表面語法，例如 `// loop`、`// temp`、`// do compute` 都不算有效註解。
+- 對應 Catapult Architecture / Schedule GUI 會看的 loop，請使用穩定 loop label：`NAME: for (...) {}`。
+
 ------------------------------------------------------------------------------
 1) GUI 的 Hierarchy Settings 對應到程式寫法（Top / Block / Inline）
 
@@ -363,7 +373,9 @@ CCS_MAIN(int argc, char **argv) {
 (3) Top 用 class 寫，class 前加 #pragma hls_design top。
 (4) loop bound 盡量 constexpr；array 尺寸固定。
 (5) 不使用 using type alias（除非你要求）；型態占位符使用 ac_type。
-(6) 所有原始碼存 UTF-8（no BOM），註解以英文為主（避免 Catapult editor 亂碼）。
+(6) 所有原始碼存 UTF-8（no BOM），design-side 註解以 ASCII/英文為主（避免 Catapult editor 亂碼）。
+(7) 新增或修改的 design-side loop 預設要加 loop label；至少所有會在 Architecture / Schedule GUI 中需要辨識的 loop 都要命名。
+(8) 新增或修改的 design block 必須補最小 reviewer-readable metadata：file/block intent、I/O 資料流、ownership boundary。中文說明放 docs / report / reviewer guide。
 
 ------------------------------------------------------------------------------
 9) 參考來源（你可以用來交叉驗證）
