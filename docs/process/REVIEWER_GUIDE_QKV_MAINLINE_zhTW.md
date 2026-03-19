@@ -1,25 +1,14 @@
 # REVIEWER_GUIDE_QKV_MAINLINE_zhTW
 Date: 2026-03-19
 
-## 1. 文件定位
-- 本文件是 reviewer-facing sidecar，目標是降低目前 local-only QKV mainline 的理解成本。
-- 本文件聚焦已接受路徑的「可讀性與邊界說明」，不代表新增功能或架構改版。
-- 本輪（Debt Sprint 1 / Round 2）重點是 `Top.h` 與 `TransformerLayer.h` 的 reviewer-facing understanding debt backfill。
+## 1. 文件定位（累積版）
+- 本文件是 **累積式 reviewer-facing guide**，對目前 accepted local-only Q/KV mainline 路徑做導讀。
+- 本文件不是單一 round completion report；內容應持續 merge-forward，不覆蓋既有有效導讀。
+- 本版明確以以下內容為合併來源：
+  - Round 1 guide baseline：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@0001a68`
+  - Round 2 guide baseline：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@b2079e3`
 
-## 2. 本輪 Scope 與 Non-Goals
-### Scope In
-- `src/Top.h`
-- `src/blocks/TransformerLayer.h`
-- 本文件（reviewer guide）
-
-### Scope Out
-- 不做 AE/AF extension
-- 不做新功能、演算法、shape、quant policy 變更
-- 不改 Top 外部 public contract
-- 不做 block graph redesign
-- 不做 Catapult pragma / scheduler retuning
-
-## 3. Files Covered（本路徑全景）
+## 2. Covered Files
 - `src/Top.h`
 - `src/blocks/TransformerLayer.h`
 - `src/blocks/AttnLayer0.h`
@@ -28,91 +17,113 @@ Date: 2026-03-19
 - `src/blocks/TernaryLiveQkvLeafKernelCatapultPrepTop.h`
 - `src/blocks/TernaryLiveQkvLeafKernelShapeConfig.h`
 
-## 4. Top.h 專章（Round 2 主焦點）
-### 4.1 Top 擁有什麼
-- 唯一外部 4-channel contract dispatch（`ctrl_cmd/ctrl_rsp/data_in/data_out`）。
-- Top-FSM / receiver state（`ST_IDLE/ST_CFG_RX/ST_PARAM_RX/ST_INFER_RX/ST_HALTED`）。
-- 共享 SRAM 的 ownership、lifetime、readback/dispatch 邊界。
-- Layer loop orchestration（layer 迴圈、X page alternation、mid/end LN 插入）。
+## 3. First-Pass Review Order
+1. `Top.h`（外部 contract、FSM dispatch、layer orchestration）
+2. `TransformerLayer.h`（Top -> Attn/FFN/LN integration boundary）
+3. `AttnLayer0.h`（QKV/score/out 主計算路徑）
+4. `TernaryLiveQkvLeafKernel*.h`（leaf row materialization 與 shape/metadata guard）
 
-### 4.2 Top dispatch 與 sub-block ownership 分界
-- Top 決定：`X_WORK` / `SCRATCH` / `W_REGION` 的 base 與呼叫時機。
-- sub-block（`TransformerLayer/AttnLayer0/...`）只消費 Top 指派邊界，不宣告共享 SRAM ownership。
+## 4. End-to-End Dataflow（3~8 步）
+1. Top ingest `SET_W_BASE/LOAD_W/INFER`，建立可用 `W_REGION` 與 input payload。
+2. Top 執行 preproc + pre-layernorm，產生 layer 輸入 `X_WORK` 映射區。
+3. Top 在 layer0 先嘗試 Top-managed Q/KV mainline hook，建立 prebuilt/fallback 結果。
+4. Top 將 base/range 與 prebuilt flags 傳入 `TransformerLayer(...)`。
+5. `TransformerLayer` 委派 `AttnLayer0` 與 `FFNLayer0`，並完成 residual + LN glue。
+6. `AttnLayer0` 在 QKV/score/out path 內呼叫 ternary leaf row materialization 並完成 write-back。
+7. Top 完成 end LN + FinalHead，依 outmode 從對應 base 將結果寫到 `data_out`。
 
-### 4.3 Fallback / not-fallback 語意建立點
-- Layer0 的 Top-managed Q/KV hook 由 `run_transformer_layer_loop(...)` 內 `lid == 0` 分支建立。
-- `p11ad_mainline_q_path_taken` / `p11ad_q_fallback_taken` 與 `p11ac_mainline_path_taken` / `p11ac_fallback_taken` 皆在 Top 端被鎖定與回報。
+## 5. Ownership / Boundary 摘要
+- SRAM 決策 owner：Top（唯一 shared SRAM owner）。
+- Dispatch/Delegate：
+  - Top dispatch：state machine、layer loop、readback/writeback 邊界。
+  - TransformerLayer delegate：Attn/FFN/LN layer-local integration。
+- 主要 buffer 生產/消費：
+  - `W_REGION`：Top 管理載入與可見範圍；blocks/leaf 只讀指定區段。
+  - `X_WORK`：Top 管理頁切換與 phase-safe overwrite；layer blocks 在指定 base 下讀寫。
+  - `SCR_K/SCR_V`：attention scratch，由 Top 指派邊界與生命週期。
+- fallback 語意位置：由 Top 在 `run_transformer_layer_loop(...)` 的 layer0 hook 區段建立並鎖定旗標。
+- write-back/readback 邊界：
+  - write-back：Top `infer_emit_outmode_payload(...)`
+  - readback：Top `handle_read_mem(...)`
 
-### 4.4 Round 2 新增的 Top loop labels（Catapult GUI 可視）
-- `TOP_LAYER_ORCHESTRATION_LOOP`
-- `TOP_OUTMODE_XPRED_WRITEBACK_LOOP`
-- `TOP_OUTMODE_LOGITS_WRITEBACK_LOOP`
-- `TOP_READ_MEM_STREAM_LOOP`
-- `TOP_COPY_X_WORDS_LOOP`
-- `TOP_NORM_PARAM_COPY_LOOP`
+## 6. File Roles
+### 6.1 `Top.h`
+- 唯一外部 4-channel contract (`ctrl_cmd/ctrl_rsp/data_in/data_out`) 的 dispatch owner。
+- 管理 `ST_CFG_RX/ST_PARAM_RX/ST_INFER_RX/ST_HALTED` 與 payload ingest。
+- 管理 layer orchestration（含 layer0 mainline hook、mid/end LN 插入、FinalHead 接續）。
 
-## 5. TransformerLayer.h 專章（Round 2 主焦點）
-### 5.1 TransformerLayer 接受什麼
-- 由 Top 傳入的 layer 執行邊界：
-  - `x_in_base_word`, `x_out_base_word`
-  - `LayerScratch sc`
-  - `LayerParamBase pb`
-  - `kv_prebuilt_from_top_managed`, `q_prebuilt_from_top_managed`
+### 6.2 `TransformerLayer.h`
+- 接收 Top 指派的 `x/scratch/param` 邊界與 prebuilt flags。
+- 委派 `AttnLayer0<ATTN_STAGE_FULL>` 與 `FFNLayer0<FFN_STAGE_FULL>`。
+- 完成 layer-local residual add + sublayer1 norm param load + LN 呼叫。
+- 不擁有 Top-FSM、共享 SRAM policy、或 fallback 政策定義權。
 
-### 5.2 TransformerLayer 委派給誰
-- Attention 主體委派給 `AttnLayer0<ATTN_STAGE_FULL>(...)`。
-- FFN 主體委派給 `FFNLayer0<FFN_STAGE_FULL>(...)`。
-- 本檔負責 layer integration glue：residual add + layer sublayer1 norm parameter load + LayerNormBlock 呼叫。
+### 6.3 `AttnLayer0.h`（Round 1 核心低層導讀保留）
+- `ATTN_STAGE_QKV`：Q/K/V materialization（含 live path 與 fallback/bypass）。
+- `ATTN_STAGE_SCORES`：QK score、softmax、V 加權輸出到 pre/post concat。
+- `ATTN_STAGE_OUT`：將 `post_concat` 寫回 attention output base。
+- 不負責 Top state machine、外部 command/rsp 協定、全域 SRAM ownership 仲裁。
 
-### 5.3 TransformerLayer 不擁有什麼
-- 不擁有 Top-FSM。
-- 不擁有共享 SRAM arbitration/lifetime policy。
-- 不定義 fallback 政策本身，只消費 Top 傳入的 prebuilt/fallback 結果。
+### 6.4 `TernaryLiveQkvLeafKernel*.h`（Round 1 核心低層導讀保留）
+- `ShapeConfig`：QKV compile-time shape/payload expectation SSOT。
+- `LeafKernel`：row-kernel（metadata guard + ternary decode + MAC）。
+- `LeafKernelTop`：local split-interface top wrapper。
+- `LeafKernelCatapultPrepTop`：compile-prep wrapper/surface adapter。
+- 不負責 runtime-variable shape negotiation、Top SRAM policy、closure 宣告。
 
-### 5.4 Round 2 新增的 TransformerLayer loop labels
-- `TRANSFORMER_LAYER_SUBLAYER1_NORM_PARAM_COPY_LOOP`
-- `TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_LOOP`
+## 7. Loop-Role Notes（代表家族）
+### 7.1 `TOP_*`（Round 2 新增）
+- `TOP_LAYER_ORCHESTRATION_LOOP`：layer 主排程迴圈。
+- `TOP_OUTMODE_XPRED_WRITEBACK_LOOP` / `TOP_OUTMODE_LOGITS_WRITEBACK_LOOP`：Top 最終輸出寫回。
+- `TOP_READ_MEM_STREAM_LOOP`：READ_MEM readback stream。
+- `TOP_COPY_X_WORDS_LOOP` / `TOP_NORM_PARAM_COPY_LOOP`：中間快照與參數搬移輔助迴圈。
 
-## 6. First-Pass Review Order（建議）
-1. `src/Top.h` `top(...)`：外部 contract dispatch 與 state gating。
-2. `src/Top.h` `run_transformer_layer_loop(...)`：layer0 Q/KV mainline hook 與 fallback latch。
-3. `src/blocks/TransformerLayer.h` `TransformerLayer(...)`：Top -> Attn/FFN/LN handoff。
-4. `src/blocks/AttnLayer0.h` `AttnLayer0(...)`：QKV/score/out 實際計算路徑。
-5. `src/blocks/TernaryLiveQkvLeafKernel*.h`：row-kernel materialization 與 metadata/shape guard。
+### 7.2 `TRANSFORMER_*`（Round 2 新增）
+- `TRANSFORMER_LAYER_SUBLAYER1_NORM_PARAM_COPY_LOOP`：LN gamma/beta 載入。
+- `TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_LOOP`：FFN2 輸出與 residual 加總。
 
-## 7. 本輪更新後最重要的 5 個 code regions
-1. `src/Top.h` `run_transformer_layer_loop(...)`（layer orchestration + fallback meaning）
-2. `src/Top.h` `infer_emit_outmode_payload(...)`（Top write-back boundary）
-3. `src/Top.h` `handle_read_mem(...)`（debug readback boundary）
-4. `src/Top.h` `top(...)`（external contract dispatch）
+### 7.3 `ATTN_*`（Round 1 低層重點保留）
+- `ATTN_QKV_KV_PRIME_COPY_LOOP`
+- `ATTN_Q_SPLIT_TOKEN_LOOP` / `ATTN_Q_SPLIT_INPUT_COL_LOOP` / `ATTN_Q_SPLIT_OUTPUT_COL_LOOP`
+- `ATTN_K_*` / `ATTN_V_*`
+- `ATTN_SCORE_TOKEN_LOOP` / `ATTN_SCORE_HEAD_LOOP` / `ATTN_SCORE_KEY_TOKEN_LOOP` / `ATTN_SCORE_DOT_COL_LOOP`
+- `ATTN_PRECONCAT_HEAD_COL_LOOP` / `ATTN_PRECONCAT_KEY_TOKEN_ACC_LOOP`
+- `ATTN_POSTCONCAT_COPY_LOOP` / `ATTN_OUT_WRITEBACK_LOOP`
+
+### 7.4 `TERNARY_*`（Round 1 低層重點保留）
+- `TERNARY_QKV_IMPL_OUT_ROW_LOOP`
+- `TERNARY_WQ_SPLIT_OUT_ROW_LOOP` + `TERNARY_WQ_SPLIT_IN_COL_LOOP`
+- `TERNARY_WK_SPLIT_OUT_ROW_LOOP` + `TERNARY_WK_SPLIT_IN_COL_LOOP`
+- `TERNARY_WV_SPLIT_OUT_ROW_LOOP` + `TERNARY_WV_SPLIT_IN_COL_LOOP`
+
+## 8. Most Important Code Regions（7 個）
+1. `src/Top.h` `top(...)`（state + command dispatch）
+2. `src/Top.h` `run_transformer_layer_loop(...)`（layer0 hook + fallback latch）
+3. `src/Top.h` `infer_emit_outmode_payload(...)`（Top write-back boundary）
+4. `src/Top.h` `handle_read_mem(...)`（Top readback boundary）
 5. `src/blocks/TransformerLayer.h` `TransformerLayer(...)`（integration boundary）
+6. `src/blocks/AttnLayer0.h` `AttnLayer0(...)`（QKV/score/out 主體）
+7. `src/blocks/TernaryLiveQkvLeafKernel.h` `ternary_live_qkv_materialize_row_kernel_impl(...)`（leaf materialization/guard）
 
-## 8. Dataflow 摘要（本輪 reviewer 角度）
-1. Top ingest `SET_W_BASE/LOAD_W/INFER`，建立 `W_REGION` 與 input payload。
-2. Top 跑 preproc + pre-layernorm，準備 layer input（`X_WORK` 對應區）。
-3. Top 在 layer0 先嘗試 Top-managed Q/KV path，建立 prebuilt/fallback 結果。
-4. Top 把 base/buffer 邊界與 prebuilt flags 交給 `TransformerLayer`。
-5. `TransformerLayer` 委派 `AttnLayer0`；`AttnLayer0` 依 flags 進入既有 QKV path。
-6. `AttnLayer0` 內部使用 ternary leaf path 完成 row materialization（Q/K/V）與後續 score/out 流程。
-7. 回到 Top，完成 end LN + FinalHead，再依 outmode 做 write-back 到 `data_out`。
-
-## 9. Ownership Boundary 摘要
-- SRAM 決策 owner：Top（唯一共享 SRAM owner）。
-- `W_REGION`：由 Top 管理載入與可見範圍；block 只讀指定區段。
-- `X_WORK`：Top 管理 phase-safe overwrite 與 layer 間交接；block 在指定 base 下讀寫。
-- `SCR_K/SCR_V`：attention scratch，由 Top 指派落點與生命週期邊界。
-- Fallback 語意 owner：Top（在 layer0 hook 區塊定義並鎖定標誌）；TransformerLayer/AttnLayer0 消費該語意。
-
-## 10. PASS 代表什麼 / 不代表什麼（本輪）
-- 代表：
-  - local-only accepted progress 仍可重現
-  - reviewer-facing 可讀性與邊界說明改善
-  - Catapult GUI loop 可辨識性提升（透過穩定 label）
-- 不代表：
+## 9. PASS 代表什麼 / 不代表什麼
+- 目前 PASS 代表：
+  - local-only accepted progress 可重現
+  - 指定 regression/compile-prep/probe script 在本地可通過
+  - handoff boundary 內主線行為符合目前 acceptance 條件
+- 目前 PASS 不代表：
   - Catapult closure
   - SCVerify closure
   - full runtime/numeric/global closure
 
-## 11. Catapult / SCVerify 狀態宣告
-- 若本輪未執行 Catapult 或 SCVerify，則 closure 明確維持 deferred。
-- 本文件中的 PASS 用語僅對應 local-only acceptance 與本輪指定腳本證據範圍。
+## 10. Round Notes（Convergence）
+### 10.1 Round 1 additions（保留）
+- 建立 Attn/ternary leaf 低層導讀與 loop-role 家族說明。
+- 建立 buffer/ownership/fallback 檢查視角。
+
+### 10.2 Round 2 additions（合併）
+- 補 Top/Transformer integration boundary 專章與 `TOP_*`/`TRANSFORMER_*` loop 可視性。
+- 補 Top write-back/readback 邊界導讀與高層 review order。
+
+### 10.3 Remaining debt / next likely review target
+- `Top.h`/`TransformerLayer.h` 之外的 design-side 歷史註解一致性仍可能有零星欠債。
+- 下一個高價值目標可放在 `AttnLayer0.h` 與 leaf family 的 comment consistency 與 reviewer導讀深度對齊（不改行為前提）。

@@ -1,10 +1,10 @@
 #pragma once
 // SSOT: src/Top.h is the only Top contract definition.
 // design/AecctTop.h is wrapper/adapter only.
-// Top.h?謅??eader-only??// M6?謅?op-FSM + CFG/PARAM/INFER + DEBUG_CFG/HALTED/RESUME
-// 1) one-command-per-call?謅Ｗ??????????????1 ??ctrl_cmd
-// 2) ST_CFG_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??cfg word?謅?rom data_in??// 3) ST_PARAM_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??param word?謅?rom data_in??// 4) ST_INFER_RX ??頦? ctrl_cmd ?頩???剜迫? 1 ??input word?謅?rom data_in??// 5) HALTED?謅Ｗ????ctrl ERR?謅?ㄝ???meta0/meta1 ??data_out
-// 6) READ_MEM ???? M2 ??ㄟ頩????腿E/HALTED ?????
+// Header-only Top integration contract for FSM dispatch and runtime paths.
+// One command is consumed per top() call from ctrl_cmd.
+// CFG/PARAM/INFER payload words are consumed from data_in in their RX states.
+// HALTED emits ERR + metadata to data_out; READ_MEM is gated by legal states.
 #include "AecctTypes.h"
 #include "AecctUtil.h"
 #include "AecctProtocol.h"
@@ -164,14 +164,14 @@ namespace aecct {
         // Shared SRAM arbitration stub owned by Top.
         MemArbRegs mem_arb;
 
-        // M5?謅?ebug/halt ??撠?
+        // Debug/HALT control and sticky halt metadata owned by Top.
         bool debug_armed;
         u32_t dbg_trigger_sel;
         u32_t dbg_k_value;
         bool halt_active;
         HaltInfo halt_info;
 
-        // M3?謅?fg ??剜迫???蝘???
+        // CFG ingest shadow words and decoded runtime CFG registers.
         u32_t cfg_words[CFG_WORDS_EXPECTED];
         u32_t cfg_count;
         bool cfg_ready;
@@ -280,7 +280,7 @@ namespace aecct {
         return top_in_fifo().read();
     }
 
-    // TB ??debug helper?謅????鞎?top ?豯殉?鞊堆???
+    // TB debug peek helpers for observing Top-owned runtime state.
     static inline TopState top_peek_state() { return top_regs().state; }
     static inline unsigned top_peek_cfg_count() { return (unsigned)top_regs().cfg_count.to_uint(); }
     static inline bool top_peek_cfg_ready() { return top_regs().cfg_ready; }
@@ -986,7 +986,7 @@ namespace aecct {
         u32_t* sram
     ) {
         // Debug read-back path owned by Top. This does not transfer SRAM ownership.
-        // READ_MEM ??憛敢?謅?ddr_word?頩?n_words?謅????塗?
+        // READ_MEM payload: addr_word then len_words, both in u32 words.
         u32_t addr_word_in = top_data_read(data_in);
         u32_t len_words_in = top_data_read(data_in);
 
@@ -1024,7 +1024,7 @@ namespace aecct {
 
     // Top dispatch entrypoint for the external 4-channel contract.
     // Top accepts commands, validates state/range constraints, and dispatches block execution.
-    // Top ????豯殉?鞊堆????翰??尿??豲????????
+    // Top functional entrypoint for command dispatch and RX-state servicing.
     static inline void top(
         ac_channel<ac_int<16, false> >& ctrl_cmd,
         ac_channel<ac_int<16, false> >& ctrl_rsp,
@@ -1122,11 +1122,11 @@ namespace aecct {
             else if (regs.state == ST_CFG_RX) {
                 if (op == (uint8_t)OP_CFG_COMMIT) {
                     if (!regs.cfg_ready) {
-                        // M3 ?雓Ｙ??甇Ｙ???謅Ｗ??????豯止?韏????雓蟡?ST_CFG_RX ?頩????嗾??
+                        // CFG_COMMIT before full CFG payload is a length mismatch error.
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_LEN_MISMATCH));
                     }
                     else if (!cfg_validate_minimal(regs)) {
-                        // M3 ?雓Ｙ??甇Ｙ???謅Ｗ????cfg ??IDLE?謅?ㄡ???謢? begin
+                        // Illegal CFG resets session state back to IDLE and clears CFG words.
                         regs.state = ST_IDLE;
                         cfg_session_clear(regs);
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_ILLEGAL));
@@ -1195,7 +1195,7 @@ namespace aecct {
             }
         }
         else {
-            // ??隡??????豯???謅?ㄝ雓??剜迫??????1 ????雓?
+            // No command this cycle: service one payload word for the active RX state.
             if (regs.state == ST_CFG_RX && !regs.cfg_ready) {
                 cfg_ingest_one_word(regs, data_in);
             }
