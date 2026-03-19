@@ -17,7 +17,7 @@
 | Area | Scope | Current Status | Latest Evidence / Patch | Key Files / Artifacts | Notes |
 |---|---|---|---|---|---|
 | Governance Entrypoint | 治理入口與 authority 順序 | PASS | P00-012（工作項名稱） | `docs/process/GOVERNANCE_ENTRYPOINT_zhTW.txt` | repo 已存在治理入口文件。 |
-| Project Status Summary | 專案主線狀態摘要 | PASS | `P00-009_report.md` + 2026-03-18 status refresh | `docs/process/PROJECT_STATUS_zhTW.txt` | 已補記 P00-011F~P00-011AD 的目前 accepted / deferred 狀態。 |
+| Project Status Summary | 專案主線狀態摘要 | PASS | `P00-009_report.md` + 2026-03-19 status refresh | `docs/process/PROJECT_STATUS_zhTW.txt` | 已補記 P00-011F~P00-011AD 的目前 accepted / deferred 狀態，並把 reviewer-facing understanding debt / readability backfill 列為後續 open item。 |
 | v12.1 Docs Baseline | v12.1 文件基線收斂（docs-only） | FROZEN-DOCS | `P00-008_report.md` + `P00-008_artifacts/verdict.txt` | `docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`<br>`docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt` | 文件凍結不等於 live implementation closure。 |
 | M0 Formal Closure | M0 skeleton/contract/smoke baseline | PASS | `M0_report.md` + `M0_artifacts/verdict.txt` | `docs/milestones/M0_report.md`<br>`docs/milestones/M0_artifacts/closure_checklist.txt` | M0 範圍明確，global open items 已分離追蹤。 |
 | Pragma Hygiene | project code pragma 清理 | PASS | P00-010（工作項名稱） | `design/AecctTop.h` | 現況檢查僅保留合法 `#pragma hls_design top/interface`。 |
