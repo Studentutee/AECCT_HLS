@@ -19,6 +19,11 @@
 - 長期里程碑規劃（那是 AECCT_v12_M0-M24_plan_zhTW.txt）
 - Catapult/HLS 實作細節規範（那是 Catapult_C++_CodeGen_Guide_for_Codex_v3.txt）
 
+補充定位
+--------
+自 2026-03-19 起，本文件除 execution-evidence / closure 規則外，也承接 reviewer-facing understanding debt / readability backfill 的最小 handoff 要求。
+也就是說：execution PASS 只代表「有跑過」，不代表 reviewer 已能快速理解 code intent。
+
 建議搭配閱讀順序
 ----------------
 1. GOVERNANCE_ENTRYPOINT_zhTW.txt
@@ -161,9 +166,35 @@ A7. Completion Report 建議格式
 4. Run command
 5. Actual execution output excerpt
 6. Limitations
+7. Reviewer-facing intent summary（這段在做什麼、碰到哪些資料流 / buffer / state）
+8. Most important code regions to inspect（建議 reviewer 先看哪幾段）
 
 若未執行，必須明確寫：
 - not executed
+
+A8. Reviewer-facing Readability / Intent Handoff
+-----------------------------------------------
+若任務涉及 design-side code、Top / block wiring、memory path、quant / shape / packing semantics、或 Catapult Architecture 可見行為，
+除 execution evidence 外，建議最少再交付下列 reviewer-facing 資訊：
+
+1. intent summary
+   - 這段 code 在做什麼
+   - 不負責什麼
+
+2. dataflow note
+   - input -> intermediate -> output
+   - touched buffer / channel / state / write-back boundary
+
+3. loop-role note
+   - 重要 loop 對應哪個 phase / row / col / mac / pack / load / store 角色
+   - 若 loop 會在 Catapult GUI 中觀察，原則上應使用穩定 label，例如 `ROW_LOOP: for (...) {}`
+
+4. reviewer guide / sidecar（可放 docs / report，不強制塞入 design code）
+   - 中文導讀可放 repo-tracked docs / milestone report / reviewer sidecar
+   - design-side source 內註解則以 ASCII/英文為主，避免工具鏈亂碼
+
+說明：本條是為了把「有跑過」與「看得懂」分開管理。
+新任務不要求一次補齊所有歷史 code，但若本輪碰到 design path，應盡量順手補最小 reviewer-facing handoff。
 
 ==================================================
 Part B：Acceptance / Evidence / Closure（如何驗收）
@@ -174,9 +205,15 @@ B1. 核心原則
 在本專案中：
 
 完成 ≠ 文字摘要完成
+Execution PASS ≠ Intent PASS ≠ Reviewer PASS
 
 凡是 code change / patch / checker / preview / milestone 子任務聲稱完成時，
 不能只看摘要，必須把 execution evidence 視為驗收的一部分。
+
+補充：
+- Execution PASS：有 files changed、build/run 命令、實際執行證據
+- Intent PASS：有說清楚這段在做什麼、碰到哪些資料流 / buffer / state
+- Reviewer PASS：reviewer 能在合理時間內指出主要 loop / phase / boundary
 
 B2. 最低驗收必要項
 ------------------
@@ -251,6 +288,8 @@ B6. 驗收時 ChatGPT / reviewer 應主動檢查的事
 5. 是否有 actual execution evidence
 6. 是否真的做到 spec 要求，而不是只做表面檢查
 7. limitations 是否說清楚
+8. 若涉及 design-side code，是否有最小 intent summary / dataflow note
+9. 若 loop 需要在 Catapult GUI 觀察，是否已有穩定 label 或明確說明為何本輪不補
 
 B7. 證據不足時的正確說法
 ------------------------

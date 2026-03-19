@@ -1,8 +1,8 @@
-# READABILITY_GOVERNANCE_ADDENDUM_zhTW
+﻿# READABILITY_GOVERNANCE_ADDENDUM_zhTW
 Date: 2026-03-19
 
 ## 目的
-把「design-side code 幾乎沒註解、Catapult 介面中 loop 無法辨識」這兩個 review 痛點，正式整理成可納入治理的更新提案。
+把「design-side code 幾乎沒註解、Catapult 介面中 loop 無法辨識」這兩個 review 痛點，整理成治理補充提案，並作為後續吸收入核心規則文件前的過渡說明。
 
 ## 本次建議納入治理的核心規則
 1. design-side `.h/.cpp` 註解以 ASCII/英文為主，避免 Catapult / compiler / log / diff viewer 亂碼。
@@ -16,7 +16,7 @@ Date: 2026-03-19
 6. reviewer-ready handoff 除執行證據外，建議再附 reviewer-facing sidecar，協助快速 review。
 
 ## 建議更新的文件
-- `Catapult_C++_CodeGen_Guide_for_Codex_v3.1.txt`
+- `Catapult_C++_CodeGen_Guide_for_Codex_v3.txt`
   - 加入 Catapult-safe readability 規則
   - 加入 loop label 規範
   - 把 readability metadata 升級為產碼硬性規格
@@ -42,3 +42,8 @@ Date: 2026-03-19
 - 在 Catapult Architecture / Schedule GUI 內更容易辨識哪個 loop 對應哪個 phase。
 - reviewer 不用先硬啃原始碼，可以先看中文 sidecar 理解資料流。
 - 有助於把「工具友善」與「人類可讀」分層，不互相傷害。
+
+
+## 文件狀態（過渡定位）
+- 本文件屬於治理補充 / 過渡說明。
+- 當相關規則已被 `GOVERNANCE_ENTRYPOINT_zhTW.txt`、`AECCT_PROJECT_WORKFLOW_v1_zhTW.txt`、`SYNTHESIS_RULES.md`、`EVIDENCE_BUNDLE_RULES.md`、`Catapult_C++_CodeGen_Guide_for_Codex_v3.txt` 吸收後，可降級為 archive / changelog 參考，不應再與核心治理文件並列成雙重 authority。

@@ -12,6 +12,14 @@
 4. 驗收時最低要看哪些證據
 5. 哪些文件屬於日常核心，哪些屬於治理查核時再讀
 
+目前工作重點
+--------
+目前前線優先順序不是新開 AE/AF 類延伸實作，而是先償還 reviewer-facing understanding debt / readability backfill。
+重點包括：
+- 補 design-side 主要路徑的 reviewer guide / dataflow note / loop-role note
+- 將 Catapult GUI 可讀性需要的 loop label 納入日常 handoff
+- 讓 execution PASS 與 reviewer-understood 兩件事明確分開
+
 本文件不是：
 - 專案目前狀態摘要（那是 PROJECT_STATUS_zhTW.txt）
 - 任務下法與驗收細則全文（那是 AECCT_PROJECT_WORKFLOW_v1_zhTW.txt）
@@ -112,8 +120,10 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 - 比較適合在 audit / 關帳 / progress review / governance 任務時再讀
 
 ====================================================================
-3. 新任務最小文件包（Minimum Task Bundle）
+3. 新任務最小文件包（Minimum Task Bundle；細節以 WORKFLOW 為準）
 ====================================================================
+
+說明：本節只保留最小摘要。任務模板、Authority Bundle 寫法、DoD 與 acceptance wording 以 AECCT_PROJECT_WORKFLOW_v1_zhTW.txt 為準。
 
 3.1 所有任務最少建議附
 ----------------------
@@ -149,7 +159,7 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 - 必須把本次真正要依賴的 authority 明確列出
 
 ====================================================================
-4. 任務啟動最低要求
+4. 任務啟動最低要求（摘要版；完整模板請看 WORKFLOW）
 ====================================================================
 
 每次交給 Codex / ChatGPT 的任務，至少應明確寫出：
@@ -179,7 +189,7 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 - AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
 
 ====================================================================
-5. 驗收最低要求（Execution-Evidence Rule）
+5. 驗收最低要求（摘要版；完整驗收分級請看 WORKFLOW）
 ====================================================================
 
 本專案對 code 任務的最低驗收規則如下：
@@ -209,6 +219,9 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 
 詳細規則請回到：
 - AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
+
+補充：execution evidence 只回答「有沒有跑」，不自動回答「reviewer 是否已理解」。
+若任務涉及 design-side code，後續仍應搭配 reviewer guide / readability sidecar / loop-role 說明。
 
 ====================================================================
 6. 任務類型與對應閱讀建議
