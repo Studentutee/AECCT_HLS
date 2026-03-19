@@ -28,6 +28,11 @@
 #include <cstdint>
 
 namespace aecct {
+    // Top is the integration owner for this design boundary:
+    // - owns the external 4-channel contract and state machine dispatch
+    // - owns shared SRAM lifetime/arbitration semantics
+    // - dispatches block calls with explicit base/range ownership boundaries
+    // Sub-blocks consume the ranges passed by Top and do not own global SRAM policy.
 
     static const unsigned CFG_WORDS_EXPECTED = (unsigned)EXP_LEN_CFG_WORDS;
     static const unsigned PARAM_WORDS_EXPECTED = (unsigned)EXP_LEN_PARAM_WORDS;
@@ -130,6 +135,7 @@ namespace aecct {
     };
 
     // Persistent top-level internal registers.
+    // These registers are the single source of truth for Top-owned runtime state.
     struct TopRegs {
         TopState state;
         ReceiverState rx_state;
@@ -679,7 +685,7 @@ namespace aecct {
     }
 
     static inline void copy_x_words(u32_t* dst, const u32_t* src, uint32_t words) {
-        for (uint32_t i = 0; i < words; ++i) {
+        TOP_COPY_X_WORDS_LOOP: for (uint32_t i = 0; i < words; ++i) {
             dst[i] = src[i];
         }
     }
@@ -763,7 +769,7 @@ namespace aecct {
         const uint32_t norm_w_base = param_base_word + kParamMeta[norm_w_id].offset_w;
         const uint32_t norm_b_base = param_base_word + kParamMeta[norm_b_id].offset_w;
 
-        for (uint32_t c = 0; c < d_model; ++c) {
+        TOP_NORM_PARAM_COPY_LOOP: for (uint32_t c = 0; c < d_model; ++c) {
             sram[gamma_base + c] = sram[norm_w_base + c];
             sram[beta_base + c] = sram[norm_b_base + c];
         }
@@ -799,6 +805,10 @@ namespace aecct {
         );
     }
 
+    // Top-level layer orchestration boundary.
+    // Top owns: layer loop scheduling, X_WORK page alternation, mid/end LN insertion,
+    // and latching "mainline taken" vs "fallback taken" status for reviewer-visible checks.
+    // TransformerLayer owns: per-layer compute under the base words handed in by Top.
     static inline void run_transformer_layer_loop(TopRegs& regs, u32_t* sram) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -813,7 +823,7 @@ namespace aecct {
         regs.p11ad_mainline_q_path_taken = false;
         regs.p11ad_q_fallback_taken = false;
 
-        for (uint32_t lid = 0; lid < n_layers; ++lid) {
+        TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
             bool q_prebuilt_from_top_managed = false;
@@ -822,6 +832,8 @@ namespace aecct {
             // P11AC mainline wiring is intentionally scoped to the current
             // local-only target layer path to keep integration additive.
             if (lid == 0u) {
+                // Layer-0 is the only place where Top prebuilds Q/KV in this local-only path.
+                // Fallback meaning is established and latched here for reviewer evidence.
                 bool q_fallback_taken = true;
                 q_prebuilt_from_top_managed = run_p11ad_layer0_top_managed_q(
                     sram,
@@ -847,6 +859,7 @@ namespace aecct {
                 regs.p11ac_fallback_taken = fallback_taken;
             }
 
+            // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
             TransformerLayer(
                 sram,
                 cfg,
@@ -912,20 +925,22 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_out,
         const u32_t* sram
     ) {
+        // Output/write-back boundary owned by Top:
+        // Top selects which finalized output region is streamed to data_out.
         uint32_t mode = (uint32_t)regs.outmode.to_uint();
         if (mode == 2u) {
             return;
         }
         if (mode == 0u) {
             uint32_t base = (uint32_t)regs.infer_xpred_base_word.to_uint();
-            for (unsigned i = 0; i < OUT_WORDS_X_PRED; ++i) {
+            TOP_OUTMODE_XPRED_WRITEBACK_LOOP: for (unsigned i = 0; i < OUT_WORDS_X_PRED; ++i) {
                 data_out.write(sram[base + i]);
             }
             return;
         }
         if (mode == 1u) {
             uint32_t base = (uint32_t)regs.infer_logits_base_word.to_uint();
-            for (unsigned i = 0; i < OUT_WORDS_LOGITS; ++i) {
+            TOP_OUTMODE_LOGITS_WRITEBACK_LOOP: for (unsigned i = 0; i < OUT_WORDS_LOGITS; ++i) {
                 data_out.write(sram[base + i]);
             }
             return;
@@ -970,6 +985,7 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_out,
         u32_t* sram
     ) {
+        // Debug read-back path owned by Top. This does not transfer SRAM ownership.
         // READ_MEM ??憛敢?謅?ddr_word?頩?n_words?謅????塗?
         u32_t addr_word_in = top_data_read(data_in);
         u32_t len_words_in = top_data_read(data_in);
@@ -999,13 +1015,15 @@ namespace aecct {
             return;
         }
 
-        for (unsigned long long i = 0ull; i < len_words; ++i) {
+        TOP_READ_MEM_STREAM_LOOP: for (unsigned long long i = 0ull; i < len_words; ++i) {
             unsigned idx = (unsigned)(addr_word + i);
             data_out.write(sram[idx]);
         }
         ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_READ_MEM));
     }
 
+    // Top dispatch entrypoint for the external 4-channel contract.
+    // Top accepts commands, validates state/range constraints, and dispatches block execution.
     // Top ????豯殉?鞊堆????翰??尿??豲????????
     static inline void top(
         ac_channel<ac_int<16, false> >& ctrl_cmd,

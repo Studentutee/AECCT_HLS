@@ -1,5 +1,9 @@
 #pragma once
-// One-layer wrapper: attention, FFN, residual add, LayerNorm.
+// One-layer integration wrapper: attention, FFN, residual add, LayerNorm.
+// Boundary notes:
+// - Inputs are fully owned by Top (base words, scratch layout, and prebuilt flags).
+// - This block delegates attention internals to AttnLayer0 and does local composition.
+// - Shared SRAM lifetime/arbitration ownership stays in Top.
 
 #include <cstdint>
 
@@ -30,6 +34,7 @@ struct TransformerLayerContract {
     u32_t w_base_word;
 };
 
+// Contract helper for Top-owned orchestration metadata.
 static inline void clear_transformer_layer_contract(TransformerLayerContract& c) {
     c.start = false;
     c.done = false;
@@ -63,12 +68,16 @@ static inline void load_layer_sublayer1_norm_params(
     const uint32_t norm_w_base = param_base_word + kParamMeta[norm_w_id].offset_w;
     const uint32_t norm_b_base = param_base_word + kParamMeta[norm_b_id].offset_w;
 
-    for (uint32_t c = 0; c < d_model; ++c) {
+    TRANSFORMER_LAYER_SUBLAYER1_NORM_PARAM_COPY_LOOP: for (uint32_t c = 0; c < d_model; ++c) {
         sram[gamma_base + c] = sram[norm_w_base + c];
         sram[beta_base + c] = sram[norm_b_base + c];
     }
 }
 
+// Integration boundary for one logical layer.
+// Accepts Top-managed X_WORK/SCRATCH/W_REGION base words and optional prebuilt Q/KV flags.
+// Delegates attention compute to AttnLayer0, then completes FFN + residual + LN handoff.
+// Does not own Top FSM dispatch, global SRAM policy, or fallback-policy definition.
 static inline void TransformerLayer(
     u32_t* sram,
     const CfgRegs& cfg,
@@ -93,6 +102,7 @@ static inline void TransformerLayer(
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
 
+    // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
     AttnLayer0<ATTN_STAGE_FULL>(
         sram,
         attn_cfg,
@@ -122,7 +132,7 @@ static inline void TransformerLayer(
     uint32_t w2_base = (uint32_t)sc.ffn.w2_out_base_word.to_uint();
     uint32_t add2_base = (uint32_t)sc.ffn.add2_base_word.to_uint();
     uint32_t words = (uint32_t)FFN_X_WORDS;
-    for (uint32_t i = 0; i < words; ++i) {
+    TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_LOOP: for (uint32_t i = 0; i < words; ++i) {
         fp32_t x = fp32_from_bits(sram[residual_base + i]);
         fp32_t y = fp32_from_bits(sram[w2_base + i]);
         sram[add2_base + i] = bits_from_fp32(x + y);
