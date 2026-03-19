@@ -3,8 +3,8 @@
 Version: 2026-03-11
 Revision: v12.1 draftA
 Source baseline:
-- AECCT_HLS_Spec_v12.1_zhTW.txt
-- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+- AECCT_HLS_Spec_zhTW.txt
+- AECCT_HLS_Architecture_Guide_zhTW.txt
 - AECCT_v12_M0-M24_plan_zhTW.txt
 
 ================================================================
@@ -21,7 +21,7 @@ Source baseline:
 - generator 未完成前可先使用的語意欄位
 
 本文件是 v12.1 主 spec 的補充規則文件。
-若本文件與主 spec 衝突，以 AECCT_HLS_Spec_v12.1_zhTW.txt 為準。
+若本文件與主 spec 衝突，以 AECCT_HLS_Spec_zhTW.txt 為準。
 
 本文件目前不負責：
 - 實體 base offset 數值

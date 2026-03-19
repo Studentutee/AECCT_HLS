@@ -10,7 +10,7 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 0.1 文件目的
 - 本文件保存 v12.1 的「邏輯資料流」與「實體落點／覆蓋方式」兩類內容。
 - 它的用途是協助設計、討論、trace 對照、micro-architecture 收斂與 SramMap / generator 規劃。
-- 它不取代主規格；正式 contract、硬體行為、記憶體語意與 TB 驗證期望，仍以 AECCT_HLS_Spec_v12.1_zhTW.txt 為準。
+- 它不取代主規格；正式 contract、硬體行為、記憶體語意與 TB 驗證期望，仍以 AECCT_HLS_Spec_zhTW.txt 為準。
 
 0.2 為什麼本文件不直接併入主 spec
 - 邏輯資料流文件重點是 producer / consumer 與值的語意，不負責凍結 SRAM 實體落點。
@@ -18,8 +18,8 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - 因此本文件採「架構指南」定位：保留資訊完整性，但避免把尚可替換的微架構選擇過早寫死成主 spec。
 
 0.3 與其他文件的關係
-- 主規格：AECCT_HLS_Spec_v12.1_zhTW.txt
-- 治理文件：AECCT_HLS_Governance_v12_zhTW.txt
+- 主規格：AECCT_HLS_Spec_zhTW.txt
+- 治理文件：docs/process/GOVERNANCE_ENTRYPOINT_zhTW.txt（治理入口） / docs/process/AECCT_PROJECT_WORKFLOW_v1_zhTW.txt（任務/驗收主規則）
 - 更新去向表：AECCT_HLS_v12.1_pending_updates_resolved_zhTW.txt
 
 ====================================================================

@@ -134,7 +134,7 @@ Version: 2026-03-19
 ====================================================================
 1. 先讀本文件（PROJECT_STATUS）。
 2. 讀治理工作流（`docs/process/AECCT_PROJECT_WORKFLOW_v1_zhTW.txt`）。
-3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`）。
+3. 讀主 spec（`docs/spec/AECCT_HLS_Spec_zhTW.txt`）。
 4. 讀 architecture / module_interface / srammap rules。
 5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
 6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R/L-S/L-T/L-U/L-V/L-W/L-X/L-Y/L-Z/L-AA/L-AB/L-AC/L-AD）。

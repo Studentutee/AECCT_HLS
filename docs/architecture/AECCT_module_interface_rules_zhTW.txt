@@ -1,10 +1,10 @@
-AECCT Module Interface Rules v12.1（繁體中文版）
+﻿AECCT Module Interface Rules v12.1（繁體中文版）
 
 Version: 2026-03-11
 Revision: v12.1 draftA
 Source baseline:
-- AECCT_HLS_Spec_v12.1_zhTW.txt
-- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+- AECCT_HLS_Spec_zhTW.txt
+- AECCT_HLS_Architecture_Guide_zhTW.txt
 
 ================================================================
 0. 文件目的與定位
@@ -20,7 +20,7 @@ Source baseline:
 - 目前不開放的介面自由度
 
 本文件是 v12.1 主 spec 的補充規則文件。
-若本文件與主 spec 衝突，以 AECCT_HLS_Spec_v12.1_zhTW.txt 為準。
+若本文件與主 spec 衝突，以 AECCT_HLS_Spec_zhTW.txt 為準。
 
 本文件不負責：
 - 實體地址與 base offset 數值
@@ -29,7 +29,7 @@ Source baseline:
 - generator 輸出格式細節
 
 上述事項由：
-- AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+- AECCT_SramMap_alias_freepoint_rules_zhTW.txt
 - SramMap.h
 - WeightStreamOrder.h
 - 對應 generator / milestone report

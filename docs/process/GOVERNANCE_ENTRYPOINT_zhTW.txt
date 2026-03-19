@@ -41,16 +41,16 @@
 3. docs/reference/Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
    - 用途：若本次任務涉及 code / patch / HLS / Catapult，可合成寫法與硬體導向風格基準
 
-4. docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt
+4. docs/spec/AECCT_HLS_Spec_zhTW.txt
    - 用途：主規格、正式 contract、正式硬體行為定義
 
-5. docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+5. docs/architecture/AECCT_HLS_Architecture_Guide_zhTW.txt
    - 用途：邏輯資料流、實體落點、micro-architecture 收斂參考
 
-6. docs/architecture/AECCT_module_interface_rules_v12.1_zhTW.txt
+6. docs/architecture/AECCT_module_interface_rules_zhTW.txt
    - 用途：Top / sub-block 責任、module 介面規則、range/base/phase 契約
 
-7. docs/architecture/AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+7. docs/architecture/AECCT_SramMap_alias_freepoint_rules_zhTW.txt
    - 用途：SramMap、alias、overwrite、free-point、storage class 規則
 
 8. docs/milestones/AECCT_v12_M0-M24_plan_zhTW.txt
@@ -90,16 +90,16 @@ C. Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
 
 2.2 規格與架構文件（implementation / spec 任務常用）
 ----------------------------------------------------
-D. AECCT_HLS_Spec_v12.1_zhTW.txt
+D. AECCT_HLS_Spec_zhTW.txt
 - 主 spec；正式 contract / 硬體行為以此為準
 
-E. AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
+E. AECCT_HLS_Architecture_Guide_zhTW.txt
 - 邏輯資料流與實體落點/覆蓋方式的架構指南
 
-F. AECCT_module_interface_rules_v12.1_zhTW.txt
+F. AECCT_module_interface_rules_zhTW.txt
 - Top 與 sub-block 的介面責任分界與統一欄位
 
-G. AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+G. AECCT_SramMap_alias_freepoint_rules_zhTW.txt
 - shared SRAM 語意、storage classes、alias/no-alias、free-point 規則
 
 2.3 規劃文件（規劃 / 排下一步時常用）
@@ -136,10 +136,10 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 
 3.3 若任務涉及正式規格 / 實作邊界 / memory semantics，再加
 ----------------------------------------------------------
-- docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt
-- docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
-- docs/architecture/AECCT_module_interface_rules_v12.1_zhTW.txt
-- docs/architecture/AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+- docs/spec/AECCT_HLS_Spec_zhTW.txt
+- docs/architecture/AECCT_HLS_Architecture_Guide_zhTW.txt
+- docs/architecture/AECCT_module_interface_rules_zhTW.txt
+- docs/architecture/AECCT_SramMap_alias_freepoint_rules_zhTW.txt
 
 3.4 若任務涉及長期規劃 / milestone 路線，再加
 ---------------------------------------------
@@ -258,10 +258,10 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 - PROJECT_STATUS_zhTW.txt
 - AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
 - Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
-- AECCT_HLS_Spec_v12.1_zhTW.txt
-- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
-- AECCT_module_interface_rules_v12.1_zhTW.txt
-- AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+- AECCT_HLS_Spec_zhTW.txt
+- AECCT_HLS_Architecture_Guide_zhTW.txt
+- AECCT_module_interface_rules_zhTW.txt
+- AECCT_SramMap_alias_freepoint_rules_zhTW.txt
 
 6.5 governance / audit / closure 類任務
 ---------------------------------------
@@ -319,10 +319,10 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
 - PROJECT_STATUS_zhTW.txt
 - AECCT_PROJECT_WORKFLOW_v1_zhTW.txt
 - Catapult_C++_CodeGen_Guide_for_Codex_v3.txt
-- AECCT_HLS_Spec_v12.1_zhTW.txt
-- AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt
-- AECCT_module_interface_rules_v12.1_zhTW.txt
-- AECCT_SramMap_alias_freepoint_rules_v12.1_zhTW.txt
+- AECCT_HLS_Spec_zhTW.txt
+- AECCT_HLS_Architecture_Guide_zhTW.txt
+- AECCT_module_interface_rules_zhTW.txt
+- AECCT_SramMap_alias_freepoint_rules_zhTW.txt
 - AECCT_v12_M0-M24_plan_zhTW.txt
 - 本文件 GOVERNANCE_ENTRYPOINT_zhTW.txt
 
