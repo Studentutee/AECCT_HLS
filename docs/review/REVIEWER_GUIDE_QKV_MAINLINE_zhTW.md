@@ -42,7 +42,7 @@ Date: 2026-03-19
 - `src/blocks/TernaryLiveQkvLeafKernelTop.h`
 - `src/blocks/TernaryLiveQkvLeafKernelCatapultPrepTop.h`
 - `src/blocks/TernaryLiveQkvLeafKernelShapeConfig.h`
-- Companion docs（Debt Sprint 3）：
+- Companion docs（stable review kit）：
   - `docs/review/REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md`
   - `docs/review/ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md`
   - `docs/review/TERNARY_LEAF_ROLEMAP_zhTW.md`
@@ -56,7 +56,7 @@ Date: 2026-03-19
 3. `AttnLayer0.h`（QKV/score/out 主計算路徑）
 4. `TernaryLiveQkvLeafKernel*.h`（leaf row materialization 與 shape/metadata guard）
 
-### 3.1 Lower-Level First-Pass Review Order（本輪新增）
+### 3.1 Lower-Level First-Pass Review Order（stable kit section）
 1. `AttnLayer0.h` 先看 `ATTN_STAGE_QKV`，確認 Q/K/V materialization 與 fallback/bypass 邊界。
 2. `AttnLayer0.h` 再看 `ATTN_STAGE_SCORES`，確認 score/softmax/pre-concat 的資料流。
 3. `AttnLayer0.h` 最後看 `ATTN_STAGE_OUT`，確認 final write-back 邊界。
@@ -89,7 +89,7 @@ Date: 2026-03-19
   - readback：Top `handle_read_mem(...)`
 
 <a id="lower-level-ownership"></a>
-### 5.1 Lower-Level File Ownership / Non-Ownership（本輪新增）
+### 5.1 Lower-Level File Ownership / Non-Ownership（stable kit section）
 - `AttnLayer0.h`
   - owns: stage-scoped attention compute 與 caller-provided windows 內的寫入行為。
   - does not own: Top FSM、外部 command/rsp 協定、全域 SRAM policy。
@@ -214,7 +214,7 @@ Date: 2026-03-19
   - SCVerify closure
   - full runtime/numeric/global closure
 
-## 10. Round Notes（Convergence）
+## 10. Historical Notes（Convergence record）
 ### 10.1 Round 1 additions（保留）
 - 建立 Attn/ternary leaf 低層導讀與 loop-role 家族說明。
 - 建立 buffer/ownership/fallback 檢查視角。
@@ -223,9 +223,9 @@ Date: 2026-03-19
 - 補 Top/Transformer integration boundary 專章與 `TOP_*`/`TRANSFORMER_*` loop 可視性。
 - 補 Top write-back/readback 邊界導讀與高層 review order。
 
-### 10.3 Remaining debt / optional enhancement（Closeout synced）
-- `Top.h`/`TransformerLayer.h` 之外的 design-side 歷史註解一致性仍可能有零星欠債。
-- 以下 reviewer-facing 項目已完成（Sprint 3 closeout）：
+### 10.3 Remaining debt / optional enhancement（post-closeout）
+- `Top.h`/`TransformerLayer.h` 之外的 design-side 歷史註解一致性仍可能有零星議題（optional，non-blocking）。
+- 以下 reviewer-facing 項目已完成（debt-paydown closeout）：
   - `AttnLayer0.h` stage cross-check checklist 化（`ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md`）
   - ternary leaf family / compile-prep wrapper 權責圖示化（`TERNARY_LEAF_ROLEMAP_zhTW.md`）
   - cumulative checklist 與 quick-entry index（`REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md` + 本文件 1.1）

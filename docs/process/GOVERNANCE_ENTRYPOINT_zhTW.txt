@@ -134,7 +134,10 @@ J. docs/milestones/CLOSURE_MATRIX_v12.1.md
   - docs/handoff/P11_AC_AF_EXECUTION_PLAN.md
   - docs/handoff/P11_AC_AF_INTERFACE_FREEZE.md
   - docs/handoff/P11_LOCAL_TO_CATAPULT_HANDOFF_RULES.md
-- transitional/addendum archive（docs/process/archive）：
+- archive 分層語意：
+  - docs/archive/ = global archive（跨子域歷史/過渡文件）
+  - docs/process/archive/ = process 子域 local archive（治理補充/過渡文件）
+- transitional/addendum archive（目前 process 子域）：
   - docs/process/archive/READABILITY_GOVERNANCE_ADDENDUM_zhTW.md
 - 用途：保留任務脈絡與歷史治理補充，不與 process core 並列成雙重 authority
 

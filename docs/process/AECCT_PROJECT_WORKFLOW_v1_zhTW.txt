@@ -21,7 +21,8 @@
 
 補充定位
 --------
-自 2026-03-19 起，本文件除 execution-evidence / closure 規則外，也承接 reviewer-facing understanding debt / readability backfill 的最小 handoff 要求。
+自 2026-03-19 起，本文件除 execution-evidence / closure 規則外，也承接 reviewer-facing intent handoff 的最小要求。
+目前 reviewer-facing debt 已進入 closeout 後維護期；reviewer 加速導讀請優先參考 `docs/review/`（屬 companion kit，不取代 process core authority）。
 也就是說：execution PASS 只代表「有跑過」，不代表 reviewer 已能快速理解 code intent。
 
 建議搭配閱讀順序
