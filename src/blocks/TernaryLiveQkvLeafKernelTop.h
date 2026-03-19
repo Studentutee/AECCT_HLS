@@ -1,5 +1,7 @@
 #pragma once
-// Local Catapult-friendly split-interface top wrapper for P11J live ternary WQ row kernel.
+// Local Catapult-friendly split-interface tops for live ternary L0_WQ/L0_WK/L0_WV.
+// These wrappers only expose fixed-shape interfaces and delegate math to
+// ternary_live_l0_w{q,k,v}_materialize_row_kernel_split().
 
 #include "AecctTypes.h"
 #include "TernaryLiveQkvLeafKernel.h"
@@ -20,6 +22,7 @@ public:
     TernaryLiveL0WqRowTop() {}
 
 #pragma hls_design interface
+    // Input -> output: x_row + payload_words + inv_sw_bits -> out_row/out_act_q_row.
     bool CCS_BLOCK(run)(
         const u32_t x_row[kTernaryLiveL0WqCols],
         const u32_t payload_words[kTernaryLiveL0WqPayloadWords],
@@ -44,6 +47,7 @@ public:
     TernaryLiveL0WkRowTop() {}
 
 #pragma hls_design interface
+    // Input -> output: x_row + payload_words + inv_sw_bits -> out_row/out_act_q_row.
     bool CCS_BLOCK(run)(
         const u32_t x_row[kTernaryLiveL0WkCols],
         const u32_t payload_words[kTernaryLiveL0WkPayloadWords],
@@ -68,6 +72,7 @@ public:
     TernaryLiveL0WvRowTop() {}
 
 #pragma hls_design interface
+    // Input -> output: x_row + payload_words + inv_sw_bits -> out_row/out_act_q_row.
     bool CCS_BLOCK(run)(
         const u32_t x_row[kTernaryLiveL0WvCols],
         const u32_t payload_words[kTernaryLiveL0WvPayloadWords],

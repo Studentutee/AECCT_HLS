@@ -1,5 +1,7 @@
 #pragma once
 // P00-011R/P00-011S/P00-011T: dedicated Catapult-facing compile-prep top wrappers for L0_WQ/L0_WK/L0_WV rows.
+// These tops are compile-prep surface adapters; they do not own SRAM policy
+// and they do not introduce runtime-variable shape behavior.
 
 #include "AecctTypes.h"
 #include "TernaryLiveQkvLeafKernelShapeConfig.h"
@@ -21,6 +23,7 @@ public:
     TernaryLiveL0WqRowTopCatapultPrep() {}
 
 #pragma hls_design interface
+    // Input -> output: x_row + payload_words + inv_sw_bits -> out_row/out_act_q_row.
     bool CCS_BLOCK(run)(
         const u32_t x_row[kTernaryLiveL0WqCols],
         const u32_t payload_words[kTernaryLiveL0WqPayloadWords],
@@ -45,6 +48,7 @@ public:
     TernaryLiveL0WkRowTopCatapultPrep() {}
 
 #pragma hls_design interface
+    // Input -> output: x_row + payload_words + inv_sw_bits -> out_row/out_act_q_row.
     bool CCS_BLOCK(run)(
         const u32_t x_row[kTernaryLiveL0WkCols],
         const u32_t payload_words[kTernaryLiveL0WkPayloadWords],
@@ -69,6 +73,7 @@ public:
     TernaryLiveL0WvRowTopCatapultPrep() {}
 
 #pragma hls_design interface
+    // Input -> output: x_row + payload_words + inv_sw_bits -> out_row/out_act_q_row.
     bool CCS_BLOCK(run)(
         const u32_t x_row[kTernaryLiveL0WvCols],
         const u32_t payload_words[kTernaryLiveL0WvPayloadWords],

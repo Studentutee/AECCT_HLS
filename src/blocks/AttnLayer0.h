@@ -1,5 +1,8 @@
 #pragma once
-// Layer0 attention block.
+// Layer-0 attention datapath for the accepted local-only ternary/QKV mainline.
+// Input: X_WORK row tiles and parameter-backed Q/K/V metadata.
+// Intermediate: Q/K/V tensors, score/probability scratch, pre/post-concat buffers.
+// Output: attention output tensor write-back to attn_out_base_word.
 
 #include <cstdint>
 
@@ -64,6 +67,14 @@ static inline bool attn_live_qkv_gate_ok(
 }
 
 template<unsigned STAGE_MODE>
+// AttnLayer0 executes stage-scoped attention work in SRAM windows owned by Top.
+// Ownership boundary: this block only consumes the base offsets provided by Top.
+// Bypass/fallback boundary:
+// - q_prebuilt_from_top_managed skips Q materialization only.
+// - kv_prebuilt_from_top_managed skips K/V materialization only.
+// Write-back boundary:
+// - score/softmax debug dumps write to score_base/softmax_base for (t=0,h=0).
+// - stage OUT writes final tensor to attn_out_base_word.
 static inline void AttnLayer0(
     u32_t* sram,
     const AttnCfg& cfg,
@@ -108,15 +119,14 @@ static inline void AttnLayer0(
         bool live_k_ok = live_k_enabled;
         bool live_v_ok = live_v_enabled;
         u32_t live_q_inv_sw_bits = (u32_t)0u;
-        // P11AD mainline hook: when Top has already materialized Q, skip only
-        // actual Q materialization work and keep other stage side effects intact.
+        // P11AD mainline hook: Top-owned Q prebuild bypasses only Q generation.
         const bool skip_q_materialization = q_prebuilt_from_top_managed;
-        // P11AC mainline hook: when Top has already materialized K/V, skip only
-        // K/V materialization work and keep all other stage side effects intact.
+        // P11AC mainline hook: Top-owned K/V prebuild bypasses only K/V generation.
         const bool skip_kv_materialization = kv_prebuilt_from_top_managed;
 
         if (!skip_kv_materialization) {
-            for (uint32_t i = 0; i < tensor_words; ++i) {
+            // Baseline priming path: copy X into K/V mirrors before live path overrides.
+            ATTN_QKV_KV_PRIME_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
                 u32_t x = sram[x_in_base + i];
                 sram[k_base + i] = x;
                 sram[v_base + i] = x;
@@ -143,17 +153,17 @@ static inline void AttnLayer0(
             u32_t out_act_q_row[kTernaryLiveL0WqRows];
             if (live_q_ok) {
                 const uint32_t payload_base = param_base + live_q_payload_meta.offset_w;
-                for (uint32_t i = 0u; i < kTernaryLiveL0WqPayloadWords; ++i) {
+                ATTN_Q_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WqPayloadWords; ++i) {
                     payload_words[i] = sram[payload_base + i];
                 }
                 const uint32_t inv_sw_addr = param_base + live_q_inv_meta.offset_w;
                 const u32_t live_q_inv_sw_input = sram[inv_sw_addr];
                 TernaryLiveL0WqRowTop live_q_top;
-                for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+                ATTN_Q_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t q_row_base = q_base + t * d_model;
                     const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
-                    for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
+                    ATTN_Q_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
                         x_row[in] = sram[x_row_base + in];
                     }
                     u32_t out_inv_sw_bits = (u32_t)0u;
@@ -171,7 +181,7 @@ static inline void AttnLayer0(
                         live_q_ok = false;
                         break;
                     }
-                    for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
+                    ATTN_Q_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
                         sram[q_row_base + out] = out_row[out];
                         sram[q_act_q_row_base + out] = out_act_q_row[out];
                     }
@@ -179,11 +189,11 @@ static inline void AttnLayer0(
                 }
             }
 #else
-            for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+            ATTN_Q_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
                 const uint32_t x_row_base = x_in_base + t * d_model;
                 const uint32_t q_row_base = q_base + t * d_model;
                 const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
-                for (uint32_t out = 0; out < live_q_meta.rows; ++out) {
+                ATTN_Q_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_q_meta.rows; ++out) {
                     u32_t q_bits = 0;
                     u32_t inv_sw_bits = 0;
                     if (!ternary_linear_live_l0_wq_compute_q_elem(
@@ -207,7 +217,8 @@ static inline void AttnLayer0(
         if (!skip_q_materialization) {
             if (!live_q_ok) {
                 const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
-                for (uint32_t i = 0; i < tensor_words; ++i) {
+                // Q fallback path is an explicit bypass copy from X into Q windows.
+                ATTN_Q_BYPASS_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
                     u32_t x = sram[x_in_base + i];
                     sram[q_base + i] = x;
                     sram[q_act_q_base + i] = x;
@@ -238,17 +249,17 @@ static inline void AttnLayer0(
                 u32_t out_row[kTernaryLiveL0WkRows];
                 u32_t out_act_q_row[kTernaryLiveL0WkRows];
                 const uint32_t payload_base = param_base + live_k_payload_meta.offset_w;
-                for (uint32_t i = 0u; i < kTernaryLiveL0WkPayloadWords; ++i) {
+                ATTN_K_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WkPayloadWords; ++i) {
                     payload_words[i] = sram[payload_base + i];
                 }
                 const uint32_t inv_sw_addr = param_base + live_k_inv_meta.offset_w;
                 const u32_t live_k_inv_sw_input = sram[inv_sw_addr];
                 TernaryLiveL0WkRowTop live_k_top;
-                for (uint32_t t = 0; t < token_count; ++t) {
+                ATTN_K_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t k_row_base = k_base + t * d_model;
                     const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
-                    for (uint32_t in = 0u; in < kTernaryLiveL0WkCols; ++in) {
+                    ATTN_K_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WkCols; ++in) {
                         x_row[in] = sram[x_row_base + in];
                     }
                     u32_t out_inv_sw_bits = (u32_t)0u;
@@ -266,7 +277,7 @@ static inline void AttnLayer0(
                         use_k_split_top = false;
                         break;
                     }
-                    for (uint32_t out = 0u; out < kTernaryLiveL0WkRows; ++out) {
+                    ATTN_K_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WkRows; ++out) {
                         sram[k_row_base + out] = out_row[out];
                         sram[k_act_q_row_base + out] = out_act_q_row[out];
                     }
@@ -274,11 +285,11 @@ static inline void AttnLayer0(
             }
 
             if (!use_k_split_top) {
-                for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
+                ATTN_K_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t k_row_base = k_base + t * d_model;
                     const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
-                    for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
+                    ATTN_K_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
                         u32_t k_bits = 0;
                         u32_t k_inv_sw_bits = 0;
                         if (!ternary_linear_live_l0_wk_compute_q_elem(
@@ -297,11 +308,11 @@ static inline void AttnLayer0(
                 }
             }
 #else
-            for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
+            ATTN_K_DIRECT_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
                 const uint32_t x_row_base = x_in_base + t * d_model;
                 const uint32_t k_row_base = k_base + t * d_model;
                 const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
-                for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
+                ATTN_K_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
                     u32_t k_bits = 0;
                     u32_t k_inv_sw_bits = 0;
                     if (!ternary_linear_live_l0_wk_compute_q_elem(
@@ -321,7 +332,7 @@ static inline void AttnLayer0(
 #endif
             if (!live_k_ok) {
                 const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
-                for (uint32_t i = 0; i < tensor_words; ++i) {
+                ATTN_K_BYPASS_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
                     u32_t x = sram[x_in_base + i];
                     sram[k_base + i] = x;
                     sram[k_act_q_base + i] = x;
@@ -349,17 +360,17 @@ static inline void AttnLayer0(
                 u32_t out_row[kTernaryLiveL0WvRows];
                 u32_t out_act_q_row[kTernaryLiveL0WvRows];
                 const uint32_t payload_base = param_base + live_v_payload_meta.offset_w;
-                for (uint32_t i = 0u; i < kTernaryLiveL0WvPayloadWords; ++i) {
+                ATTN_V_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WvPayloadWords; ++i) {
                     payload_words[i] = sram[payload_base + i];
                 }
                 const uint32_t inv_sw_addr = param_base + live_v_inv_meta.offset_w;
                 const u32_t live_v_inv_sw_input = sram[inv_sw_addr];
                 TernaryLiveL0WvRowTop live_v_top;
-                for (uint32_t t = 0; t < token_count; ++t) {
+                ATTN_V_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t v_row_base = v_base + t * d_model;
                     const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
-                    for (uint32_t in = 0u; in < kTernaryLiveL0WvCols; ++in) {
+                    ATTN_V_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WvCols; ++in) {
                         x_row[in] = sram[x_row_base + in];
                     }
                     u32_t out_inv_sw_bits = (u32_t)0u;
@@ -377,7 +388,7 @@ static inline void AttnLayer0(
                         use_v_split_top = false;
                         break;
                     }
-                    for (uint32_t out = 0u; out < kTernaryLiveL0WvRows; ++out) {
+                    ATTN_V_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WvRows; ++out) {
                         sram[v_row_base + out] = out_row[out];
                         sram[v_act_q_row_base + out] = out_act_q_row[out];
                     }
@@ -385,11 +396,11 @@ static inline void AttnLayer0(
             }
 
             if (!use_v_split_top) {
-                for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
+                ATTN_V_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t v_row_base = v_base + t * d_model;
                     const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
-                    for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
+                    ATTN_V_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
                         u32_t v_bits = 0;
                         u32_t v_inv_sw_bits = 0;
                         if (!ternary_linear_live_l0_wv_compute_q_elem(
@@ -408,11 +419,11 @@ static inline void AttnLayer0(
                 }
             }
 #else
-            for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
+            ATTN_V_DIRECT_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
                 const uint32_t x_row_base = x_in_base + t * d_model;
                 const uint32_t v_row_base = v_base + t * d_model;
                 const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
-                for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
+                ATTN_V_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
                     u32_t v_bits = 0;
                     u32_t v_inv_sw_bits = 0;
                     if (!ternary_linear_live_l0_wv_compute_q_elem(
@@ -432,7 +443,7 @@ static inline void AttnLayer0(
 #endif
             if (!live_v_ok) {
                 const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
-                for (uint32_t i = 0; i < tensor_words; ++i) {
+                ATTN_V_BYPASS_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
                     u32_t x = sram[x_in_base + i];
                     sram[v_base + i] = x;
                     sram[v_act_q_base + i] = x;
@@ -442,17 +453,18 @@ static inline void AttnLayer0(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
+        // Score stage consumes Q/K/V and emits pre-concat plus optional debug score/prob dumps.
         softmax_score_t score_row[N_NODES];
         softmax_prob_t prob_row[N_NODES];
-        for (uint32_t t = 0; t < token_count; ++t) {
-            for (uint32_t h = 0; h < n_heads; ++h) {
+        ATTN_SCORE_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
+            ATTN_SCORE_HEAD_LOOP: for (uint32_t h = 0; h < n_heads; ++h) {
                 uint32_t head_col_base = h * d_head;
 
-                for (uint32_t j = 0; j < token_count; ++j) {
+                ATTN_SCORE_KEY_TOKEN_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
                     quant_acc_t dot = 0;
                     uint32_t q_row = q_base + t * d_model + head_col_base;
                     uint32_t k_row = k_base + j * d_model + head_col_base;
-                    for (uint32_t d = 0; d < d_head; ++d) {
+                    ATTN_SCORE_DOT_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
                         quant_act_t qv = quant_act_from_bits(sram[q_row + d]);
                         quant_act_t kv = quant_act_from_bits(sram[k_row + d]);
                         dot += quant_acc_t(qv) * quant_acc_t(kv);
@@ -463,7 +475,7 @@ static inline void AttnLayer0(
                 SoftmaxApprox<N_NODES>(score_row, prob_row, token_count);
 
                 if (t == 0u && h == 0u) {
-                    for (uint32_t j = 0; j < token_count; ++j) {
+                    ATTN_SCORE_DEBUG_DUMP_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
                         fp32_t score_fp(score_row[j]);
                         fp32_t prob_fp(prob_row[j]);
                         sram[score_base + j] = bits_from_fp32(score_fp);
@@ -471,9 +483,9 @@ static inline void AttnLayer0(
                     }
                 }
 
-                for (uint32_t d = 0; d < d_head; ++d) {
+                ATTN_PRECONCAT_HEAD_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
                     quant_acc_t acc = 0;
-                    for (uint32_t j = 0; j < token_count; ++j) {
+                    ATTN_PRECONCAT_KEY_TOKEN_ACC_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
                         uint32_t v_idx = v_base + j * d_model + head_col_base + d;
                         quant_act_t vv = quant_act_from_bits(sram[v_idx]);
                         acc += quant_acc_t(prob_row[j]) * quant_acc_t(vv);
@@ -484,13 +496,15 @@ static inline void AttnLayer0(
             }
         }
 
-        for (uint32_t i = 0; i < tensor_words; ++i) {
+        // Write-back boundary between pre-concat scratch and post-concat tensor.
+        ATTN_POSTCONCAT_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
             sram[post_base + i] = sram[pre_base + i];
         }
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_OUT || STAGE_MODE == ATTN_STAGE_FULL) {
-        for (uint32_t i = 0; i < tensor_words; ++i) {
+        // Final stage output write-back to caller-provided attn_out window.
+        ATTN_OUT_WRITEBACK_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
             sram[out_base + i] = sram[post_base + i];
         }
     }

@@ -1,5 +1,8 @@
 #pragma once
-// Tiny HLS-oriented leaf kernel for live ternary QKV row materialization.
+// Tiny HLS-oriented leaf kernel family for live ternary QKV row materialization.
+// Input: one X row + matrix-specific packed payload + inv_s_w metadata.
+// Intermediate: metadata guards + ternary decode + row dot-accumulate.
+// Output: one quantized Q/K/V row + mirrored act_q row + out_inv_sw_bits.
 
 #include <cstdint>
 
@@ -11,6 +14,9 @@
 
 namespace aecct {
 
+// Generic row kernel using SRAM-backed payload and matrix metadata lookup.
+// Ownership boundary: payload/inv_s_w locations are defined by Top-owned W_REGION
+// plus WeightStreamOrder metadata. This kernel only consumes those offsets.
 static inline bool ternary_live_qkv_materialize_row_kernel_impl(
     u32_t* sram,
     u32_t param_base_word,
@@ -79,7 +85,7 @@ static inline bool ternary_live_qkv_materialize_row_kernel_impl(
 
     const uint32_t out_base = (uint32_t)out_row_base_word.to_uint();
     const uint32_t out_act_q_base = (uint32_t)out_act_q_row_base_word.to_uint();
-    for (uint32_t out = 0u; out < meta.rows; ++out) {
+    TERNARY_QKV_IMPL_OUT_ROW_LOOP: for (uint32_t out = 0u; out < meta.rows; ++out) {
         u32_t q_bits = (u32_t)0u;
         u32_t inv_sw_bits = (u32_t)0u;
         if (!ternary_linear_live_compute_q_elem(
@@ -101,6 +107,9 @@ static inline bool ternary_live_qkv_materialize_row_kernel_impl(
     return true;
 }
 
+// Split-interface WQ row kernel used by Catapult-facing wrappers.
+// Input -> intermediate -> output:
+// x_row + payload_words + inv_sw_bits -> decoded ternary MAC -> out_row/out_act_q_row.
 static inline bool ternary_live_l0_wq_materialize_row_kernel_split(
     const u32_t x_row[kTernaryLiveL0WqCols],
     const u32_t payload_words[kTernaryLiveL0WqPayloadWords],
@@ -149,10 +158,10 @@ static inline bool ternary_live_l0_wq_materialize_row_kernel_split(
     }
 
     out_inv_sw_bits = inv_sw_bits;
-    for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
+    TERNARY_WQ_SPLIT_OUT_ROW_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
         quant_acc_t acc = 0;
         const uint32_t row_base = out * kTernaryLiveL0WqCols;
-        for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
+        TERNARY_WQ_SPLIT_IN_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
             const uint32_t elem_idx = row_base + in;
             const uint32_t word_idx = (elem_idx >> 4);
             const uint32_t slot = (elem_idx & 15u);
@@ -183,6 +192,7 @@ static inline bool ternary_live_l0_wq_materialize_row_kernel_split(
     return true;
 }
 
+// Split-interface WK row kernel with the same dataflow and guard contract as WQ.
 static inline bool ternary_live_l0_wk_materialize_row_kernel_split(
     const u32_t x_row[kTernaryLiveL0WkCols],
     const u32_t payload_words[kTernaryLiveL0WkPayloadWords],
@@ -231,10 +241,10 @@ static inline bool ternary_live_l0_wk_materialize_row_kernel_split(
     }
 
     out_inv_sw_bits = inv_sw_bits;
-    for (uint32_t out = 0u; out < kTernaryLiveL0WkRows; ++out) {
+    TERNARY_WK_SPLIT_OUT_ROW_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WkRows; ++out) {
         quant_acc_t acc = 0;
         const uint32_t row_base = out * kTernaryLiveL0WkCols;
-        for (uint32_t in = 0u; in < kTernaryLiveL0WkCols; ++in) {
+        TERNARY_WK_SPLIT_IN_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WkCols; ++in) {
             const uint32_t elem_idx = row_base + in;
             const uint32_t word_idx = (elem_idx >> 4);
             const uint32_t slot = (elem_idx & 15u);
@@ -265,6 +275,7 @@ static inline bool ternary_live_l0_wk_materialize_row_kernel_split(
     return true;
 }
 
+// Split-interface WV row kernel with the same dataflow and guard contract as WQ/WK.
 static inline bool ternary_live_l0_wv_materialize_row_kernel_split(
     const u32_t x_row[kTernaryLiveL0WvCols],
     const u32_t payload_words[kTernaryLiveL0WvPayloadWords],
@@ -313,10 +324,10 @@ static inline bool ternary_live_l0_wv_materialize_row_kernel_split(
     }
 
     out_inv_sw_bits = inv_sw_bits;
-    for (uint32_t out = 0u; out < kTernaryLiveL0WvRows; ++out) {
+    TERNARY_WV_SPLIT_OUT_ROW_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WvRows; ++out) {
         quant_acc_t acc = 0;
         const uint32_t row_base = out * kTernaryLiveL0WvCols;
-        for (uint32_t in = 0u; in < kTernaryLiveL0WvCols; ++in) {
+        TERNARY_WV_SPLIT_IN_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WvCols; ++in) {
             const uint32_t elem_idx = row_base + in;
             const uint32_t word_idx = (elem_idx >> 4);
             const uint32_t slot = (elem_idx & 15u);
@@ -347,6 +358,7 @@ static inline bool ternary_live_l0_wv_materialize_row_kernel_split(
     return true;
 }
 
+// Convenience dispatch wrappers for SRAM-backed call sites.
 static inline bool ternary_live_l0_wq_materialize_row_kernel(
     u32_t* sram,
     u32_t param_base_word,

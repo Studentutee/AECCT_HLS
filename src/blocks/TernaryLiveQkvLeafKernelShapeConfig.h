@@ -2,6 +2,7 @@
 // P00-011T: compile-time shape SSOT for current supported QKV live-cut/compile-prep build.
 // Runtime metadata/config performs validation against these compile-time supported shapes only.
 // This header does not imply runtime-variable top interfaces.
+// It defines expected constants only; it does not perform materialization logic.
 
 #include <cstdint>
 
