@@ -9,6 +9,10 @@ Date: 2026-03-19
 - Catapult closure 與 SCVerify closure 仍屬 deferred（未執行即不宣稱）。
 - 主要參考：`REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md` 的「PASS 代表什麼 / 不代表什麼」。
 
+## 1.1 Companion quick tools
+- Top/Transformer 15 分鐘快檢：[`TOP_TRANSFORMER_QUICKCHECK_zhTW.md`](./TOP_TRANSFORMER_QUICKCHECK_zhTW.md#15-minute-fast-scan-order)
+- Reviewer 結論模板（短版/完整版）：[`REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md`](./REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md#ultra-short-note-template)
+
 <a id="fast-10-minute-pass"></a>
 ## 2. Fast 10-minute pass（10 項）
 - [ ] Check: Top 是唯一 SRAM policy owner。  
@@ -70,6 +74,12 @@ Date: 2026-03-19
   Inputs / Outputs: consume test logs；output review verdict wording。  
   Evidence posture: local-only。  
   Primary pointer: `REVIEWER_GUIDE` [9. PASS 代表什麼 / 不代表什麼](./REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md#pass-semantics)
+
+- [ ] Check: 輸出 reviewer verdict 時，使用統一模板避免過度宣稱。  
+  Owns / Not owns: owns review wording hygiene；not owns technical closure itself。  
+  Inputs / Outputs: consume本輪檢查結果；輸出可接受/保留/需補件 verdict。  
+  Evidence posture: local-only。  
+  Primary pointer: [REVIEW_VERDICT_TEMPLATE（ultra-short）](./REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md#ultra-short-note-template) + [REVIEW_VERDICT_TEMPLATE（full）](./REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md#full-review-note-template)
 
 <a id="deeper-30-minute-pass"></a>
 ## 3. Deeper 30-minute pass（18 項）

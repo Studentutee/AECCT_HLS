@@ -17,6 +17,7 @@ Version: 2026-03-19
 - docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
 - ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）；Phase A/B/C 的 non-live 對齊亦已存在。
 - ternary live-cut mainline 已接受至 P00-011AD；P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X / P00-011Y / P00-011Z / P00-011AA / P00-011AB / P00-011AC / P00-011AD 皆為 local-only accepted progress（repo-tracked path），其中 P00-011R 的定位是 first Catapult-facing compile-prep probe（single-slice representative, local compiler evidence only），P00-011S 的定位是 WK/WV family compile-prep expansion（family representative, local compiler evidence only），P00-011T 的定位是 QKV shape SSOT consolidation（compile-time shape SSOT, runtime validation only, local compiler evidence only），P00-011U 的定位是 QKV payload-metadata SSOT bridge（local-only，runtime metadata guard expectations validate against compile-time SSOT chain），P00-011V 的定位是 QKV WeightStreamOrder continuity fence（local-only，validation-only continuity checks against authoritative local-build metadata），P00-011W 的定位是 QKV exported-artifact / loader-facing continuity fence（local-only，validation-only checks against repo-tracked offline export metadata），P00-011X 的定位是 QKV export-consumer semantic continuity fence（local-only，validation-only semantic checks for matrix_id-driven consumer interpretation），P00-011Y 的定位是 QKV local runtime-handoff fence（local-only，validation-only continuity checks for runtime-facing handoff expectations derived from accepted authority chain），P00-011Z 的定位是 QKV local runtime-consume probe（local-only，read-only runtime-facing consume probe），P00-011AA 的定位是 QKV formal LOAD_W bridge + READ_MEM roundtrip（local-only，formal runtime-path bridge coverage for L0_WQ/L0_WK/L0_WV），P00-011AB 的定位是 Phase-A K/V materialization staging proof（local-only，X_WORK + Wk/Wv -> SCR_K/SCR_V，strict stream/memory ordering + single-read X reuse + exact writeback evidence），P00-011AC 的定位是 Phase-A Top-managed K/V design-mainline wiring finalize（local-only），P00-011AD 的定位是 Q path mainline wiring（local-only，real Top-managed Q path with anti-fallback acceptance evidence），Catapult / SCVerify 仍 deferred。
+- reviewer-facing debt/paydown（Sprint 1/2/3）已完成主體收斂：source readability backfill、guide convergence、lower-level consistency refinement、docs-only acceleration kit 已落地；目前狀態為 core debt largely paid down，剩餘屬 optional reviewer-acceleration enhancements。
 - P00-011L-D 已新增 repo-tracked Windows local regression script，並以 `build\p11l_d\*.log` 完成 p11j/p11k/p11l_b/p11l_c 同輪重跑 PASS。
 - `build\p11l_d_probe` 僅作 preflight / baseline probe，不作為 P00-011L-D acceptance evidence。
 - P00-011M 已完成 WQ source-side integration slice（local-only）：以 dual-binary（baseline/macro）方式驗證 `KV_SIG` 一致，並在 macro build 下驗證 `Q/Q_act_q/Q_sx` 與 `TernaryLiveL0WqRowTop` direct reference exact-match；正式 evidence 來源為 `build\p11m\*.log`。
@@ -114,8 +115,8 @@ Version: 2026-03-19
 - Catapult / SCVerify validation for P00-011J / P00-011K / P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X / P00-011Y / P00-011Z / P00-011AA / P00-011AB / P00-011AC / P00-011AD is still deferred; current acceptance remains local-only progress under local smoke / local static checks / compile-prep probe / compile-time SSOT consolidation / payload-metadata SSOT bridge / WeightStreamOrder continuity fence / exported-artifact continuity fence / export-consumer semantic continuity fence / local runtime-handoff continuity fence / local runtime-consume probe / formal LOAD_W bridge scope / Phase-A K/V materialization staging proof scope / Phase-A Top-managed K/V design-mainline wiring scope / Q path mainline wiring scope.
 - ternary live-cut 主線雖已推進到 L0_WQ/WK/WV、local top smoke 與單一 slice compile-prep probe，但尚未等同 live runtime full closure，也尚未完成更大範圍 family migration。
 - repo/global governance open items 尚未全域 closure（hygiene cleanup / waiver resolution 仍待後續任務）。
-- readability governance 文件已補入 rules / addendum，但 design-side 歷史 code 的註解、loop label、reviewer guide / sidecar backfill 尚未完成；目前仍存在 reviewer-facing understanding debt。
-- historical reviewer-guide / intent backfill 尚未完成：過去 accepted 的 local-only path（特別是 `Top.h` / `TransformerLayer.h` / `AttnLayer0.h` / `TernaryLiveQkvLeafKernel*` 與 P00-011AB / P00-011AC / P00-011AD 主線整合路徑）仍缺一致的資料流導讀、loop-role 說明與 Catapult Architecture 可辨識 loop labels。
+- readability governance 方向已落地於既有 docs/source backfill；目前 reviewer-facing debt 已由 blocking 改列為 optional enhancement（例如額外情境模板、增量 quick-check sidecar），不再視為 core outstanding debt。
+- historical reviewer-guide / intent backfill 之核心項已完成（含 `Top.h` / `TransformerLayer.h` / `AttnLayer0.h` / `TernaryLiveQkvLeafKernel*` 與 P00-011AB / P00-011AC / P00-011AD 主線導讀）；後續僅維持 merge-forward 與增量優化。
 - m1/m2 runtime closure 尚未完成（目前主證據重心仍在 m0 baseline 與 task-local ternary smoke / compile-prep probe）。
 - full numeric correctness / full algorithm closure 尚未完成。
 - ternary SRAM freeze 規格雖已文件凍結，WeightStreamOrder / loader / generator 的完整 live 落地與回歸仍待後續任務。
@@ -123,11 +124,13 @@ Version: 2026-03-19
 ====================================================================
 6. Recommended Next Step
 ====================================================================
-1. 先優先還 reviewer-facing understanding debt：針對 `Top.h`、`src/blocks/TransformerLayer.h`、`src/blocks/AttnLayer0.h`、`src/blocks/TernaryLiveQkvLeafKernel*`，以及 P00-011AB / P00-011AC / P00-011AD 主線整合路徑，補最小 reviewer guide / dataflow note / loop-role note / Architecture-visible loop label，讓已 accepted 的 local-only path 變成 reviewer-ready。
+1. reviewer-facing debt 目前已大致還清；下一步可二擇一：
+   - (a) 繼續做 docs-only optional enhancement（更多情境模板/快檢卡）
+   - (b) 回到 functional/mainline work（維持現有 reviewer kit 作為穩定導讀基線）
 2. 在 `P00-011Q` freeze boundary 與 `P00-011R`/`P00-011S` compile-prep probe、`P00-011T` compile-time SSOT consolidation、`P00-011U` payload-metadata SSOT bridge、`P00-011V` WeightStreamOrder continuity fence、`P00-011W` exported-artifact continuity fence、`P00-011X` export-consumer semantic continuity fence、`P00-011Y` local runtime-handoff continuity fence、`P00-011Z` local runtime-consume probe、`P00-011AA` formal LOAD_W bridge、`P00-011AB` Phase-A K/V materialization staging proof、`P00-011AC` Top-managed K/V mainline wiring、`P00-011AD` Q path mainline wiring 基礎上，延續同 family 的最小 compile-prep / validation bundles，維持 repo-tracked source + TB 為正式路徑。
 3. 持續以 repo-tracked local smoke / local static checks / compile-prep probe acceptance 為主，避免把 task-local acceptance 誤寫成 full closure。
 4. Catapult / SCVerify closure 維持 deferred，待同 family probe 累積到足夠批次後再啟動。
-5. 依 readability governance 逐步把 design-side code 落地成：ASCII/英文註解 + 中文 docs/reviewer guide 分層、以及 Catapult Architecture GUI 可辨識的 loop label（`NAME: for (...) {}`）。
+5. readability governance 進入維護期：新任務延續既有規則（source 英文註解 + docs 中文導讀 + 可辨識 loop label）即可，不需再做大範圍 debt backfill 專案化重跑。
 
 ====================================================================
 7. Reading Order for Future Work
@@ -139,5 +142,4 @@ Version: 2026-03-19
 5. 讀 closure / traceability 索引（`CLOSURE_MATRIX_v12.1.md`、`TRACEABILITY_MAP_v12.1.md`）。
 6. 最後再進入最新 ternary task-local source / TB / report（特別是 P00-011J/K/L-A/L-B/L-C/L-D/L-M/L-N/L-O/L-P/L-Q/L-R/L-S/L-T/L-U/L-V/L-W/L-X/L-Y/L-Z/L-AA/L-AB/L-AC/L-AD）。
 7. 若要 review 新 code，先讀對應 reviewer guide / readability sidecar，再進原始碼，可大幅降低 Catapult/HLS code review 成本。
-
 

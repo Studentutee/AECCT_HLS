@@ -20,6 +20,19 @@ Date: 2026-03-19
 | 我想快速知道 Catapult GUI 應優先看哪些 loop family？ | [7. Loop-Role Notes](#loop-role-notes) | [TERNARY_LEAF_ROLEMAP：Loop family quick map](./TERNARY_LEAF_ROLEMAP_zhTW.md#loop-family-quick-map) |
 | 我想先做 10 分鐘快檢，不重看整份 guide | [3. First-Pass Review Order](#first-pass-review-order) | [REVIEW_CHECKLIST：Fast 10-minute pass](./REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md#fast-10-minute-pass) |
 | 我要做 30 分鐘深檢，想要可執行清單 | [8. Most Important Code Regions](#most-important-code-regions) | [REVIEW_CHECKLIST：Deeper 30-minute pass](./REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md#deeper-30-minute-pass) |
+| 我要快速檢查 Top/Transformer（15 分鐘） | [6.1 Top](#top-role) + [6.2 TransformerLayer](#transformerlayer-role) | [TOP_TRANSFORMER_QUICKCHECK](./TOP_TRANSFORMER_QUICKCHECK_zhTW.md#15-minute-fast-scan-order) |
+| 我要快速產出 reviewer 結論文字 | [9. PASS 代表什麼 / 不代表什麼](#pass-semantics) | [REVIEW_VERDICT_TEMPLATE](./REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md#ultra-short-note-template) |
+
+<a id="review-kit-map"></a>
+## 1.2 Review Kit Map（Closeout Bundle）
+| 文件 | 主要用途 | 建議使用時機 |
+| --- | --- | --- |
+| `REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md` | 累積式主導讀與邊界語意 | 第一次進入或對齊全局語意 |
+| `REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md` | 可執行 checklist（10 分鐘/30 分鐘） | 要快速確認「有無漏檢」 |
+| `ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md` | AttnLayer0 三 stage cross-check | 要釐清 QKV/SCORES/OUT 分層與邊界 |
+| `TERNARY_LEAF_ROLEMAP_zhTW.md` | ternary family 權責與常見誤讀 | 要釐清 kernel/wrapper/shape-config 角色 |
+| `REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md` | reviewer 結論模板（短版/完整版） | 要輸出可接受/需補件等結論 |
+| `TOP_TRANSFORMER_QUICKCHECK_zhTW.md` | Top/Transformer 15 分鐘快檢 | 要先判斷高層 dispatch/delegation 邊界 |
 
 ## 2. Covered Files
 - `src/Top.h`
@@ -33,6 +46,8 @@ Date: 2026-03-19
   - `docs/process/REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md`
   - `docs/process/ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md`
   - `docs/process/TERNARY_LEAF_ROLEMAP_zhTW.md`
+  - `docs/process/REVIEW_VERDICT_TEMPLATE_QKV_MAINLINE_zhTW.md`
+  - `docs/process/TOP_TRANSFORMER_QUICKCHECK_zhTW.md`
 
 <a id="first-pass-review-order"></a>
 ## 3. First-Pass Review Order
@@ -138,12 +153,14 @@ Date: 2026-03-19
 
 <a id="loop-role-notes"></a>
 ## 7. Loop-Role Notes（代表家族）
+<a id="top-loop-family"></a>
 ### 7.1 `TOP_*`（Round 2 新增）
 - `TOP_LAYER_ORCHESTRATION_LOOP`：layer 主排程迴圈。
 - `TOP_OUTMODE_XPRED_WRITEBACK_LOOP` / `TOP_OUTMODE_LOGITS_WRITEBACK_LOOP`：Top 最終輸出寫回。
 - `TOP_READ_MEM_STREAM_LOOP`：READ_MEM readback stream。
 - `TOP_COPY_X_WORDS_LOOP` / `TOP_NORM_PARAM_COPY_LOOP`：中間快照與參數搬移輔助迴圈。
 
+<a id="transformer-loop-family"></a>
 ### 7.2 `TRANSFORMER_*`（Round 2 新增）
 - `TRANSFORMER_LAYER_SUBLAYER1_NORM_PARAM_COPY_LOOP`：LN gamma/beta 載入。
 - `TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_LOOP`：FFN2 輸出與 residual 加總。
@@ -206,8 +223,12 @@ Date: 2026-03-19
 - 補 Top/Transformer integration boundary 專章與 `TOP_*`/`TRANSFORMER_*` loop 可視性。
 - 補 Top write-back/readback 邊界導讀與高層 review order。
 
-### 10.3 Remaining debt / next likely review target
+### 10.3 Remaining debt / optional enhancement（Closeout synced）
 - `Top.h`/`TransformerLayer.h` 之外的 design-side 歷史註解一致性仍可能有零星欠債。
-- 下一個高價值目標可放在：
-  - `AttnLayer0.h` 各 stage 的 cross-check checklist 化（reviewer 快速檢核模板）
-  - ternary leaf family 與 compile-prep wrapper 的權責圖示化（docs-side，不改行為）
+- 以下 reviewer-facing 項目已完成（Sprint 3 closeout）：
+  - `AttnLayer0.h` stage cross-check checklist 化（`ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md`）
+  - ternary leaf family / compile-prep wrapper 權責圖示化（`TERNARY_LEAF_ROLEMAP_zhTW.md`）
+  - cumulative checklist 與 quick-entry index（`REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md` + 本文件 1.1）
+- 目前剩餘項目屬 optional enhancement（非 blocking debt）：
+  - 針對特定 review 場景（例如 Catapult GUI 專項）補更細的「問答式範本」
+  - 視後續任務需要，新增針對新 mainline 工作的增量 sidecar（docs-only）
