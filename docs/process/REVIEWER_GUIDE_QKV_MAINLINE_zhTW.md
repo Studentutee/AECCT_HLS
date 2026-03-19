@@ -11,6 +11,16 @@ Date: 2026-03-19
   - 以既有 reviewer-guide/既有回報可追溯內容為 source of truth。
   - 不用當前 code 註解重新推導或重寫 Round 1 低層語意。
 
+## 1.1 Review by Question（Quick Entry Index）
+| 問題 | 先看（主 guide） | 再看（companion doc） |
+| --- | --- | --- |
+| 我想先確認 SRAM 決策到底誰擁有？ | [5. Ownership / Boundary 摘要](#ownership-boundary) | [REVIEW_CHECKLIST：Write-back/Fallback/Ownership](./REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md#writeback-fallback-ownership) |
+| 我想知道 fallback meaning 是在哪裡被鎖定？ | [5. Ownership / Boundary 摘要](#ownership-boundary) | [REVIEW_CHECKLIST：Top / integration boundary](./REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md#top-integration-boundary) |
+| 我想知道 Q/K/V handoff 主要在哪裡發生？ | [6.3 AttnLayer0](#attnlayer0-role) | [ATTNLAYER0_STAGE_CROSSCHECK：QKV stage](./ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md#stage-qkv) |
+| 我想快速知道 Catapult GUI 應優先看哪些 loop family？ | [7. Loop-Role Notes](#loop-role-notes) | [TERNARY_LEAF_ROLEMAP：Loop family quick map](./TERNARY_LEAF_ROLEMAP_zhTW.md#loop-family-quick-map) |
+| 我想先做 10 分鐘快檢，不重看整份 guide | [3. First-Pass Review Order](#first-pass-review-order) | [REVIEW_CHECKLIST：Fast 10-minute pass](./REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md#fast-10-minute-pass) |
+| 我要做 30 分鐘深檢，想要可執行清單 | [8. Most Important Code Regions](#most-important-code-regions) | [REVIEW_CHECKLIST：Deeper 30-minute pass](./REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md#deeper-30-minute-pass) |
+
 ## 2. Covered Files
 - `src/Top.h`
 - `src/blocks/TransformerLayer.h`
@@ -19,7 +29,12 @@ Date: 2026-03-19
 - `src/blocks/TernaryLiveQkvLeafKernelTop.h`
 - `src/blocks/TernaryLiveQkvLeafKernelCatapultPrepTop.h`
 - `src/blocks/TernaryLiveQkvLeafKernelShapeConfig.h`
+- Companion docs（Debt Sprint 3）：
+  - `docs/process/REVIEW_CHECKLIST_QKV_MAINLINE_zhTW.md`
+  - `docs/process/ATTNLAYER0_STAGE_CROSSCHECK_zhTW.md`
+  - `docs/process/TERNARY_LEAF_ROLEMAP_zhTW.md`
 
+<a id="first-pass-review-order"></a>
 ## 3. First-Pass Review Order
 1. `Top.h`（外部 contract、FSM dispatch、layer orchestration）
 2. `TransformerLayer.h`（Top -> Attn/FFN/LN integration boundary）
@@ -33,6 +48,7 @@ Date: 2026-03-19
 4. `TernaryLiveQkvLeafKernel.h` 看 core row kernel metadata guard + decode/MAC 角色。
 5. `TernaryLiveQkvLeafKernelTop.h` / `...CatapultPrepTop.h` 看 wrapper surface 角色，不看成 policy owner。
 
+<a id="end-to-end-dataflow"></a>
 ## 4. End-to-End Dataflow（3~8 步）
 1. Top ingest `SET_W_BASE/LOAD_W/INFER`，建立可用 `W_REGION` 與 input payload。
 2. Top 執行 preproc + pre-layernorm，產生 layer 輸入 `X_WORK` 映射區。
@@ -42,6 +58,7 @@ Date: 2026-03-19
 6. `AttnLayer0` 在 QKV/score/out path 內呼叫 ternary leaf row materialization 並完成 write-back。
 7. Top 完成 end LN + FinalHead，依 outmode 從對應 base 將結果寫到 `data_out`。
 
+<a id="ownership-boundary"></a>
 ## 5. Ownership / Boundary 摘要
 - SRAM 決策 owner：Top（唯一 shared SRAM owner）。
 - Dispatch/Delegate：
@@ -56,6 +73,7 @@ Date: 2026-03-19
   - write-back：Top `infer_emit_outmode_payload(...)`
   - readback：Top `handle_read_mem(...)`
 
+<a id="lower-level-ownership"></a>
 ### 5.1 Lower-Level File Ownership / Non-Ownership（本輪新增）
 - `AttnLayer0.h`
   - owns: stage-scoped attention compute 與 caller-provided windows 內的寫入行為。
@@ -74,17 +92,20 @@ Date: 2026-03-19
   - does not own: materialization logic、wrapper interface behavior。
 
 ## 6. File Roles
+<a id="top-role"></a>
 ### 6.1 `Top.h`
 - 唯一外部 4-channel contract (`ctrl_cmd/ctrl_rsp/data_in/data_out`) 的 dispatch owner。
 - 管理 `ST_CFG_RX/ST_PARAM_RX/ST_INFER_RX/ST_HALTED` 與 payload ingest。
 - 管理 layer orchestration（含 layer0 mainline hook、mid/end LN 插入、FinalHead 接續）。
 
+<a id="transformerlayer-role"></a>
 ### 6.2 `TransformerLayer.h`
 - 接收 Top 指派的 `x/scratch/param` 邊界與 prebuilt flags。
 - 委派 `AttnLayer0<ATTN_STAGE_FULL>` 與 `FFNLayer0<FFN_STAGE_FULL>`。
 - 完成 layer-local residual add + sublayer1 norm param load + LN 呼叫。
 - 不擁有 Top-FSM、共享 SRAM policy、或 fallback 政策定義權。
 
+<a id="attnlayer0-role"></a>
 ### 6.3 `AttnLayer0.h`（Round 1 核心低層導讀保留）
 - `ATTN_STAGE_QKV`：Q/K/V materialization（含 live path 與 fallback/bypass）。
 - `ATTN_STAGE_SCORES`：QK score、softmax、V 加權輸出到 pre/post concat。
@@ -99,6 +120,7 @@ Date: 2026-03-19
   - OUT stage 才把最終 tensor 寫到 caller-provided `attn_out_base_word`。
 - 不負責 Top state machine、外部 command/rsp 協定、全域 SRAM ownership 仲裁。
 
+<a id="ternary-role-section"></a>
 ### 6.4 `TernaryLiveQkvLeafKernel*.h`（Round 1 核心低層導讀保留）
 - `ShapeConfig`：QKV compile-time shape/payload expectation SSOT。
 - `LeafKernel`：row-kernel（metadata guard + ternary decode + MAC）。
@@ -114,6 +136,7 @@ Date: 2026-03-19
   - shape config = constants/SSOT only
 - 不負責 runtime-variable shape negotiation、Top SRAM policy、closure 宣告。
 
+<a id="loop-role-notes"></a>
 ## 7. Loop-Role Notes（代表家族）
 ### 7.1 `TOP_*`（Round 2 新增）
 - `TOP_LAYER_ORCHESTRATION_LOOP`：layer 主排程迴圈。
@@ -125,6 +148,7 @@ Date: 2026-03-19
 - `TRANSFORMER_LAYER_SUBLAYER1_NORM_PARAM_COPY_LOOP`：LN gamma/beta 載入。
 - `TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_LOOP`：FFN2 輸出與 residual 加總。
 
+<a id="attn-loop-family"></a>
 ### 7.3 `ATTN_*`（Round 1 低層重點保留）
 - `ATTN_QKV_KV_PRIME_COPY_LOOP`
 - `ATTN_Q_SPLIT_TOKEN_LOOP` / `ATTN_Q_SPLIT_INPUT_COL_LOOP` / `ATTN_Q_SPLIT_OUTPUT_COL_LOOP`
@@ -140,6 +164,7 @@ Date: 2026-03-19
   - `ATTN_PRECONCAT*` = V 加權累積
   - `ATTN_POSTCONCAT*` / `ATTN_OUT*` = concat 收斂與最終寫回
 
+<a id="ternary-loop-family"></a>
 ### 7.4 `TERNARY_*`（Round 1 低層重點保留）
 - `TERNARY_QKV_IMPL_OUT_ROW_LOOP`
 - `TERNARY_WQ_SPLIT_OUT_ROW_LOOP` + `TERNARY_WQ_SPLIT_IN_COL_LOOP`
@@ -151,6 +176,7 @@ Date: 2026-03-19
   - `TERNARY_WK_SPLIT_*` = WK fixed-shape split-interface row path
   - `TERNARY_WV_SPLIT_*` = WV fixed-shape split-interface row path
 
+<a id="most-important-code-regions"></a>
 ## 8. Most Important Code Regions（7 個）
 1. `src/Top.h` `top(...)`（state + command dispatch）
 2. `src/Top.h` `run_transformer_layer_loop(...)`（layer0 hook + fallback latch）
@@ -160,6 +186,7 @@ Date: 2026-03-19
 6. `src/blocks/AttnLayer0.h` `AttnLayer0(...)`（QKV/score/out 主體）
 7. `src/blocks/TernaryLiveQkvLeafKernel.h` `ternary_live_qkv_materialize_row_kernel_impl(...)`（leaf materialization/guard）
 
+<a id="pass-semantics"></a>
 ## 9. PASS 代表什麼 / 不代表什麼
 - 目前 PASS 代表：
   - local-only accepted progress 可重現
