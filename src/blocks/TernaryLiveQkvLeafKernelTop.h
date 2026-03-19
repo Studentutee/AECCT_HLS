@@ -2,6 +2,7 @@
 // Local Catapult-friendly split-interface tops for live ternary L0_WQ/L0_WK/L0_WV.
 // These wrappers only expose fixed-shape interfaces and delegate math to
 // ternary_live_l0_w{q,k,v}_materialize_row_kernel_split().
+// Non-ownership boundary: these tops do not define SRAM policy or runtime-variable shape behavior.
 
 #include "AecctTypes.h"
 #include "TernaryLiveQkvLeafKernel.h"

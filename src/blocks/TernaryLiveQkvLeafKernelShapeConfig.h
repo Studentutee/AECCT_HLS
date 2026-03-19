@@ -3,6 +3,7 @@
 // Runtime metadata/config performs validation against these compile-time supported shapes only.
 // This header does not imply runtime-variable top interfaces.
 // It defines expected constants only; it does not perform materialization logic.
+// Non-ownership boundary: this file defines constants only; wrappers/kernels consume them.
 
 #include <cstdint>
 

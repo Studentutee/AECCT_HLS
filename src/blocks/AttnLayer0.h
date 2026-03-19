@@ -3,6 +3,7 @@
 // Input: X_WORK row tiles and parameter-backed Q/K/V metadata.
 // Intermediate: Q/K/V tensors, score/probability scratch, pre/post-concat buffers.
 // Output: attention output tensor write-back to attn_out_base_word.
+// Ownership boundary: Top owns global SRAM policy; this block consumes caller-provided windows.
 
 #include <cstdint>
 
@@ -69,6 +70,9 @@ static inline bool attn_live_qkv_gate_ok(
 template<unsigned STAGE_MODE>
 // AttnLayer0 executes stage-scoped attention work in SRAM windows owned by Top.
 // Ownership boundary: this block only consumes the base offsets provided by Top.
+// TransformerLayer handoff boundary:
+// - x_in_base_word is the layer input slice selected by TransformerLayer/Top.
+// - attn_out_base_word is the output slice consumed by the downstream FFN stage.
 // Bypass/fallback boundary:
 // - q_prebuilt_from_top_managed skips Q materialization only.
 // - kv_prebuilt_from_top_managed skips K/V materialization only.
@@ -104,6 +108,8 @@ static inline void AttnLayer0(
     if (d_head == 0u) { d_head = d_model / n_heads; }
     quant_acc_t inv_sqrt_d_head = attn_inv_sqrt_d_head(d_head);
 
+    // QKV stage:
+    // X_WORK + W_REGION metadata/payload -> Q/K/V (plus act_q mirrors) in attention scratch windows.
     if constexpr (STAGE_MODE == ATTN_STAGE_QKV || STAGE_MODE == ATTN_STAGE_FULL) {
         const uint32_t param_base = (uint32_t)param_base_word.to_uint();
         const QuantLinearMeta live_q_meta = ternary_linear_live_l0_wq_meta();
@@ -138,6 +144,7 @@ static inline void AttnLayer0(
         if (!skip_q_materialization && live_q_enabled) {
             const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE)
+            // Preferred Q path: fixed-shape split-top wrapper over ternary leaf kernel.
             const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
             const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
             if (live_q_meta.rows != kQkvCtSupportedL0WqRows ||
@@ -232,6 +239,7 @@ static inline void AttnLayer0(
         if (!skip_kv_materialization && live_k_enabled) {
             const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
+            // Preferred K path: fixed-shape split-top wrapper over ternary leaf kernel.
             bool use_k_split_top = true;
             const ParamMeta live_k_payload_meta = kParamMeta[live_k_meta.weight_param_id];
             const ParamMeta live_k_inv_meta = kParamMeta[live_k_meta.inv_sw_param_id];
@@ -332,6 +340,7 @@ static inline void AttnLayer0(
 #endif
             if (!live_k_ok) {
                 const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
+                // K fallback path is an explicit bypass copy from X into K windows.
                 ATTN_K_BYPASS_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
                     u32_t x = sram[x_in_base + i];
                     sram[k_base + i] = x;
@@ -343,6 +352,7 @@ static inline void AttnLayer0(
         if (!skip_kv_materialization && live_v_enabled) {
             const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
+            // Preferred V path: fixed-shape split-top wrapper over ternary leaf kernel.
             bool use_v_split_top = true;
             const ParamMeta live_v_payload_meta = kParamMeta[live_v_meta.weight_param_id];
             const ParamMeta live_v_inv_meta = kParamMeta[live_v_meta.inv_sw_param_id];
@@ -443,6 +453,7 @@ static inline void AttnLayer0(
 #endif
             if (!live_v_ok) {
                 const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
+                // V fallback path is an explicit bypass copy from X into V windows.
                 ATTN_V_BYPASS_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
                     u32_t x = sram[x_in_base + i];
                     sram[v_base + i] = x;
@@ -453,7 +464,9 @@ static inline void AttnLayer0(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
-        // Score stage consumes Q/K/V and emits pre-concat plus optional debug score/prob dumps.
+        // Scores stage:
+        // Q/K/V -> scaled dot products -> softmax probabilities -> pre-concat accumulation.
+        // Optional debug dumps are emitted only for (t=0, h=0) into score/softmax windows.
         softmax_score_t score_row[N_NODES];
         softmax_prob_t prob_row[N_NODES];
         ATTN_SCORE_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
@@ -503,7 +516,8 @@ static inline void AttnLayer0(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_OUT || STAGE_MODE == ATTN_STAGE_FULL) {
-        // Final stage output write-back to caller-provided attn_out window.
+        // OUT stage write-back boundary:
+        // post-concat tensor -> caller-provided attn_out window for downstream layer glue.
         ATTN_OUT_WRITEBACK_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
             sram[out_base + i] = sram[post_base + i];
         }

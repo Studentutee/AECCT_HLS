@@ -7,6 +7,9 @@ Date: 2026-03-19
 - 本版明確以以下內容為合併來源：
   - Round 1 guide baseline：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@0001a68`
   - Round 2 guide baseline：`docs/process/REVIEWER_GUIDE_QKV_MAINLINE_zhTW.md@b2079e3`
+- Round 1 低層導讀保留原則：
+  - 以既有 reviewer-guide/既有回報可追溯內容為 source of truth。
+  - 不用當前 code 註解重新推導或重寫 Round 1 低層語意。
 
 ## 2. Covered Files
 - `src/Top.h`
@@ -22,6 +25,13 @@ Date: 2026-03-19
 2. `TransformerLayer.h`（Top -> Attn/FFN/LN integration boundary）
 3. `AttnLayer0.h`（QKV/score/out 主計算路徑）
 4. `TernaryLiveQkvLeafKernel*.h`（leaf row materialization 與 shape/metadata guard）
+
+### 3.1 Lower-Level First-Pass Review Order（本輪新增）
+1. `AttnLayer0.h` 先看 `ATTN_STAGE_QKV`，確認 Q/K/V materialization 與 fallback/bypass 邊界。
+2. `AttnLayer0.h` 再看 `ATTN_STAGE_SCORES`，確認 score/softmax/pre-concat 的資料流。
+3. `AttnLayer0.h` 最後看 `ATTN_STAGE_OUT`，確認 final write-back 邊界。
+4. `TernaryLiveQkvLeafKernel.h` 看 core row kernel metadata guard + decode/MAC 角色。
+5. `TernaryLiveQkvLeafKernelTop.h` / `...CatapultPrepTop.h` 看 wrapper surface 角色，不看成 policy owner。
 
 ## 4. End-to-End Dataflow（3~8 步）
 1. Top ingest `SET_W_BASE/LOAD_W/INFER`，建立可用 `W_REGION` 與 input payload。
@@ -46,6 +56,23 @@ Date: 2026-03-19
   - write-back：Top `infer_emit_outmode_payload(...)`
   - readback：Top `handle_read_mem(...)`
 
+### 5.1 Lower-Level File Ownership / Non-Ownership（本輪新增）
+- `AttnLayer0.h`
+  - owns: stage-scoped attention compute 與 caller-provided windows 內的寫入行為。
+  - does not own: Top FSM、外部 command/rsp 協定、全域 SRAM policy。
+- `TernaryLiveQkvLeafKernel.h`
+  - owns: row-kernel guard/decode/MAC 與 matrix-specific row materialization。
+  - does not own: W_REGION policy、runtime scheduling、runtime-variable shape negotiation。
+- `TernaryLiveQkvLeafKernelTop.h`
+  - owns: fixed-shape local wrapper surface（split-interface run surface）。
+  - does not own: SRAM policy、compile-prep policy、global orchestration。
+- `TernaryLiveQkvLeafKernelCatapultPrepTop.h`
+  - owns: compile-prep-facing wrapper surface。
+  - does not own: runtime behavior contract 擴張、SRAM policy。
+- `TernaryLiveQkvLeafKernelShapeConfig.h`
+  - owns: compile-time shape/payload SSOT constants。
+  - does not own: materialization logic、wrapper interface behavior。
+
 ## 6. File Roles
 ### 6.1 `Top.h`
 - 唯一外部 4-channel contract (`ctrl_cmd/ctrl_rsp/data_in/data_out`) 的 dispatch owner。
@@ -62,6 +89,14 @@ Date: 2026-03-19
 - `ATTN_STAGE_QKV`：Q/K/V materialization（含 live path 與 fallback/bypass）。
 - `ATTN_STAGE_SCORES`：QK score、softmax、V 加權輸出到 pre/post concat。
 - `ATTN_STAGE_OUT`：將 `post_concat` 寫回 attention output base。
+- handoff-in（from `TransformerLayer`）：
+  - `x_in_base_word` / `sc.*_base_word` 形成當前 stage 讀寫邊界。
+  - `q_prebuilt_from_top_managed` / `kv_prebuilt_from_top_managed` 只控制對應 materialization 是否略過。
+- handoff-out（to downstream layer glue）：
+  - `attn_out_base_word` 是本 block 對後續 FFN/residual glue 的輸出交接點。
+- write-back 邊界：
+  - pre/post concat copy 在 attention scratch 內。
+  - OUT stage 才把最終 tensor 寫到 caller-provided `attn_out_base_word`。
 - 不負責 Top state machine、外部 command/rsp 協定、全域 SRAM ownership 仲裁。
 
 ### 6.4 `TernaryLiveQkvLeafKernel*.h`（Round 1 核心低層導讀保留）
@@ -69,6 +104,14 @@ Date: 2026-03-19
 - `LeafKernel`：row-kernel（metadata guard + ternary decode + MAC）。
 - `LeafKernelTop`：local split-interface top wrapper。
 - `LeafKernelCatapultPrepTop`：compile-prep wrapper/surface adapter。
+- handoff 關係：
+  - `AttnLayer0` 呼叫 `LeafKernelTop` split interface 完成 row materialization。
+  - `LeafKernel` 本體可由 SRAM-backed generic entry 或 split-interface wrappers 委派進入。
+- role 分層：
+  - core kernel = 計算/guard
+  - local top wrapper = fixed-shape runtime-facing local adapter
+  - compile-prep top wrapper = Catapult compile-prep adapter
+  - shape config = constants/SSOT only
 - 不負責 runtime-variable shape negotiation、Top SRAM policy、closure 宣告。
 
 ## 7. Loop-Role Notes（代表家族）
@@ -89,12 +132,24 @@ Date: 2026-03-19
 - `ATTN_SCORE_TOKEN_LOOP` / `ATTN_SCORE_HEAD_LOOP` / `ATTN_SCORE_KEY_TOKEN_LOOP` / `ATTN_SCORE_DOT_COL_LOOP`
 - `ATTN_PRECONCAT_HEAD_COL_LOOP` / `ATTN_PRECONCAT_KEY_TOKEN_ACC_LOOP`
 - `ATTN_POSTCONCAT_COPY_LOOP` / `ATTN_OUT_WRITEBACK_LOOP`
+- map（本輪補強）：
+  - `ATTN_Q*` = Q materialization / fallback / bypass family
+  - `ATTN_K*` = K materialization / fallback / bypass family
+  - `ATTN_V*` = V materialization / fallback / bypass family
+  - `ATTN_SCORE*` = score + softmax 前計算
+  - `ATTN_PRECONCAT*` = V 加權累積
+  - `ATTN_POSTCONCAT*` / `ATTN_OUT*` = concat 收斂與最終寫回
 
 ### 7.4 `TERNARY_*`（Round 1 低層重點保留）
 - `TERNARY_QKV_IMPL_OUT_ROW_LOOP`
 - `TERNARY_WQ_SPLIT_OUT_ROW_LOOP` + `TERNARY_WQ_SPLIT_IN_COL_LOOP`
 - `TERNARY_WK_SPLIT_OUT_ROW_LOOP` + `TERNARY_WK_SPLIT_IN_COL_LOOP`
 - `TERNARY_WV_SPLIT_OUT_ROW_LOOP` + `TERNARY_WV_SPLIT_IN_COL_LOOP`
+- map（本輪補強）：
+  - `TERNARY_QKV_IMPL_*` = generic SRAM-backed row kernel path
+  - `TERNARY_WQ_SPLIT_*` = WQ fixed-shape split-interface row path
+  - `TERNARY_WK_SPLIT_*` = WK fixed-shape split-interface row path
+  - `TERNARY_WV_SPLIT_*` = WV fixed-shape split-interface row path
 
 ## 8. Most Important Code Regions（7 個）
 1. `src/Top.h` `top(...)`（state + command dispatch）
@@ -126,4 +181,6 @@ Date: 2026-03-19
 
 ### 10.3 Remaining debt / next likely review target
 - `Top.h`/`TransformerLayer.h` 之外的 design-side 歷史註解一致性仍可能有零星欠債。
-- 下一個高價值目標可放在 `AttnLayer0.h` 與 leaf family 的 comment consistency 與 reviewer導讀深度對齊（不改行為前提）。
+- 下一個高價值目標可放在：
+  - `AttnLayer0.h` 各 stage 的 cross-check checklist 化（reviewer 快速檢核模板）
+  - ternary leaf family 與 compile-prep wrapper 的權責圖示化（docs-side，不改行為）

@@ -2,6 +2,7 @@
 // P00-011R/P00-011S/P00-011T: dedicated Catapult-facing compile-prep top wrappers for L0_WQ/L0_WK/L0_WV rows.
 // These tops are compile-prep surface adapters; they do not own SRAM policy
 // and they do not introduce runtime-variable shape behavior.
+// Role distinction: this file is compile-prep oriented and separate from local split-top wrappers.
 
 #include "AecctTypes.h"
 #include "TernaryLiveQkvLeafKernelShapeConfig.h"

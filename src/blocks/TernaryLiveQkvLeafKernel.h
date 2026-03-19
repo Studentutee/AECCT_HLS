@@ -3,6 +3,7 @@
 // Input: one X row + matrix-specific packed payload + inv_s_w metadata.
 // Intermediate: metadata guards + ternary decode + row dot-accumulate.
 // Output: one quantized Q/K/V row + mirrored act_q row + out_inv_sw_bits.
+// Non-ownership boundary: this file does not own SRAM region policy or runtime scheduling.
 
 #include <cstdint>
 
@@ -110,6 +111,7 @@ static inline bool ternary_live_qkv_materialize_row_kernel_impl(
 // Split-interface WQ row kernel used by Catapult-facing wrappers.
 // Input -> intermediate -> output:
 // x_row + payload_words + inv_sw_bits -> decoded ternary MAC -> out_row/out_act_q_row.
+// Non-ownership boundary: this split kernel consumes fixed-shape buffers only.
 static inline bool ternary_live_l0_wq_materialize_row_kernel_split(
     const u32_t x_row[kTernaryLiveL0WqCols],
     const u32_t payload_words[kTernaryLiveL0WqPayloadWords],
@@ -193,6 +195,7 @@ static inline bool ternary_live_l0_wq_materialize_row_kernel_split(
 }
 
 // Split-interface WK row kernel with the same dataflow and guard contract as WQ.
+// Non-ownership boundary: this split kernel consumes fixed-shape buffers only.
 static inline bool ternary_live_l0_wk_materialize_row_kernel_split(
     const u32_t x_row[kTernaryLiveL0WkCols],
     const u32_t payload_words[kTernaryLiveL0WkPayloadWords],
@@ -276,6 +279,7 @@ static inline bool ternary_live_l0_wk_materialize_row_kernel_split(
 }
 
 // Split-interface WV row kernel with the same dataflow and guard contract as WQ/WK.
+// Non-ownership boundary: this split kernel consumes fixed-shape buffers only.
 static inline bool ternary_live_l0_wv_materialize_row_kernel_split(
     const u32_t x_row[kTernaryLiveL0WvCols],
     const u32_t payload_words[kTernaryLiveL0WvPayloadWords],
@@ -358,7 +362,8 @@ static inline bool ternary_live_l0_wv_materialize_row_kernel_split(
     return true;
 }
 
-// Convenience dispatch wrappers for SRAM-backed call sites.
+// Convenience dispatch wrappers for SRAM-backed call sites (for example AttnLayer0).
+// They provide matrix-id-specific entrypoints but delegate all math/guards to the core kernel.
 static inline bool ternary_live_l0_wq_materialize_row_kernel(
     u32_t* sram,
     u32_t param_base_word,
