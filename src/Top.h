@@ -23,6 +23,8 @@
 #include "blocks/LayerNormBlock.h"
 #include "blocks/AttnPhaseATopManagedKv.h"
 #include "blocks/AttnPhaseATopManagedQ.h"
+#include "blocks/AttnPhaseBTopManagedQkScore.h"
+#include "blocks/AttnPhaseBTopManagedSoftmaxOut.h"
 #include "blocks/TransformerLayer.h"
 #include "blocks/FinalHead.h"
 #include <cstdint>
@@ -154,6 +156,10 @@ namespace aecct {
         bool p11ac_fallback_taken;
         bool p11ad_mainline_q_path_taken;
         bool p11ad_q_fallback_taken;
+        bool p11ae_mainline_score_path_taken;
+        bool p11ae_score_fallback_taken;
+        bool p11af_mainline_softmax_output_path_taken;
+        bool p11af_softmax_output_fallback_taken;
 
         // Top-controlled block contract placeholders (skeleton only).
         PreprocBlockContract preproc_contract;
@@ -208,6 +214,10 @@ namespace aecct {
             p11ac_fallback_taken = false;
             p11ad_mainline_q_path_taken = false;
             p11ad_q_fallback_taken = false;
+            p11ae_mainline_score_path_taken = false;
+            p11ae_score_fallback_taken = false;
+            p11af_mainline_softmax_output_path_taken = false;
+            p11af_softmax_output_fallback_taken = false;
             clear_preproc_contract(preproc_contract);
             clear_transformer_layer_contract(transformer_contract);
             clear_layernorm_contract(layernorm_contract);
@@ -307,6 +317,10 @@ namespace aecct {
     static inline bool top_peek_p11ac_fallback_taken() { return top_regs().p11ac_fallback_taken; }
     static inline bool top_peek_p11ad_mainline_q_path_taken() { return top_regs().p11ad_mainline_q_path_taken; }
     static inline bool top_peek_p11ad_q_fallback_taken() { return top_regs().p11ad_q_fallback_taken; }
+    static inline bool top_peek_p11ae_mainline_score_path_taken() { return top_regs().p11ae_mainline_score_path_taken; }
+    static inline bool top_peek_p11ae_score_fallback_taken() { return top_regs().p11ae_score_fallback_taken; }
+    static inline bool top_peek_p11af_mainline_softmax_output_path_taken() { return top_regs().p11af_mainline_softmax_output_path_taken; }
+    static inline bool top_peek_p11af_softmax_output_fallback_taken() { return top_regs().p11af_softmax_output_fallback_taken; }
 
     static inline RegionId decode_region(const u32_t& addr_word) {
         unsigned a = (unsigned)addr_word.to_uint();
@@ -756,6 +770,69 @@ namespace aecct {
         );
     }
 
+    static inline bool run_p11ae_layer0_top_managed_qk_score(
+        u32_t* sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t token_idx,
+        bool& fallback_taken
+    ) {
+        AttnCfg attn_cfg;
+        attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        attn_cfg.d_model = cfg.d_model;
+        attn_cfg.n_heads = cfg.n_heads;
+        uint32_t d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)attn_cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        attn_cfg.d_model = (u32_t)d_model;
+        attn_cfg.n_heads = (u32_t)n_heads;
+        attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+        // P11AE_MAINLINE_TOP_SCORE_CALLSITE
+        return attn_phaseb_top_managed_qk_score_mainline(
+            sram,
+            attn_cfg,
+            sc.attn,
+            token_idx,
+            fallback_taken
+        );
+    }
+
+    static inline bool run_p11af_layer0_top_managed_softmax_out(
+        u32_t* sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t token_idx,
+        bool& fallback_taken
+    ) {
+        AttnCfg attn_cfg;
+        attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        attn_cfg.d_model = cfg.d_model;
+        attn_cfg.n_heads = cfg.n_heads;
+        uint32_t d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)attn_cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        attn_cfg.d_model = (u32_t)d_model;
+        attn_cfg.n_heads = (u32_t)n_heads;
+        attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+        // P11AF_MAINLINE_TOP_SOFTMAX_OUT_CALLSITE
+        return attn_phaseb_top_managed_softmax_out_mainline(
+            sram,
+            attn_cfg,
+            sc.attn,
+            token_idx,
+            sc.attn_out_base_word,
+            fallback_taken
+        );
+    }
+
     static inline void load_mid_or_end_norm_params(
         bool is_mid_norm,
         u32_t* sram,
@@ -822,12 +899,18 @@ namespace aecct {
         regs.p11ac_fallback_taken = false;
         regs.p11ad_mainline_q_path_taken = false;
         regs.p11ad_q_fallback_taken = false;
+        regs.p11ae_mainline_score_path_taken = false;
+        regs.p11ae_score_fallback_taken = false;
+        regs.p11af_mainline_softmax_output_path_taken = false;
+        regs.p11af_softmax_output_fallback_taken = false;
 
         TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
             bool q_prebuilt_from_top_managed = false;
             bool kv_prebuilt_from_top_managed = false;
+            bool score_prebuilt_from_top_managed = false;
+            bool out_prebuilt_from_top_managed = false;
 
             // P11AC mainline wiring is intentionally scoped to the current
             // local-only target layer path to keep integration additive.
@@ -857,6 +940,51 @@ namespace aecct {
                 );
                 regs.p11ac_mainline_path_taken = kv_prebuilt_from_top_managed;
                 regs.p11ac_fallback_taken = fallback_taken;
+
+                bool ae_mainline_score_path_taken = true;
+                bool af_mainline_softmax_output_path_taken = true;
+                if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
+                    const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
+                    TOP_P11AEAF_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+                        bool score_fallback_taken = true;
+                        const bool score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                            sram,
+                            cfg,
+                            sc,
+                            (u32_t)t,
+                            score_fallback_taken
+                        );
+                        if (!score_mainline_taken || score_fallback_taken) {
+                            ae_mainline_score_path_taken = false;
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+
+                        bool softmax_out_fallback_taken = true;
+                        const bool softmax_out_mainline_taken =
+                            run_p11af_layer0_top_managed_softmax_out(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                softmax_out_fallback_taken
+                            );
+                        if (!softmax_out_mainline_taken || softmax_out_fallback_taken) {
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+                    }
+                } else {
+                    ae_mainline_score_path_taken = false;
+                    af_mainline_softmax_output_path_taken = false;
+                }
+
+                score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
+                out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
+                regs.p11ae_mainline_score_path_taken = ae_mainline_score_path_taken;
+                regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
+                regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
+                regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
             }
 
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
@@ -869,7 +997,9 @@ namespace aecct {
                 sc,
                 pb,
                 kv_prebuilt_from_top_managed,
-                q_prebuilt_from_top_managed
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed
             );
 
             x_in_base = x_out_base;

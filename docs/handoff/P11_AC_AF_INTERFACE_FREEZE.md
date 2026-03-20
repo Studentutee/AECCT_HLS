@@ -47,8 +47,21 @@
 - no alternate temporary destination in acceptance path
 
 ### G-AE-IF (to be filled when AE interface freeze lands)
-- Status: pending
-- Freeze scope: pending
+- Status: landed (local-only evidence cycle; AE/AF additive mainline wiring)
+- Freeze scope:
+- AC/AD hooks/surfaces remain backward-compatible and unchanged in semantics
+- Added AE helper/wrapper path:
+  - `run_transformer_layer_loop -> run_p11ae_layer0_top_managed_qk_score -> attn_phaseb_top_managed_qk_score_mainline`
+- Added AF helper/wrapper path:
+  - `run_transformer_layer_loop -> run_p11af_layer0_top_managed_softmax_out -> attn_phaseb_top_managed_softmax_out_mainline`
+- Added additive prebuilt hooks only for score/out handoff:
+  - `TransformerLayer(..., score_prebuilt_from_top_managed, out_prebuilt_from_top_managed)`
+  - `AttnLayer0(..., score_prebuilt_from_top_managed, out_prebuilt_from_top_managed)`
+- Acceptance lock:
+  - `MAINLINE_SCORE_PATH_TAKEN PASS`
+  - `MAINLINE_SOFTMAX_OUTPUT_PATH_TAKEN PASS`
+  - `FALLBACK_NOT_TAKEN PASS`
+  - `fallback_taken = false`
 
 ## Non-Goals
 - No Catapult closure claim.

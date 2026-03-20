@@ -87,7 +87,9 @@ static inline void AttnLayer0(
     const AttnScratch& sc,
     u32_t param_base_word = (u32_t)0,
     bool kv_prebuilt_from_top_managed = false,
-    bool q_prebuilt_from_top_managed = false
+    bool q_prebuilt_from_top_managed = false,
+    bool score_prebuilt_from_top_managed = false,
+    bool out_prebuilt_from_top_managed = false
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -464,6 +466,10 @@ static inline void AttnLayer0(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
+        if (score_prebuilt_from_top_managed) {
+            // Top-managed AE/AF path already produced score/pre/post for this layer invocation.
+            // Keep existing AC/AD hooks untouched and skip duplicate score/softmax execution only.
+        } else {
         // Scores stage:
         // Q/K/V -> scaled dot products -> softmax probabilities -> pre-concat accumulation.
         // Optional debug dumps are emitted only for (t=0, h=0) into score/softmax windows.
@@ -513,9 +519,14 @@ static inline void AttnLayer0(
         ATTN_POSTCONCAT_COPY_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
             sram[post_base + i] = sram[pre_base + i];
         }
+        }
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_OUT || STAGE_MODE == ATTN_STAGE_FULL) {
+        if (out_prebuilt_from_top_managed) {
+            // Top-managed AF path already wrote final output for this layer invocation.
+            return;
+        }
         // OUT stage write-back boundary:
         // post-concat tensor -> caller-provided attn_out window for downstream layer glue.
         ATTN_OUT_WRITEBACK_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
