@@ -23,9 +23,9 @@ static inline quant_w_t ffn_weight_from_sram(const u32_t* sram, uint32_t param_b
     return quant_w_t(quant_act_from_bits(sram[ffn_param_addr_word(param_base_word, param_id, elem_idx)]));
 }
 
-template<unsigned STAGE_MODE>
-static inline void FFNLayer0(
-    u32_t* sram,
+template<unsigned STAGE_MODE, typename SramView>
+static inline void FFNLayer0CoreWindow(
+    SramView& sram,
     const FfnCfg& cfg,
     u32_t x_in_base_word,
     const FfnScratch& sc,
@@ -95,6 +95,25 @@ static inline void FFNLayer0(
     }
 }
 
+template<unsigned STAGE_MODE>
+static inline void FFNLayer0(
+    u32_t* sram,
+    const FfnCfg& cfg,
+    u32_t x_in_base_word,
+    const FfnScratch& sc,
+    u32_t param_base_word,
+    u32_t layer_id = (u32_t)0
+) {
+    FFNLayer0CoreWindow<STAGE_MODE, u32_t*>(
+        sram,
+        cfg,
+        x_in_base_word,
+        sc,
+        param_base_word,
+        layer_id
+    );
+}
+
 // P00-011AO: first deep FFN boundary bridge.
 // This keeps the first deep call-site boundary array-shaped for Catapult-facing
 // paths while preserving the accepted FFN core implementation.
@@ -107,7 +126,7 @@ static inline void FFNLayer0TopManagedWindowBridge(
     u32_t param_base_word,
     u32_t layer_id = (u32_t)0
 ) {
-    FFNLayer0<STAGE_MODE>(
+    FFNLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
         cfg,
         x_in_base_word,

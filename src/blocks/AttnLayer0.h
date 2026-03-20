@@ -67,7 +67,7 @@ static inline bool attn_live_qkv_gate_ok(
     return true;
 }
 
-template<unsigned STAGE_MODE>
+template<unsigned STAGE_MODE, typename SramView>
 // AttnLayer0 executes stage-scoped attention work in SRAM windows owned by Top.
 // Ownership boundary: this block only consumes the base offsets provided by Top.
 // TransformerLayer handoff boundary:
@@ -79,8 +79,8 @@ template<unsigned STAGE_MODE>
 // Write-back boundary:
 // - score/softmax debug dumps write to score_base/softmax_base for (t=0,h=0).
 // - stage OUT writes final tensor to attn_out_base_word.
-static inline void AttnLayer0(
-    u32_t* sram,
+static inline void AttnLayer0CoreWindow(
+    SramView& sram,
     const AttnCfg& cfg,
     u32_t x_in_base_word,
     u32_t attn_out_base_word,
@@ -535,6 +535,33 @@ static inline void AttnLayer0(
     }
 }
 
+template<unsigned STAGE_MODE>
+static inline void AttnLayer0(
+    u32_t* sram,
+    const AttnCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t attn_out_base_word,
+    const AttnScratch& sc,
+    u32_t param_base_word = (u32_t)0,
+    bool kv_prebuilt_from_top_managed = false,
+    bool q_prebuilt_from_top_managed = false,
+    bool score_prebuilt_from_top_managed = false,
+    bool out_prebuilt_from_top_managed = false
+) {
+    AttnLayer0CoreWindow<STAGE_MODE, u32_t*>(
+        sram,
+        cfg,
+        x_in_base_word,
+        attn_out_base_word,
+        sc,
+        param_base_word,
+        kv_prebuilt_from_top_managed,
+        q_prebuilt_from_top_managed,
+        score_prebuilt_from_top_managed,
+        out_prebuilt_from_top_managed
+    );
+}
+
 // P00-011AN: first deep Attn boundary bridge.
 // This keeps the first deep call-site boundary array-shaped for Catapult-facing paths.
 // Internal compute semantics remain the same by forwarding to the accepted AttnLayer0 core.
@@ -551,7 +578,7 @@ static inline void AttnLayer0TopManagedWindowBridge(
     bool score_prebuilt_from_top_managed = false,
     bool out_prebuilt_from_top_managed = false
 ) {
-    AttnLayer0<STAGE_MODE>(
+    AttnLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
         cfg,
         x_in_base_word,
