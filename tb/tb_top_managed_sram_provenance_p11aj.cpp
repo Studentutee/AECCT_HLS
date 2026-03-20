@@ -1,0 +1,818 @@
+// P00-011AJ: Top-managed SRAM full-flow provenance + final compare hardening (local-only).
+// Scope:
+// - Provenance checks for AC/AD/AE/AF stage spans.
+// - Downstream bridge checks (Q/K->score, score->output, attn_out->final_x).
+// - Full-loop vs staged-flow key-span exact compare with hardened final_x compare.
+
+#ifndef __SYNTHESIS__
+
+#include <cstdio>
+#include <cstdint>
+#include <vector>
+
+#include "tb_p11aeaf_common.h"
+
+#if __has_include(<mc_scverify.h>)
+#include <mc_scverify.h>
+#define AECCT_HAS_SCVERIFY 1
+#else
+#define AECCT_HAS_SCVERIFY 0
+#endif
+
+#if !AECCT_HAS_SCVERIFY
+#ifndef CCS_MAIN
+#define CCS_MAIN(...) int main(__VA_ARGS__)
+#endif
+#ifndef CCS_RETURN
+#define CCS_RETURN(x) return (x)
+#endif
+#endif
+
+namespace {
+
+class TbP11ajTopManagedSramProvenance {
+public:
+    int run_all() {
+        if (!init_state()) {
+            return 1;
+        }
+        if (!run_staged_provenance_chain()) {
+            return 1;
+        }
+        if (!run_staged_downstream_finalize()) {
+            return 1;
+        }
+        if (!run_full_loop_mainline()) {
+            return 1;
+        }
+        if (!validate_full_flow_key_span_compare()) {
+            return 1;
+        }
+        if (!validate_final_x_hardened_compare()) {
+            return 1;
+        }
+        std::printf("PASS: tb_top_managed_sram_provenance_p11aj\n");
+        return 0;
+    }
+
+private:
+    std::vector<aecct::u32_t> sram_stage_;
+    std::vector<aecct::u32_t> sram_full_;
+    std::vector<aecct::u32_t> sram_stage_before_downstream_;
+    p11aeaf_tb::QkvPayloadSet payloads_;
+    aecct::CfgRegs cfg_;
+    aecct::LayerScratch sc_;
+    aecct::TopRegs regs_full_;
+    uint32_t param_base_;
+    uint32_t token_count_;
+    uint32_t d_model_;
+    uint32_t n_heads_;
+    uint32_t d_head_;
+    uint32_t staged_final_x_base_;
+    bool ae_any_score_change_;
+    bool af_any_pre_change_;
+    bool af_any_post_change_;
+    bool af_any_out_change_;
+
+    static uint32_t f32_to_bits(float f) {
+        union {
+            float f;
+            uint32_t u;
+        } cvt;
+        cvt.f = f;
+        return cvt.u;
+    }
+
+    static aecct::u32_t perturb_fp32_bits(aecct::u32_t in_bits) {
+        const uint32_t raw = (uint32_t)in_bits.to_uint();
+        return (aecct::u32_t)(raw ^ 0x00400000u);
+    }
+
+    static aecct::u32_t force_delta_bits(aecct::u32_t in_bits) {
+        if ((uint32_t)in_bits.to_uint() != 0u) {
+            return (aecct::u32_t)0u;
+        }
+        return (aecct::u32_t)0x3F800000u;
+    }
+
+    static void init_full_x_rows(std::vector<aecct::u32_t>& sram) {
+        const uint32_t token_count = (uint32_t)aecct::ATTN_TOKEN_COUNT;
+        const uint32_t d_model = (uint32_t)aecct::ATTN_D_MODEL;
+        const uint32_t x_base = (uint32_t)aecct::LN_X_OUT_BASE_WORD;
+        for (uint32_t t = 0u; t < token_count; ++t) {
+            const uint32_t row_base = x_base + t * d_model;
+            for (uint32_t i = 0u; i < d_model; ++i) {
+                const int32_t v = (int32_t)((t + 3u) * 17u + (i + 5u) * 11u) - 211;
+                const float f = ((float)v) * 0.015625f;
+                sram[row_base + i] = (aecct::u32_t)f32_to_bits(f);
+            }
+        }
+    }
+
+    static void mark_span(std::vector<uint8_t>& allowed, uint32_t base, uint32_t words) {
+        for (uint32_t i = 0u; i < words; ++i) {
+            allowed[base + i] = 1u;
+        }
+    }
+
+    static uint32_t count_span_changes(
+        const std::vector<aecct::u32_t>& before,
+        const std::vector<aecct::u32_t>& after,
+        uint32_t base,
+        uint32_t words
+    ) {
+        uint32_t changed = 0u;
+        for (uint32_t i = 0u; i < words; ++i) {
+            if ((uint32_t)before[base + i].to_uint() != (uint32_t)after[base + i].to_uint()) {
+                ++changed;
+            }
+        }
+        return changed;
+    }
+
+    static bool span_unchanged(
+        const std::vector<aecct::u32_t>& before,
+        const std::vector<aecct::u32_t>& after,
+        uint32_t base,
+        uint32_t words,
+        const char* label
+    ) {
+        for (uint32_t i = 0u; i < words; ++i) {
+            const uint32_t bv = (uint32_t)before[base + i].to_uint();
+            const uint32_t av = (uint32_t)after[base + i].to_uint();
+            if (bv != av) {
+                std::printf("[p11aj][FAIL] %s changed unexpectedly addr=%u offs=%u before=0x%08X after=0x%08X\n",
+                    label, (unsigned)(base + i), (unsigned)i, (unsigned)bv, (unsigned)av);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool check_no_spurious_changes(
+        const std::vector<aecct::u32_t>& before,
+        const std::vector<aecct::u32_t>& after,
+        const std::vector<uint8_t>& allowed,
+        const char* stage_label
+    ) {
+        const uint32_t words = (uint32_t)before.size();
+        for (uint32_t i = 0u; i < words; ++i) {
+            const uint32_t bv = (uint32_t)before[i].to_uint();
+            const uint32_t av = (uint32_t)after[i].to_uint();
+            if (bv != av && allowed[i] == 0u) {
+                std::printf("[p11aj][FAIL] %s spurious write addr=%u before=0x%08X after=0x%08X\n",
+                    stage_label, (unsigned)i, (unsigned)bv, (unsigned)av);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static bool compare_span_exact(
+        const std::vector<aecct::u32_t>& lhs,
+        const std::vector<aecct::u32_t>& rhs,
+        uint32_t base,
+        uint32_t words,
+        const char* label
+    ) {
+        for (uint32_t i = 0u; i < words; ++i) {
+            const uint32_t lv = (uint32_t)lhs[base + i].to_uint();
+            const uint32_t rv = (uint32_t)rhs[base + i].to_uint();
+            if (lv != rv) {
+                std::printf("[p11aj][FAIL] %s mismatch addr=%u offs=%u lhs=0x%08X rhs=0x%08X\n",
+                    label, (unsigned)(base + i), (unsigned)i, (unsigned)lv, (unsigned)rv);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static uint32_t count_span_diffs(
+        const std::vector<aecct::u32_t>& lhs,
+        const std::vector<aecct::u32_t>& rhs,
+        uint32_t base,
+        uint32_t words
+    ) {
+        uint32_t diffs = 0u;
+        for (uint32_t i = 0u; i < words; ++i) {
+            if ((uint32_t)lhs[base + i].to_uint() != (uint32_t)rhs[base + i].to_uint()) {
+                ++diffs;
+            }
+        }
+        return diffs;
+    }
+
+    bool init_state() {
+        token_count_ = (uint32_t)aecct::ATTN_TOKEN_COUNT;
+        d_model_ = (uint32_t)aecct::ATTN_D_MODEL;
+        n_heads_ = (uint32_t)aecct::ATTN_N_HEADS;
+        d_head_ = (uint32_t)aecct::ATTN_D_HEAD;
+        param_base_ = (uint32_t)sram_map::W_REGION_BASE;
+        staged_final_x_base_ = 0u;
+        ae_any_score_change_ = false;
+        af_any_pre_change_ = false;
+        af_any_post_change_ = false;
+        af_any_out_change_ = false;
+
+        if (!p11aeaf_tb::prepare_qkv_payload_set(payloads_)) {
+            std::printf("[p11aj][FAIL] payload preparation failed\n");
+            return false;
+        }
+
+        sram_stage_.assign((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
+        sram_full_.assign((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
+
+        init_full_x_rows(sram_stage_);
+        init_full_x_rows(sram_full_);
+        p11aeaf_tb::load_qkv_payload_set_to_sram(sram_stage_, payloads_, param_base_);
+        p11aeaf_tb::load_qkv_payload_set_to_sram(sram_full_, payloads_, param_base_);
+
+        cfg_ = p11aeaf_tb::build_cfg();
+        cfg_.n_layers = (aecct::u32_t)1u;
+        sc_ = aecct::make_layer_scratch((aecct::u32_t)aecct::LN_X_OUT_BASE_WORD);
+
+        regs_full_.clear();
+        regs_full_.w_base_set = true;
+        regs_full_.w_base_word = (aecct::u32_t)param_base_;
+        regs_full_.cfg_d_model = cfg_.d_model;
+        regs_full_.cfg_n_heads = cfg_.n_heads;
+        regs_full_.cfg_d_ffn = cfg_.d_ffn;
+        regs_full_.cfg_n_layers = cfg_.n_layers;
+        regs_full_.cfg_ready = true;
+        return true;
+    }
+
+    bool run_stage_ac_provenance() {
+        const uint32_t tensor_words = token_count_ * d_model_;
+        const uint32_t x_base = (uint32_t)aecct::LN_X_OUT_BASE_WORD;
+        const uint32_t k_base = (uint32_t)sc_.attn.k_base_word.to_uint();
+        const uint32_t v_base = (uint32_t)sc_.attn.v_base_word.to_uint();
+        const uint32_t k_act_q_base = (uint32_t)sc_.attn.k_act_q_base_word.to_uint();
+        const uint32_t v_act_q_base = (uint32_t)sc_.attn.v_act_q_base_word.to_uint();
+
+        const std::vector<aecct::u32_t> before = sram_stage_;
+        const aecct::LayerParamBase pb =
+            aecct::make_layer_param_base((aecct::u32_t)param_base_, (aecct::u32_t)0u);
+        bool fallback_taken = true;
+        const bool mainline_taken = aecct::run_p11ac_layer0_top_managed_kv(
+            sram_stage_.data(),
+            cfg_,
+            (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD,
+            sc_,
+            pb,
+            fallback_taken);
+        if (!mainline_taken || fallback_taken) {
+            std::printf("[p11aj][FAIL] AC mainline/fallback status invalid (mainline=%d fallback=%d)\n",
+                mainline_taken ? 1 : 0, fallback_taken ? 1 : 0);
+            return false;
+        }
+
+        const uint32_t changed_k = count_span_changes(before, sram_stage_, k_base, tensor_words);
+        const uint32_t changed_v = count_span_changes(before, sram_stage_, v_base, tensor_words);
+        const uint32_t changed_k_act_q = count_span_changes(before, sram_stage_, k_act_q_base, tensor_words);
+        const uint32_t changed_v_act_q = count_span_changes(before, sram_stage_, v_act_q_base, tensor_words);
+        if (changed_k == 0u || changed_v == 0u || changed_k_act_q == 0u || changed_v_act_q == 0u) {
+            std::printf("[p11aj][FAIL] AC target spans not written (K=%u V=%u K_act_q=%u V_act_q=%u)\n",
+                (unsigned)changed_k, (unsigned)changed_v, (unsigned)changed_k_act_q, (unsigned)changed_v_act_q);
+            return false;
+        }
+
+        if (!span_unchanged(before, sram_stage_, x_base, tensor_words, "AC source X")) {
+            return false;
+        }
+
+        std::vector<uint8_t> allowed((uint32_t)sram_stage_.size(), 0u);
+        mark_span(allowed, k_base, tensor_words);
+        mark_span(allowed, v_base, tensor_words);
+        mark_span(allowed, k_act_q_base, tensor_words);
+        mark_span(allowed, v_act_q_base, tensor_words);
+        if (!check_no_spurious_changes(before, sram_stage_, allowed, "AC")) {
+            return false;
+        }
+
+        std::printf("PROVENANCE_STAGE_AC PASS\n");
+        std::printf("PROVENANCE_STAGE_AC_NO_SPURIOUS_TOUCH PASS\n");
+        return true;
+    }
+
+    bool run_stage_ad_provenance() {
+        const uint32_t tensor_words = token_count_ * d_model_;
+        const uint32_t x_base = (uint32_t)aecct::LN_X_OUT_BASE_WORD;
+        const uint32_t q_base = (uint32_t)sc_.attn.q_base_word.to_uint();
+        const uint32_t q_act_q_base = (uint32_t)sc_.attn.q_act_q_base_word.to_uint();
+        const uint32_t q_sx_base = (uint32_t)sc_.attn.q_sx_base_word.to_uint();
+
+        const std::vector<aecct::u32_t> before = sram_stage_;
+        const aecct::LayerParamBase pb =
+            aecct::make_layer_param_base((aecct::u32_t)param_base_, (aecct::u32_t)0u);
+        bool fallback_taken = true;
+        const bool mainline_taken = aecct::run_p11ad_layer0_top_managed_q(
+            sram_stage_.data(),
+            cfg_,
+            (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD,
+            sc_,
+            pb,
+            fallback_taken);
+        if (!mainline_taken || fallback_taken) {
+            std::printf("[p11aj][FAIL] AD mainline/fallback status invalid (mainline=%d fallback=%d)\n",
+                mainline_taken ? 1 : 0, fallback_taken ? 1 : 0);
+            return false;
+        }
+
+        const uint32_t changed_q = count_span_changes(before, sram_stage_, q_base, tensor_words);
+        const uint32_t changed_q_act_q = count_span_changes(before, sram_stage_, q_act_q_base, tensor_words);
+        const uint32_t changed_q_sx = count_span_changes(before, sram_stage_, q_sx_base, 1u);
+        if (changed_q == 0u || changed_q_act_q == 0u || changed_q_sx == 0u) {
+            std::printf("[p11aj][FAIL] AD target spans not written (Q=%u Q_act_q=%u Q_sx=%u)\n",
+                (unsigned)changed_q, (unsigned)changed_q_act_q, (unsigned)changed_q_sx);
+            return false;
+        }
+
+        if (!span_unchanged(before, sram_stage_, x_base, tensor_words, "AD source X")) {
+            return false;
+        }
+
+        std::vector<uint8_t> allowed((uint32_t)sram_stage_.size(), 0u);
+        mark_span(allowed, q_base, tensor_words);
+        mark_span(allowed, q_act_q_base, tensor_words);
+        mark_span(allowed, q_sx_base, 1u);
+        if (!check_no_spurious_changes(before, sram_stage_, allowed, "AD")) {
+            return false;
+        }
+
+        std::printf("PROVENANCE_STAGE_AD PASS\n");
+        std::printf("PROVENANCE_STAGE_AD_NO_SPURIOUS_TOUCH PASS\n");
+        return true;
+    }
+
+    bool prove_ae_consumes_qk(uint32_t token_idx) {
+        const uint32_t score_base = (uint32_t)sc_.attn.score_base_word.to_uint();
+        const uint32_t score_words = n_heads_ * token_count_;
+        const uint32_t q_base = (uint32_t)sc_.attn.q_base_word.to_uint();
+        const uint32_t k_base = (uint32_t)sc_.attn.k_base_word.to_uint();
+        const uint32_t q_addr = q_base + token_idx * d_model_;
+        const uint32_t k_addr = k_base + token_idx * d_model_;
+
+        std::vector<aecct::u32_t> sram_baseline = sram_stage_;
+        std::vector<aecct::u32_t> sram_q_perturb = sram_stage_;
+        std::vector<aecct::u32_t> sram_k_perturb = sram_stage_;
+
+        bool fb_baseline = true;
+        if (!aecct::run_p11ae_layer0_top_managed_qk_score(
+                sram_baseline.data(), cfg_, sc_, (aecct::u32_t)token_idx, fb_baseline) || fb_baseline) {
+            std::printf("[p11aj][FAIL] baseline AE execution failed for bridge proof\n");
+            return false;
+        }
+
+        sram_q_perturb[q_addr] = force_delta_bits(sram_q_perturb[q_addr]);
+        bool fb_q = true;
+        if (!aecct::run_p11ae_layer0_top_managed_qk_score(
+                sram_q_perturb.data(), cfg_, sc_, (aecct::u32_t)token_idx, fb_q) || fb_q) {
+            std::printf("[p11aj][FAIL] Q-perturbed AE execution failed for bridge proof\n");
+            return false;
+        }
+
+        sram_k_perturb[k_addr] = force_delta_bits(sram_k_perturb[k_addr]);
+        bool fb_k = true;
+        if (!aecct::run_p11ae_layer0_top_managed_qk_score(
+                sram_k_perturb.data(), cfg_, sc_, (aecct::u32_t)token_idx, fb_k) || fb_k) {
+            std::printf("[p11aj][FAIL] K-perturbed AE execution failed for bridge proof\n");
+            return false;
+        }
+
+        const uint32_t q_bridge_diffs = count_span_diffs(sram_baseline, sram_q_perturb, score_base, score_words);
+        const uint32_t k_bridge_diffs = count_span_diffs(sram_baseline, sram_k_perturb, score_base, score_words);
+        if (q_bridge_diffs == 0u) {
+            std::printf("[p11aj][FAIL] Q perturbation did not change score span\n");
+            return false;
+        }
+        if (k_bridge_diffs == 0u) {
+            std::printf("[p11aj][FAIL] K perturbation did not change score span\n");
+            return false;
+        }
+
+        std::printf("BRIDGE_Q_TO_SCORE_CONSUMPTION PASS\n");
+        std::printf("BRIDGE_K_TO_SCORE_CONSUMPTION PASS\n");
+        return true;
+    }
+
+    bool run_stage_ae_provenance(uint32_t token_idx) {
+        const uint32_t tensor_words = token_count_ * d_model_;
+        const uint32_t score_words = n_heads_ * token_count_;
+        const uint32_t score_base = (uint32_t)sc_.attn.score_base_word.to_uint();
+        const uint32_t q_base = (uint32_t)sc_.attn.q_base_word.to_uint();
+        const uint32_t k_base = (uint32_t)sc_.attn.k_base_word.to_uint();
+
+        std::vector<aecct::u32_t> expected_score;
+        p11aeaf_tb::compute_expected_score_row(
+            sram_stage_,
+            sc_.attn,
+            token_idx,
+            token_count_,
+            n_heads_,
+            d_head_,
+            expected_score);
+
+        const std::vector<aecct::u32_t> before = sram_stage_;
+        bool fallback_taken = true;
+        const bool mainline_taken = aecct::run_p11ae_layer0_top_managed_qk_score(
+            sram_stage_.data(),
+            cfg_,
+            sc_,
+            (aecct::u32_t)token_idx,
+            fallback_taken);
+        if (!mainline_taken || fallback_taken) {
+            std::printf("[p11aj][FAIL] AE mainline/fallback status invalid token=%u (mainline=%d fallback=%d)\n",
+                (unsigned)token_idx, mainline_taken ? 1 : 0, fallback_taken ? 1 : 0);
+            return false;
+        }
+
+        for (uint32_t i = 0u; i < score_words; ++i) {
+            const uint32_t got = (uint32_t)sram_stage_[score_base + i].to_uint();
+            const uint32_t exp = (uint32_t)expected_score[i].to_uint();
+            if (got != exp) {
+                std::printf("[p11aj][FAIL] AE expected score mismatch token=%u idx=%u got=0x%08X exp=0x%08X\n",
+                    (unsigned)token_idx, (unsigned)i, (unsigned)got, (unsigned)exp);
+                return false;
+            }
+        }
+
+        const uint32_t changed_score = count_span_changes(before, sram_stage_, score_base, score_words);
+        if (changed_score != 0u) {
+            ae_any_score_change_ = true;
+        }
+
+        if (!span_unchanged(before, sram_stage_, q_base, tensor_words, "AE source Q")) {
+            return false;
+        }
+        if (!span_unchanged(before, sram_stage_, k_base, tensor_words, "AE source K")) {
+            return false;
+        }
+
+        std::vector<uint8_t> allowed((uint32_t)sram_stage_.size(), 0u);
+        mark_span(allowed, score_base, score_words);
+        if (!check_no_spurious_changes(before, sram_stage_, allowed, "AE")) {
+            return false;
+        }
+        return true;
+    }
+
+    bool prove_af_consumes_score(uint32_t token_idx) {
+        const uint32_t out_row_base = (uint32_t)sc_.attn_out_base_word.to_uint() + token_idx * d_model_;
+        const uint32_t score_base = (uint32_t)sc_.attn.score_base_word.to_uint();
+
+        std::vector<aecct::u32_t> sram_baseline = sram_stage_;
+        std::vector<aecct::u32_t> sram_score_perturb = sram_stage_;
+
+        bool fb_baseline = true;
+        if (!aecct::run_p11af_layer0_top_managed_softmax_out(
+                sram_baseline.data(), cfg_, sc_, (aecct::u32_t)token_idx, fb_baseline) || fb_baseline) {
+            std::printf("[p11aj][FAIL] baseline AF execution failed for bridge proof\n");
+            return false;
+        }
+
+        sram_score_perturb[score_base] = force_delta_bits(sram_score_perturb[score_base]);
+        bool fb_perturb = true;
+        if (!aecct::run_p11af_layer0_top_managed_softmax_out(
+                sram_score_perturb.data(), cfg_, sc_, (aecct::u32_t)token_idx, fb_perturb) || fb_perturb) {
+            std::printf("[p11aj][FAIL] score-perturbed AF execution failed for bridge proof\n");
+            return false;
+        }
+
+        const uint32_t out_diffs = count_span_diffs(sram_baseline, sram_score_perturb, out_row_base, d_model_);
+        if (out_diffs == 0u) {
+            std::printf("[p11aj][FAIL] score perturbation did not change AF output row\n");
+            return false;
+        }
+
+        std::printf("BRIDGE_SCORE_TO_OUTPUT_CONSUMPTION PASS\n");
+        return true;
+    }
+
+    bool run_stage_af_provenance(uint32_t token_idx) {
+        const uint32_t tensor_words = token_count_ * d_model_;
+        const uint32_t score_words = n_heads_ * token_count_;
+        const uint32_t score_base = (uint32_t)sc_.attn.score_base_word.to_uint();
+        const uint32_t v_base = (uint32_t)sc_.attn.v_base_word.to_uint();
+        const uint32_t pre_row_base = (uint32_t)sc_.attn.pre_concat_base_word.to_uint() + token_idx * d_model_;
+        const uint32_t post_row_base = (uint32_t)sc_.attn.post_concat_base_word.to_uint() + token_idx * d_model_;
+        const uint32_t out_row_base = (uint32_t)sc_.attn_out_base_word.to_uint() + token_idx * d_model_;
+
+        std::vector<aecct::u32_t> expected_out;
+        p11aeaf_tb::compute_expected_output_row_online(
+            sram_stage_,
+            sc_.attn,
+            token_idx,
+            token_count_,
+            n_heads_,
+            d_head_,
+            expected_out);
+
+        const std::vector<aecct::u32_t> before = sram_stage_;
+        bool fallback_taken = true;
+        const bool mainline_taken = aecct::run_p11af_layer0_top_managed_softmax_out(
+            sram_stage_.data(),
+            cfg_,
+            sc_,
+            (aecct::u32_t)token_idx,
+            fallback_taken);
+        if (!mainline_taken || fallback_taken) {
+            std::printf("[p11aj][FAIL] AF mainline/fallback status invalid token=%u (mainline=%d fallback=%d)\n",
+                (unsigned)token_idx, mainline_taken ? 1 : 0, fallback_taken ? 1 : 0);
+            return false;
+        }
+
+        for (uint32_t i = 0u; i < d_model_; ++i) {
+            const uint32_t exp = (uint32_t)expected_out[i].to_uint();
+            const uint32_t got_pre = (uint32_t)sram_stage_[pre_row_base + i].to_uint();
+            const uint32_t got_post = (uint32_t)sram_stage_[post_row_base + i].to_uint();
+            const uint32_t got_out = (uint32_t)sram_stage_[out_row_base + i].to_uint();
+            if (got_pre != exp || got_post != exp || got_out != exp) {
+                std::printf(
+                    "[p11aj][FAIL] AF expected output mismatch token=%u idx=%u pre=0x%08X post=0x%08X out=0x%08X exp=0x%08X\n",
+                    (unsigned)token_idx, (unsigned)i,
+                    (unsigned)got_pre, (unsigned)got_post, (unsigned)got_out, (unsigned)exp);
+                return false;
+            }
+        }
+
+        const uint32_t changed_pre = count_span_changes(before, sram_stage_, pre_row_base, d_model_);
+        const uint32_t changed_post = count_span_changes(before, sram_stage_, post_row_base, d_model_);
+        const uint32_t changed_out = count_span_changes(before, sram_stage_, out_row_base, d_model_);
+        if (changed_pre != 0u) { af_any_pre_change_ = true; }
+        if (changed_post != 0u) { af_any_post_change_ = true; }
+        if (changed_out != 0u) { af_any_out_change_ = true; }
+
+        if (!span_unchanged(before, sram_stage_, score_base, score_words, "AF source SCORE")) {
+            return false;
+        }
+        if (!span_unchanged(before, sram_stage_, v_base, tensor_words, "AF source V")) {
+            return false;
+        }
+
+        std::vector<uint8_t> allowed((uint32_t)sram_stage_.size(), 0u);
+        mark_span(allowed, pre_row_base, d_model_);
+        mark_span(allowed, post_row_base, d_model_);
+        mark_span(allowed, out_row_base, d_model_);
+        if (!check_no_spurious_changes(before, sram_stage_, allowed, "AF")) {
+            return false;
+        }
+        return true;
+    }
+
+    bool run_staged_provenance_chain() {
+        if (!run_stage_ad_provenance()) {
+            return false;
+        }
+        if (!run_stage_ac_provenance()) {
+            return false;
+        }
+        if (!prove_ae_consumes_qk(0u)) {
+            return false;
+        }
+
+        for (uint32_t t = 0u; t < token_count_; ++t) {
+            if (!run_stage_ae_provenance(t)) {
+                return false;
+            }
+            if (t == 0u) {
+                if (!prove_af_consumes_score(t)) {
+                    return false;
+                }
+            }
+            if (!run_stage_af_provenance(t)) {
+                return false;
+            }
+        }
+
+        if (!ae_any_score_change_) {
+            std::printf("[p11aj][FAIL] AE stage never produced an observable score-span change\n");
+            return false;
+        }
+        if (!af_any_pre_change_ || !af_any_post_change_ || !af_any_out_change_) {
+            std::printf("[p11aj][FAIL] AF stage did not produce observable target-span changes (pre=%d post=%d out=%d)\n",
+                af_any_pre_change_ ? 1 : 0,
+                af_any_post_change_ ? 1 : 0,
+                af_any_out_change_ ? 1 : 0);
+            return false;
+        }
+
+        std::printf("PROVENANCE_STAGE_AE PASS\n");
+        std::printf("PROVENANCE_STAGE_AE_NO_SPURIOUS_TOUCH PASS\n");
+        std::printf("PROVENANCE_STAGE_AF PASS\n");
+        std::printf("PROVENANCE_STAGE_AF_NO_SPURIOUS_TOUCH PASS\n");
+        return true;
+    }
+
+    uint32_t run_downstream_from_prebuilt(std::vector<aecct::u32_t>& sram_vec) const {
+        aecct::u32_t x_in_base = (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD;
+        aecct::u32_t x_out_base = aecct::alternate_x_page(x_in_base);
+        const aecct::LayerScratch sc = aecct::make_layer_scratch(x_in_base);
+        const aecct::LayerParamBase pb =
+            aecct::make_layer_param_base((aecct::u32_t)param_base_, (aecct::u32_t)0u);
+
+        aecct::TransformerLayer(
+            sram_vec.data(),
+            cfg_,
+            (aecct::u32_t)0u,
+            x_in_base,
+            x_out_base,
+            sc,
+            pb,
+            true,  // kv_prebuilt_from_top_managed
+            true,  // q_prebuilt_from_top_managed
+            true,  // score_prebuilt_from_top_managed
+            true   // out_prebuilt_from_top_managed
+        );
+
+        x_in_base = x_out_base;
+        x_out_base = aecct::alternate_x_page(x_in_base);
+        aecct::run_mid_or_end_layernorm(
+            false,
+            cfg_,
+            sram_vec.data(),
+            (aecct::u32_t)param_base_,
+            x_in_base,
+            x_out_base
+        );
+
+        x_in_base = x_out_base;
+        return (uint32_t)x_in_base.to_uint();
+    }
+
+    uint32_t run_transformer_layer_prebuilt_only(std::vector<aecct::u32_t>& sram_vec) const {
+        aecct::u32_t x_in_base = (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD;
+        aecct::u32_t x_out_base = aecct::alternate_x_page(x_in_base);
+        const aecct::LayerScratch sc = aecct::make_layer_scratch(x_in_base);
+        const aecct::LayerParamBase pb =
+            aecct::make_layer_param_base((aecct::u32_t)param_base_, (aecct::u32_t)0u);
+
+        aecct::TransformerLayer(
+            sram_vec.data(),
+            cfg_,
+            (aecct::u32_t)0u,
+            x_in_base,
+            x_out_base,
+            sc,
+            pb,
+            true,  // kv_prebuilt_from_top_managed
+            true,  // q_prebuilt_from_top_managed
+            true,  // score_prebuilt_from_top_managed
+            true   // out_prebuilt_from_top_managed
+        );
+        return (uint32_t)sc.ffn.add2_base_word.to_uint();
+    }
+
+    bool run_staged_downstream_finalize() {
+        std::vector<aecct::u32_t> sram_baseline = sram_stage_;
+        std::vector<aecct::u32_t> sram_perturb = sram_stage_;
+        const uint32_t attn_out_base = (uint32_t)sc_.attn_out_base_word.to_uint();
+        sram_perturb[attn_out_base] = force_delta_bits(sram_perturb[attn_out_base]);
+
+        const uint32_t add2_base_baseline = run_transformer_layer_prebuilt_only(sram_baseline);
+        const uint32_t add2_base_perturb = run_transformer_layer_prebuilt_only(sram_perturb);
+        if (add2_base_baseline != add2_base_perturb) {
+            std::printf("[p11aj][FAIL] downstream add2 base mismatch baseline=%u perturb=%u\n",
+                (unsigned)add2_base_baseline, (unsigned)add2_base_perturb);
+            return false;
+        }
+        const uint32_t add2_words = token_count_ * d_model_;
+        const uint32_t add2_diffs =
+            count_span_diffs(sram_baseline, sram_perturb, add2_base_baseline, add2_words);
+        if (add2_diffs == 0u) {
+            std::printf("[p11aj][FAIL] attn_out perturbation did not propagate to downstream add2 span\n");
+            return false;
+        }
+
+        staged_final_x_base_ = run_downstream_from_prebuilt(sram_stage_);
+        sram_stage_before_downstream_ = sram_stage_;
+
+        std::printf("BRIDGE_ATTNOUT_TO_DOWNSTREAM_CONSUMPTION PASS\n");
+        return true;
+    }
+
+    bool run_full_loop_mainline() {
+        aecct::run_transformer_layer_loop(regs_full_, sram_full_.data());
+        const bool all_mainline =
+            regs_full_.p11ac_mainline_path_taken &&
+            regs_full_.p11ad_mainline_q_path_taken &&
+            regs_full_.p11ae_mainline_score_path_taken &&
+            regs_full_.p11af_mainline_softmax_output_path_taken;
+        const bool fallback_taken =
+            regs_full_.p11ac_fallback_taken ||
+            regs_full_.p11ad_q_fallback_taken ||
+            regs_full_.p11ae_score_fallback_taken ||
+            regs_full_.p11af_softmax_output_fallback_taken;
+        if (!all_mainline) {
+            std::printf("[p11aj][FAIL] full-loop mainline flags invalid (ac=%d ad=%d ae=%d af=%d)\n",
+                regs_full_.p11ac_mainline_path_taken ? 1 : 0,
+                regs_full_.p11ad_mainline_q_path_taken ? 1 : 0,
+                regs_full_.p11ae_mainline_score_path_taken ? 1 : 0,
+                regs_full_.p11af_mainline_softmax_output_path_taken ? 1 : 0);
+            return false;
+        }
+        if (fallback_taken) {
+            std::printf("[p11aj][FAIL] fallback path was taken in full-loop (ac=%d ad=%d ae=%d af=%d)\n",
+                regs_full_.p11ac_fallback_taken ? 1 : 0,
+                regs_full_.p11ad_q_fallback_taken ? 1 : 0,
+                regs_full_.p11ae_score_fallback_taken ? 1 : 0,
+                regs_full_.p11af_softmax_output_fallback_taken ? 1 : 0);
+            return false;
+        }
+
+        std::printf("FULL_LOOP_MAINLINE_PATH_TAKEN PASS\n");
+        std::printf("fallback_taken = false\n");
+        std::printf("FULL_LOOP_FALLBACK_NOT_TAKEN PASS\n");
+        return true;
+    }
+
+    bool validate_full_flow_key_span_compare() {
+        const uint32_t tensor_words = token_count_ * d_model_;
+        const uint32_t score_words = n_heads_ * token_count_;
+        const uint32_t q_base = (uint32_t)sc_.attn.q_base_word.to_uint();
+        const uint32_t k_base = (uint32_t)sc_.attn.k_base_word.to_uint();
+        const uint32_t v_base = (uint32_t)sc_.attn.v_base_word.to_uint();
+        const uint32_t q_act_q_base = (uint32_t)sc_.attn.q_act_q_base_word.to_uint();
+        const uint32_t k_act_q_base = (uint32_t)sc_.attn.k_act_q_base_word.to_uint();
+        const uint32_t v_act_q_base = (uint32_t)sc_.attn.v_act_q_base_word.to_uint();
+        const uint32_t q_sx_base = (uint32_t)sc_.attn.q_sx_base_word.to_uint();
+        const uint32_t score_base = (uint32_t)sc_.attn.score_base_word.to_uint();
+        const uint32_t pre_base = (uint32_t)sc_.attn.pre_concat_base_word.to_uint();
+        const uint32_t post_base = (uint32_t)sc_.attn.post_concat_base_word.to_uint();
+        const uint32_t out_base = (uint32_t)sc_.attn_out_base_word.to_uint();
+
+        if (!compare_span_exact(sram_full_, sram_stage_, q_base, tensor_words, "Q span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, k_base, tensor_words, "K span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, v_base, tensor_words, "V span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, q_act_q_base, tensor_words, "Q_act_q span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, k_act_q_base, tensor_words, "K_act_q span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, v_act_q_base, tensor_words, "V_act_q span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, q_sx_base, 1u, "Q_sx span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, score_base, score_words, "score span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, pre_base, tensor_words, "pre-concat span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, post_base, tensor_words, "post-concat span")) {
+            return false;
+        }
+        if (!compare_span_exact(sram_full_, sram_stage_, out_base, tensor_words, "attn_out span")) {
+            return false;
+        }
+
+        std::printf("FULL_FLOW_KEY_SPAN_EXPECTED_COMPARE PASS\n");
+        return true;
+    }
+
+    bool validate_final_x_hardened_compare() {
+        const uint32_t full_final_base = (uint32_t)regs_full_.infer_final_x_base_word.to_uint();
+        if (staged_final_x_base_ != full_final_base) {
+            std::printf("[p11aj][FAIL] final_x base mismatch staged=%u full=%u\n",
+                (unsigned)staged_final_x_base_, (unsigned)full_final_base);
+            return false;
+        }
+
+        for (uint32_t t = 0u; t < token_count_; ++t) {
+            const uint32_t row_base = full_final_base + t * d_model_;
+            for (uint32_t c = 0u; c < d_model_; ++c) {
+                const uint32_t got = (uint32_t)sram_full_[row_base + c].to_uint();
+                const uint32_t exp = (uint32_t)sram_stage_[row_base + c].to_uint();
+                if (got != exp) {
+                    std::printf("[p11aj][FAIL] final_x compare mismatch token=%u col=%u got=0x%08X exp=0x%08X\n",
+                        (unsigned)t, (unsigned)c, (unsigned)got, (unsigned)exp);
+                    return false;
+                }
+            }
+        }
+
+        std::printf("FINAL_X_EXPECTED_COMPARE_HARDENED PASS\n");
+        return true;
+    }
+};
+
+} // namespace
+
+CCS_MAIN(int argc, char** argv) {
+    (void)argc;
+    (void)argv;
+    TbP11ajTopManagedSramProvenance tb;
+    const int rc = tb.run_all();
+    CCS_RETURN(rc);
+}
+
+#endif // __SYNTHESIS__
