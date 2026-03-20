@@ -74,8 +74,9 @@ static inline void load_layer_sublayer1_norm_params(
     }
 }
 
-// P00-011AN: first deep Attn boundary bridge for Catapult-facing progress.
-// This variant keeps the Attn entry boundary array-shaped and leaves FFN path unchanged.
+// P00-011AN/P00-011AO: first deep Attn+FFN boundary bridges for Catapult-facing progress.
+// This variant keeps Attn/FFN first deep entries array-shaped while preserving
+// accepted core compute semantics.
 template<uint32_t SRAM_WORDS>
 static inline void TransformerLayerTopManagedAttnBridge(
     u32_t (&sram_window)[SRAM_WORDS],
@@ -121,7 +122,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
     ffn_cfg.d_model = (u32_t)d_model;
     ffn_cfg.d_ffn = (u32_t)d_ffn;
 
-    FFNLayer0<FFN_STAGE_FULL>(
+    FFNLayer0TopManagedWindowBridge<FFN_STAGE_FULL>(
         sram_window,
         ffn_cfg,
         sc.attn_out_base_word,

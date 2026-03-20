@@ -95,4 +95,26 @@ static inline void FFNLayer0(
     }
 }
 
+// P00-011AO: first deep FFN boundary bridge.
+// This keeps the first deep call-site boundary array-shaped for Catapult-facing
+// paths while preserving the accepted FFN core implementation.
+template<unsigned STAGE_MODE, uint32_t SRAM_WORDS>
+static inline void FFNLayer0TopManagedWindowBridge(
+    u32_t (&sram_window)[SRAM_WORDS],
+    const FfnCfg& cfg,
+    u32_t x_in_base_word,
+    const FfnScratch& sc,
+    u32_t param_base_word,
+    u32_t layer_id = (u32_t)0
+) {
+    FFNLayer0<STAGE_MODE>(
+        sram_window,
+        cfg,
+        x_in_base_word,
+        sc,
+        param_base_word,
+        layer_id
+    );
+}
+
 } // namespace aecct
