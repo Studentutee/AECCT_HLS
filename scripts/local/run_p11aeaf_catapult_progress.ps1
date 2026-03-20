@@ -7,21 +7,12 @@ $ErrorActionPreference = "Stop"
 
 function Invoke-Step {
     param(
-        [string]$RunLog,
         [string]$Command,
         [string[]]$StepArgs
     )
-
-    Add-Content -Path $RunLog -Value ("CMD: {0} {1}" -f $Command, ($StepArgs -join " ")) -Encoding UTF8
-    $output = & $Command @StepArgs 2>&1
-    $exitCode = $LASTEXITCODE
-    foreach ($line in @($output)) {
-        $text = [string]$line
-        Write-Host $text
-        Add-Content -Path $RunLog -Value $text -Encoding UTF8
-    }
-    if ($exitCode -ne 0) {
-        throw "step failed ($Command), exit=$exitCode"
+    & $Command @StepArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "step failed ($Command), exit=$LASTEXITCODE"
     }
 }
 
@@ -31,27 +22,22 @@ try {
     New-Item -ItemType Directory -Force -Path $BuildDir > $null
 
     $runLog = Join-Path $BuildDir "run.log"
-    if (Test-Path $runLog) {
-        Remove-Item $runLog -Force
-    }
-    New-Item -ItemType File -Path $runLog -Force > $null
-
     $p11rDir = Join-Path $BuildDir "p11r"
 
-    Invoke-Step -RunLog $runLog -Command "powershell" -StepArgs @(
+    Invoke-Step -Command "powershell" -StepArgs @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", "scripts/check_p11aeaf_catapult_progress_surface.ps1",
         "-OutDir", $BuildDir,
         "-Phase", "pre"
     )
-    Invoke-Step -RunLog $runLog -Command "powershell" -StepArgs @(
+    Invoke-Step -Command "powershell" -StepArgs @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", "scripts/local/run_p11r_compile_prep.ps1",
         "-BuildDir", $p11rDir
     )
-    Invoke-Step -RunLog $runLog -Command "powershell" -StepArgs @(
+    Invoke-Step -Command "powershell" -StepArgs @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
         "-File", "scripts/check_p11aeaf_catapult_progress_surface.ps1",
@@ -59,7 +45,16 @@ try {
         "-Phase", "post"
     )
 
-    Add-Content -Path $runLog -Value "PASS: run_p11aeaf_catapult_progress" -Encoding UTF8
+    @(
+        "CMD: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_p11aeaf_catapult_progress_surface.ps1 -OutDir $BuildDir -Phase pre",
+        "PASS: check_p11aeaf_catapult_progress_surface",
+        "CMD: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local/run_p11r_compile_prep.ps1 -BuildDir $p11rDir",
+        "PASS: run_p11r_compile_prep",
+        "CMD: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_p11aeaf_catapult_progress_surface.ps1 -OutDir $BuildDir -Phase post",
+        "PASS: check_p11aeaf_catapult_progress_surface",
+        "PASS: run_p11aeaf_catapult_progress"
+    ) | Set-Content -Path $runLog -Encoding UTF8
+
     Write-Host "PASS: run_p11aeaf_catapult_progress"
     exit 0
 }

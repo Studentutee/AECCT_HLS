@@ -1,6 +1,7 @@
 #pragma once
 // LayerNorm block with two-pass implementation.
 
+#include <cstdio>
 #include <cstdint>
 
 #include "AecctTypes.h"
@@ -85,7 +86,25 @@ static inline void LayerNormBlock(
 
             mean = sum_fp / inv_n_den;
             fp32_t var = (sq_sum_fp / inv_n_den) - (mean * mean);
-            fp32_t std_val = (var + eps).template sqrt<AC_RND_CONV, false>();
+            fp32_t var_plus_eps = var + eps;
+            if (var_plus_eps <= fp32_zero()) {
+#ifndef __SYNTHESIS__
+                static bool p11ah_ln_guard_logged = false;
+                if (!p11ah_ln_guard_logged) {
+                    p11ah_ln_guard_logged = true;
+                    const u32_t var_bits = bits_from_fp32(var);
+                    const u32_t vpe_bits = bits_from_fp32(var_plus_eps);
+                    std::printf(
+                        "[p11ah][LN_ASSERT_GUARD] token=%u var_bits=0x%08X var_plus_eps_bits=0x%08X eps_bits=0x%08X\n",
+                        (unsigned)t,
+                        (unsigned)var_bits.to_uint(),
+                        (unsigned)vpe_bits.to_uint(),
+                        (unsigned)cfg.eps_bits.to_uint());
+                }
+#endif
+                var_plus_eps = eps;
+            }
+            fp32_t std_val = var_plus_eps.template sqrt<AC_RND_CONV, false>();
             inv_std = fp32_one().template div<AC_RND_CONV, false>(std_val);
         }
 
