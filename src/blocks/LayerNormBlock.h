@@ -68,12 +68,40 @@ static inline void LayerNormBlock(
         uint32_t row_in_base = x_in_base + t * d_model;
         uint32_t row_out_base = x_out_base + t * d_model;
 
-        quant_acc_t sum = 0;
-        quant_acc_t sq_sum = 0;
+        // LayerNorm arithmetic is FP32-domain per spec; keep pass1 accumulators in FP32.
+        fp32_t sum_fp = fp32_zero();
+        fp32_t sq_sum_fp = fp32_zero();
+#ifndef __SYNTHESIS__
+        // Legacy fixed-point accumulator reconstruction for P11AI root-cause isolation only.
+        quant_acc_t legacy_sum = 0;
+        quant_acc_t legacy_sq_sum = 0;
+        fp32_t x_min = fp32_zero();
+        fp32_t x_max = fp32_zero();
+        bool x_minmax_init = false;
+        bool input_nonfinite = false;
+#endif
         for (uint32_t c = 0; c < d_model; ++c) {
-            quant_act_t x = quant_act_from_bits(sram[row_in_base + c]);
-            sum += x;
-            sq_sum += (quant_acc_t(x) * quant_acc_t(x));
+            const u32_t x_bits = sram[row_in_base + c];
+            const fp32_t x = fp32_from_bits(x_bits);
+            sum_fp += x;
+            sq_sum_fp += (x * x);
+#ifndef __SYNTHESIS__
+            const quant_act_t x_q = quant_act_from_bits(x_bits);
+            legacy_sum += x_q;
+            legacy_sq_sum += (quant_acc_t(x_q) * quant_acc_t(x_q));
+            if (!x_minmax_init) {
+                x_min = x;
+                x_max = x;
+                x_minmax_init = true;
+            } else {
+                if (x < x_min) { x_min = x; }
+                if (x > x_max) { x_max = x; }
+            }
+            const uint32_t raw = (uint32_t)x_bits.to_uint();
+            if ((raw & 0x7F800000u) == 0x7F800000u) {
+                input_nonfinite = true;
+            }
+#endif
         }
 
         fp32_t mean = fp32_zero();
@@ -81,21 +109,43 @@ static inline void LayerNormBlock(
         if (d_model != 0u) {
             ac_int<32, true> d_model_i = (ac_int<32, true>)d_model;
             fp32_t inv_n_den(d_model_i);
-            fp32_t sum_fp(sum);
-            fp32_t sq_sum_fp(sq_sum);
 
             mean = sum_fp / inv_n_den;
             fp32_t var = (sq_sum_fp / inv_n_den) - (mean * mean);
+#ifndef __SYNTHESIS__
+            static bool p11ai_ln_root_cause_logged = false;
+            if (!p11ai_ln_root_cause_logged) {
+                const fp32_t legacy_sum_fp(legacy_sum);
+                const fp32_t legacy_sq_sum_fp(legacy_sq_sum);
+                const fp32_t legacy_mean = legacy_sum_fp / inv_n_den;
+                const fp32_t legacy_var = (legacy_sq_sum_fp / inv_n_den) - (legacy_mean * legacy_mean);
+                if (legacy_var <= fp32_zero() && var > fp32_zero()) {
+                    p11ai_ln_root_cause_logged = true;
+                    std::printf(
+                        "[p11ai][LN_ROOT_CAUSE] token=%u input_nonfinite=%d legacy_var_bits=0x%08X fp32_var_bits=0x%08X legacy_sq_sum_bits=0x%08X fp32_sq_sum_bits=0x%08X legacy_sum_bits=0x%08X fp32_sum_bits=0x%08X x_min_bits=0x%08X x_max_bits=0x%08X\n",
+                        (unsigned)t,
+                        input_nonfinite ? 1 : 0,
+                        (unsigned)bits_from_fp32(legacy_var).to_uint(),
+                        (unsigned)bits_from_fp32(var).to_uint(),
+                        (unsigned)bits_from_fp32(legacy_sq_sum_fp).to_uint(),
+                        (unsigned)bits_from_fp32(sq_sum_fp).to_uint(),
+                        (unsigned)bits_from_fp32(legacy_sum_fp).to_uint(),
+                        (unsigned)bits_from_fp32(sum_fp).to_uint(),
+                        (unsigned)bits_from_fp32(x_min).to_uint(),
+                        (unsigned)bits_from_fp32(x_max).to_uint());
+                }
+            }
+#endif
             fp32_t var_plus_eps = var + eps;
             if (var_plus_eps <= fp32_zero()) {
 #ifndef __SYNTHESIS__
-                static bool p11ah_ln_guard_logged = false;
-                if (!p11ah_ln_guard_logged) {
-                    p11ah_ln_guard_logged = true;
+                static bool p11ai_ln_guard_logged = false;
+                if (!p11ai_ln_guard_logged) {
+                    p11ai_ln_guard_logged = true;
                     const u32_t var_bits = bits_from_fp32(var);
                     const u32_t vpe_bits = bits_from_fp32(var_plus_eps);
                     std::printf(
-                        "[p11ah][LN_ASSERT_GUARD] token=%u var_bits=0x%08X var_plus_eps_bits=0x%08X eps_bits=0x%08X\n",
+                        "[p11ai][LN_ASSERT_GUARD] token=%u var_bits=0x%08X var_plus_eps_bits=0x%08X eps_bits=0x%08X\n",
                         (unsigned)t,
                         (unsigned)var_bits.to_uint(),
                         (unsigned)vpe_bits.to_uint(),
