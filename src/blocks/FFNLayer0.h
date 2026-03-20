@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "AecctTypes.h"
+#include "AttnTopManagedPackets.h"
 #include "FfnDescBringup.h"
 #include "QuantDesc.h"
 #include "gen/WeightStreamOrder.h"
@@ -21,6 +22,73 @@ static inline quant_acc_t ffn_bias_from_sram(const u32_t* sram, uint32_t param_b
 
 static inline quant_w_t ffn_weight_from_sram(const u32_t* sram, uint32_t param_base_word, uint32_t param_id, uint32_t elem_idx) {
     return quant_w_t(quant_act_from_bits(sram[ffn_param_addr_word(param_base_word, param_id, elem_idx)]));
+}
+
+struct FfnTopManagedTileMeta {
+    u16_t phase_id;
+    u16_t subphase_id;
+    u16_t token_begin;
+    u16_t token_end;
+    u16_t token_idx;
+    u16_t tile_begin;
+    u16_t tile_end;
+    u16_t tile_idx;
+    u16_t tile_valid_words;
+};
+
+static inline bool ffn_top_managed_tile_meta_ok(
+    const FfnTopManagedTileMeta& m,
+    uint32_t expect_token_idx,
+    uint32_t expect_tile_idx
+) {
+    if ((uint32_t)m.phase_id.to_uint() != (uint32_t)ATTN_PHASE_C) {
+        return false;
+    }
+    if ((uint32_t)m.token_idx.to_uint() != expect_token_idx) {
+        return false;
+    }
+    if ((uint32_t)m.tile_idx.to_uint() != expect_tile_idx) {
+        return false;
+    }
+    const uint32_t t_begin = (uint32_t)m.token_begin.to_uint();
+    const uint32_t t_end = (uint32_t)m.token_end.to_uint();
+    const uint32_t dt_begin = (uint32_t)m.tile_begin.to_uint();
+    const uint32_t dt_end = (uint32_t)m.tile_end.to_uint();
+    const uint32_t valid = (uint32_t)m.tile_valid_words.to_uint();
+    if (t_end <= t_begin) { return false; }
+    if (dt_end <= dt_begin) { return false; }
+    if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
+        return false;
+    }
+    return true;
+}
+
+static inline quant_acc_t ffn_block_mac_tile(
+    const FfnTopManagedTileMeta& meta,
+    const u32_t x_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS],
+    const u32_t w_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS],
+    quant_acc_t acc
+) {
+    const uint32_t valid = (uint32_t)meta.tile_valid_words.to_uint();
+    FFN_BLOCK_MAC_TILE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+        const quant_act_t xv = quant_act_from_bits(x_tile[i]);
+        const quant_w_t wv = quant_act_from_bits(w_tile[i]);
+        acc += quant_acc_t(xv) * quant_acc_t(wv);
+    }
+    return acc;
+}
+
+static inline void ffn_block_relu_tile(
+    const FfnTopManagedTileMeta& meta,
+    const u32_t in_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS],
+    u32_t out_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS]
+) {
+    const uint32_t valid = (uint32_t)meta.tile_valid_words.to_uint();
+    FFN_BLOCK_RELU_TILE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+        const quant_act_t v = quant_act_from_bits(in_tile[i]);
+        const quant_act_t y = (v > quant_act_t(0)) ? v : quant_act_t(0);
+        out_tile[i] = quant_bits_from_act(y);
+    }
 }
 
 template<unsigned STAGE_MODE, typename SramView>
@@ -126,14 +194,145 @@ static inline void FFNLayer0TopManagedWindowBridge(
     u32_t param_base_word,
     u32_t layer_id = (u32_t)0
 ) {
-    FFNLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
-        sram_window,
-        cfg,
-        x_in_base_word,
-        sc,
-        param_base_word,
-        layer_id
-    );
+    uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
+    uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+    uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
+    if (token_count == 0u) { token_count = (uint32_t)FFN_TOKEN_COUNT; }
+    if (d_model == 0u) { d_model = (uint32_t)FFN_D_MODEL; }
+    if (d_ffn == 0u) { d_ffn = (uint32_t)FFN_D_FFN; }
+    if (token_count == 0u || d_model == 0u || d_ffn == 0u) {
+        return;
+    }
+
+    const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
+    const uint32_t x_in_base = (uint32_t)x_in_base_word.to_uint();
+    const uint32_t w1_base = (uint32_t)sc.w1_out_base_word.to_uint();
+    const uint32_t relu_base = (uint32_t)sc.relu_out_base_word.to_uint();
+    const uint32_t w2_base = (uint32_t)sc.w2_out_base_word.to_uint();
+    const uint32_t param_base = (uint32_t)param_base_word.to_uint();
+
+    const uint32_t w1_bias_id = use_layer1 ? 12u : 4u;
+    const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
+    const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
+    const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
+
+    const uint32_t tile_words = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+    const uint32_t d_model_tile_count = attn_top_managed_tile_count(d_model, tile_words);
+    const uint32_t d_ffn_tile_count = attn_top_managed_tile_count(d_ffn, tile_words);
+    if (d_model_tile_count == 0u || d_ffn_tile_count == 0u) {
+        return;
+    }
+
+    if constexpr (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
+        FFN_TOP_MANAGED_W1_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+            const uint32_t x_row = x_in_base + t * d_model;
+            const uint32_t h_row = w1_base + t * d_ffn;
+            FFN_TOP_MANAGED_W1_OUT_LOOP: for (uint32_t j = 0u; j < d_ffn; ++j) {
+                quant_acc_t acc = ffn_bias_from_sram(sram_window, param_base, w1_bias_id, j);
+                const uint32_t w_row = j * d_model;
+                FFN_TOP_MANAGED_W1_TILE_LOOP: for (uint32_t dt = 0u; dt < d_model_tile_count; ++dt) {
+                    const uint32_t tile_offset = dt * tile_words;
+                    const uint32_t valid =
+                        attn_top_managed_tile_valid_words(d_model, tile_words, dt);
+                    FfnTopManagedTileMeta meta;
+                    meta.phase_id = (u16_t)ATTN_PHASE_C;
+                    meta.subphase_id = (u16_t)ATTN_SUBPHASE_QSRC;
+                    meta.token_begin = (u16_t)0u;
+                    meta.token_end = (u16_t)token_count;
+                    meta.token_idx = (u16_t)t;
+                    meta.tile_begin = (u16_t)0u;
+                    meta.tile_end = (u16_t)d_model_tile_count;
+                    meta.tile_idx = (u16_t)dt;
+                    meta.tile_valid_words = (u16_t)valid;
+                    if (!ffn_top_managed_tile_meta_ok(meta, t, dt)) {
+                        continue;
+                    }
+
+                    u32_t x_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+                    u32_t w_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+                    FFN_TOP_MANAGED_W1_TILE_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                        x_tile[i] = sram_window[x_row + tile_offset + i];
+                        w_tile[i] = sram_window[ffn_param_addr_word(param_base, w1_weight_id, w_row + tile_offset + i)];
+                    }
+                    acc = ffn_block_mac_tile(meta, x_tile, w_tile, acc);
+                }
+                sram_window[h_row + j] = quant_bits_from_acc(acc);
+            }
+        }
+    }
+
+    if constexpr (STAGE_MODE == FFN_STAGE_RELU || STAGE_MODE == FFN_STAGE_FULL) {
+        FFN_TOP_MANAGED_RELU_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+            const uint32_t h_row = w1_base + t * d_ffn;
+            const uint32_t a_row = relu_base + t * d_ffn;
+            FFN_TOP_MANAGED_RELU_TILE_LOOP: for (uint32_t dt = 0u; dt < d_ffn_tile_count; ++dt) {
+                const uint32_t tile_offset = dt * tile_words;
+                const uint32_t valid =
+                    attn_top_managed_tile_valid_words(d_ffn, tile_words, dt);
+                FfnTopManagedTileMeta meta;
+                meta.phase_id = (u16_t)ATTN_PHASE_C;
+                meta.subphase_id = (u16_t)ATTN_SUBPHASE_MASK;
+                meta.token_begin = (u16_t)0u;
+                meta.token_end = (u16_t)token_count;
+                meta.token_idx = (u16_t)t;
+                meta.tile_begin = (u16_t)0u;
+                meta.tile_end = (u16_t)d_ffn_tile_count;
+                meta.tile_idx = (u16_t)dt;
+                meta.tile_valid_words = (u16_t)valid;
+                if (!ffn_top_managed_tile_meta_ok(meta, t, dt)) {
+                    continue;
+                }
+
+                u32_t in_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+                u32_t out_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+                FFN_TOP_MANAGED_RELU_TILE_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                    in_tile[i] = sram_window[h_row + tile_offset + i];
+                }
+                ffn_block_relu_tile(meta, in_tile, out_tile);
+                FFN_TOP_MANAGED_RELU_TILE_WRITEBACK_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                    sram_window[a_row + tile_offset + i] = out_tile[i];
+                }
+            }
+        }
+    }
+
+    if constexpr (STAGE_MODE == FFN_STAGE_W2 || STAGE_MODE == FFN_STAGE_FULL) {
+        FFN_TOP_MANAGED_W2_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+            const uint32_t a_row = relu_base + t * d_ffn;
+            const uint32_t y_row = w2_base + t * d_model;
+            FFN_TOP_MANAGED_W2_OUT_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
+                quant_acc_t acc = ffn_bias_from_sram(sram_window, param_base, w2_bias_id, i);
+                const uint32_t w_row = i * d_ffn;
+                FFN_TOP_MANAGED_W2_TILE_LOOP: for (uint32_t dt = 0u; dt < d_ffn_tile_count; ++dt) {
+                    const uint32_t tile_offset = dt * tile_words;
+                    const uint32_t valid =
+                        attn_top_managed_tile_valid_words(d_ffn, tile_words, dt);
+                    FfnTopManagedTileMeta meta;
+                    meta.phase_id = (u16_t)ATTN_PHASE_C;
+                    meta.subphase_id = (u16_t)ATTN_SUBPHASE_WO;
+                    meta.token_begin = (u16_t)0u;
+                    meta.token_end = (u16_t)token_count;
+                    meta.token_idx = (u16_t)t;
+                    meta.tile_begin = (u16_t)0u;
+                    meta.tile_end = (u16_t)d_ffn_tile_count;
+                    meta.tile_idx = (u16_t)dt;
+                    meta.tile_valid_words = (u16_t)valid;
+                    if (!ffn_top_managed_tile_meta_ok(meta, t, dt)) {
+                        continue;
+                    }
+
+                    u32_t a_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+                    u32_t w_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+                    FFN_TOP_MANAGED_W2_TILE_LOAD_LOOP: for (uint32_t k = 0u; k < valid; ++k) {
+                        a_tile[k] = sram_window[a_row + tile_offset + k];
+                        w_tile[k] = sram_window[ffn_param_addr_word(param_base, w2_weight_id, w_row + tile_offset + k)];
+                    }
+                    acc = ffn_block_mac_tile(meta, a_tile, w_tile, acc);
+                }
+                sram_window[y_row + i] = quant_bits_from_acc(acc);
+            }
+        }
+    }
 }
 
 } // namespace aecct

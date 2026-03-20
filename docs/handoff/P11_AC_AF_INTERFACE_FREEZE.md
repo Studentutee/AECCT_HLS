@@ -100,7 +100,14 @@
 
 ### Rationale snapshot
 - The goal is to remove residual whole-SRAM/raw-pointer ownership semantics from active-chain block boundaries without doing repo-wide cleanup first.
-- The 4-word tile target is a working compute/window granularity decision for the next active-chain cleanup pass; it is not a claim that all existing packet definitions have already been rewritten.
+- The 4-word tile target is now landed on the active mainline helpers (`attn_phasea_top_managed_{q,kv}_mainline`, `attn_phaseb_top_managed_{qk_score,softmax_out}_mainline`) and on the Catapult-facing deep FFN bridge path (`FFNLayer0TopManagedWindowBridge`).
+- Legacy packet-width constants and legacy helper surfaces are intentionally retained for backward-compatible local evidence paths.
+
+### Landing status snapshot
+- This document records active-chain progress only:
+  - local-only implementation landed for Top-managed 4-word tile/window contract on Phase A/B helpers and deep FFN bridge
+  - Phase B active packets/metadata now carry explicit `head_group_id` and `subphase_id`
+- This is still not Catapult closure and not SCVerify closure.
 
 ## Non-Goals
 - No Catapult closure claim.
