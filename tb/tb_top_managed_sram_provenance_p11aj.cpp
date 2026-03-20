@@ -42,6 +42,9 @@ public:
         if (!run_staged_downstream_finalize()) {
             return 1;
         }
+        if (!run_direct_attnout_to_finalx_bridge_probe()) {
+            return 1;
+        }
         if (!run_full_loop_mainline()) {
             return 1;
         }
@@ -51,6 +54,7 @@ public:
         if (!validate_final_x_hardened_compare()) {
             return 1;
         }
+        std::printf("PASS: tb_attnout_finalx_bridge_p11ak\n");
         std::printf("PASS: tb_top_managed_sram_provenance_p11aj\n");
         return 0;
     }
@@ -93,6 +97,21 @@ private:
             return (aecct::u32_t)0u;
         }
         return (aecct::u32_t)0x3F800000u;
+    }
+
+    void apply_bridge_probe_norm_params(std::vector<aecct::u32_t>& sram_vec) const {
+        const uint32_t one_bits = 0x3F800000u;
+        const uint32_t zero_bits = 0x00000000u;
+        const uint32_t layer_norm_w_base = param_base_ + kParamMeta[43u].offset_w;
+        const uint32_t layer_norm_b_base = param_base_ + kParamMeta[7u].offset_w;
+        const uint32_t end_norm_w_base = param_base_ + kParamMeta[64u].offset_w;
+        const uint32_t end_norm_b_base = param_base_ + kParamMeta[16u].offset_w;
+        for (uint32_t c = 0u; c < d_model_; ++c) {
+            sram_vec[layer_norm_w_base + c] = (aecct::u32_t)one_bits;
+            sram_vec[layer_norm_b_base + c] = (aecct::u32_t)zero_bits;
+            sram_vec[end_norm_w_base + c] = (aecct::u32_t)one_bits;
+            sram_vec[end_norm_b_base + c] = (aecct::u32_t)zero_bits;
+        }
     }
 
     static void init_full_x_rows(std::vector<aecct::u32_t>& sram) {
@@ -688,6 +707,57 @@ private:
         sram_stage_before_downstream_ = sram_stage_;
 
         std::printf("BRIDGE_ATTNOUT_TO_DOWNSTREAM_CONSUMPTION PASS\n");
+        return true;
+    }
+
+    bool run_direct_attnout_to_finalx_bridge_probe() {
+        const uint32_t attn_out_base = (uint32_t)sc_.attn_out_base_word.to_uint();
+        const uint32_t final_words = (uint32_t)aecct::LN_X_TOTAL_WORDS;
+        const uint32_t add2_words = token_count_ * d_model_;
+
+        std::vector<aecct::u32_t> sram_add2_baseline = sram_stage_;
+        std::vector<aecct::u32_t> sram_add2_perturb = sram_stage_;
+        apply_bridge_probe_norm_params(sram_add2_baseline);
+        apply_bridge_probe_norm_params(sram_add2_perturb);
+        sram_add2_perturb[attn_out_base] = force_delta_bits(sram_add2_perturb[attn_out_base]);
+
+        const uint32_t add2_base_baseline = run_transformer_layer_prebuilt_only(sram_add2_baseline);
+        const uint32_t add2_base_perturb = run_transformer_layer_prebuilt_only(sram_add2_perturb);
+        if (add2_base_baseline != add2_base_perturb) {
+            std::printf("[p11ak][FAIL] add2 base mismatch baseline=%u perturb=%u\n",
+                (unsigned)add2_base_baseline, (unsigned)add2_base_perturb);
+            return false;
+        }
+        const uint32_t add2_diffs =
+            count_span_diffs(sram_add2_baseline, sram_add2_perturb, add2_base_baseline, add2_words);
+        if (add2_diffs == 0u) {
+            std::printf("[p11ak][FAIL] attn_out perturbation did not change add2 span in direct probe\n");
+            return false;
+        }
+
+        std::vector<aecct::u32_t> sram_final_baseline = sram_stage_;
+        std::vector<aecct::u32_t> sram_final_perturb = sram_stage_;
+        apply_bridge_probe_norm_params(sram_final_baseline);
+        apply_bridge_probe_norm_params(sram_final_perturb);
+        sram_final_perturb[attn_out_base] = force_delta_bits(sram_final_perturb[attn_out_base]);
+
+        const uint32_t final_base_baseline = run_downstream_from_prebuilt(sram_final_baseline);
+        const uint32_t final_base_perturb = run_downstream_from_prebuilt(sram_final_perturb);
+        if (final_base_baseline != final_base_perturb) {
+            std::printf("[p11ak][FAIL] final_x base mismatch baseline=%u perturb=%u\n",
+                (unsigned)final_base_baseline, (unsigned)final_base_perturb);
+            return false;
+        }
+        const uint32_t final_diffs =
+            count_span_diffs(sram_final_baseline, sram_final_perturb, final_base_baseline, final_words);
+        if (final_diffs == 0u) {
+            std::printf("[p11ak][FAIL] attn_out perturbation did not change final_x span in direct probe\n");
+            return false;
+        }
+
+        std::printf("[p11ak][DIRECT_BRIDGE][PASS] add2_diffs=%u final_x_diffs=%u\n",
+            (unsigned)add2_diffs, (unsigned)final_diffs);
+        std::printf("BRIDGE_ATTNOUT_TO_FINALX_DIRECT_CONSUMPTION PASS\n");
         return true;
     }
 
