@@ -74,6 +74,98 @@ static inline void load_layer_sublayer1_norm_params(
     }
 }
 
+// P00-011AN: first deep Attn boundary bridge for Catapult-facing progress.
+// This variant keeps the Attn entry boundary array-shaped and leaves FFN path unchanged.
+template<uint32_t SRAM_WORDS>
+static inline void TransformerLayerTopManagedAttnBridge(
+    u32_t (&sram_window)[SRAM_WORDS],
+    const CfgRegs& cfg,
+    u32_t layer_id,
+    u32_t x_in_base_word,
+    u32_t x_out_base_word,
+    const LayerScratch& sc,
+    const LayerParamBase& pb,
+    bool kv_prebuilt_from_top_managed = false,
+    bool q_prebuilt_from_top_managed = false,
+    bool score_prebuilt_from_top_managed = false,
+    bool out_prebuilt_from_top_managed = false
+) {
+    uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+    uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
+    uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
+    if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+    if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+    if (d_ffn == 0u) { d_ffn = (uint32_t)FFN_D_FFN; }
+
+    AttnCfg attn_cfg;
+    attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+    attn_cfg.d_model = (u32_t)d_model;
+    attn_cfg.n_heads = (u32_t)n_heads;
+    attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+    AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
+        sram_window,
+        attn_cfg,
+        x_in_base_word,
+        sc.attn_out_base_word,
+        sc.attn,
+        (u32_t)0,
+        kv_prebuilt_from_top_managed,
+        q_prebuilt_from_top_managed,
+        score_prebuilt_from_top_managed,
+        out_prebuilt_from_top_managed
+    );
+
+    FfnCfg ffn_cfg;
+    ffn_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
+    ffn_cfg.d_model = (u32_t)d_model;
+    ffn_cfg.d_ffn = (u32_t)d_ffn;
+
+    FFNLayer0<FFN_STAGE_FULL>(
+        sram_window,
+        ffn_cfg,
+        sc.attn_out_base_word,
+        sc.ffn,
+        pb.param_base_word,
+        layer_id
+    );
+
+    uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();
+    uint32_t w2_base = (uint32_t)sc.ffn.w2_out_base_word.to_uint();
+    uint32_t add2_base = (uint32_t)sc.ffn.add2_base_word.to_uint();
+    uint32_t words = (uint32_t)FFN_X_WORDS;
+    TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_BRIDGE_LOOP: for (uint32_t i = 0; i < words; ++i) {
+        fp32_t x = fp32_from_bits(sram_window[residual_base + i]);
+        fp32_t y = fp32_from_bits(sram_window[w2_base + i]);
+        sram_window[add2_base + i] = bits_from_fp32(x + y);
+    }
+
+    uint32_t gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
+    uint32_t beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
+    load_layer_sublayer1_norm_params(
+        sram_window,
+        (uint32_t)pb.param_base_word.to_uint(),
+        (uint32_t)layer_id.to_uint(),
+        gamma_base,
+        beta_base,
+        d_model
+    );
+
+    LayerNormCfg ln_cfg;
+    ln_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
+    ln_cfg.d_model = (u32_t)d_model;
+    ln_cfg.eps_bits = LN_EPS_BITS;
+
+    LayerNormBlock(
+        sram_window,
+        ln_cfg,
+        (u32_t)add2_base,
+        x_out_base_word,
+        (u32_t)gamma_base,
+        (u32_t)beta_base
+    );
+}
+
 // Integration boundary for one logical layer.
 // Accepts Top-managed X_WORK/SCRATCH/W_REGION base words and optional prebuilt Q/KV flags.
 // Delegates attention compute to AttnLayer0, then completes FFN + residual + LN handoff.

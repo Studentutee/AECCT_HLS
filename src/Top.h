@@ -1033,6 +1033,152 @@ namespace aecct {
         }
     }
 
+    // P00-011AN: Catapult-facing deep Attn boundary variant.
+    // Top remains the sole SRAM owner; this variant only changes the first deep
+    // Attn callsite boundary by dispatching through the Attn array-shaped bridge.
+    template<uint32_t SRAM_WORDS>
+    static inline void run_transformer_layer_loop_top_managed_attn_bridge(
+        TopRegs& regs,
+        u32_t (&sram)[SRAM_WORDS]
+    ) {
+        CfgRegs cfg = build_layer_cfg(regs);
+        uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
+        int mid_index = (int)(n_layers / 2u) - 1;
+
+        u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
+        u32_t x_out_base = alternate_x_page(x_in_base);
+        bool mid_valid = false;
+        static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
+        regs.p11ac_mainline_path_taken = false;
+        regs.p11ac_fallback_taken = false;
+        regs.p11ad_mainline_q_path_taken = false;
+        regs.p11ad_q_fallback_taken = false;
+        regs.p11ae_mainline_score_path_taken = false;
+        regs.p11ae_score_fallback_taken = false;
+        regs.p11af_mainline_softmax_output_path_taken = false;
+        regs.p11af_softmax_output_fallback_taken = false;
+
+        TOP_LAYER_ORCHESTRATION_AN_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
+            LayerScratch sc = make_layer_scratch(x_in_base);
+            LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
+            bool q_prebuilt_from_top_managed = false;
+            bool kv_prebuilt_from_top_managed = false;
+            bool score_prebuilt_from_top_managed = false;
+            bool out_prebuilt_from_top_managed = false;
+
+            if (lid == 0u) {
+                bool q_fallback_taken = true;
+                q_prebuilt_from_top_managed = run_p11ad_layer0_top_managed_q(
+                    sram,
+                    cfg,
+                    x_in_base,
+                    sc,
+                    pb,
+                    q_fallback_taken
+                );
+                regs.p11ad_mainline_q_path_taken = q_prebuilt_from_top_managed;
+                regs.p11ad_q_fallback_taken = q_fallback_taken;
+
+                bool fallback_taken = true;
+                kv_prebuilt_from_top_managed = run_p11ac_layer0_top_managed_kv(
+                    sram,
+                    cfg,
+                    x_in_base,
+                    sc,
+                    pb,
+                    fallback_taken
+                );
+                regs.p11ac_mainline_path_taken = kv_prebuilt_from_top_managed;
+                regs.p11ac_fallback_taken = fallback_taken;
+
+                bool ae_mainline_score_path_taken = true;
+                bool af_mainline_softmax_output_path_taken = true;
+                if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
+                    const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
+                    TOP_P11AEAF_AN_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+                        bool score_fallback_taken = true;
+                        const bool score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                            sram,
+                            cfg,
+                            sc,
+                            (u32_t)t,
+                            score_fallback_taken
+                        );
+                        if (!score_mainline_taken || score_fallback_taken) {
+                            ae_mainline_score_path_taken = false;
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+
+                        bool softmax_out_fallback_taken = true;
+                        const bool softmax_out_mainline_taken =
+                            run_p11af_layer0_top_managed_softmax_out(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                softmax_out_fallback_taken
+                            );
+                        if (!softmax_out_mainline_taken || softmax_out_fallback_taken) {
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+                    }
+                } else {
+                    ae_mainline_score_path_taken = false;
+                    af_mainline_softmax_output_path_taken = false;
+                }
+
+                score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
+                out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
+                regs.p11ae_mainline_score_path_taken = ae_mainline_score_path_taken;
+                regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
+                regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
+                regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
+            }
+
+            TransformerLayerTopManagedAttnBridge(
+                sram,
+                cfg,
+                (u32_t)lid,
+                x_in_base,
+                x_out_base,
+                sc,
+                pb,
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed
+            );
+
+            x_in_base = x_out_base;
+            x_out_base = alternate_x_page(x_in_base);
+
+            if ((int)lid == mid_index) {
+                run_mid_or_end_layernorm(true, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
+                x_in_base = x_out_base;
+                x_out_base = alternate_x_page(x_in_base);
+
+                copy_x_words(mid_snapshot, &sram[(uint32_t)x_in_base.to_uint()], (uint32_t)LN_X_TOTAL_WORDS);
+                mid_valid = true;
+            }
+        }
+
+        run_mid_or_end_layernorm(false, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
+        x_in_base = x_out_base;
+        x_out_base = alternate_x_page(x_in_base);
+
+        regs.infer_final_x_base_word = x_in_base;
+        if (mid_valid) {
+            regs.infer_mid_valid = true;
+            regs.infer_mid_dump_base_word = x_out_base;
+            copy_x_words(&sram[(uint32_t)x_out_base.to_uint()], mid_snapshot, (uint32_t)LN_X_TOTAL_WORDS);
+        } else {
+            regs.infer_mid_valid = false;
+            regs.infer_mid_dump_base_word = 0;
+        }
+    }
+
     static inline void run_infer_pipeline(TopRegs& regs, u32_t* sram) {
         run_preproc_block(sram);
         run_layernorm_block(sram);

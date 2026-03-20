@@ -66,7 +66,7 @@ public:
         regs_.cfg_n_layers = (u32_t)1u;
         regs_.cfg_ready = true;
 
-        run_transformer_layer_loop(regs_, sram_);
+        run_transformer_layer_loop_top_managed_attn_bridge(regs_, sram_);
 
         const LayerScratch sc = make_layer_scratch((u32_t)LN_X_OUT_BASE_WORD);
         const uint32_t attn_out_base = (uint32_t)sc.attn_out_base_word.to_uint();
@@ -155,4 +155,3 @@ private:
 };
 
 } // namespace aecct
-

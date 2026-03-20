@@ -535,4 +535,34 @@ static inline void AttnLayer0(
     }
 }
 
+// P00-011AN: first deep Attn boundary bridge.
+// This keeps the first deep call-site boundary array-shaped for Catapult-facing paths.
+// Internal compute semantics remain the same by forwarding to the accepted AttnLayer0 core.
+template<unsigned STAGE_MODE, uint32_t SRAM_WORDS>
+static inline void AttnLayer0TopManagedWindowBridge(
+    u32_t (&sram_window)[SRAM_WORDS],
+    const AttnCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t attn_out_base_word,
+    const AttnScratch& sc,
+    u32_t param_base_word = (u32_t)0,
+    bool kv_prebuilt_from_top_managed = false,
+    bool q_prebuilt_from_top_managed = false,
+    bool score_prebuilt_from_top_managed = false,
+    bool out_prebuilt_from_top_managed = false
+) {
+    AttnLayer0<STAGE_MODE>(
+        sram_window,
+        cfg,
+        x_in_base_word,
+        attn_out_base_word,
+        sc,
+        param_base_word,
+        kv_prebuilt_from_top_managed,
+        q_prebuilt_from_top_managed,
+        score_prebuilt_from_top_managed,
+        out_prebuilt_from_top_managed
+    );
+}
+
 } // namespace aecct
