@@ -63,6 +63,45 @@
   - `FALLBACK_NOT_TAKEN PASS`
   - `fallback_taken = false`
 
+## P11AP Forward Freeze Addendum (active-chain target)
+
+### Scope posture
+- This addendum records forward freeze decisions for the active Catapult-facing chain only.
+- It is intended to guide the next block-boundary cleanup pass where Top remains the only shared-SRAM owner.
+- It does **not** retroactively rewrite already-landed AC/AD packet-width constants until the matching code/SSOT changes land.
+
+### Decision lock
+- Head-group mapping is fixed as:
+  - `head 0..3 -> group0 -> rule1 -> one_ring_mask`
+  - `head 4..7 -> group1 -> rule2 -> second_ring_mask`
+- Working tile granularity target is fixed as:
+  - `WORD_BITS = 32`
+  - `TILE_WORDS = 4`
+  - `TILE_BITS = 128`
+  - tail tile is allowed for the final partial tile
+- Ownership rule remains fixed:
+  - Top owns shared SRAM, arbitration, and writeback timing
+  - sub-blocks consume Top-provided token/tile windows only
+  - no block-direct shared-SRAM ownership is allowed in the active chain
+
+### Encoding policy lock
+- Phase A / Phase C may keep deterministic sequence-derived semantics when payload meaning is uniquely recoverable from phase + range + order.
+- Phase B must not rely on sequence index alone.
+- Phase B active-chain packets/windows must carry explicit disambiguation for:
+  - `head_group_id`
+  - `subphase_id`
+- Recommended Phase B `subphase_id` buckets:
+  - `QSRC`
+  - `WQ`
+  - `KVSCAN`
+  - `MASK`
+  - `WO`
+  - `OUT`
+
+### Rationale snapshot
+- The goal is to remove residual whole-SRAM/raw-pointer ownership semantics from active-chain block boundaries without doing repo-wide cleanup first.
+- The 4-word tile target is a working compute/window granularity decision for the next active-chain cleanup pass; it is not a claim that all existing packet definitions have already been rewritten.
+
 ## Non-Goals
 - No Catapult closure claim.
 - No SCVerify closure claim.

@@ -580,6 +580,14 @@ G. DATA_OUT 路徑
 - 建議 stream order（對每個 q_token 固定 deterministic 順序）：
   - Top -> block：Q-source tile -> Wq tile -> K/V scan window -> mask window -> Wo tile
   - block -> Top：attention sublayer 已完成 residual 的 token tile
+- 建議 active-chain packet / window 解碼策略：
+  - Phase B 不只靠 sequence index；至少再顯式攜帶 `head_group_id` 與 `subphase_id`
+  - 建議 `subphase_id` 最小集合：`QSRC / WQ / KVSCAN / MASK / WO / OUT`
+  - Phase A / Phase C 若 payload 語意可由固定順序唯一推出，則可維持 sequence-derived 風格
+- 建議 active-chain working tile 粒度：
+  - 預設以 32-bit word 為單位時，採 `4 word = 128 bit` 作為第一優先清理目標
+  - 允許最後一個 partial tile（tail tile）
+  - 此處指 block-local compute / window granularity，不等於宣稱所有既有 packet 常數都已同步改成 4-word
 - 讀寫：
   - 讀 X_WORK[q_token][:]
   - 讀 SCRATCH 中的 SCR_K / SCR_V
