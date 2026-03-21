@@ -15,11 +15,25 @@ namespace aecct {
 typedef ac_channel<AttnTopManagedPacket> attn_q_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_q_work_pkt_ch_t;
 
+template<typename SramView>
+static inline bool attn_phasea_q_sram_view_ok(SramView&) {
+    return true;
+}
+
+static inline bool attn_phasea_q_sram_view_ok(const u32_t* sram) {
+    return sram != (const u32_t*)0;
+}
+
+static inline bool attn_phasea_q_sram_view_ok(u32_t* sram) {
+    return sram != (u32_t*)0;
+}
+
 static_assert(ATTN_TOP_MANAGED_TILE_WORDS == (unsigned)kTernaryLiveL0WqCols, "Q tile words must match WQ cols");
 static_assert(ATTN_TOP_MANAGED_TILE_WORDS == (unsigned)kTernaryLiveL0WqRows, "Q tile words must match WQ rows");
 
+template<typename SramView>
 static inline bool attn_top_emit_phasea_q_work_unit(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t x_row_base_word,
     u32_t token_idx,
     u32_t d_tile_idx,
@@ -87,8 +101,9 @@ static inline bool attn_block_phasea_q_consume_emit(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_top_writeback_phasea_q_work_unit(
-    u32_t* sram,
+    SramView& sram,
     u32_t scr_q_row_base_word,
     u32_t scr_q_act_q_row_base_word,
     u32_t scr_q_sx_word_addr,
@@ -114,8 +129,9 @@ static inline bool attn_top_writeback_phasea_q_work_unit(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_top_emit_phasea_q_work_tile(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t x_tile_base_word,
     u32_t token_idx,
     u32_t token_begin,
@@ -258,8 +274,9 @@ static inline bool attn_block_phasea_q_consume_emit_token_work_tiles(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_top_writeback_phasea_q_work_tile(
-    u32_t* sram,
+    SramView& sram,
     u32_t scr_q_tile_base_word,
     u32_t scr_q_act_q_tile_base_word,
     u32_t scr_q_sx_word_addr,
@@ -331,8 +348,9 @@ static inline bool attn_phasea_top_managed_q_meta_ok(
 // P11AD_MAINLINE_HELPER_ENTRYPOINT
 // Real design-side Top-managed Q entrypoint used by Top mainline wiring.
 // Returns true only when the Top-managed path is executed end-to-end.
+template<typename SramView>
 static inline bool attn_phasea_top_managed_q_mainline(
-    u32_t* sram,
+    SramView& sram,
     u32_t param_base_word,
     u32_t x_in_base_word,
     const AttnCfg& cfg,
@@ -340,7 +358,7 @@ static inline bool attn_phasea_top_managed_q_mainline(
     bool& fallback_taken
 ) {
     fallback_taken = true;
-    if (sram == (u32_t*)0) {
+    if (!attn_phasea_q_sram_view_ok(sram)) {
         return false;
     }
 

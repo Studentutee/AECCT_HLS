@@ -704,8 +704,9 @@ namespace aecct {
         }
     }
 
+    template<typename SramView>
     static inline bool run_p11ac_layer0_top_managed_kv(
-        u32_t* sram,
+        SramView&& sram,
         const CfgRegs& cfg,
         u32_t x_in_base_word,
         const LayerScratch& sc,
@@ -737,8 +738,9 @@ namespace aecct {
         );
     }
 
+    template<typename SramView>
     static inline bool run_p11ad_layer0_top_managed_q(
-        u32_t* sram,
+        SramView&& sram,
         const CfgRegs& cfg,
         u32_t x_in_base_word,
         const LayerScratch& sc,
@@ -770,8 +772,9 @@ namespace aecct {
         );
     }
 
+    template<typename SramView>
     static inline bool run_p11ae_layer0_top_managed_qk_score(
-        u32_t* sram,
+        SramView&& sram,
         const CfgRegs& cfg,
         const LayerScratch& sc,
         u32_t token_idx,
@@ -801,8 +804,9 @@ namespace aecct {
         );
     }
 
+    template<typename SramView>
     static inline bool run_p11af_layer0_top_managed_softmax_out(
-        u32_t* sram,
+        SramView&& sram,
         const CfgRegs& cfg,
         const LayerScratch& sc,
         u32_t token_idx,

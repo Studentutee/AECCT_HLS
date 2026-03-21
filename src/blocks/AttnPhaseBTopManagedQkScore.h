@@ -14,6 +14,19 @@ namespace aecct {
 
 typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_qk_pkt_ch_t;
 
+template<typename SramView>
+static inline bool attn_phaseb_sram_view_ok(SramView&) {
+    return true;
+}
+
+static inline bool attn_phaseb_sram_view_ok(const u32_t* sram) {
+    return sram != (const u32_t*)0;
+}
+
+static inline bool attn_phaseb_sram_view_ok(u32_t* sram) {
+    return sram != (u32_t*)0;
+}
+
 static inline quant_acc_t attn_phaseb_inv_sqrt_d_head(uint32_t d_head) {
     u32_t bits = (u32_t)0x3F800000u;
     if (d_head == 2u) { bits = (u32_t)0x3F3504F3u; }
@@ -26,8 +39,9 @@ static inline quant_acc_t attn_phaseb_inv_sqrt_d_head(uint32_t d_head) {
     return fp.template convert_to_ac_fixed<32, 12, true, AC_RND, AC_SAT>(false);
 }
 
+template<typename SramView>
 static inline bool attn_phaseb_emit_qsrc_tile(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t q_tile_base_word,
     u32_t token_idx,
     u32_t key_token_idx,
@@ -64,8 +78,9 @@ static inline bool attn_phaseb_emit_qsrc_tile(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_phaseb_emit_kvscan_tile(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t k_tile_base_word,
     u32_t token_idx,
     u32_t key_token_idx,
@@ -174,8 +189,9 @@ static inline bool attn_phaseb_block_qk_dot_consume_emit(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_phaseb_top_writeback_score(
-    u32_t* sram,
+    SramView& sram,
     u32_t score_word_addr,
     u32_t token_idx,
     u32_t key_token_idx,
@@ -200,15 +216,16 @@ static inline bool attn_phaseb_top_writeback_score(
 // P11AE_MAINLINE_HELPER_ENTRYPOINT
 // Real design-side QK/score entrypoint used by Top mainline wiring.
 // Writes score rows into the current score span consumed by AF.
+template<typename SramView>
 static inline bool attn_phaseb_top_managed_qk_score_mainline(
-    u32_t* sram,
+    SramView& sram,
     const AttnCfg& cfg,
     const AttnScratch& sc,
     u32_t token_idx,
     bool& fallback_taken
 ) {
     fallback_taken = true;
-    if (sram == (u32_t*)0) {
+    if (!attn_phaseb_sram_view_ok(sram)) {
         return false;
     }
 

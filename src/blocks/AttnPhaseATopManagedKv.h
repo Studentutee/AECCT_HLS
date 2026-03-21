@@ -15,8 +15,22 @@ namespace aecct {
 typedef ac_channel<AttnTopManagedPacket> attn_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_work_pkt_ch_t;
 
+template<typename SramView>
+static inline bool attn_phasea_kv_sram_view_ok(SramView&) {
+    return true;
+}
+
+static inline bool attn_phasea_kv_sram_view_ok(const u32_t* sram) {
+    return sram != (const u32_t*)0;
+}
+
+static inline bool attn_phasea_kv_sram_view_ok(u32_t* sram) {
+    return sram != (u32_t*)0;
+}
+
+template<typename SramView>
 static inline bool attn_top_emit_phasea_kv_work_unit(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t x_row_base_word,
     u32_t token_idx,
     u32_t d_tile_idx,
@@ -122,8 +136,9 @@ static inline bool attn_block_phasea_kv_consume_emit(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_top_writeback_phasea_kv_work_unit(
-    u32_t* sram,
+    SramView& sram,
     u32_t scr_k_row_base_word,
     u32_t scr_v_row_base_word,
     u32_t token_idx,
@@ -155,8 +170,9 @@ static inline bool attn_top_writeback_phasea_kv_work_unit(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_top_emit_phasea_kv_work_tile(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t x_tile_base_word,
     u32_t token_idx,
     u32_t token_begin,
@@ -359,8 +375,9 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_top_writeback_phasea_kv_work_tile(
-    u32_t* sram,
+    SramView& sram,
     u32_t scr_k_tile_base_word,
     u32_t scr_v_tile_base_word,
     u32_t token_idx,
@@ -444,8 +461,9 @@ static inline bool attn_phasea_top_managed_meta_ok(
 // P11AC_MAINLINE_HELPER_ENTRYPOINT
 // Real design-side Phase-A Top-managed KV entrypoint used by Top mainline wiring.
 // Returns true only when the Top-managed path is executed end-to-end.
+template<typename SramView>
 static inline bool attn_phasea_top_managed_kv_mainline(
-    u32_t* sram,
+    SramView& sram,
     u32_t param_base_word,
     u32_t x_in_base_word,
     const AttnCfg& cfg,
@@ -453,7 +471,7 @@ static inline bool attn_phasea_top_managed_kv_mainline(
     bool& fallback_taken
 ) {
     fallback_taken = true;
-    if (sram == (u32_t*)0) {
+    if (!attn_phasea_kv_sram_view_ok(sram)) {
         return false;
     }
 

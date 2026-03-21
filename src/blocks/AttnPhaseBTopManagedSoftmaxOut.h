@@ -16,8 +16,22 @@ namespace aecct {
 
 typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_softmax_pkt_ch_t;
 
+template<typename SramView>
+static inline bool attn_phaseb_softmax_sram_view_ok(SramView&) {
+    return true;
+}
+
+static inline bool attn_phaseb_softmax_sram_view_ok(const u32_t* sram) {
+    return sram != (const u32_t*)0;
+}
+
+static inline bool attn_phaseb_softmax_sram_view_ok(u32_t* sram) {
+    return sram != (u32_t*)0;
+}
+
+template<typename SramView>
 static inline bool attn_phaseb_emit_mask_score_word(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t score_word_addr,
     u32_t token_idx,
     u32_t key_token_idx,
@@ -43,8 +57,9 @@ static inline bool attn_phaseb_emit_mask_score_word(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_phaseb_emit_v_tile(
-    const u32_t* sram,
+    const SramView& sram,
     u32_t v_tile_base_word,
     u32_t token_idx,
     u32_t key_token_idx,
@@ -248,8 +263,9 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
     return true;
 }
 
+template<typename SramView>
 static inline bool attn_phaseb_top_writeback_out_tile(
-    u32_t* sram,
+    SramView& sram,
     u32_t pre_tile_base_word,
     u32_t post_tile_base_word,
     u32_t out_tile_base_word,
@@ -292,8 +308,9 @@ static inline bool attn_phaseb_top_writeback_out_tile(
 // P11AF_MAINLINE_HELPER_ENTRYPOINT
 // Real design-side single-pass online softmax/output entrypoint used by Top mainline wiring.
 // Consumes the score span produced by AE and writes pre/post/out for the target token row.
+template<typename SramView>
 static inline bool attn_phaseb_top_managed_softmax_out_mainline(
-    u32_t* sram,
+    SramView& sram,
     const AttnCfg& cfg,
     const AttnScratch& sc,
     u32_t token_idx,
@@ -301,7 +318,7 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     bool& fallback_taken
 ) {
     fallback_taken = true;
-    if (sram == (u32_t*)0) {
+    if (!attn_phaseb_softmax_sram_view_ok(sram)) {
         return false;
     }
 
