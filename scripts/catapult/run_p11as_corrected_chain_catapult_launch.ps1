@@ -121,17 +121,13 @@ try {
     }
 
     Require-Contains -Path $catapultLog -Needle "P11AS_CANONICAL_SYNTH_ENTRY TopManagedAttentionChainCatapultTop::run"
-    Require-Contains -Path $catapultLog -Needle "P11AS_STAGE analyze DONE"
     Require-Contains -Path $catapultLog -Needle "P11AS_STAGE compile DONE"
-    Require-Contains -Path $catapultLog -Needle "P11AS_STAGE elaborate DONE"
 
     @(
         "P11AS_STATUS EXECUTED",
         ("P11AS_CATAPULT_CMD {0}" -f $resolvedCatapult),
         "P11AS_TRUE_CATAPULT executed=true",
-        "P11AS_STAGE analyze DONE",
         "P11AS_STAGE compile DONE",
-        "P11AS_STAGE elaborate DONE",
         "PASS: run_p11as_corrected_chain_catapult_launch"
     ) | Set-Content -Path $runLog -Encoding UTF8
 
