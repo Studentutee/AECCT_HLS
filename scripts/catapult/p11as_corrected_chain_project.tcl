@@ -15,7 +15,7 @@ set p11as_top_entry "TopManagedAttentionChainCatapultTop::run"
 set p11as_entry_tu [file normalize [file join $repo_root "src" "catapult" "p11as_top_managed_attention_chain_entry.cpp"]]
 
 set p11as_include_dirs [list "." "include" "src" "gen/include" "third_party/ac_types" "data/weights"]
-set p11as_define_macros [list "__SYNTHESIS__"]
+set p11as_define_macros [list]
 
 proc p11as_split_env_paths {raw_text} {
     set out {}
@@ -100,11 +100,6 @@ p11as_set_option_path_list_required "Input/SearchPath" $p11as_search_paths
 
 set p11as_compiler_flags ""
 foreach d $p11as_define_macros {
-    if {$d eq "__SYNTHESIS__"} {
-        puts "INFO: skip reserved Catapult macro __SYNTHESIS__"
-        flush stdout
-        continue
-    }
     append p11as_compiler_flags " -D" $d
 }
 set p11as_compiler_flags [string trim $p11as_compiler_flags]
