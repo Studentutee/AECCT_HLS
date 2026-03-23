@@ -11,7 +11,7 @@ if {[info exists ::env(AECCT_P11AS_CATAPULT_OUTDIR)] && $::env(AECCT_P11AS_CATAP
 file mkdir $work_dir
 cd $work_dir
 
-set p11as_top_entry "TopManagedAttentionChainCatapultTop::run"
+set p11as_top_entry "aecct::TopManagedAttentionChainCatapultTop"
 set p11as_entry_tu [file normalize [file join $repo_root "src" "catapult" "p11as_top_managed_attention_chain_entry.cpp"]]
 
 set p11as_include_dirs [list "." "include" "src" "gen/include" "third_party/ac_types" "data/weights"]

@@ -120,7 +120,7 @@ try {
         throw "catapult execution failed, exit=$LASTEXITCODE"
     }
 
-    Require-Contains -Path $catapultLog -Needle "P11AS_CANONICAL_SYNTH_ENTRY TopManagedAttentionChainCatapultTop::run"
+    Require-Contains -Path $catapultLog -Needle "P11AS_CANONICAL_SYNTH_ENTRY aecct::TopManagedAttentionChainCatapultTop"
     Require-Contains -Path $catapultLog -Needle "P11AS_STAGE compile DONE"
 
     @(

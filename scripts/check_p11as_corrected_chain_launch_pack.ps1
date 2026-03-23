@@ -189,7 +189,7 @@ Require-Regex -Text $projectTclText -Pattern '(?m)^\s*project\s+new\s*$' -Reason
 Require-Regex -Text $projectTclText -Pattern '(?m)^\s*options\s+set\s+Input/CppStandard\s+c\+\+20\s*$' -Reason "project tcl missing Input/CppStandard c++20"
 Require-Regex -Text $projectTclText -Pattern 'p11as_set_option_path_list_required\s+"Input/SearchPath"\s+\$p11as_search_paths' -Reason "project tcl missing repo-local Input/SearchPath setup"
 Require-Regex -Text $projectTclText -Pattern 'solution\s+file\s+add\s+\$p11as_entry_tu\s+-type\s+C\+\+' -Reason "project tcl missing solution file add for entry TU"
-Require-Regex -Text $projectTclText -Pattern '(?m)^\s*set\s+p11as_top_entry\s+"TopManagedAttentionChainCatapultTop::run"\s*$' -Reason "project tcl corrected-entry declaration mismatch"
+Require-Regex -Text $projectTclText -Pattern '(?m)^\s*set\s+p11as_top_entry\s+"aecct::TopManagedAttentionChainCatapultTop"\s*$' -Reason "project tcl corrected-entry declaration mismatch"
 Require-Regex -Text $projectTclText -Pattern 'solution\s+design\s+set\s+\$p11as_top_entry\s+-top' -Reason "project tcl missing set-top command for corrected entry"
 Require-Regex -Text $projectTclText -Pattern '(?m)^\s*go\s+compile\s*$' -Reason "project tcl missing go compile"
 Write-Log "P11AS_INCLUDE_MACRO_CHECK PASS"
