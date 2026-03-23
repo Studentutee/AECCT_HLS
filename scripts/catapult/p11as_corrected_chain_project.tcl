@@ -100,10 +100,17 @@ p11as_set_option_path_list_required "Input/SearchPath" $p11as_search_paths
 
 set p11as_compiler_flags ""
 foreach d $p11as_define_macros {
+    if {$d eq "__SYNTHESIS__"} {
+        puts "INFO: skip reserved Catapult macro __SYNTHESIS__"
+        flush stdout
+        continue
+    }
     append p11as_compiler_flags " -D" $d
 }
 set p11as_compiler_flags [string trim $p11as_compiler_flags]
-options set Input/CompilerFlags $p11as_compiler_flags
+if {$p11as_compiler_flags ne ""} {
+    options set Input/CompilerFlags $p11as_compiler_flags
+}
 
 if {[info exists ::env(AECCT_P11AS_INPUT_LIBPATHS)]} {
     set p11as_input_libpaths [p11as_split_env_paths $::env(AECCT_P11AS_INPUT_LIBPATHS)]
