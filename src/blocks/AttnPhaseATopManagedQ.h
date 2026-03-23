@@ -238,8 +238,7 @@ static inline bool attn_block_phasea_q_consume_emit_token_work_tiles(
     u32_t q_out[kTernaryLiveL0WqRows];
     u32_t q_out_act_q[kTernaryLiveL0WqRows];
     u32_t q_out_inv_sw_bits = (u32_t)0u;
-    TernaryLiveL0WqRowTop wq_top;
-    if (!wq_top.run(
+    if (!ternary_live_l0_wq_materialize_row_kernel_split(
             x_row,
             wq_payload_words,
             wq_inv_sw_bits,
