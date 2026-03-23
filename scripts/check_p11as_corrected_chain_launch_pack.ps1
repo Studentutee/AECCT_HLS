@@ -177,10 +177,21 @@ foreach ($inc in $includeDirs) {
     $absInc = Join-RepoPath -RepoRootPath $repo -Path $inc
     Require-True -Condition (Test-Path $absInc) -Reason ("include dir missing: {0}" -f $inc)
 }
-Require-True -Condition ($defineMacros.Count -gt 0) -Reason "p11as project tcl define macro list missing or empty"
-Require-True -Condition ($defineMacros -contains "__SYNTHESIS__") -Reason "p11as project tcl missing __SYNTHESIS__ macro"
+Require-Regex -Text $projectTclText -Pattern '(?m)^\s*set\s+p11as_define_macros\s+\[list(?:\s+"[^"]+")*\]\s*$' -Reason "p11as project tcl define macro list declaration missing"
+Require-True -Condition (-not ($defineMacros -contains "__SYNTHESIS__")) -Reason "p11as project tcl must not include reserved __SYNTHESIS__ macro in define list"
+Require-True -Condition (-not ([System.Text.RegularExpressions.Regex]::IsMatch(
+            $projectTclText,
+            '-D__SYNTHESIS__',
+            [System.Text.RegularExpressions.RegexOptions]::Singleline))) -Reason "p11as project tcl must not define reserved macro via -D__SYNTHESIS__"
+Require-Regex -Text $projectTclText -Pattern '(?ms)set\s+p11as_compiler_flags\s+""[\s\S]*if\s+\{\$p11as_compiler_flags\s+ne\s+""\}\s*\{\s*options\s+set\s+Input/CompilerFlags\s+\$p11as_compiler_flags\s*\}' -Reason "project tcl must guard Input/CompilerFlags behind non-empty compiler flags"
+Require-Regex -Text $projectTclText -Pattern '(?m)^\s*options\s+defaults\s*$' -Reason "project tcl missing options defaults"
+Require-Regex -Text $projectTclText -Pattern '(?m)^\s*project\s+new\s*$' -Reason "project tcl missing project new"
+Require-Regex -Text $projectTclText -Pattern '(?m)^\s*options\s+set\s+Input/CppStandard\s+c\+\+20\s*$' -Reason "project tcl missing Input/CppStandard c++20"
+Require-Regex -Text $projectTclText -Pattern 'p11as_set_option_path_list_required\s+"Input/SearchPath"\s+\$p11as_search_paths' -Reason "project tcl missing repo-local Input/SearchPath setup"
+Require-Regex -Text $projectTclText -Pattern 'solution\s+file\s+add\s+\$p11as_entry_tu\s+-type\s+C\+\+' -Reason "project tcl missing solution file add for entry TU"
 Require-Regex -Text $projectTclText -Pattern '(?m)^\s*set\s+p11as_top_entry\s+"TopManagedAttentionChainCatapultTop::run"\s*$' -Reason "project tcl corrected-entry declaration mismatch"
 Require-Regex -Text $projectTclText -Pattern 'solution\s+design\s+set\s+\$p11as_top_entry\s+-top' -Reason "project tcl missing set-top command for corrected entry"
+Require-Regex -Text $projectTclText -Pattern '(?m)^\s*go\s+compile\s*$' -Reason "project tcl missing go compile"
 Write-Log "P11AS_INCLUDE_MACRO_CHECK PASS"
 
 # Corrected active path reachability check.
