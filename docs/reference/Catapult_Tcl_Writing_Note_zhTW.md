@@ -10,7 +10,9 @@
   - 哪些指令/寫法目前仍屬 **待真機 compile 驗證**。
 
 ## 目前專案的 canonical synth entry
-- Canonical synth entry：`TopManagedAttentionChainCatapultTop::run`
+- Canonical synth entry（經真機 transcript 修正後）：`aecct::TopManagedAttentionChainCatapultTop`
+- `run` 仍是實際被 synthesize 的 interface method，但 `solution design set ... -top` 應以 class-level target 為主，而不是 `TopManagedAttentionChainCatapultTop::run`。
+- 舊寫法 `TopManagedAttentionChainCatapultTop::run` 曾在真機 transcript 觸發 `HIER-55`，因此現在應視為 **deprecated target string**。
 - 對應 entry TU：`src/catapult/p11as_top_managed_attention_chain_entry.cpp`
 - 對應 filelist：`scripts/catapult/p11as_corrected_chain_filelist.f`
 - 對應 launch runner：`scripts/catapult/run_p11as_corrected_chain_catapult_launch.ps1`
@@ -49,7 +51,7 @@ options set Input/SearchPath /usr/tmp -append
 options set Input/SearchPath {/usr/share/alsa /usr/share/akonadi} -append
 options set Input/LibPaths /usr
 options set Input/LibPaths /usr/share -append
-options set Input/CompilerFlags -D__SYNTHESIS__
+options set Input/CompilerFlags <non-empty user flags only>
 options set ComponentLibs/SearchPath /home/peter/Catapult_Library_Builder -append
 options set ComponentLibs/TechLibSearchPath {/cad/PDK/CBDK_TSMC40_Arm_f2.0/CIC/SynopsysDC/db/sc9_base_hvt /cad/PDK/CBDK_TSMC40_Arm_f2.0/CIC/SynopsysDC/db/sc9_base_lvt /cad/PDK/CBDK_TSMC40_Arm_f2.0/CIC/SynopsysDC/db/sc9_base_rvt}
 options set Flows/QuestaSIM/Path /cad/mentor/Questa_Sim/2025.2_2/questasim/bin
@@ -59,11 +61,12 @@ options set Flows/VSCode/GDB_PATH /usr/bin/
 ```
 
 ### 中文解釋
-- 對 `Input/CompilerFlags`，雖然 GUI transcript 顯示 bare token 形式，但依使用者最新決策，**專案文件先以 `-D__SYNTHESIS__` 為主建議值**。
+- `Input/CompilerFlags` 的舊建議值 `-D__SYNTHESIS__` 已被真機 transcript 推翻：`__SYNTHESIS__` 在 Catapult project Tcl 中不可 user-define。
+- 因此目前 corrected-chain 的 Catapult Tcl 應採：**define macro list 可空；只有在存在其他非保留的 user flags 時，才設定 `Input/CompilerFlags`**。
 - `Input/CppStandard`：設定 Catapult 的 C++ 標準版本。以目前使用者回報，**先以 `c++20` 為專案預設嘗試值**。
 - `Input/SearchPath`：設定 include / source 搜尋路徑；可單筆設定，也可用 `-append` 持續追加。
 - `Input/LibPaths`：設定一般 library 搜尋路徑；compile-first draft 可先帶入。
-- `Input/CompilerFlags`：目前已觀察到可用來設定 `__SYNTHESIS__` 這類編譯旗標/define；專案現階段先採 `-D__SYNTHESIS__`。
+- `Input/CompilerFlags`：可用來承載其他非保留的 user-defined compiler flags；對 corrected-chain Catapult Tcl 而言，define macro list 可空。
 - `ComponentLibs/SearchPath`、`ComponentLibs/TechLibSearchPath`：屬於 component / tech library 路徑，通常站點相依。
 - `Flows/.../Path`：屬於外部工具整合路徑，非最小 compile 必要，但 GUI transcript 已顯示其 option key。
 
@@ -76,7 +79,7 @@ options set Flows/VSCode/GDB_PATH /usr/bin/
 - 使用 `options set Input/CppStandard ...` 設定 C++ 標準。
 - 使用 `options set Input/SearchPath ...` / `-append` 設定 include/source 搜尋路徑。
 - 使用 `options set Input/LibPaths ...` 設定 library 路徑。
-- 使用 `options set Input/CompilerFlags -D__SYNTHESIS__` 作為目前觀察到的 define/flag 寫法起點。
+- `Input/CompilerFlags` 僅在存在其他非保留 user flags 時才設定；**不可**在 Catapult project Tcl 中手動加 `-D__SYNTHESIS__`。
 - 需要更完整 synthesis flow 時，再補 component libs / tech libs / library / clock / assembly / architect / extract。
 
 ## 目前**不要直接當成已驗證寫法**的項目
@@ -107,10 +110,12 @@ options set Input/SearchPath [file join $repo_root "src"] -append
 options set Input/SearchPath [file join $repo_root "gen" "include"] -append
 options set Input/SearchPath [file join $repo_root "third_party" "ac_types"] -append
 options set Input/SearchPath [file join $repo_root "data" "weights"] -append
-options set Input/CompilerFlags -D__SYNTHESIS__
+if {$p11as_compiler_flags ne ""} {
+    options set Input/CompilerFlags $p11as_compiler_flags
+}
 
 solution file add [file join $repo_root src catapult p11as_top_managed_attention_chain_entry.cpp] -type C++
-solution design set TopManagedAttentionChainCatapultTop::run -top
+solution design set aecct::TopManagedAttentionChainCatapultTop -top
 
 go compile
 ```
@@ -120,9 +125,9 @@ go compile
 - `project new`：建立新 project。
 - `Input/CppStandard`：先用 `c++20`，因為使用者明確表示目前本地端也是用 `C++20`。
 - `Input/SearchPath`：這一步非常重要，因為 entry TU 會 include repo 內 header；**不要只把 include dir 放在 Tcl 變數裡卻不真正餵給工具**。
-- `Input/CompilerFlags -D__SYNTHESIS__`：依目前使用者決策，先明確以編譯器 define 形式帶入。
+- `Input/CompilerFlags`：只在非空時才設；**不要**在 Catapult Tcl 中 user-define `__SYNTHESIS__`。
 - `solution file add`：加入設計來源檔；這裡先用最小 entry TU 驗證 flow 能不能起來。
-- `solution design set ... -top`：指定真正要綜合的 top。
+- `solution design set ... -top`：指定真正要綜合的 class-level top；目前 corrected-chain 應指向 `aecct::TopManagedAttentionChainCatapultTop`。
 - `go compile`：先做最基本的 compile；這一步通過後，再談後續 library / assembly / architect。
 
 ## `Input/SearchPath` / `Input/LibPaths` 的實作筆記
@@ -142,7 +147,7 @@ go compile
 1. 開 Catapult。
 2. 先設定 `Input/CppStandard`、`Input/SearchPath`、必要時的 `Input/LibPaths`。
 3. 用 GUI 或 `File -> Run script` 載入最小 Tcl。
-4. 確認 synth entry 是 `TopManagedAttentionChainCatapultTop::run`。
+4. 確認 synth entry target 是 class-level `aecct::TopManagedAttentionChainCatapultTop`；`run` 仍是 class 內被綜合的方法。
 5. 若站點需要，再補 technology/component library 路徑。
 6. 先讓 `go compile` 成功，再往下補 `go libraries` / `go assembly` / `go architect`。
 
@@ -171,10 +176,21 @@ go compile
 3. **最後才擴到更完整腳本**
    - 包含 project script 自動化、library / clock / assembly / architect、或更完整 flow 串接。
 
-## 目前仍待使用者從 GUI 補充確認的點
-- `Input/CompilerFlags` 目前先以 `-D__SYNTHESIS__` 為專案決議值；若真機 compile transcript 顯示 Catapult 會自動補 `-D`，再回頭修正文案。
+## 目前仍待使用者從 GUI / 真機補充確認的點
+- corrected-chain 已確認 `solution design set` 應採 class-level target；但 include graph 內仍可見 multiple tops warning，尚未代表 top-related 問題全數收斂。
 - 若一次塞多個 repo-local search path，實機是否偏好 repeated `-append`，還是 brace-list 一次設定。
 - corrected-chain compile 第一關是否真的需要 `Input/LibPaths`，或只設 `Input/SearchPath` 即可先過。
+- 當 top-target 與 `__SYNTHESIS__` policy 修正後，新的可見 fatal 已往後移，應優先以真機最後幾行 error 繼續收斂，而不是回退前述 Tcl 修正。
+
+## 目前已收斂 / 未收斂邊界
+### 已收斂
+- `solution design set ... -top` 的 corrected-chain target 不應再使用 `TopManagedAttentionChainCatapultTop::run`。
+- Catapult project Tcl 不應 user-define `__SYNTHESIS__`。
+- define macro list 可空；`Input/CompilerFlags` 只有非空才設。
+
+### 尚未收斂
+- include graph 中仍可能出現 multiple tops warning，這不應和 class-level target 修正混為一談。
+- 真機 compile 的最後 fatal 仍需以最後幾行 transcript 為準持續追蹤；本 note 不宣稱問題已完全收斂。
 
 ## 目前文件姿態
 - 這份文件是 reference note，不是 closure claim。

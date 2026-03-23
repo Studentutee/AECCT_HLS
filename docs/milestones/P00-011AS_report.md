@@ -2,7 +2,7 @@
 
 ## Scope
 - Build a corrected active-chain only Catapult launch pack for first true tool-blocker capture on a machine with Catapult.
-- Keep canonical synth entry fixed at `TopManagedAttentionChainCatapultTop::run`.
+- Initial launch-pack baseline started from `TopManagedAttentionChainCatapultTop::run`, but real-tool transcript later corrected the top target to class-level `aecct::TopManagedAttentionChainCatapultTop`.
 - Do not broaden into repo-wide cleanup/migration.
 
 ## Landed Artifacts
@@ -27,3 +27,9 @@
 - not SCVerify closure
 - corrected active-chain launch-prep only
 - not full repo migration
+
+## Transcript-based corrections after initial landing
+- `solution design set ... -top` should target class-level `aecct::TopManagedAttentionChainCatapultTop`, not `TopManagedAttentionChainCatapultTop::run`.
+- Catapult project Tcl must not user-define `__SYNTHESIS__`; define macro list may be empty.
+- Preflight/checker should validate reserved-macro-forbidden policy instead of requiring non-empty macro list.
+- Remaining compile issues must be judged by the final fatal lines of the real-tool transcript, not by earlier deprecated blockers alone.

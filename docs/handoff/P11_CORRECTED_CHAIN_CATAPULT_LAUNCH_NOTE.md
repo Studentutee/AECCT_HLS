@@ -2,11 +2,11 @@
 
 ## Purpose
 - This note defines the corrected active-chain Catapult launch entry for first true tool blocker capture.
-- Canonical synth entry is fixed to `TopManagedAttentionChainCatapultTop::run`.
+- Canonical synth entry target（經真機 transcript 修正）為 `aecct::TopManagedAttentionChainCatapultTop`；`run` 是 class 內被 synthesize 的 interface method。
 - This note is a launch/handoff note, not a full Catapult Tcl user guide.
 
 ## Canonical Corrected Active Path
-- `TopManagedAttentionChainCatapultTop::run`
+- `aecct::TopManagedAttentionChainCatapultTop`
 - `run_transformer_layer_loop_top_managed_attn_bridge`
 - `run_p11ad_layer0_top_managed_q`
 - `run_p11ac_layer0_top_managed_kv`
@@ -32,8 +32,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/catapult/run_p11as_c
 - `catapult` command must be discoverable from `PATH`, or from `CATAPULT_HOME\bin\catapult.exe`, or from `MGC_HOME\bin\catapult.exe`.
 - Technology/library setup is site-dependent and must be provided on the Catapult machine.
 
+## Transcript-driven corrections to old assumptions
+- Old assumption (deprecated): `solution design set TopManagedAttentionChainCatapultTop::run -top`
+- Current corrected target: `solution design set aecct::TopManagedAttentionChainCatapultTop -top`
+- Old assumption (deprecated): Catapult project Tcl should set `Input/CompilerFlags -D__SYNTHESIS__`
+- Current corrected policy: do not user-define `__SYNTHESIS__`; empty macro list is legal.
+- Current posture: class-level top target and `__SYNTHESIS__` policy are updated, but compile still must be judged by the final fatal lines of the real-tool transcript.
+
 ## Tcl Validation Status
-- For compile-flag policy, the project now intentionally **defaults to `options set Input/CompilerFlags -D__SYNTHESIS__`** because the user prefers explicit compiler-define form for first true-tool bring-up.
+- For compile-flag policy, Catapult project Tcl **must not** user-define `__SYNTHESIS__`; define macro list may be empty, and `Input/CompilerFlags` should only be set when non-empty user flags actually exist.
 - `scripts/catapult/p11as_corrected_chain_project.tcl` should currently be treated as a **launch-pack draft**, not as a fully verified Catapult project script.
 - The launch intent is correct: corrected-chain canonical entry, filelist binding, preflight usage, and fail-fast environment probe are aligned with the current repo posture.
 - Command-level compatibility on a real Catapult machine is **not yet verified**.
@@ -44,7 +51,7 @@ The user has now confirmed these option-key families directly from Catapult tran
 - `options set Input/CppStandard c++20`
 - `options set Input/SearchPath <path>` and `-append`
 - `options set Input/LibPaths <path>` and `-append`
-- `options set Input/CompilerFlags -D__SYNTHESIS__`
+- `Input/CompilerFlags` 只有在非空 user flags 存在時才設定；不可手動帶入 `-D__SYNTHESIS__`
 - `options set ComponentLibs/SearchPath ... -append`
 - `options set ComponentLibs/TechLibSearchPath {...}`
 - `options set Flows/QuestaSIM/Path ...`
@@ -58,7 +65,7 @@ For the next corrected-chain Tcl revision, prefer this order:
 2. `project new`
 3. `options set Input/CppStandard c++20`
 4. `options set Input/SearchPath ...` for repo-local include/source paths
-5. `options set Input/CompilerFlags -D__SYNTHESIS__`
+5. optional non-empty `Input/CompilerFlags`（不得 user-define `__SYNTHESIS__`）
 6. optional `Input/LibPaths`
 7. `solution file add ... -type C++`
 8. `solution design set ... -top`
@@ -72,7 +79,7 @@ Do **not** re-expand the draft back to `solution new`, `-cflags`, `go elaborate`
 - Prefer environment-variable or user-supplied override style for these settings.
 
 ## Open items for first real-tool run
-- Use `Input/CompilerFlags -D__SYNTHESIS__` as the current project default for first true compile; only switch away from this if real-tool transcript proves the target Catapult version auto-infers defines from bare tokens.
+- Keep `Input/CompilerFlags` empty unless non-reserved user flags are actually needed; do not restore `-D__SYNTHESIS__` into Catapult project Tcl.
 - Confirm whether corrected-chain compile first-pass truly needs `Input/LibPaths`, or whether `Input/SearchPath` alone is sufficient.
 - Confirm whether repeated `-append` or brace-list style is more robust for repo-local multi-path setup on the target Catapult version.
 
