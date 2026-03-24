@@ -180,7 +180,18 @@ go compile
 - corrected-chain 已確認 `solution design set` 應採 class-level target；但 include graph 內仍可見 multiple tops warning，尚未代表 top-related 問題全數收斂。
 - 若一次塞多個 repo-local search path，實機是否偏好 repeated `-append`，還是 brace-list 一次設定。
 - corrected-chain compile 第一關是否真的需要 `Input/LibPaths`，或只設 `Input/SearchPath` 即可先過。
-- 當 top-target 與 `__SYNTHESIS__` policy 修正後，新的可見 fatal 已往後移，應優先以真機最後幾行 error 繼續收斂，而不是回退前述 Tcl 修正。
+- 當 top-target 與 `__SYNTHESIS__` policy 修正後，historical blocker 曾依序出現過 `HIER-55`、`CIN-249 (wq_top / wk_top / wv_top)`、`HIER-10`；這些目前應視為 **歷史收斂軌跡**，不應再覆蓋最新 transcript 判讀。
+- 最新使用者提供的 compile-first transcript excerpt（2026-03-24）以關鍵字檢索未命中 `# Error` / `Compilation aborted`；目前可見輸出以 warning 為主。
+
+## 2026-03-24 compile-first transcript refresh（latest shared excerpt）
+- 最新使用者提供的 Catapult compile transcript excerpt 已顯示：
+  - `solution design set aecct::TopManagedAttentionChainCatapultTop -top`
+  - `go compile` 已真正啟動
+  - 目前共享 excerpt 以關鍵字檢索未命中 `# Error` 或 `Compilation aborted`
+- 目前可見 warning 主要分兩群：
+  - `CRD-549 / CRD-111 / CRD-68 / CRD-1 / CRD-186`（多數來自 `third_party/ac_types` 模板實例化鏈）
+  - `CIN-63` multiple tops warning（`TernaryLiveL0Wq/Wk/WvRowTop` 與 `TopManagedAttentionChainCatapultTop`）
+- 這代表 corrected-chain compile-first 真機 bring-up 已從「持續追第一個 fatal」推進到「最新共享 excerpt 為 warning-only」；但這仍不等同 Catapult closure，也不等同 SCVerify closure。
 
 ## 目前已收斂 / 未收斂邊界
 ### 已收斂
@@ -190,7 +201,7 @@ go compile
 
 ### 尚未收斂
 - include graph 中仍可能出現 multiple tops warning，這不應和 class-level target 修正混為一談。
-- 真機 compile 的最後 fatal 仍需以最後幾行 transcript 為準持續追蹤；本 note 不宣稱問題已完全收斂。
+- 最新共享 transcript excerpt 雖未檢出 fatal keyword，但仍應以實際 solution transcript 的最後幾行作為正式判讀依據；本 note 不宣稱問題已完全收斂。
 
 ## 目前文件姿態
 - 這份文件是 reference note，不是 closure claim。

@@ -1,7 +1,7 @@
 # P11 Corrected-Chain Catapult Launch Note (P00-011AS)
 
 ## Purpose
-- This note defines the corrected active-chain Catapult launch entry for first true tool blocker capture.
+- This note defines the corrected active-chain Catapult launch entry, launch-pack corrections, and latest compile-first transcript posture on a real Catapult machine.
 - Canonical synth entry target（經真機 transcript 修正）為 `aecct::TopManagedAttentionChainCatapultTop`；`run` 是 class 內被 synthesize 的 interface method。
 - This note is a launch/handoff note, not a full Catapult Tcl user guide.
 
@@ -37,14 +37,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/catapult/run_p11as_c
 - Current corrected target: `solution design set aecct::TopManagedAttentionChainCatapultTop -top`
 - Old assumption (deprecated): Catapult project Tcl should set `Input/CompilerFlags -D__SYNTHESIS__`
 - Current corrected policy: do not user-define `__SYNTHESIS__`; empty macro list is legal.
-- Current posture: class-level top target and `__SYNTHESIS__` policy are updated, but compile still must be judged by the final fatal lines of the real-tool transcript.
+- Current posture: class-level top target and `__SYNTHESIS__` policy are updated; historical blockers (`HIER-55`, `CIN-249`, `HIER-10`) should now be treated as prior iterations, and latest compile judgement must follow the newest solution transcript.
 
 ## Tcl Validation Status
 - For compile-flag policy, Catapult project Tcl **must not** user-define `__SYNTHESIS__`; define macro list may be empty, and `Input/CompilerFlags` should only be set when non-empty user flags actually exist.
-- `scripts/catapult/p11as_corrected_chain_project.tcl` should currently be treated as a **launch-pack draft**, not as a fully verified Catapult project script.
+- `scripts/catapult/p11as_corrected_chain_project.tcl` should currently be treated as a **launch-pack draft with transcript-backed corrections**, not as a full closure script.
 - The launch intent is correct: corrected-chain canonical entry, filelist binding, preflight usage, and fail-fast environment probe are aligned with the current repo posture.
-- Command-level compatibility on a real Catapult machine is **not yet verified**.
-- The current preferred direction is to rewrite the compile-first draft toward **`options set Input/...` style configuration**, based on the user-provided Catapult GUI transcript.
+- Basic command-level compatibility on a real Catapult machine is now evidenced by shared `go analyze -> go compile` transcript excerpts, but full closure is **not** verified.
+- The current preferred direction remains to keep the compile-first draft in **`options set Input/...` style configuration**, based on the user-provided Catapult GUI transcript.
+
+## Latest shared compile-first transcript refresh (2026-03-24)
+- Latest user-shared solution transcript excerpt uses class-level target:
+  - `solution design set aecct::TopManagedAttentionChainCatapultTop -top`
+- The shared excerpt shows `go compile` has started on the corrected-chain solution.
+- Keyword scan on the shared excerpt did **not** detect `# Error` or `Compilation aborted`.
+- Current visible output is warning-only, mainly:
+  - `CRD-549 / CRD-111 / CRD-68 / CRD-1 / CRD-186` from `third_party/ac_types` instantiation chains
+  - `CIN-63` multiple-tops warnings for `TernaryLiveL0Wq/Wk/WvRowTop` and `TopManagedAttentionChainCatapultTop`
+- Therefore this note should treat prior `HIER-55` / `CIN-249` / `HIER-10` blockers as historical transcript checkpoints, not as the current visible fatal.
 
 ## GUI Transcript-Based Option Keys (new evidence)
 The user has now confirmed these option-key families directly from Catapult transcript output:
