@@ -8,7 +8,7 @@
 #include "AttnDescBringup.h"
 #include "AttnTopManagedPackets.h"
 #include "TernaryLinearLive.h"
-#include "TernaryLiveQkvLeafKernelTop.h"
+#include "TernaryLiveQkvLeafKernel.h"
 
 namespace aecct {
 
@@ -86,8 +86,7 @@ static inline bool attn_block_phasea_kv_consume_emit(
     u32_t k_out[kTernaryLiveL0WkRows];
     u32_t k_out_act_q[kTernaryLiveL0WkRows];
     u32_t k_out_inv_sw_bits = (u32_t)0;
-    TernaryLiveL0WkRowTop wk_top;
-    if (!wk_top.run(
+    if (!ternary_live_l0_wk_materialize_row_kernel_split(
             x_pkt.data,
             wk_payload_words,
             wk_inv_sw_bits,
@@ -100,8 +99,7 @@ static inline bool attn_block_phasea_kv_consume_emit(
     u32_t v_out[kTernaryLiveL0WvRows];
     u32_t v_out_act_q[kTernaryLiveL0WvRows];
     u32_t v_out_inv_sw_bits = (u32_t)0;
-    TernaryLiveL0WvRowTop wv_top;
-    if (!wv_top.run(
+    if (!ternary_live_l0_wv_materialize_row_kernel_split(
             x_pkt.data,
             wv_payload_words,
             wv_inv_sw_bits,

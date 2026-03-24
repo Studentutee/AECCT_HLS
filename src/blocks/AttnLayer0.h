@@ -14,7 +14,7 @@
 #include "SoftmaxApprox.h"
 #include "TernaryLinearLive.h"
 #include "TernaryLiveQkvLeafKernelShapeConfig.h"
-#include "TernaryLiveQkvLeafKernelTop.h"
+#include "TernaryLiveQkvLeafKernel.h"
 
 namespace aecct {
 
@@ -146,7 +146,7 @@ static inline void AttnLayer0CoreWindow(
         if (!skip_q_materialization && live_q_enabled) {
             const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE)
-            // Preferred Q path: fixed-shape split-top wrapper over ternary leaf kernel.
+            // Preferred Q path: fixed-shape split-kernel call over ternary leaf kernel.
             const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
             const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
             if (live_q_meta.rows != kQkvCtSupportedL0WqRows ||
@@ -167,7 +167,6 @@ static inline void AttnLayer0CoreWindow(
                 }
                 const uint32_t inv_sw_addr = param_base + live_q_inv_meta.offset_w;
                 const u32_t live_q_inv_sw_input = sram[inv_sw_addr];
-                TernaryLiveL0WqRowTop live_q_top;
                 ATTN_Q_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t q_row_base = q_base + t * d_model;
@@ -176,7 +175,7 @@ static inline void AttnLayer0CoreWindow(
                         x_row[in] = sram[x_row_base + in];
                     }
                     u32_t out_inv_sw_bits = (u32_t)0u;
-                    if (!live_q_top.run(
+                    if (!ternary_live_l0_wq_materialize_row_kernel_split(
                             x_row,
                             payload_words,
                             live_q_inv_sw_input,
@@ -241,7 +240,7 @@ static inline void AttnLayer0CoreWindow(
         if (!skip_kv_materialization && live_k_enabled) {
             const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
-            // Preferred K path: fixed-shape split-top wrapper over ternary leaf kernel.
+            // Preferred K path: fixed-shape split-kernel call over ternary leaf kernel.
             bool use_k_split_top = true;
             const ParamMeta live_k_payload_meta = kParamMeta[live_k_meta.weight_param_id];
             const ParamMeta live_k_inv_meta = kParamMeta[live_k_meta.inv_sw_param_id];
@@ -264,7 +263,6 @@ static inline void AttnLayer0CoreWindow(
                 }
                 const uint32_t inv_sw_addr = param_base + live_k_inv_meta.offset_w;
                 const u32_t live_k_inv_sw_input = sram[inv_sw_addr];
-                TernaryLiveL0WkRowTop live_k_top;
                 ATTN_K_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t k_row_base = k_base + t * d_model;
@@ -273,7 +271,7 @@ static inline void AttnLayer0CoreWindow(
                         x_row[in] = sram[x_row_base + in];
                     }
                     u32_t out_inv_sw_bits = (u32_t)0u;
-                    if (!live_k_top.run(
+                    if (!ternary_live_l0_wk_materialize_row_kernel_split(
                             x_row,
                             payload_words,
                             live_k_inv_sw_input,
@@ -354,7 +352,7 @@ static inline void AttnLayer0CoreWindow(
         if (!skip_kv_materialization && live_v_enabled) {
             const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
-            // Preferred V path: fixed-shape split-top wrapper over ternary leaf kernel.
+            // Preferred V path: fixed-shape split-kernel call over ternary leaf kernel.
             bool use_v_split_top = true;
             const ParamMeta live_v_payload_meta = kParamMeta[live_v_meta.weight_param_id];
             const ParamMeta live_v_inv_meta = kParamMeta[live_v_meta.inv_sw_param_id];
@@ -377,7 +375,6 @@ static inline void AttnLayer0CoreWindow(
                 }
                 const uint32_t inv_sw_addr = param_base + live_v_inv_meta.offset_w;
                 const u32_t live_v_inv_sw_input = sram[inv_sw_addr];
-                TernaryLiveL0WvRowTop live_v_top;
                 ATTN_V_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t v_row_base = v_base + t * d_model;
@@ -386,7 +383,7 @@ static inline void AttnLayer0CoreWindow(
                         x_row[in] = sram[x_row_base + in];
                     }
                     u32_t out_inv_sw_bits = (u32_t)0u;
-                    if (!live_v_top.run(
+                    if (!ternary_live_l0_wv_materialize_row_kernel_split(
                             x_row,
                             payload_words,
                             live_v_inv_sw_input,

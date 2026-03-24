@@ -1,6 +1,6 @@
 // P00-011AS canonical Catapult design entry translation unit.
 // Canonical synth entry:
-//   TopManagedAttentionChainCatapultTop::run
+//   aecct::TopManagedAttentionChainCatapultTop
 // This TU intentionally has no testbench/main and only anchors the design include graph.
 
 #include "blocks/TopManagedAttentionChainCatapultTop.h"
