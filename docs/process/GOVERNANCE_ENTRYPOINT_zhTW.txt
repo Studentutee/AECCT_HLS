@@ -14,10 +14,12 @@
 
 目前工作重點
 --------
-目前 reviewer-facing debt/paydown 已完成核心收斂，重點改為：
+目前 reviewer-facing debt/paydown 已完成核心收斂，已由 blocking 轉入維護期；目前重點改為：
 - 維持文件結構清楚（process/review/handoff/archive 分層）
 - 保持 reviewer kit 可快速導航、可重用
 - 讓 execution PASS 與 reviewer-understood 兩件事持續分開管理（避免 overclaim）
+- 後續若繼續補文件，定位為 optional enhancement（例如額外情境模板、增量 quick-check sidecar），不再視為 core outstanding debt
+- functional/mainline work 可與文件維護並行推進，不必再把 readability backfill 當成唯一前線優先順序
 
 本文件不是：
 - 專案目前狀態摘要（那是 PROJECT_STATUS_zhTW.txt）
