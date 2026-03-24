@@ -409,70 +409,70 @@ static inline bool attn_phasea_top_managed_q_mainline(
     }
     const u32_t wq_inv_sw_bits = sram[wq_inv_addr];
 
-    attn_q_work_pkt_ch_t in_ch;
-    attn_q_work_pkt_ch_t out_ch;
-
     const uint32_t x_base = (uint32_t)x_in_base_word.to_uint();
     const uint32_t q_base = (uint32_t)sc.q_base_word.to_uint();
     const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
     const uint32_t q_sx_base = (uint32_t)sc.q_sx_base_word.to_uint();
-    const uint32_t token_begin = 0u;
-    const uint32_t token_end = token_count;
-    const uint32_t tile_begin = 0u;
-    const uint32_t tile_end = d_tile_count;
+
+    if (d_model > (uint32_t)kTernaryLiveL0WqCols) {
+        return false;
+    }
 
     for (uint32_t t = 0u; t < token_count; ++t) {
         const uint32_t row_x_base = x_base + t * d_model;
         const uint32_t row_q_base = q_base + t * d_model;
         const uint32_t row_q_act_q_base = q_act_q_base + t * d_model;
+
+        u32_t x_row[kTernaryLiveL0WqCols];
+        ATTN_P11AD_MAINLINE_XROW_CLEAR_LOOP: for (uint32_t i = 0u; i < (uint32_t)kTernaryLiveL0WqCols; ++i) {
+            x_row[i] = (u32_t)0u;
+        }
+
         for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
             const uint32_t tile_offset = dt * tile_words;
             const uint32_t valid =
                 attn_top_managed_tile_valid_words(d_model, tile_words, dt);
-            if (!attn_top_emit_phasea_q_work_tile(
-                    sram,
-                    (u32_t)(row_x_base + tile_offset),
-                    (u32_t)t,
-                    (u32_t)token_begin,
-                    (u32_t)token_end,
-                    (u32_t)dt,
-                    (u32_t)tile_begin,
-                    (u32_t)tile_end,
-                    (u32_t)valid,
-                    in_ch)) {
+            if (valid == 0u || valid > tile_words) {
                 return false;
             }
+            if ((tile_offset + valid) > d_model) {
+                return false;
+            }
+            ATTN_P11AD_MAINLINE_XROW_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                x_row[tile_offset + i] = sram[row_x_base + tile_offset + i];
+            }
         }
-        if (!attn_block_phasea_q_consume_emit_token_work_tiles(
-                in_ch,
-                out_ch,
+
+        u32_t q_out[kTernaryLiveL0WqRows];
+        u32_t q_out_act_q[kTernaryLiveL0WqRows];
+        u32_t q_out_inv_sw_bits = (u32_t)0u;
+        if (!ternary_live_l0_wq_materialize_row_kernel_split(
+                x_row,
                 wq_payload_words,
                 wq_inv_sw_bits,
-                (u32_t)t,
-                (u32_t)token_begin,
-                (u32_t)token_end,
-                (u32_t)tile_begin,
-                (u32_t)tile_end,
-                (u32_t)d_model)) {
+                q_out,
+                q_out_act_q,
+                q_out_inv_sw_bits)) {
             return false;
         }
+
         for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
             const uint32_t tile_offset = dt * tile_words;
-            if (!attn_top_writeback_phasea_q_work_tile(
-                    sram,
-                    (u32_t)(row_q_base + tile_offset),
-                    (u32_t)(row_q_act_q_base + tile_offset),
-                    (u32_t)q_sx_base,
-                    (u32_t)t,
-                    (u32_t)token_begin,
-                    (u32_t)token_end,
-                    (u32_t)dt,
-                    (u32_t)tile_begin,
-                    (u32_t)tile_end,
-                    out_ch)) {
+            const uint32_t valid =
+                attn_top_managed_tile_valid_words(d_model, tile_words, dt);
+            if (valid == 0u || valid > tile_words) {
                 return false;
             }
+            if ((tile_offset + valid) > d_model) {
+                return false;
+            }
+            ATTN_P11AD_MAINLINE_Q_WRITEBACK_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                const u32_t q_bits = q_out[tile_offset + i];
+                sram[row_q_base + tile_offset + i] = q_bits;
+                sram[row_q_act_q_base + tile_offset + i] = q_bits;
+            }
         }
+        sram[q_sx_base] = q_out_inv_sw_bits;
     }
 
     fallback_taken = false;

@@ -351,13 +351,13 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     if (d_tile_count == 0u) {
         return false;
     }
+    if (d_head > (uint32_t)ATTN_D_MODEL) {
+        return false;
+    }
 
     const uint32_t pre_row_base = pre_base + token * d_model;
     const uint32_t post_row_base = post_base + token * d_model;
     const uint32_t out_row_base = out_base + token * d_model;
-
-    attn_phaseb_softmax_pkt_ch_t in_ch;
-    attn_phaseb_softmax_pkt_ch_t out_ch;
 
     ATTN_P11AF_HEAD_LOOP: for (uint32_t h = 0u; h < n_heads; ++h) {
         const uint32_t head_col_base = h * d_head;
@@ -365,63 +365,88 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
         const u16_t head_group_id = attn_phaseb_head_group_id_from_head_idx(h);
         (void)attn_phaseb_rule_id_from_head_group(head_group_id);
 
-        ATTN_P11AF_EMIT_KEY_TOKEN_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
-            if (!attn_phaseb_emit_mask_score_word(
-                    sram,
-                    (u32_t)(score_head_base + j),
-                    (u32_t)token,
-                    (u32_t)j,
-                    (u32_t)head_group_id.to_uint(),
-                    in_ch)) {
-                return false;
-            }
+        softmax_score_t running_max = softmax_score_t(0);
+        softmax_sum_t running_l = softmax_sum_t(0);
+        quant_acc_t running_acc[ATTN_D_MODEL];
+        ATTN_P11AF_MAINLINE_ACC_CLEAR_LOOP: for (uint32_t i = 0u; i < (uint32_t)ATTN_D_MODEL; ++i) {
+            running_acc[i] = quant_acc_t(0);
+        }
+        bool have_state = false;
+
+        ATTN_P11AF_MAINLINE_KEY_TOKEN_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
+            const fp32_t score_fp = fp32_from_bits(sram[score_head_base + j]);
+            const softmax_score_t score =
+                score_fp.template convert_to_ac_fixed<18, 6, true, AC_RND, AC_SAT>(false);
             const uint32_t v_row_base = v_base + j * d_model + head_col_base;
-            ATTN_P11AF_EMIT_V_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
-                const uint32_t tile_offset = dt * tile_words;
-                const uint32_t tile_valid_words =
-                    attn_top_managed_tile_valid_words(d_head, tile_words, dt);
-                if (!attn_phaseb_emit_v_tile(
-                        sram,
-                        (u32_t)(v_row_base + tile_offset),
-                        (u32_t)token,
-                        (u32_t)j,
-                        (u32_t)head_group_id.to_uint(),
-                        (u32_t)dt,
-                        (u32_t)0u,
-                        (u32_t)d_tile_count,
-                        (u32_t)tile_valid_words,
-                        in_ch)) {
-                    return false;
+
+            if (!have_state) {
+                running_max = score;
+                running_l = softmax_sum_t(1);
+                ATTN_P11AF_MAINLINE_INIT_ACC_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
+                    const uint32_t tile_offset = dt * tile_words;
+                    const uint32_t valid =
+                        attn_top_managed_tile_valid_words(d_head, tile_words, dt);
+                    if (valid == 0u || valid > tile_words) { return false; }
+                    if ((tile_offset + valid) > d_head) { return false; }
+                    ATTN_P11AF_MAINLINE_INIT_ACC_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                        const quant_act_t vv = quant_act_from_bits(sram[v_row_base + tile_offset + i]);
+                        running_acc[tile_offset + i] = quant_acc_t(vv);
+                    }
+                }
+                have_state = true;
+                continue;
+            }
+
+            if (score > running_max) {
+                const softmax_x_t old_minus_new = softmax_x_t(running_max - score);
+                const softmax_exp_t alpha = softmax_exp_lut(old_minus_new);
+                running_l = softmax_sum_t(running_l * softmax_sum_t(alpha)) + softmax_sum_t(1);
+                ATTN_P11AF_MAINLINE_RENORM_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
+                    const uint32_t tile_offset = dt * tile_words;
+                    const uint32_t valid =
+                        attn_top_managed_tile_valid_words(d_head, tile_words, dt);
+                    if (valid == 0u || valid > tile_words) { return false; }
+                    if ((tile_offset + valid) > d_head) { return false; }
+                    ATTN_P11AF_MAINLINE_RENORM_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                        const quant_act_t vv = quant_act_from_bits(sram[v_row_base + tile_offset + i]);
+                        running_acc[tile_offset + i] =
+                            quant_acc_t(running_acc[tile_offset + i] * quant_acc_t(alpha)) + quant_acc_t(vv);
+                    }
+                }
+                running_max = score;
+            } else {
+                const softmax_x_t score_minus_old = softmax_x_t(score - running_max);
+                const softmax_exp_t beta = softmax_exp_lut(score_minus_old);
+                running_l += softmax_sum_t(beta);
+                ATTN_P11AF_MAINLINE_ACC_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
+                    const uint32_t tile_offset = dt * tile_words;
+                    const uint32_t valid =
+                        attn_top_managed_tile_valid_words(d_head, tile_words, dt);
+                    if (valid == 0u || valid > tile_words) { return false; }
+                    if ((tile_offset + valid) > d_head) { return false; }
+                    ATTN_P11AF_MAINLINE_ACC_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                        const quant_act_t vv = quant_act_from_bits(sram[v_row_base + tile_offset + i]);
+                        running_acc[tile_offset + i] += quant_acc_t(beta) * quant_acc_t(vv);
+                    }
                 }
             }
         }
 
-        if (!attn_phaseb_block_softmax_out_consume_emit(
-                in_ch,
-                out_ch,
-                (u32_t)token,
-                (u32_t)head_group_id.to_uint(),
-                (u32_t)token_count,
-                (u32_t)d_head,
-                (u32_t)0u,
-                (u32_t)d_tile_count)) {
+        if (!have_state) {
             return false;
         }
-
-        ATTN_P11AF_WRITEBACK_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
+        const softmax_inv_t inv_l = softmax_rcp_lut(running_l);
+        ATTN_P11AF_MAINLINE_WRITEBACK_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
             const uint32_t tile_offset = dt * tile_words;
-            if (!attn_phaseb_top_writeback_out_tile(
-                    sram,
-                    (u32_t)(pre_row_base + head_col_base + tile_offset),
-                    (u32_t)(post_row_base + head_col_base + tile_offset),
-                    (u32_t)(out_row_base + head_col_base + tile_offset),
-                    (u32_t)token,
-                    (u32_t)head_group_id.to_uint(),
-                    (u32_t)dt,
-                    (u32_t)0u,
-                    (u32_t)d_tile_count,
-                    out_ch)) {
-                return false;
+            const uint32_t valid = attn_top_managed_tile_valid_words(d_head, tile_words, dt);
+            if (valid == 0u || valid > tile_words) { return false; }
+            if ((tile_offset + valid) > d_head) { return false; }
+            ATTN_P11AF_MAINLINE_WRITEBACK_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                const quant_acc_t out_val = running_acc[tile_offset + i] * quant_acc_t(inv_l);
+                const u32_t out_bits = quant_bits_from_acc(out_val);
+                sram[pre_row_base + head_col_base + tile_offset + i] = out_bits;
+                sram[post_row_base + head_col_base + tile_offset + i] = out_bits;
+                sram[out_row_base + head_col_base + tile_offset + i] = out_bits;
             }
         }
     }

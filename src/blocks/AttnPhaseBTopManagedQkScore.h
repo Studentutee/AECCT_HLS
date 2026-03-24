@@ -259,9 +259,6 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     }
     const quant_acc_t inv_sqrt_d_head = attn_phaseb_inv_sqrt_d_head(d_head);
 
-    attn_phaseb_qk_pkt_ch_t in_ch;
-    attn_phaseb_qk_pkt_ch_t out_ch;
-
     ATTN_P11AE_HEAD_LOOP: for (uint32_t h = 0u; h < n_heads; ++h) {
         const uint32_t head_col_base = h * d_head;
         const uint32_t score_head_base = score_base + h * token_count;
@@ -270,58 +267,27 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
 
         ATTN_P11AE_KEY_TOKEN_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
             const uint32_t k_row_base = k_base + j * d_model + head_col_base;
-            ATTN_P11AE_TILE_EMIT_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
+            quant_acc_t dot = quant_acc_t(0);
+            ATTN_P11AE_TILE_DOT_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
                 const uint32_t tile_offset = dt * tile_words;
                 const uint32_t tile_valid_words =
                     attn_top_managed_tile_valid_words(d_head, tile_words, dt);
-                if (!attn_phaseb_emit_qsrc_tile(
-                        sram,
-                        (u32_t)(q_row_base + head_col_base + tile_offset),
-                        (u32_t)token,
-                        (u32_t)j,
-                        (u32_t)head_group_id.to_uint(),
-                        (u32_t)dt,
-                        (u32_t)0u,
-                        (u32_t)d_tile_count,
-                        (u32_t)tile_valid_words,
-                        in_ch)) {
+                if (tile_valid_words == 0u || tile_valid_words > tile_words) {
                     return false;
                 }
-                if (!attn_phaseb_emit_kvscan_tile(
-                        sram,
-                        (u32_t)(k_row_base + tile_offset),
-                        (u32_t)token,
-                        (u32_t)j,
-                        (u32_t)head_group_id.to_uint(),
-                        (u32_t)dt,
-                        (u32_t)0u,
-                        (u32_t)d_tile_count,
-                        (u32_t)tile_valid_words,
-                        in_ch)) {
+                if ((tile_offset + tile_valid_words) > d_head) {
                     return false;
                 }
+                ATTN_P11AE_DOT_COL_LOOP: for (uint32_t i = 0u; i < tile_valid_words; ++i) {
+                    const quant_act_t qv =
+                        quant_act_from_bits(sram[q_row_base + head_col_base + tile_offset + i]);
+                    const quant_act_t kv =
+                        quant_act_from_bits(sram[k_row_base + tile_offset + i]);
+                    dot += quant_acc_t(qv) * quant_acc_t(kv);
+                }
             }
-
-            if (!attn_phaseb_block_qk_dot_consume_emit(
-                    in_ch,
-                    out_ch,
-                    (u32_t)token,
-                    (u32_t)j,
-                    (u32_t)head_group_id.to_uint(),
-                    (u32_t)0u,
-                    (u32_t)d_tile_count,
-                    inv_sqrt_d_head)) {
-                return false;
-            }
-            if (!attn_phaseb_top_writeback_score(
-                    sram,
-                    (u32_t)(score_head_base + j),
-                    (u32_t)token,
-                    (u32_t)j,
-                    (u32_t)head_group_id.to_uint(),
-                    out_ch)) {
-                return false;
-            }
+            const quant_acc_t scaled = dot * inv_sqrt_d_head;
+            sram[score_head_base + j] = quant_bits_from_acc(scaled);
         }
     }
 

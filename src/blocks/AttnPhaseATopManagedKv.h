@@ -534,18 +534,16 @@ static inline bool attn_phasea_top_managed_kv_mainline(
     const u32_t wk_inv_sw_bits = sram[wk_inv_addr];
     const u32_t wv_inv_sw_bits = sram[wv_inv_addr];
 
-    attn_work_pkt_ch_t in_ch;
-    attn_work_pkt_ch_t out_ch;
-
     const uint32_t x_base = (uint32_t)x_in_base_word.to_uint();
     const uint32_t k_base = (uint32_t)sc.k_base_word.to_uint();
     const uint32_t v_base = (uint32_t)sc.v_base_word.to_uint();
     const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
     const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
-    const uint32_t token_begin = 0u;
-    const uint32_t token_end = token_count;
-    const uint32_t tile_begin = 0u;
-    const uint32_t tile_end = d_tile_count;
+
+    if (d_model > (uint32_t)kTernaryLiveL0WkCols ||
+        d_model > (uint32_t)kTernaryLiveL0WvCols) {
+        return false;
+    }
 
     for (uint32_t t = 0u; t < token_count; ++t) {
         const uint32_t row_x_base = x_base + t * d_model;
@@ -553,59 +551,70 @@ static inline bool attn_phasea_top_managed_kv_mainline(
         const uint32_t row_v_base = v_base + t * d_model;
         const uint32_t row_k_act_q_base = k_act_q_base + t * d_model;
         const uint32_t row_v_act_q_base = v_act_q_base + t * d_model;
+
+        u32_t x_row[kTernaryLiveL0WkCols];
+        ATTN_P11AC_MAINLINE_XROW_CLEAR_LOOP: for (uint32_t i = 0u; i < (uint32_t)kTernaryLiveL0WkCols; ++i) {
+            x_row[i] = (u32_t)0u;
+        }
+
         for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
             const uint32_t tile_offset = dt * tile_words;
             const uint32_t valid =
                 attn_top_managed_tile_valid_words(d_model, tile_words, dt);
-            if (!attn_top_emit_phasea_kv_work_tile(
-                    sram,
-                    (u32_t)(row_x_base + tile_offset),
-                    (u32_t)t,
-                    (u32_t)token_begin,
-                    (u32_t)token_end,
-                    (u32_t)dt,
-                    (u32_t)tile_begin,
-                    (u32_t)tile_end,
-                    (u32_t)valid,
-                    in_ch)) {
+            if (valid == 0u || valid > tile_words) {
                 return false;
             }
+            if ((tile_offset + valid) > d_model) {
+                return false;
+            }
+            ATTN_P11AC_MAINLINE_XROW_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                x_row[tile_offset + i] = sram[row_x_base + tile_offset + i];
+            }
         }
-        if (!attn_block_phasea_kv_consume_emit_token_work_tiles(
-                in_ch,
-                out_ch,
+
+        u32_t k_out[kTernaryLiveL0WkRows];
+        u32_t k_out_act_q[kTernaryLiveL0WkRows];
+        u32_t k_out_inv_sw_bits = (u32_t)0u;
+        if (!ternary_live_l0_wk_materialize_row_kernel_split(
+                x_row,
                 wk_payload_words,
                 wk_inv_sw_bits,
-                wv_payload_words,
-                wv_inv_sw_bits,
-                (u32_t)t,
-                (u32_t)token_begin,
-                (u32_t)token_end,
-                (u32_t)tile_begin,
-                (u32_t)tile_end,
-                (u32_t)d_model)) {
+                k_out,
+                k_out_act_q,
+                k_out_inv_sw_bits)) {
             return false;
         }
+
+        u32_t v_out[kTernaryLiveL0WvRows];
+        u32_t v_out_act_q[kTernaryLiveL0WvRows];
+        u32_t v_out_inv_sw_bits = (u32_t)0u;
+        if (!ternary_live_l0_wv_materialize_row_kernel_split(
+                x_row,
+                wv_payload_words,
+                wv_inv_sw_bits,
+                v_out,
+                v_out_act_q,
+                v_out_inv_sw_bits)) {
+            return false;
+        }
+
         for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
             const uint32_t tile_offset = dt * tile_words;
-            if (!attn_top_writeback_phasea_kv_work_tile(
-                    sram,
-                    (u32_t)(row_k_base + tile_offset),
-                    (u32_t)(row_v_base + tile_offset),
-                    (u32_t)t,
-                    (u32_t)token_begin,
-                    (u32_t)token_end,
-                    (u32_t)dt,
-                    (u32_t)tile_begin,
-                    (u32_t)tile_end,
-                    out_ch)) {
-                return false;
-            }
             const uint32_t valid =
                 attn_top_managed_tile_valid_words(d_model, tile_words, dt);
+            if (valid == 0u || valid > tile_words) {
+                return false;
+            }
+            if ((tile_offset + valid) > d_model) {
+                return false;
+            }
             for (uint32_t i = 0u; i < valid; ++i) {
-                sram[row_k_act_q_base + tile_offset + i] = sram[row_k_base + tile_offset + i];
-                sram[row_v_act_q_base + tile_offset + i] = sram[row_v_base + tile_offset + i];
+                const u32_t k_bits = k_out[tile_offset + i];
+                const u32_t v_bits = v_out[tile_offset + i];
+                sram[row_k_base + tile_offset + i] = k_bits;
+                sram[row_v_base + tile_offset + i] = v_bits;
+                sram[row_k_act_q_base + tile_offset + i] = k_bits;
+                sram[row_v_act_q_base + tile_offset + i] = v_bits;
             }
         }
     }
