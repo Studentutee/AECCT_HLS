@@ -9,6 +9,20 @@
   - 哪些 `options set ...` 寫法已由使用者在 Catapult GUI transcript 中實際觀察到。
   - 哪些指令/寫法目前仍屬 **待真機 compile 驗證**。
 
+## 與 Catapult Shell Runbook 的關係
+- 通用執行文件建議命名為 **Catapult Shell Runbook**，檔名仍可維持 `SKILL.md` 以相容 agent / loader 的固定入口。
+- Runbook 的責任是：
+  - 怎麼在遠端 shell 啟動 Catapult
+  - 怎麼保存 console log / internal log / `messages.txt`
+  - 怎麼 grep success / fail / blocker / warning
+  - 怎麼用固定治理格式回報
+- 本 note 的責任是：
+  - 說明 **AECCT 這個專案** 的 project Tcl 應該怎麼寫
+  - 固定 canonical synth top / entry TU / search path policy / compiler flag policy
+- 一句話分工：
+  - **Runbook 管怎麼跑**
+  - **本 note 管 AECCT 的 Tcl 要跑什麼**
+
 ## 目前專案的 canonical synth entry
 - Canonical synth entry（經真機 transcript 修正後）：`aecct::TopManagedAttentionChainCatapultTop`
 - `run` 仍是實際被 synthesize 的 interface method，但 `solution design set ... -top` 應以 class-level target 為主，而不是 `TopManagedAttentionChainCatapultTop::run`。
@@ -17,6 +31,11 @@
 - 對應 filelist：`scripts/catapult/p11as_corrected_chain_filelist.f`
 - 對應 launch runner：`scripts/catapult/run_p11as_corrected_chain_catapult_launch.ps1`
 - 對應 launch note：`docs/handoff/P11_CORRECTED_CHAIN_CATAPULT_LAUNCH_NOTE.md`
+- 若搭配通用 Runbook，建議在 AECCT override 中額外記錄：
+  - `PROJECT_TCL=scripts/catapult/p11as_corrected_chain_project.tcl`
+  - `PROJECT_ENTRY_DESC="corrected-chain compile-first project tcl"`
+  - `TOP_TARGET="aecct::TopManagedAttentionChainCatapultTop"`
+  - `ENTRY_TU="src/catapult/p11as_top_managed_attention_chain_entry.cpp"`
 
 ## 你提供的 Catapult 範本中，可直接拿來當基線的 Tcl 風格
 以下骨架在你提供的範本中有明確對應，可視為目前最保守、最安全的基線：
@@ -161,6 +180,7 @@ go compile
 換句話說：
 - 它可以拿來當 launch-pack 草案與自動化入口。
 - 但在真機驗證前，不能把它當成完全定稿的 Catapult project script。
+- 若由通用 Runbook 啟動，`PROJECT_TCL` 就應指向這份檔案。
 
 ## 建議的驗證策略
 1. **先驗最小 compile**
