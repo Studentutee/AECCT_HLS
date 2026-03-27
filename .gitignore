@@ -392,3 +392,6 @@ archives/
 /trace/
 /traces/
 
+
+# Local SSH keys
+.codex_ssh/
