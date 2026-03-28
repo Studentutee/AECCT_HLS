@@ -1183,12 +1183,17 @@ namespace aecct {
         }
     }
 
-    static inline void run_infer_pipeline(TopRegs& regs, u32_t* sram) {
+    static inline bool run_infer_pipeline(
+        TopRegs& regs,
+        u32_t* sram,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
         run_preproc_block(sram);
         run_layernorm_block(sram);
         run_transformer_layer_loop(regs, sram);
 
         HeadParamBase hp = make_head_param_base(regs.w_base_word);
+        const u32_t outmode = regs.outmode;
         FinalHead(
             sram,
             build_layer_cfg(regs),
@@ -1196,8 +1201,13 @@ namespace aecct {
             regs.infer_input_shadow,
             regs.infer_logits_base_word,
             regs.infer_xpred_base_word,
-            hp
+            hp,
+            &data_out,
+            outmode
         );
+        const uint32_t mode = (uint32_t)outmode.to_uint();
+        return (mode == (uint32_t)FINAL_HEAD_OUTMODE_XPRED) ||
+            (mode == (uint32_t)FINAL_HEAD_OUTMODE_LOGITS);
     }
 
     static inline void infer_emit_outmode_payload(
@@ -1236,8 +1246,10 @@ namespace aecct {
     ) {
         unsigned idx = (unsigned)regs.input_count.to_uint();
         if (idx >= INFER_IN_WORDS_EXPECTED) {
-            run_infer_pipeline(regs, sram);
-            infer_emit_outmode_payload(regs, data_out, sram);
+            const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
+            if (!finalhead_streamed) {
+                infer_emit_outmode_payload(regs, data_out, sram);
+            }
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
             return;
@@ -1251,8 +1263,10 @@ namespace aecct {
         regs.input_count = regs.input_count + 1;
 
         if ((unsigned)regs.input_count.to_uint() == INFER_IN_WORDS_EXPECTED) {
-            run_infer_pipeline(regs, sram);
-            infer_emit_outmode_payload(regs, data_out, sram);
+            const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
+            if (!finalhead_streamed) {
+                infer_emit_outmode_payload(regs, data_out, sram);
+            }
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
         }
