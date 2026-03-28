@@ -30,7 +30,8 @@ enum class CliRunMode : unsigned char {
   EXPERIMENT_ONLY = 2,
   EVAL_BASELINE = 3,
   EVAL_EXPERIMENT = 4,
-  EVAL_COMPARE = 5
+  EVAL_COMPARE = 5,
+  EXPLORE = 6
 };
 
 enum class CliParseResult : unsigned char {
@@ -48,6 +49,7 @@ struct CliOptions {
   bool summary_only;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
+  aecct_ref::RefFinalHeadExploreStage finalhead_stage;
 };
 
 struct PatternRange {
@@ -163,6 +165,7 @@ static const char* run_mode_to_string(CliRunMode mode) {
     case CliRunMode::EVAL_BASELINE: return "eval-baseline";
     case CliRunMode::EVAL_EXPERIMENT: return "eval-experiment";
     case CliRunMode::EVAL_COMPARE: return "eval-compare";
+    case CliRunMode::EXPLORE: return "explore";
     default: return "unknown";
   }
 }
@@ -170,10 +173,11 @@ static const char* run_mode_to_string(CliRunMode mode) {
 static void print_usage() {
   std::printf("Usage: ref_sim [pattern_index] [options]\n");
   std::printf("Options:\n");
-  std::printf("  --mode compare|baseline|experiment|eval-baseline|eval-experiment|eval-compare\n");
+  std::printf("  --mode compare|baseline|experiment|eval-baseline|eval-experiment|eval-compare|explore\n");
   std::printf("  --pattern N\n");
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
+  std::printf("  --stage S0|S1|S2|S3|S4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
   std::printf("  --summary-csv PATH\n");
@@ -206,6 +210,10 @@ static bool parse_run_mode(const char* text, CliRunMode& mode) {
     mode = CliRunMode::EVAL_COMPARE;
     return true;
   }
+  if (std::strcmp(text, "explore") == 0) {
+    mode = CliRunMode::EXPLORE;
+    return true;
+  }
   return false;
 }
 
@@ -225,6 +233,30 @@ static bool parse_algo_variant(const char* text, aecct_ref::RefAlgoVariant& vari
   return false;
 }
 
+static bool parse_finalhead_stage(const char* text, aecct_ref::RefFinalHeadExploreStage& stage) {
+  if (std::strcmp(text, "S0") == 0 || std::strcmp(text, "s0") == 0) {
+    stage = aecct_ref::RefFinalHeadExploreStage::S0;
+    return true;
+  }
+  if (std::strcmp(text, "S1") == 0 || std::strcmp(text, "s1") == 0) {
+    stage = aecct_ref::RefFinalHeadExploreStage::S1;
+    return true;
+  }
+  if (std::strcmp(text, "S2") == 0 || std::strcmp(text, "s2") == 0) {
+    stage = aecct_ref::RefFinalHeadExploreStage::S2;
+    return true;
+  }
+  if (std::strcmp(text, "S3") == 0 || std::strcmp(text, "s3") == 0) {
+    stage = aecct_ref::RefFinalHeadExploreStage::S3;
+    return true;
+  }
+  if (std::strcmp(text, "S4") == 0 || std::strcmp(text, "s4") == 0) {
+    stage = aecct_ref::RefFinalHeadExploreStage::S4;
+    return true;
+  }
+  return false;
+}
+
 static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.run_mode = CliRunMode::COMPARE;
   opts.pattern_index = -1;
@@ -234,6 +266,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.summary_only = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
+  opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
 
   bool positional_pattern_used = false;
   for (int i = 1; i < argc; ++i) {
@@ -283,6 +316,17 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
         return CliParseResult::ERROR;
       }
       opts.topk = std::atoi(argv[++i]);
+      continue;
+    }
+    if (std::strcmp(arg, "--stage") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --stage\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_finalhead_stage(argv[++i], opts.finalhead_stage)) {
+        std::printf("Unsupported stage: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
       continue;
     }
     if (std::strcmp(arg, "--summary-only") == 0 || std::strcmp(arg, "--quiet") == 0) {
@@ -445,6 +489,7 @@ static inline aecct_ref::ref_fp32_t sign_fp32_local(aecct_ref::ref_fp32_t x) {
 static void run_experiment_from_baseline_finalhead(
   const PatternRange& range,
   int n_vars,
+  aecct_ref::RefFinalHeadExploreStage stage,
   const std::vector<double>& baseline_finalhead_s_t,
   std::vector<double>& experiment_logits,
   std::vector<aecct_ref::bit1_t>& experiment_x_pred
@@ -455,13 +500,22 @@ static void run_experiment_from_baseline_finalhead(
   const std::size_t logits_count = static_cast<std::size_t>(run_b * n_vars);
   experiment_logits.assign(logits_count, 0.0);
   experiment_x_pred.assign(logits_count, aecct_ref::bit1_t(0));
+  const bool use_s0 = aecct_ref::stage_uses_island_s0(stage);
+  const bool use_s1 = aecct_ref::stage_uses_island_s1(stage);
+  const bool use_s3 = aecct_ref::stage_uses_island_s3(stage);
 
   for (int b = 0; b < run_b; ++b) {
     aecct_ref::ref_fp32_t out_fc_in[kTokensT];
     for (int t = 0; t < kTokensT; ++t) {
       const double s_t = baseline_finalhead_s_t[static_cast<std::size_t>(b * kTokensT + t)];
       aecct_ref::ref_fp32_t x = aecct_ref::ref_fp32_t(static_cast<float>(s_t));
-      out_fc_in[t] = aecct_ref::roundtrip_through_generic_e4m3(x);
+      if (use_s3) {
+        x = aecct_ref::roundtrip_through_generic_e4m3(x);
+      }
+      if (use_s0) {
+        x = aecct_ref::roundtrip_through_generic_e4m3(x);
+      }
+      out_fc_in[t] = x;
     }
 
     const int src_pattern = range.begin + b;
@@ -469,7 +523,11 @@ static void run_experiment_from_baseline_finalhead(
     for (int n = 0; n < kVars; ++n) {
       aecct_ref::ref_fp32_t acc = aecct_ref::ref_fp32_t(static_cast<float>(w_out_fc_bias[n]));
       for (int t = 0; t < kTokensT; ++t) {
-        acc += aecct_ref::ref_fp32_t(static_cast<float>(w_out_fc_weight[n * kTokensT + t])) * out_fc_in[t];
+        aecct_ref::ref_fp32_t mul_in = out_fc_in[t];
+        if (use_s1) {
+          mul_in = aecct_ref::roundtrip_through_generic_e4m3(mul_in);
+        }
+        acc += aecct_ref::ref_fp32_t(static_cast<float>(w_out_fc_weight[n * kTokensT + t])) * mul_in;
       }
 
       experiment_logits[static_cast<std::size_t>(b * n_vars + n)] = static_cast<double>(acc.to_float());
@@ -1130,6 +1188,226 @@ static void print_eval_compare_console_summary(
   std::printf("experiment x_pred match ratio: %.9e\n", experiment_stats.x_pred_match_ratio);
 }
 
+struct StageCompareEvalSnapshot {
+  aecct_ref::RefFinalHeadExploreStage stage;
+  PatternRange range;
+  BatchCompareSummary compare_batch;
+  DistributionStats margin_dist;
+  EvalAggregateStats baseline_eval;
+  EvalAggregateStats experiment_eval;
+  PerfBreakdownSec perf;
+  std::vector<PerPatternCompareRow> compare_rows;
+  std::vector<EvalComparePatternRow> eval_rows;
+};
+
+struct ExploreStageOutcome {
+  bool attempted;
+  bool pass;
+  bool red;
+  bool yellow;
+  bool promoted;
+  bool rolled_back;
+  bool has_quick;
+  bool has_eval32;
+  std::string reason;
+  StageCompareEvalSnapshot quick;
+  StageCompareEvalSnapshot eval32;
+};
+
+static bool run_stage_compare_eval_snapshot(
+  const CliOptions& opts,
+  int n_vars,
+  const PatternRange& range,
+  aecct_ref::RefFinalHeadExploreStage stage,
+  const std::string& file_prefix,
+  bool summary_only,
+  StageCompareEvalSnapshot& out
+) {
+  out = StageCompareEvalSnapshot{};
+  out.stage = stage;
+  out.range = range;
+  init_batch_summary(out.compare_batch);
+  init_eval_aggregate(out.baseline_eval);
+  init_eval_aggregate(out.experiment_eval);
+  out.compare_rows.reserve(static_cast<std::size_t>(range.count));
+  out.eval_rows.reserve(static_cast<std::size_t>(range.count));
+
+  aecct_ref::RefModel baseline_model;
+  aecct_ref::RefRunConfig baseline_cfg{};
+  baseline_cfg.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+  baseline_cfg.algo_variant = opts.algo_variant;
+  baseline_cfg.finalhead_stage = stage;
+  baseline_model.set_run_config(baseline_cfg);
+
+  std::vector<double> baseline_logits_batch;
+  std::vector<aecct_ref::bit1_t> baseline_x_pred_batch;
+  std::vector<double> baseline_finalhead_s_t;
+  baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
+  std::vector<double> experiment_logits_batch;
+  std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
+
+  const auto t0 = now_tp();
+  run_ref_batch(
+    baseline_model,
+    range,
+    n_vars,
+    baseline_logits_batch,
+    baseline_x_pred_batch,
+    baseline_finalhead_s_t.data()
+  );
+  out.perf.baseline_model_s = elapsed_sec(t0, now_tp());
+
+  const auto t1 = now_tp();
+  run_experiment_from_baseline_finalhead(
+    range,
+    n_vars,
+    stage,
+    baseline_finalhead_s_t,
+    experiment_logits_batch,
+    experiment_x_pred_batch
+  );
+  out.perf.experiment_path_s = elapsed_sec(t1, now_tp());
+
+  const auto t2 = now_tp();
+  for (int off = 0; off < range.count; ++off) {
+    const int pattern = range.begin + off;
+    const std::size_t base_idx = static_cast<std::size_t>(off * n_vars);
+
+    PerPatternCompareRow cmp_row{};
+    cmp_row.pattern_index = pattern;
+    cmp_row.baseline_vs_golden = compute_pattern_logits_vs_golden(baseline_logits_batch, off, pattern, n_vars);
+    cmp_row.experiment_vs_golden = compute_pattern_logits_vs_golden(experiment_logits_batch, off, pattern, n_vars);
+    cmp_row.cmp = aecct_ref::compute_experiment_compare_metrics(
+      &baseline_logits_batch[base_idx],
+      &experiment_logits_batch[base_idx],
+      &baseline_x_pred_batch[base_idx],
+      &experiment_x_pred_batch[base_idx],
+      static_cast<std::size_t>(n_vars),
+      static_cast<std::size_t>(n_vars),
+      static_cast<std::size_t>(opts.topk)
+    );
+    out.compare_rows.push_back(cmp_row);
+    update_batch_summary(out.compare_batch, cmp_row);
+
+    const EvalPatternRow b_row = build_eval_pattern_row(
+      &baseline_x_pred_batch[base_idx],
+      pattern,
+      n_vars
+    );
+    const EvalPatternRow e_row = build_eval_pattern_row(
+      &experiment_x_pred_batch[base_idx],
+      pattern,
+      n_vars
+    );
+    update_eval_aggregate(out.baseline_eval, b_row);
+    update_eval_aggregate(out.experiment_eval, e_row);
+
+    EvalComparePatternRow eval_row{};
+    eval_row.pattern_index = pattern;
+    eval_row.evaluated_bits = b_row.evaluated_bits;
+    eval_row.baseline_bit_errors = b_row.bit_errors;
+    eval_row.experiment_bit_errors = e_row.bit_errors;
+    eval_row.baseline_x_pred_match_count = b_row.x_pred_match_count;
+    eval_row.experiment_x_pred_match_count = e_row.x_pred_match_count;
+    eval_row.baseline_frame_error_flag = b_row.frame_error_flag;
+    eval_row.experiment_frame_error_flag = e_row.frame_error_flag;
+    out.eval_rows.push_back(eval_row);
+
+    if (!summary_only) {
+      std::printf("[stage %s][pattern %d] mse=%.9e maxabs=%.9e xflip=%zu sflip=%zu min_margin=%.9e b_err=%zu e_err=%zu\n",
+        aecct_ref::to_string(stage),
+        pattern,
+        cmp_row.cmp.logits_diff.mse,
+        cmp_row.cmp.logits_diff.max_abs,
+        cmp_row.cmp.x_pred_mismatch_count,
+        cmp_row.cmp.sign_flip_count,
+        (cmp_row.cmp.baseline_min_abs_margin < cmp_row.cmp.experiment_min_abs_margin)
+          ? cmp_row.cmp.baseline_min_abs_margin : cmp_row.cmp.experiment_min_abs_margin,
+        eval_row.baseline_bit_errors,
+        eval_row.experiment_bit_errors);
+    }
+  }
+  out.perf.compare_aggregation_s = elapsed_sec(t2, now_tp());
+  finalize_eval_aggregate(out.baseline_eval);
+  finalize_eval_aggregate(out.experiment_eval);
+  out.margin_dist = compute_distribution_stats(out.compare_batch.per_pattern_min_margin);
+
+  const auto t3 = now_tp();
+  const std::string compare_csv = file_prefix + "_compare.csv";
+  const std::string compare_txt = file_prefix + "_compare.txt";
+  const std::string eval_csv = file_prefix + "_eval.csv";
+  const std::string eval_txt = file_prefix + "_eval.txt";
+  const std::string timing_txt = file_prefix + "_timing.txt";
+  const std::vector<std::size_t> vulnerable_idx = collect_top_vulnerable_indices(out.compare_rows, 5U);
+  write_compare_csv(compare_csv, out.compare_rows);
+  write_batch_summary_txt(compare_txt, out.compare_batch, out.margin_dist, out.compare_rows, vulnerable_idx);
+  write_eval_compare_csv(eval_csv, out.eval_rows);
+  write_eval_compare_summary_txt(eval_txt, out.baseline_eval, out.experiment_eval, out.eval_rows);
+  out.perf.file_io_s = elapsed_sec(t3, now_tp());
+  out.perf.total_s = out.perf.baseline_model_s + out.perf.experiment_path_s +
+                     out.perf.compare_aggregation_s + out.perf.file_io_s;
+  write_timing_txt(timing_txt, out.perf);
+  return true;
+}
+
+static bool is_stage_red(const StageCompareEvalSnapshot& s, std::string& reason) {
+  const double delta_ber = s.experiment_eval.ber - s.baseline_eval.ber;
+  const double delta_fer = s.experiment_eval.fer - s.baseline_eval.fer;
+  if (delta_ber > 0.0) {
+    reason = "delta BER > 0";
+    return true;
+  }
+  if (delta_fer > 0.0) {
+    reason = "delta FER > 0";
+    return true;
+  }
+  if (s.compare_batch.patterns_with_xpred_flip > 0U) {
+    reason = "x_pred flips detected";
+    return true;
+  }
+  if (s.compare_batch.patterns_with_sign_flip > 0U) {
+    reason = "sign flips detected";
+    return true;
+  }
+  if (s.compare_batch.baseline_nonfinite_total.nan_count > 0U ||
+      s.compare_batch.baseline_nonfinite_total.inf_count > 0U ||
+      s.compare_batch.experiment_nonfinite_total.nan_count > 0U ||
+      s.compare_batch.experiment_nonfinite_total.inf_count > 0U) {
+    reason = "NaN/Inf detected";
+    return true;
+  }
+  reason.clear();
+  return false;
+}
+
+static bool is_stage_yellow(const StageCompareEvalSnapshot& s) {
+  return s.compare_batch.worst_min_margin < 2.0e-2;
+}
+
+static void print_stage_snapshot_summary(const char* tag, const StageCompareEvalSnapshot& s) {
+  const double delta_ber = s.experiment_eval.ber - s.baseline_eval.ber;
+  const double delta_fer = s.experiment_eval.fer - s.baseline_eval.fer;
+  std::printf("[%s][%s] patterns=%d mse_worst=%.9e maxabs_worst=%.9e xflip_patterns=%zu signflip_patterns=%zu worst_min_margin=%.9e bBER=%.9e eBER=%.9e dBER=%.9e bFER=%.9e eFER=%.9e dFER=%.9e baseline_nan_inf=%zu/%zu experiment_nan_inf=%zu/%zu\n",
+    aecct_ref::to_string(s.stage),
+    tag,
+    s.compare_batch.total_patterns_scanned,
+    s.compare_batch.worst_logits_mse,
+    s.compare_batch.worst_max_abs_diff,
+    s.compare_batch.patterns_with_xpred_flip,
+    s.compare_batch.patterns_with_sign_flip,
+    s.compare_batch.worst_min_margin,
+    s.baseline_eval.ber,
+    s.experiment_eval.ber,
+    delta_ber,
+    s.baseline_eval.fer,
+    s.experiment_eval.fer,
+    delta_fer,
+    s.compare_batch.baseline_nonfinite_total.nan_count,
+    s.compare_batch.baseline_nonfinite_total.inf_count,
+    s.compare_batch.experiment_nonfinite_total.nan_count,
+    s.compare_batch.experiment_nonfinite_total.inf_count);
+}
+
 static int run_single_mode(
   aecct_ref::RefPrecisionMode precision_mode,
   const char* tag,
@@ -1141,6 +1419,7 @@ static int run_single_mode(
   aecct_ref::RefRunConfig cfg{};
   cfg.precision_mode = precision_mode;
   cfg.algo_variant = opts.algo_variant;
+  cfg.finalhead_stage = opts.finalhead_stage;
   model.set_run_config(cfg);
 
   GoldenAggregateMetrics agg{};
@@ -1212,6 +1491,7 @@ int main(int argc, char** argv) {
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
   std::printf("  precision(base): %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::BASELINE_FP32));
   std::printf("  precision(exp) : %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD));
+  std::printf("  finalhead_stage: %s\n", aecct_ref::to_string(opts.finalhead_stage));
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
   std::printf("  pattern_range  : begin=%d count=%d\n", range.begin, range.count);
   std::printf("  topk           : %d\n", opts.topk);
@@ -1226,6 +1506,190 @@ int main(int argc, char** argv) {
     return run_single_mode(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD, "experiment", range, N, opts);
   }
 
+  if (opts.run_mode == CliRunMode::EXPLORE) {
+    if (range.count <= 0) {
+      std::printf("[explore] Empty range.\n");
+      return 1;
+    }
+
+    const PatternRange quick_range{range.begin, (range.count < 16) ? range.count : 16};
+    const PatternRange eval32_range{range.begin, (range.count < 32) ? range.count : 32};
+    const aecct_ref::RefFinalHeadExploreStage ladder[] = {
+      aecct_ref::RefFinalHeadExploreStage::S1,
+      aecct_ref::RefFinalHeadExploreStage::S2,
+      aecct_ref::RefFinalHeadExploreStage::S3,
+      aecct_ref::RefFinalHeadExploreStage::S4
+    };
+
+    std::vector<ExploreStageOutcome> outcomes(5);
+    outcomes[0].attempted = true;
+    outcomes[0].pass = true;
+    outcomes[0].yellow = true;
+    outcomes[0].reason = "Known stage from existing evidence (S0 margin tail below 2e-2).";
+
+    aecct_ref::RefFinalHeadExploreStage best_stage = aecct_ref::RefFinalHeadExploreStage::S0;
+    int first_fail_stage = -1;
+    std::string stop_reason = "Reached end of FinalHead ladder";
+
+    for (std::size_t si = 0; si < sizeof(ladder) / sizeof(ladder[0]); ++si) {
+      const aecct_ref::RefFinalHeadExploreStage stage = ladder[si];
+      ExploreStageOutcome& out = outcomes[static_cast<int>(stage)];
+      out = ExploreStageOutcome{};
+      out.attempted = true;
+
+      const std::string base_prefix = "build/ref_eval/explore_" + std::string(aecct_ref::to_string(stage)) +
+        "_begin" + std::to_string(range.begin) + "_count" + std::to_string(range.count);
+      const std::string quick_prefix = base_prefix + "_quick16";
+      const bool quick_ok = run_stage_compare_eval_snapshot(
+        opts, N, quick_range, stage, quick_prefix, true, out.quick
+      );
+      out.has_quick = quick_ok;
+      if (!quick_ok) {
+        out.red = true;
+        out.pass = false;
+        out.rolled_back = true;
+        out.reason = "RED: quick16 run failed";
+        first_fail_stage = static_cast<int>(stage);
+        stop_reason = out.reason;
+        break;
+      }
+      print_stage_snapshot_summary("quick16", out.quick);
+
+      std::string red_reason;
+      if (is_stage_red(out.quick, red_reason)) {
+        out.red = true;
+        out.pass = false;
+        out.rolled_back = true;
+        out.reason = "RED at quick16: " + red_reason;
+        first_fail_stage = static_cast<int>(stage);
+        stop_reason = out.reason;
+        break;
+      }
+
+      StageCompareEvalSnapshot gate_snapshot = out.quick;
+      if (eval32_range.count > quick_range.count) {
+        const std::string eval32_prefix = base_prefix + "_eval32";
+        const bool eval32_ok = run_stage_compare_eval_snapshot(
+          opts, N, eval32_range, stage, eval32_prefix, true, out.eval32
+        );
+        out.has_eval32 = eval32_ok;
+        if (!eval32_ok) {
+          out.red = true;
+          out.pass = false;
+          out.rolled_back = true;
+          out.reason = "RED: eval32 run failed";
+          first_fail_stage = static_cast<int>(stage);
+          stop_reason = out.reason;
+          break;
+        }
+        gate_snapshot = out.eval32;
+        print_stage_snapshot_summary("eval32", out.eval32);
+      }
+
+      if (is_stage_red(gate_snapshot, red_reason)) {
+        out.red = true;
+        out.pass = false;
+        out.rolled_back = true;
+        out.reason = "RED at eval gate: " + red_reason;
+        first_fail_stage = static_cast<int>(stage);
+        stop_reason = out.reason;
+        break;
+      }
+
+      out.yellow = is_stage_yellow(gate_snapshot);
+      out.pass = true;
+      out.promoted = (stage != aecct_ref::RefFinalHeadExploreStage::S4);
+      out.reason = out.yellow
+        ? "PASS YELLOW: worst min margin < 2e-2"
+        : "PASS GREEN";
+      best_stage = stage;
+    }
+
+    const std::string report_path = !opts.summary_csv_path.empty()
+      ? derive_summary_txt_path(opts.summary_csv_path)
+      : ("build/ref_eval/explore_report_begin" + std::to_string(range.begin) +
+         "_count" + std::to_string(range.count) + ".txt");
+    std::filesystem::path rp(report_path);
+    if (rp.has_parent_path()) {
+      std::filesystem::create_directories(rp.parent_path());
+    }
+    std::ofstream rofs(report_path.c_str(), std::ios::out | std::ios::trunc);
+    if (rofs.good()) {
+      rofs.setf(std::ios::scientific);
+      rofs << std::setprecision(9);
+      rofs << "=== Guardrailed Auto-Explore Report ===\n";
+      rofs << "quick_range: begin=" << quick_range.begin << " count=" << quick_range.count << "\n";
+      rofs << "eval32_range: begin=" << eval32_range.begin << " count=" << eval32_range.count << "\n";
+      rofs << "best_stage: " << aecct_ref::to_string(best_stage) << "\n";
+      rofs << "first_fail_stage: " << ((first_fail_stage >= 0) ? std::to_string(first_fail_stage) : std::string("none")) << "\n";
+      rofs << "stop_reason: " << stop_reason << "\n";
+      rofs << "\n";
+      rofs << "stage table:\n";
+      rofs << "S0: PASS (known baseline stage), class=YELLOW\n";
+      const aecct_ref::RefFinalHeadExploreStage all_stages[] = {
+        aecct_ref::RefFinalHeadExploreStage::S1,
+        aecct_ref::RefFinalHeadExploreStage::S2,
+        aecct_ref::RefFinalHeadExploreStage::S3,
+        aecct_ref::RefFinalHeadExploreStage::S4
+      };
+      for (std::size_t i = 0; i < sizeof(all_stages) / sizeof(all_stages[0]); ++i) {
+        const aecct_ref::RefFinalHeadExploreStage st = all_stages[i];
+        const ExploreStageOutcome& o = outcomes[static_cast<int>(st)];
+        rofs << aecct_ref::to_string(st) << ": ";
+        if (!o.attempted) {
+          rofs << "NOT_ATTEMPTED\n";
+          continue;
+        }
+        rofs << (o.pass ? "PASS" : "FAIL")
+             << " class=" << (o.red ? "RED" : (o.yellow ? "YELLOW" : "GREEN"))
+             << " promoted=" << (o.promoted ? 1 : 0)
+             << " rollback=" << (o.rolled_back ? 1 : 0)
+             << " reason=\"" << o.reason << "\"\n";
+        const StageCompareEvalSnapshot* snap = o.has_eval32 ? &o.eval32 : (o.has_quick ? &o.quick : nullptr);
+        if (snap != nullptr) {
+          const double delta_ber = snap->experiment_eval.ber - snap->baseline_eval.ber;
+          const double delta_fer = snap->experiment_eval.fer - snap->baseline_eval.fer;
+          rofs << "  patterns=" << snap->compare_batch.total_patterns_scanned
+               << " worst_logits_mse=" << snap->compare_batch.worst_logits_mse
+               << " worst_max_abs=" << snap->compare_batch.worst_max_abs_diff
+               << " worst_min_margin=" << snap->compare_batch.worst_min_margin
+               << " xflip_patterns=" << snap->compare_batch.patterns_with_xpred_flip
+               << " signflip_patterns=" << snap->compare_batch.patterns_with_sign_flip
+               << " baseline_nan_inf=" << snap->compare_batch.baseline_nonfinite_total.nan_count
+               << "/" << snap->compare_batch.baseline_nonfinite_total.inf_count
+               << " experiment_nan_inf=" << snap->compare_batch.experiment_nonfinite_total.nan_count
+               << "/" << snap->compare_batch.experiment_nonfinite_total.inf_count
+               << "\n";
+          rofs << "  baseline_ber=" << snap->baseline_eval.ber
+               << " experiment_ber=" << snap->experiment_eval.ber
+               << " delta_ber=" << delta_ber
+               << " baseline_fer=" << snap->baseline_eval.fer
+               << " experiment_fer=" << snap->experiment_eval.fer
+               << " delta_fer=" << delta_fer
+               << "\n";
+        }
+      }
+    }
+
+    std::printf("=== Explore Summary ===\n");
+    std::printf("S0 : PASS (known), class=YELLOW\n");
+    for (int si = 1; si <= 4; ++si) {
+      const ExploreStageOutcome& o = outcomes[si];
+      std::printf("S%d : %s class=%s reason=%s\n",
+        si,
+        o.attempted ? (o.pass ? "PASS" : "FAIL") : "NOT_ATTEMPTED",
+        o.attempted ? (o.red ? "RED" : (o.yellow ? "YELLOW" : "GREEN")) : "N/A",
+        o.attempted ? o.reason.c_str() : "not attempted");
+    }
+    const std::string first_fail_text = (first_fail_stage >= 0)
+      ? ("S" + std::to_string(first_fail_stage))
+      : std::string("none");
+    std::printf("highest safe stage : %s\n", aecct_ref::to_string(best_stage));
+    std::printf("first failing stage: %s\n", first_fail_text.c_str());
+    std::printf("explore report txt : %s\n", report_path.c_str());
+    return 0;
+  }
+
   if (opts.run_mode == CliRunMode::EVAL_BASELINE ||
       opts.run_mode == CliRunMode::EVAL_EXPERIMENT ||
       opts.run_mode == CliRunMode::EVAL_COMPARE) {
@@ -1233,6 +1697,7 @@ int main(int argc, char** argv) {
     aecct_ref::RefRunConfig baseline_cfg_eval{};
     baseline_cfg_eval.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
     baseline_cfg_eval.algo_variant = opts.algo_variant;
+    baseline_cfg_eval.finalhead_stage = opts.finalhead_stage;
     baseline_model_eval.set_run_config(baseline_cfg_eval);
 
     std::vector<double> baseline_logits_batch;
@@ -1263,6 +1728,7 @@ int main(int argc, char** argv) {
       run_experiment_from_baseline_finalhead(
         range,
         N,
+        opts.finalhead_stage,
         baseline_finalhead_s_t,
         experiment_logits_batch,
         experiment_x_pred_batch
@@ -1446,6 +1912,7 @@ int main(int argc, char** argv) {
   aecct_ref::RefRunConfig baseline_cfg{};
   baseline_cfg.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
   baseline_cfg.algo_variant = opts.algo_variant;
+  baseline_cfg.finalhead_stage = opts.finalhead_stage;
   baseline_model.set_run_config(baseline_cfg);
 
   BatchCompareSummary batch{};
@@ -1474,6 +1941,7 @@ int main(int argc, char** argv) {
   run_experiment_from_baseline_finalhead(
     range,
     N,
+    opts.finalhead_stage,
     baseline_finalhead_s_t,
     experiment_logits_batch,
     experiment_x_pred_batch

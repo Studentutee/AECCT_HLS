@@ -3,6 +3,7 @@
 
 #include "RefAlgoVariant.h"
 #include "RefPrecisionMode.h"
+#include "RefStageConfig.h"
 #include "RefTypes.h"
 
 namespace aecct_ref {
@@ -33,6 +34,7 @@ struct RefDumpConfig {
 struct RefRunConfig {
   RefPrecisionMode precision_mode;
   RefAlgoVariant algo_variant;
+  RefFinalHeadExploreStage finalhead_stage = RefFinalHeadExploreStage::S0;
 };
 
 class RefModel {

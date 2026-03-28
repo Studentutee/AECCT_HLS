@@ -55,6 +55,18 @@ static inline bool use_generic_e4m3_finalhead(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
 }
 
+static inline bool use_island_s0(const RefRunConfig& cfg) {
+  return use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage);
+}
+
+static inline bool use_island_s1(const RefRunConfig& cfg) {
+  return use_generic_e4m3_finalhead(cfg) && stage_uses_island_s1(cfg.finalhead_stage);
+}
+
+static inline bool use_island_s3(const RefRunConfig& cfg) {
+  return use_generic_e4m3_finalhead(cfg) && stage_uses_island_s3(cfg.finalhead_stage);
+}
+
 static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
   fp32_ref_t q = fp32_round(x * s_x);
   if (q > kActQMax) q = kActQMax;
@@ -596,6 +608,7 @@ static void run_layer(const int layer_idx,
 RefModel::RefModel() {
   run_cfg_.precision_mode = RefPrecisionMode::BASELINE_FP32;
   run_cfg_.algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
+  run_cfg_.finalhead_stage = RefFinalHeadExploreStage::S0;
   dump_cfg_.enabled = false;
   dump_cfg_.dump_dir = nullptr;
   dump_cfg_.pattern_index = -1;
@@ -790,14 +803,19 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       for (int i = 0; i < D_MODEL; ++i) {
         acc += end_norm[t][i] * fp32_ref_t(static_cast<float>(w_oned_final_embed_0_weight[i]));
       }
-      fp32_ref_t s_t = acc;
-      if (use_generic_e4m3_finalhead(run_cfg_)) {
-        s_t = roundtrip_through_generic_e4m3(s_t);
+      fp32_ref_t s_t_embed_out = acc;
+      if (use_island_s3(run_cfg_)) {
+        s_t_embed_out = roundtrip_through_generic_e4m3(s_t_embed_out);
       }
-      final_node_logits[t][0] = s_t;
-      out_fc_in[0][t] = s_t;
+      final_node_logits[t][0] = s_t_embed_out;
+
+      fp32_ref_t s_t_out_fc = s_t_embed_out;
+      if (use_island_s0(run_cfg_)) {
+        s_t_out_fc = roundtrip_through_generic_e4m3(s_t_out_fc);
+      }
+      out_fc_in[0][t] = s_t_out_fc;
       if (io.out_finalhead_s_t != nullptr) {
-        io.out_finalhead_s_t[b * TOKENS_T + t] = static_cast<double>(s_t.to_float());
+        io.out_finalhead_s_t[b * TOKENS_T + t] = static_cast<double>(acc.to_float());
       }
     }
 
@@ -806,7 +824,11 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     for (int n = 0; n < VAR_N; ++n) {
       fp32_ref_t acc = fp32_ref_t(static_cast<float>(w_out_fc_bias[n]));
       for (int t = 0; t < TOKENS_T; ++t) {
-        acc += fp32_ref_t(static_cast<float>(w_out_fc_weight[n * TOKENS_T + t])) * out_fc_in[0][t];
+        fp32_ref_t mul_in = out_fc_in[0][t];
+        if (use_island_s1(run_cfg_)) {
+          mul_in = roundtrip_through_generic_e4m3(mul_in);
+        }
+        acc += fp32_ref_t(static_cast<float>(w_out_fc_weight[n * TOKENS_T + t])) * mul_in;
       }
       final_logits[0][n] = acc;
 
