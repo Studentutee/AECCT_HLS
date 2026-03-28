@@ -27,7 +27,10 @@ namespace {
 enum class CliRunMode : unsigned char {
   COMPARE = 0,
   BASELINE_ONLY = 1,
-  EXPERIMENT_ONLY = 2
+  EXPERIMENT_ONLY = 2,
+  EVAL_BASELINE = 3,
+  EVAL_EXPERIMENT = 4,
+  EVAL_COMPARE = 5
 };
 
 enum class CliParseResult : unsigned char {
@@ -111,6 +114,36 @@ struct PerfBreakdownSec {
   double total_s;
 };
 
+struct EvalPatternRow {
+  int pattern_index;
+  std::size_t bit_errors;
+  std::size_t evaluated_bits;
+  std::size_t x_pred_match_count;
+  int frame_error_flag;
+};
+
+struct EvalComparePatternRow {
+  int pattern_index;
+  std::size_t evaluated_bits;
+  std::size_t baseline_bit_errors;
+  std::size_t experiment_bit_errors;
+  std::size_t baseline_x_pred_match_count;
+  std::size_t experiment_x_pred_match_count;
+  int baseline_frame_error_flag;
+  int experiment_frame_error_flag;
+};
+
+struct EvalAggregateStats {
+  int total_patterns;
+  std::size_t total_bits;
+  std::size_t total_bit_errors;
+  std::size_t frame_error_count;
+  std::size_t x_pred_match_count;
+  double ber;
+  double fer;
+  double x_pred_match_ratio;
+};
+
 static inline std::chrono::steady_clock::time_point now_tp() {
   return std::chrono::steady_clock::now();
 }
@@ -122,10 +155,22 @@ static inline double elapsed_sec(
   return std::chrono::duration<double>(t1 - t0).count();
 }
 
+static const char* run_mode_to_string(CliRunMode mode) {
+  switch (mode) {
+    case CliRunMode::COMPARE: return "compare";
+    case CliRunMode::BASELINE_ONLY: return "baseline";
+    case CliRunMode::EXPERIMENT_ONLY: return "experiment";
+    case CliRunMode::EVAL_BASELINE: return "eval-baseline";
+    case CliRunMode::EVAL_EXPERIMENT: return "eval-experiment";
+    case CliRunMode::EVAL_COMPARE: return "eval-compare";
+    default: return "unknown";
+  }
+}
+
 static void print_usage() {
   std::printf("Usage: ref_sim [pattern_index] [options]\n");
   std::printf("Options:\n");
-  std::printf("  --mode compare|baseline|experiment\n");
+  std::printf("  --mode compare|baseline|experiment|eval-baseline|eval-experiment|eval-compare\n");
   std::printf("  --pattern N\n");
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
@@ -147,6 +192,18 @@ static bool parse_run_mode(const char* text, CliRunMode& mode) {
   }
   if (std::strcmp(text, "experiment") == 0) {
     mode = CliRunMode::EXPERIMENT_ONLY;
+    return true;
+  }
+  if (std::strcmp(text, "eval-baseline") == 0) {
+    mode = CliRunMode::EVAL_BASELINE;
+    return true;
+  }
+  if (std::strcmp(text, "eval-experiment") == 0) {
+    mode = CliRunMode::EVAL_EXPERIMENT;
+    return true;
+  }
+  if (std::strcmp(text, "eval-compare") == 0) {
+    mode = CliRunMode::EVAL_COMPARE;
     return true;
   }
   return false;
@@ -459,6 +516,59 @@ static std::size_t compute_pattern_xpred_match_vs_golden(
   return match;
 }
 
+static EvalPatternRow build_eval_pattern_row(
+  const aecct_ref::bit1_t* pred_x,
+  int pattern_index,
+  int n_vars
+) {
+  EvalPatternRow row{};
+  row.pattern_index = pattern_index;
+  row.evaluated_bits = static_cast<std::size_t>(n_vars);
+  const double* target_x = &trace_output_x_pred_step0_tensor[pattern_index * n_vars];
+  for (int i = 0; i < n_vars; ++i) {
+    const int target = (target_x[i] != 0.0) ? 1 : 0;
+    const int pred = pred_x[i].to_int();
+    if (target == pred) {
+      row.x_pred_match_count++;
+    } else {
+      row.bit_errors++;
+    }
+  }
+  row.frame_error_flag = (row.bit_errors > 0U) ? 1 : 0;
+  return row;
+}
+
+static void init_eval_aggregate(EvalAggregateStats& s) {
+  s.total_patterns = 0;
+  s.total_bits = 0;
+  s.total_bit_errors = 0;
+  s.frame_error_count = 0;
+  s.x_pred_match_count = 0;
+  s.ber = 0.0;
+  s.fer = 0.0;
+  s.x_pred_match_ratio = 0.0;
+}
+
+static void update_eval_aggregate(EvalAggregateStats& s, const EvalPatternRow& row) {
+  s.total_patterns += 1;
+  s.total_bits += row.evaluated_bits;
+  s.total_bit_errors += row.bit_errors;
+  s.frame_error_count += static_cast<std::size_t>(row.frame_error_flag);
+  s.x_pred_match_count += row.x_pred_match_count;
+}
+
+static void finalize_eval_aggregate(EvalAggregateStats& s) {
+  s.ber = (s.total_bits > 0U)
+    ? (static_cast<double>(s.total_bit_errors) / static_cast<double>(s.total_bits))
+    : 0.0;
+  s.fer = (s.total_patterns > 0)
+    ? (static_cast<double>(s.frame_error_count) / static_cast<double>(s.total_patterns))
+    : 0.0;
+  s.x_pred_match_ratio = (s.total_bits > 0U)
+    ? (static_cast<double>(s.x_pred_match_count) / static_cast<double>(s.total_bits))
+    : 0.0;
+}
+
 static void print_vs_golden_summary(const char* tag, const RefRunOutputs& run) {
   const double match_ratio = (run.x_pred_total_count > 0U)
     ? (100.0 * static_cast<double>(run.x_pred_match_count) /
@@ -536,6 +646,196 @@ static bool write_compare_csv(const std::string& path, const std::vector<PerPatt
         << "," << r.experiment_vs_golden.mse
         << ",\"" << format_topk_entries(r.cmp.baseline_topk_smallest_abs) << "\""
         << ",\"" << format_topk_entries(r.cmp.experiment_topk_smallest_abs) << "\""
+        << "\n";
+  }
+  return ofs.good();
+}
+
+static bool write_eval_single_csv(const std::string& path, const std::vector<EvalPatternRow>& rows) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+
+  ofs << "pattern"
+      << ",evaluated_bits"
+      << ",bit_errors"
+      << ",ber"
+      << ",x_pred_match_count"
+      << ",x_pred_match_ratio"
+      << ",frame_error_flag"
+      << "\n";
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const EvalPatternRow& r = rows[i];
+    const double ber = (r.evaluated_bits > 0U)
+      ? (static_cast<double>(r.bit_errors) / static_cast<double>(r.evaluated_bits))
+      : 0.0;
+    const double match_ratio = (r.evaluated_bits > 0U)
+      ? (static_cast<double>(r.x_pred_match_count) / static_cast<double>(r.evaluated_bits))
+      : 0.0;
+    ofs << r.pattern_index
+        << "," << r.evaluated_bits
+        << "," << r.bit_errors
+        << "," << ber
+        << "," << r.x_pred_match_count
+        << "," << match_ratio
+        << "," << r.frame_error_flag
+        << "\n";
+  }
+  return ofs.good();
+}
+
+static bool write_eval_compare_csv(const std::string& path, const std::vector<EvalComparePatternRow>& rows) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+
+  ofs << "pattern"
+      << ",evaluated_bits"
+      << ",baseline_bit_errors"
+      << ",baseline_ber"
+      << ",baseline_x_pred_match_count"
+      << ",baseline_x_pred_match_ratio"
+      << ",baseline_frame_error_flag"
+      << ",experiment_bit_errors"
+      << ",experiment_ber"
+      << ",experiment_x_pred_match_count"
+      << ",experiment_x_pred_match_ratio"
+      << ",experiment_frame_error_flag"
+      << ",delta_bit_errors"
+      << "\n";
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const EvalComparePatternRow& r = rows[i];
+    const double b_ber = (r.evaluated_bits > 0U)
+      ? (static_cast<double>(r.baseline_bit_errors) / static_cast<double>(r.evaluated_bits))
+      : 0.0;
+    const double e_ber = (r.evaluated_bits > 0U)
+      ? (static_cast<double>(r.experiment_bit_errors) / static_cast<double>(r.evaluated_bits))
+      : 0.0;
+    const double b_match = (r.evaluated_bits > 0U)
+      ? (static_cast<double>(r.baseline_x_pred_match_count) / static_cast<double>(r.evaluated_bits))
+      : 0.0;
+    const double e_match = (r.evaluated_bits > 0U)
+      ? (static_cast<double>(r.experiment_x_pred_match_count) / static_cast<double>(r.evaluated_bits))
+      : 0.0;
+    const std::size_t delta_bit_errors = (r.experiment_bit_errors >= r.baseline_bit_errors)
+      ? (r.experiment_bit_errors - r.baseline_bit_errors)
+      : (r.baseline_bit_errors - r.experiment_bit_errors);
+    ofs << r.pattern_index
+        << "," << r.evaluated_bits
+        << "," << r.baseline_bit_errors
+        << "," << b_ber
+        << "," << r.baseline_x_pred_match_count
+        << "," << b_match
+        << "," << r.baseline_frame_error_flag
+        << "," << r.experiment_bit_errors
+        << "," << e_ber
+        << "," << r.experiment_x_pred_match_count
+        << "," << e_match
+        << "," << r.experiment_frame_error_flag
+        << "," << delta_bit_errors
+        << "\n";
+  }
+  return ofs.good();
+}
+
+static bool write_eval_single_summary_txt(
+  const std::string& path,
+  const char* tag,
+  const EvalAggregateStats& stats,
+  const std::vector<EvalPatternRow>& rows
+) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  ofs << "=== Evaluator Summary (" << tag << ") ===\n";
+  ofs << "total patterns             : " << stats.total_patterns << "\n";
+  ofs << "total evaluated bits       : " << stats.total_bits << "\n";
+  ofs << "total bit errors           : " << stats.total_bit_errors << "\n";
+  ofs << "BER                        : " << stats.ber << "\n";
+  ofs << "frame error count          : " << stats.frame_error_count << "\n";
+  ofs << "FER                        : " << stats.fer << "\n";
+  ofs << "x_pred/target match count  : " << stats.x_pred_match_count << "\n";
+  ofs << "x_pred/target match ratio  : " << stats.x_pred_match_ratio << "\n";
+  ofs << "\n";
+  ofs << "per-pattern bit/frame summary:\n";
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const EvalPatternRow& r = rows[i];
+    ofs << "  pattern=" << r.pattern_index
+        << " bits=" << r.evaluated_bits
+        << " bit_errors=" << r.bit_errors
+        << " frame_error=" << r.frame_error_flag
+        << " xmatch=" << r.x_pred_match_count
+        << "\n";
+  }
+  return ofs.good();
+}
+
+static bool write_eval_compare_summary_txt(
+  const std::string& path,
+  const EvalAggregateStats& baseline_stats,
+  const EvalAggregateStats& experiment_stats,
+  const std::vector<EvalComparePatternRow>& rows
+) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+  const double delta_ber = experiment_stats.ber - baseline_stats.ber;
+  const double delta_fer = experiment_stats.fer - baseline_stats.fer;
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  ofs << "=== Evaluator Compare Summary ===\n";
+  ofs << "total patterns             : " << baseline_stats.total_patterns << "\n";
+  ofs << "total evaluated bits       : " << baseline_stats.total_bits << "\n";
+  ofs << "baseline total bit errors  : " << baseline_stats.total_bit_errors << "\n";
+  ofs << "baseline BER               : " << baseline_stats.ber << "\n";
+  ofs << "baseline frame errors      : " << baseline_stats.frame_error_count << "\n";
+  ofs << "baseline FER               : " << baseline_stats.fer << "\n";
+  ofs << "experiment total bit errors: " << experiment_stats.total_bit_errors << "\n";
+  ofs << "experiment BER             : " << experiment_stats.ber << "\n";
+  ofs << "experiment frame errors    : " << experiment_stats.frame_error_count << "\n";
+  ofs << "experiment FER             : " << experiment_stats.fer << "\n";
+  ofs << "delta BER (exp-base)       : " << delta_ber << "\n";
+  ofs << "delta FER (exp-base)       : " << delta_fer << "\n";
+  ofs << "baseline x_pred match ratio: " << baseline_stats.x_pred_match_ratio << "\n";
+  ofs << "experiment x_pred match ratio: " << experiment_stats.x_pred_match_ratio << "\n";
+  ofs << "\n";
+  ofs << "per-pattern bit/frame summary:\n";
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const EvalComparePatternRow& r = rows[i];
+    ofs << "  pattern=" << r.pattern_index
+        << " bits=" << r.evaluated_bits
+        << " baseline_bit_errors=" << r.baseline_bit_errors
+        << " experiment_bit_errors=" << r.experiment_bit_errors
+        << " baseline_frame_error=" << r.baseline_frame_error_flag
+        << " experiment_frame_error=" << r.experiment_frame_error_flag
+        << " baseline_xmatch=" << r.baseline_x_pred_match_count
+        << " experiment_xmatch=" << r.experiment_x_pred_match_count
         << "\n";
   }
   return ofs.good();
@@ -795,6 +1095,41 @@ static bool write_timing_txt(const std::string& path, const PerfBreakdownSec& pe
   return ofs.good();
 }
 
+static void print_eval_single_console_summary(const char* tag, const EvalAggregateStats& stats) {
+  std::printf("=== Evaluator Summary (%s) ===\n", tag);
+  std::printf("total patterns             : %d\n", stats.total_patterns);
+  std::printf("total evaluated bits       : %zu\n", stats.total_bits);
+  std::printf("total bit errors           : %zu\n", stats.total_bit_errors);
+  std::printf("BER                        : %.9e\n", stats.ber);
+  std::printf("frame error count          : %zu\n", stats.frame_error_count);
+  std::printf("FER                        : %.9e\n", stats.fer);
+  std::printf("x_pred/target match count  : %zu\n", stats.x_pred_match_count);
+  std::printf("x_pred/target match ratio  : %.9e\n", stats.x_pred_match_ratio);
+}
+
+static void print_eval_compare_console_summary(
+  const EvalAggregateStats& baseline_stats,
+  const EvalAggregateStats& experiment_stats
+) {
+  const double delta_ber = experiment_stats.ber - baseline_stats.ber;
+  const double delta_fer = experiment_stats.fer - baseline_stats.fer;
+  std::printf("=== Evaluator Compare Summary ===\n");
+  std::printf("total patterns             : %d\n", baseline_stats.total_patterns);
+  std::printf("total evaluated bits       : %zu\n", baseline_stats.total_bits);
+  std::printf("baseline total bit errors  : %zu\n", baseline_stats.total_bit_errors);
+  std::printf("baseline BER               : %.9e\n", baseline_stats.ber);
+  std::printf("baseline frame errors      : %zu\n", baseline_stats.frame_error_count);
+  std::printf("baseline FER               : %.9e\n", baseline_stats.fer);
+  std::printf("experiment total bit errors: %zu\n", experiment_stats.total_bit_errors);
+  std::printf("experiment BER             : %.9e\n", experiment_stats.ber);
+  std::printf("experiment frame errors    : %zu\n", experiment_stats.frame_error_count);
+  std::printf("experiment FER             : %.9e\n", experiment_stats.fer);
+  std::printf("delta BER (exp-base)       : %.9e\n", delta_ber);
+  std::printf("delta FER (exp-base)       : %.9e\n", delta_fer);
+  std::printf("baseline x_pred match ratio: %.9e\n", baseline_stats.x_pred_match_ratio);
+  std::printf("experiment x_pred match ratio: %.9e\n", experiment_stats.x_pred_match_ratio);
+}
+
 static int run_single_mode(
   aecct_ref::RefPrecisionMode precision_mode,
   const char* tag,
@@ -874,9 +1209,7 @@ int main(int argc, char** argv) {
   }
 
   std::printf("Run config:\n");
-  std::printf("  mode           : %s\n",
-    (opts.run_mode == CliRunMode::COMPARE) ? "compare"
-      : ((opts.run_mode == CliRunMode::BASELINE_ONLY) ? "baseline" : "experiment"));
+  std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
   std::printf("  precision(base): %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::BASELINE_FP32));
   std::printf("  precision(exp) : %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD));
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
@@ -891,6 +1224,222 @@ int main(int argc, char** argv) {
   }
   if (opts.run_mode == CliRunMode::EXPERIMENT_ONLY) {
     return run_single_mode(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD, "experiment", range, N, opts);
+  }
+
+  if (opts.run_mode == CliRunMode::EVAL_BASELINE ||
+      opts.run_mode == CliRunMode::EVAL_EXPERIMENT ||
+      opts.run_mode == CliRunMode::EVAL_COMPARE) {
+    aecct_ref::RefModel baseline_model_eval;
+    aecct_ref::RefRunConfig baseline_cfg_eval{};
+    baseline_cfg_eval.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+    baseline_cfg_eval.algo_variant = opts.algo_variant;
+    baseline_model_eval.set_run_config(baseline_cfg_eval);
+
+    std::vector<double> baseline_logits_batch;
+    std::vector<aecct_ref::bit1_t> baseline_x_pred_batch;
+    std::vector<double> baseline_finalhead_s_t;
+    std::vector<double> experiment_logits_batch;
+    std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
+
+    const bool need_experiment_path =
+      (opts.run_mode == CliRunMode::EVAL_EXPERIMENT || opts.run_mode == CliRunMode::EVAL_COMPARE);
+    if (need_experiment_path) {
+      baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
+    }
+
+    const auto t_baseline_start = now_tp();
+    run_ref_batch(
+      baseline_model_eval,
+      range,
+      N,
+      baseline_logits_batch,
+      baseline_x_pred_batch,
+      need_experiment_path ? baseline_finalhead_s_t.data() : nullptr
+    );
+    perf.baseline_model_s = elapsed_sec(t_baseline_start, now_tp());
+
+    if (need_experiment_path) {
+      const auto t_experiment_start = now_tp();
+      run_experiment_from_baseline_finalhead(
+        range,
+        N,
+        baseline_finalhead_s_t,
+        experiment_logits_batch,
+        experiment_x_pred_batch
+      );
+      perf.experiment_path_s = elapsed_sec(t_experiment_start, now_tp());
+    } else {
+      perf.experiment_path_s = 0.0;
+    }
+
+    std::string default_eval_name = "eval_compare";
+    if (opts.run_mode == CliRunMode::EVAL_BASELINE) {
+      default_eval_name = "eval_baseline";
+    } else if (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
+      default_eval_name = "eval_experiment";
+    }
+    const std::string csv_path = !opts.summary_csv_path.empty()
+      ? opts.summary_csv_path
+      : ("build/ref_eval/" + default_eval_name + "_begin" + std::to_string(range.begin) +
+         "_count" + std::to_string(range.count) + ".csv");
+
+    const auto t_eval_agg_start = now_tp();
+    if (opts.run_mode == CliRunMode::EVAL_BASELINE || opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
+      const std::vector<aecct_ref::bit1_t>& pred_batch =
+        (opts.run_mode == CliRunMode::EVAL_BASELINE) ? baseline_x_pred_batch : experiment_x_pred_batch;
+      std::vector<EvalPatternRow> rows;
+      rows.reserve(static_cast<std::size_t>(range.count));
+      EvalAggregateStats stats{};
+      init_eval_aggregate(stats);
+      for (int off = 0; off < range.count; ++off) {
+        const int pattern = range.begin + off;
+        const EvalPatternRow row = build_eval_pattern_row(
+          &pred_batch[static_cast<std::size_t>(off * N)],
+          pattern,
+          N
+        );
+        rows.push_back(row);
+        update_eval_aggregate(stats, row);
+        if (!opts.summary_only) {
+          const double ber = (row.evaluated_bits > 0U)
+            ? (static_cast<double>(row.bit_errors) / static_cast<double>(row.evaluated_bits))
+            : 0.0;
+          std::printf("[pattern %d][%s] bit_errors=%zu bits=%zu ber=%.9e frame_error=%d xmatch=%zu/%zu\n",
+            pattern,
+            (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
+            row.bit_errors,
+            row.evaluated_bits,
+            ber,
+            row.frame_error_flag,
+            row.x_pred_match_count,
+            row.evaluated_bits);
+        }
+      }
+      finalize_eval_aggregate(stats);
+      perf.compare_aggregation_s = elapsed_sec(t_eval_agg_start, now_tp());
+
+      const auto t_fileio_start = now_tp();
+      if (write_eval_single_csv(csv_path, rows)) {
+        std::printf("Per-pattern eval csv    : %s\n", csv_path.c_str());
+      } else {
+        std::printf("[warn] Failed to write per-pattern eval csv: %s\n", csv_path.c_str());
+      }
+      const std::string txt_path = derive_summary_txt_path(csv_path);
+      if (write_eval_single_summary_txt(
+            txt_path,
+            (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
+            stats,
+            rows)) {
+        std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
+      } else {
+        std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
+      }
+      const std::string timing_path = derive_timing_txt_path(csv_path);
+      perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
+      perf.total_s = elapsed_sec(t_program_start, now_tp());
+      if (write_timing_txt(timing_path, perf)) {
+        std::printf("Timing summary txt      : %s\n", timing_path.c_str());
+      } else {
+        std::printf("[warn] Failed to write timing summary txt: %s\n", timing_path.c_str());
+      }
+
+      print_eval_single_console_summary(
+        (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
+        stats
+      );
+      std::printf("=== Timing Breakdown (sec) ===\n");
+      std::printf("startup/init             : %.6f\n", perf.startup_init_s);
+      std::printf("baseline model run       : %.6f\n", perf.baseline_model_s);
+      std::printf("experiment path run      : %.6f\n", perf.experiment_path_s);
+      std::printf("eval aggregation         : %.6f\n", perf.compare_aggregation_s);
+      std::printf("file I/O                 : %.6f\n", perf.file_io_s);
+      std::printf("total runtime            : %.6f\n", perf.total_s);
+      return 0;
+    }
+
+    std::vector<EvalComparePatternRow> rows;
+    rows.reserve(static_cast<std::size_t>(range.count));
+    EvalAggregateStats baseline_stats{};
+    EvalAggregateStats experiment_stats{};
+    init_eval_aggregate(baseline_stats);
+    init_eval_aggregate(experiment_stats);
+    for (int off = 0; off < range.count; ++off) {
+      const int pattern = range.begin + off;
+      const EvalPatternRow b_row = build_eval_pattern_row(
+        &baseline_x_pred_batch[static_cast<std::size_t>(off * N)],
+        pattern,
+        N
+      );
+      const EvalPatternRow e_row = build_eval_pattern_row(
+        &experiment_x_pred_batch[static_cast<std::size_t>(off * N)],
+        pattern,
+        N
+      );
+      update_eval_aggregate(baseline_stats, b_row);
+      update_eval_aggregate(experiment_stats, e_row);
+
+      EvalComparePatternRow row{};
+      row.pattern_index = pattern;
+      row.evaluated_bits = b_row.evaluated_bits;
+      row.baseline_bit_errors = b_row.bit_errors;
+      row.experiment_bit_errors = e_row.bit_errors;
+      row.baseline_x_pred_match_count = b_row.x_pred_match_count;
+      row.experiment_x_pred_match_count = e_row.x_pred_match_count;
+      row.baseline_frame_error_flag = b_row.frame_error_flag;
+      row.experiment_frame_error_flag = e_row.frame_error_flag;
+      rows.push_back(row);
+
+      if (!opts.summary_only) {
+        const double b_ber = (b_row.evaluated_bits > 0U)
+          ? (static_cast<double>(b_row.bit_errors) / static_cast<double>(b_row.evaluated_bits))
+          : 0.0;
+        const double e_ber = (e_row.evaluated_bits > 0U)
+          ? (static_cast<double>(e_row.bit_errors) / static_cast<double>(e_row.evaluated_bits))
+          : 0.0;
+        std::printf("[pattern %d][eval-compare] b_err=%zu e_err=%zu b_ber=%.9e e_ber=%.9e b_fe=%d e_fe=%d\n",
+          pattern,
+          b_row.bit_errors,
+          e_row.bit_errors,
+          b_ber,
+          e_ber,
+          b_row.frame_error_flag,
+          e_row.frame_error_flag);
+      }
+    }
+    finalize_eval_aggregate(baseline_stats);
+    finalize_eval_aggregate(experiment_stats);
+    perf.compare_aggregation_s = elapsed_sec(t_eval_agg_start, now_tp());
+
+    const auto t_fileio_start = now_tp();
+    if (write_eval_compare_csv(csv_path, rows)) {
+      std::printf("Per-pattern eval csv    : %s\n", csv_path.c_str());
+    } else {
+      std::printf("[warn] Failed to write per-pattern eval csv: %s\n", csv_path.c_str());
+    }
+    const std::string txt_path = derive_summary_txt_path(csv_path);
+    if (write_eval_compare_summary_txt(txt_path, baseline_stats, experiment_stats, rows)) {
+      std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
+    } else {
+      std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
+    }
+    const std::string timing_path = derive_timing_txt_path(csv_path);
+    perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
+    perf.total_s = elapsed_sec(t_program_start, now_tp());
+    if (write_timing_txt(timing_path, perf)) {
+      std::printf("Timing summary txt      : %s\n", timing_path.c_str());
+    } else {
+      std::printf("[warn] Failed to write timing summary txt: %s\n", timing_path.c_str());
+    }
+
+    print_eval_compare_console_summary(baseline_stats, experiment_stats);
+    std::printf("=== Timing Breakdown (sec) ===\n");
+    std::printf("startup/init             : %.6f\n", perf.startup_init_s);
+    std::printf("baseline model run       : %.6f\n", perf.baseline_model_s);
+    std::printf("experiment path run      : %.6f\n", perf.experiment_path_s);
+    std::printf("eval aggregation         : %.6f\n", perf.compare_aggregation_s);
+    std::printf("file I/O                 : %.6f\n", perf.file_io_s);
+    std::printf("total runtime            : %.6f\n", perf.total_s);
+    return 0;
   }
 
   aecct_ref::RefModel baseline_model;
@@ -1044,7 +1593,7 @@ int main(int argc, char** argv) {
   std::printf("compare aggregation      : %.6f\n", perf.compare_aggregation_s);
   std::printf("file I/O                 : %.6f\n", perf.file_io_s);
   std::printf("total runtime            : %.6f\n", perf.total_s);
-  std::printf("BER/FER evaluator             : unavailable in this AECCT_ac_ref flow (baseline-relative compare only)\n");
+  std::printf("BER/FER evaluator             : run with --mode eval-compare (target_x from output_x_pred_step0.h)\n");
 
   return 0;
 }
