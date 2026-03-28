@@ -124,6 +124,10 @@ Require-TextContains -Text $attnText -Needle "score_prebuilt_from_top_managed" -
 
 $afText = Get-Content -Path (Join-Path $repo "src/blocks/AttnPhaseBTopManagedSoftmaxOut.h") -Raw
 Require-TextContains -Text $afText -Needle "ATTN_P11AF_KEY_TOKEN_LOOP" -Reason "AF helper must keep single-pass key-token loop marker"
+Require-TextContains -Text $afText -Needle "attn_phaseb_softmax_score_ch_t" -Reason "AF score channel split typedef missing"
+Require-TextContains -Text $afText -Needle "attn_phaseb_softmax_v_ch_t" -Reason "AF V channel split typedef missing"
+Require-TextContains -Text $afText -Needle "score_ch.nb_read(score_pkt)" -Reason "AF score consume must read from score_ch"
+Require-TextContains -Text $afText -Needle "v_ch.nb_read(v_pkt)" -Reason "AF V consume must read from v_ch"
 
 $runnerText = Get-Content -Path (Join-Path $repo "scripts/local/run_p11af_impl_softmax_out.ps1") -Raw
 Require-TextContains -Text $runnerText -Needle "PASS: run_p11af_impl_softmax_out" -Reason "runner PASS banner missing"

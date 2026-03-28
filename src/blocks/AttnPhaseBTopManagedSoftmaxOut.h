@@ -14,6 +14,8 @@
 
 namespace aecct {
 
+typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_softmax_score_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_softmax_v_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_softmax_pkt_ch_t;
 
 template<typename SramView>
@@ -36,7 +38,7 @@ static inline bool attn_phaseb_emit_mask_score_word(
     u32_t token_idx,
     u32_t key_token_idx,
     u32_t head_group_id,
-    attn_phaseb_softmax_pkt_ch_t& in_ch
+    attn_phaseb_softmax_score_ch_t& score_ch
 ) {
     AttnTopManagedWorkPacket pkt;
     attn_work_packet_clear(pkt);
@@ -53,7 +55,7 @@ static inline bool attn_phaseb_emit_mask_score_word(
     pkt.tile_valid_words = (u16_t)1u;
     pkt.flags = (u16_t)key_token_idx;
     pkt.data[0] = sram[(uint32_t)score_word_addr.to_uint()];
-    in_ch.write(pkt);
+    score_ch.write(pkt);
     return true;
 }
 
@@ -68,7 +70,7 @@ static inline bool attn_phaseb_emit_v_tile(
     u32_t tile_begin,
     u32_t tile_end,
     u32_t tile_valid_words,
-    attn_phaseb_softmax_pkt_ch_t& in_ch
+    attn_phaseb_softmax_v_ch_t& v_ch
 ) {
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
@@ -92,12 +94,13 @@ static inline bool attn_phaseb_emit_v_tile(
     for (uint32_t i = 0u; i < valid; ++i) {
         pkt.data[i] = sram[(uint32_t)v_tile_base_word.to_uint() + i];
     }
-    in_ch.write(pkt);
+    v_ch.write(pkt);
     return true;
 }
 
 static inline bool attn_phaseb_block_softmax_out_consume_emit(
-    attn_phaseb_softmax_pkt_ch_t& in_ch,
+    attn_phaseb_softmax_score_ch_t& score_ch,
+    attn_phaseb_softmax_v_ch_t& v_ch,
     attn_phaseb_softmax_pkt_ch_t& out_ch,
     u32_t token_idx,
     u32_t head_group_id,
@@ -128,7 +131,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
     bool have_state = false;
     ATTN_P11AF_KEY_TOKEN_LOOP: for (uint32_t j = 0u; j < n_tokens; ++j) {
         AttnTopManagedWorkPacket score_pkt;
-        if (!in_ch.nb_read(score_pkt)) {
+        if (!score_ch.nb_read(score_pkt)) {
             return false;
         }
         if ((uint32_t)score_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_SCORE) { return false; }
@@ -148,7 +151,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
             running_l = softmax_sum_t(1);
             ATTN_P11AF_INIT_ACC_TILE_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
                 AttnTopManagedWorkPacket v_pkt;
-                if (!in_ch.nb_read(v_pkt)) {
+                if (!v_ch.nb_read(v_pkt)) {
                     return false;
                 }
                 if ((uint32_t)v_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_V) { return false; }
@@ -179,7 +182,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
             running_l = softmax_sum_t(running_l * softmax_sum_t(alpha)) + softmax_sum_t(1);
             ATTN_P11AF_RENORM_ACC_TILE_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
                 AttnTopManagedWorkPacket v_pkt;
-                if (!in_ch.nb_read(v_pkt)) {
+                if (!v_ch.nb_read(v_pkt)) {
                     return false;
                 }
                 if ((uint32_t)v_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_V) { return false; }
@@ -208,7 +211,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
             running_l += softmax_sum_t(beta);
             ATTN_P11AF_ACC_TILE_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
                 AttnTopManagedWorkPacket v_pkt;
-                if (!in_ch.nb_read(v_pkt)) {
+                if (!v_ch.nb_read(v_pkt)) {
                     return false;
                 }
                 if ((uint32_t)v_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_V) { return false; }
