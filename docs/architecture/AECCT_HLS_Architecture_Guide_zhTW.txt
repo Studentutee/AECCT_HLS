@@ -580,6 +580,9 @@ G. DATA_OUT 路徑
 - 建議 stream order（對每個 q_token 固定 deterministic 順序）：
   - Top -> block：Q-source tile -> Wq tile -> K/V scan window -> mask window -> Wo tile
   - block -> Top：attention sublayer 已完成 residual 的 token tile
+- 建議 internal channel 分流原則：
+  - 若 control-like 資訊（例如 score / mask / descriptor）與 payload-heavy tile data 的 consume timing 或 consume rate 不同，預設分成不同 internal channels，不以共道作為預設。
+  - 若兩類 payload 永遠 lockstep 成對生產與成對消費，且 bounded FIFO 下已證明不會造成 head-of-line blocking，才可共用單一 channel / packet。
 - 建議 active-chain packet / window 解碼策略：
   - Phase B 不只靠 sequence index；至少再顯式攜帶 `head_group_id` 與 `subphase_id`
   - 建議 `subphase_id` 最小集合：`QSRC / WQ / KVSCAN / MASK / WO / OUT`
