@@ -66,6 +66,7 @@ struct PerPatternCompareRow {
 struct BatchCompareSummary {
   int total_patterns_scanned;
   std::size_t patterns_with_xpred_flip;
+  std::size_t patterns_with_sign_flip;
   std::size_t total_flipped_bits;
   double worst_logits_mse;
   int worst_logits_mse_pattern;
@@ -76,8 +77,16 @@ struct BatchCompareSummary {
   std::size_t max_sign_flip_count;
   int max_sign_flip_pattern;
   std::size_t total_sign_flip_count;
+  std::vector<double> per_pattern_min_margin;
   aecct_ref::RefNonFiniteCounters baseline_nonfinite_total;
   aecct_ref::RefNonFiniteCounters experiment_nonfinite_total;
+};
+
+struct DistributionStats {
+  double min_v;
+  double max_v;
+  double mean_v;
+  double median_v;
 };
 
 struct GoldenAggregateMetrics {
@@ -342,18 +351,6 @@ static std::string format_topk_entries(const std::vector<aecct_ref::RefExperimen
   return oss.str();
 }
 
-static void print_topk_entries(
-  const char* tag,
-  const std::vector<aecct_ref::RefExperimentCompareMetrics::TopKEntry>& entries
-) {
-  std::printf("%s", tag);
-  for (std::size_t i = 0; i < entries.size(); ++i) {
-    std::printf(" [%zu]idx=%zu,v=%.6e,|v|=%.6e",
-      i, entries[i].index, entries[i].value, entries[i].abs_value);
-  }
-  std::printf("\n");
-}
-
 static bool write_compare_csv(const std::string& path, const std::vector<PerPatternCompareRow>& rows) {
   std::filesystem::path p(path);
   if (p.has_parent_path()) {
@@ -411,6 +408,7 @@ static bool write_compare_csv(const std::string& path, const std::vector<PerPatt
 static void init_batch_summary(BatchCompareSummary& s) {
   s.total_patterns_scanned = 0;
   s.patterns_with_xpred_flip = 0;
+  s.patterns_with_sign_flip = 0;
   s.total_flipped_bits = 0;
   s.worst_logits_mse = -1.0;
   s.worst_logits_mse_pattern = -1;
@@ -421,6 +419,7 @@ static void init_batch_summary(BatchCompareSummary& s) {
   s.max_sign_flip_count = 0;
   s.max_sign_flip_pattern = -1;
   s.total_sign_flip_count = 0;
+  s.per_pattern_min_margin.clear();
   s.baseline_nonfinite_total = {};
   s.experiment_nonfinite_total = {};
 }
@@ -430,6 +429,9 @@ static void update_batch_summary(BatchCompareSummary& s, const PerPatternCompare
   s.total_flipped_bits += row.cmp.x_pred_mismatch_count;
   if (row.cmp.x_pred_mismatch_count > 0U) {
     s.patterns_with_xpred_flip += 1;
+  }
+  if (row.cmp.sign_flip_count > 0U) {
+    s.patterns_with_sign_flip += 1;
   }
   if (row.cmp.logits_diff.mse > s.worst_logits_mse) {
     s.worst_logits_mse = row.cmp.logits_diff.mse;
@@ -448,6 +450,7 @@ static void update_batch_summary(BatchCompareSummary& s, const PerPatternCompare
     s.worst_min_margin = row_min_margin;
     s.worst_min_margin_pattern = row.pattern_index;
   }
+  s.per_pattern_min_margin.push_back(row_min_margin);
 
   if (row.cmp.sign_flip_count > s.max_sign_flip_count) {
     s.max_sign_flip_count = row.cmp.sign_flip_count;
@@ -491,6 +494,142 @@ static aecct_ref::Metrics finalize_golden_aggregate(const GoldenAggregateMetrics
     m.max_abs = g.max_abs;
   }
   return m;
+}
+
+static DistributionStats compute_distribution_stats(const std::vector<double>& values) {
+  DistributionStats s{};
+  s.min_v = 0.0;
+  s.max_v = 0.0;
+  s.mean_v = 0.0;
+  s.median_v = 0.0;
+  if (values.empty()) {
+    return s;
+  }
+
+  s.min_v = values[0];
+  s.max_v = values[0];
+  double sum = 0.0;
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    const double v = values[i];
+    if (v < s.min_v) s.min_v = v;
+    if (v > s.max_v) s.max_v = v;
+    sum += v;
+  }
+  s.mean_v = sum / static_cast<double>(values.size());
+
+  std::vector<double> sorted = values;
+  std::sort(sorted.begin(), sorted.end());
+  const std::size_t mid = sorted.size() / 2U;
+  if ((sorted.size() & 1U) != 0U) {
+    s.median_v = sorted[mid];
+  } else {
+    s.median_v = 0.5 * (sorted[mid - 1U] + sorted[mid]);
+  }
+  return s;
+}
+
+static double pattern_risk_margin(const PerPatternCompareRow& row) {
+  return (row.cmp.baseline_min_abs_margin < row.cmp.experiment_min_abs_margin)
+    ? row.cmp.baseline_min_abs_margin
+    : row.cmp.experiment_min_abs_margin;
+}
+
+static std::vector<std::size_t> collect_top_vulnerable_indices(
+  const std::vector<PerPatternCompareRow>& rows,
+  std::size_t topk
+) {
+  std::vector<std::size_t> idx;
+  idx.reserve(rows.size());
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    idx.push_back(i);
+  }
+  std::sort(idx.begin(), idx.end(),
+    [&rows](std::size_t a, std::size_t b) {
+      const double ma = pattern_risk_margin(rows[a]);
+      const double mb = pattern_risk_margin(rows[b]);
+      if (ma != mb) {
+        return ma < mb;
+      }
+      if (rows[a].cmp.logits_diff.mse != rows[b].cmp.logits_diff.mse) {
+        return rows[a].cmp.logits_diff.mse > rows[b].cmp.logits_diff.mse;
+      }
+      return rows[a].pattern_index < rows[b].pattern_index;
+    });
+  if (idx.size() > topk) {
+    idx.resize(topk);
+  }
+  return idx;
+}
+
+static std::string derive_summary_txt_path(const std::string& csv_path) {
+  if (csv_path.size() >= 4U && csv_path.substr(csv_path.size() - 4U) == ".csv") {
+    return csv_path.substr(0, csv_path.size() - 4U) + ".txt";
+  }
+  return csv_path + ".txt";
+}
+
+static bool write_batch_summary_txt(
+  const std::string& path,
+  const BatchCompareSummary& batch,
+  const DistributionStats& margin_dist,
+  const std::vector<PerPatternCompareRow>& rows,
+  const std::vector<std::size_t>& vulnerable_idx
+) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  ofs << "=== Batch Compare Summary ===\n";
+  ofs << "total patterns scanned        : " << batch.total_patterns_scanned << "\n";
+  ofs << "patterns with x_pred flip     : " << batch.patterns_with_xpred_flip << "\n";
+  ofs << "patterns with sign flip       : " << batch.patterns_with_sign_flip << "\n";
+  ofs << "total flipped bits            : " << batch.total_flipped_bits << "\n";
+  ofs << "worst logits MSE              : " << batch.worst_logits_mse
+      << " (pattern " << batch.worst_logits_mse_pattern << ")\n";
+  ofs << "worst max abs diff            : " << batch.worst_max_abs_diff
+      << " (pattern " << batch.worst_max_abs_diff_pattern << ")\n";
+  ofs << "worst min margin              : " << batch.worst_min_margin
+      << " (pattern " << batch.worst_min_margin_pattern << ")\n";
+  ofs << "max sign-flip count           : " << batch.max_sign_flip_count
+      << " (pattern " << batch.max_sign_flip_pattern << ")\n";
+  ofs << "total sign flips              : " << batch.total_sign_flip_count << "\n";
+  ofs << "total baseline NaN / Inf      : "
+      << batch.baseline_nonfinite_total.nan_count << " / "
+      << batch.baseline_nonfinite_total.inf_count << "\n";
+  ofs << "total experiment NaN / Inf    : "
+      << batch.experiment_nonfinite_total.nan_count << " / "
+      << batch.experiment_nonfinite_total.inf_count << "\n";
+  ofs << "\n";
+
+  ofs << "margin distribution (per-pattern min(abs(logit)), using min(baseline,experiment)):\n";
+  ofs << "  min    : " << margin_dist.min_v << "\n";
+  ofs << "  max    : " << margin_dist.max_v << "\n";
+  ofs << "  mean   : " << margin_dist.mean_v << "\n";
+  ofs << "  median : " << margin_dist.median_v << "\n";
+  ofs << "\n";
+
+  ofs << "top vulnerable patterns (sorted by smallest min margin):\n";
+  for (std::size_t k = 0; k < vulnerable_idx.size(); ++k) {
+    const PerPatternCompareRow& r = rows[vulnerable_idx[k]];
+    ofs << "  rank " << (k + 1U)
+        << " pattern=" << r.pattern_index
+        << " min_margin_baseline=" << r.cmp.baseline_min_abs_margin
+        << " min_margin_experiment=" << r.cmp.experiment_min_abs_margin
+        << " logits_mse=" << r.cmp.logits_diff.mse
+        << " max_abs_diff=" << r.cmp.logits_diff.max_abs
+        << " xpred_mismatch=" << r.cmp.x_pred_mismatch_count
+        << " sign_flip=" << r.cmp.sign_flip_count
+        << "\n";
+  }
+
+  return ofs.good();
 }
 
 static int run_single_mode(
@@ -640,9 +779,10 @@ int main(int argc, char** argv) {
       row.cmp.baseline_logits_nonfinite.inf_count,
       row.cmp.experiment_logits_nonfinite.nan_count,
       row.cmp.experiment_logits_nonfinite.inf_count);
-    print_topk_entries("  baseline topk smallest |logit|:", row.cmp.baseline_topk_smallest_abs);
-    print_topk_entries("  experiment topk smallest |logit|:", row.cmp.experiment_topk_smallest_abs);
   }
+
+  const DistributionStats margin_dist = compute_distribution_stats(batch.per_pattern_min_margin);
+  const std::vector<std::size_t> vulnerable_idx = collect_top_vulnerable_indices(rows, 5U);
 
   const std::string csv_path = !opts.summary_csv_path.empty()
     ? opts.summary_csv_path
@@ -653,10 +793,17 @@ int main(int argc, char** argv) {
   } else {
     std::printf("[warn] Failed to write csv summary: %s\n", csv_path.c_str());
   }
+  const std::string txt_path = derive_summary_txt_path(csv_path);
+  if (write_batch_summary_txt(txt_path, batch, margin_dist, rows, vulnerable_idx)) {
+    std::printf("Reviewer summary txt    : %s\n", txt_path.c_str());
+  } else {
+    std::printf("[warn] Failed to write reviewer summary txt: %s\n", txt_path.c_str());
+  }
 
   std::printf("=== Batch Compare Summary ===\n");
   std::printf("total patterns scanned        : %d\n", batch.total_patterns_scanned);
   std::printf("patterns with x_pred flip     : %zu\n", batch.patterns_with_xpred_flip);
+  std::printf("patterns with sign flip       : %zu\n", batch.patterns_with_sign_flip);
   std::printf("total flipped bits            : %zu\n", batch.total_flipped_bits);
   std::printf("worst logits MSE              : %.9e (pattern %d)\n",
     batch.worst_logits_mse, batch.worst_logits_mse_pattern);
@@ -671,6 +818,21 @@ int main(int argc, char** argv) {
     batch.baseline_nonfinite_total.nan_count, batch.baseline_nonfinite_total.inf_count);
   std::printf("total experiment NaN / Inf    : %zu / %zu\n",
     batch.experiment_nonfinite_total.nan_count, batch.experiment_nonfinite_total.inf_count);
+  std::printf("margin dist (risk=min(b/e))   : min=%.9e max=%.9e mean=%.9e median=%.9e\n",
+    margin_dist.min_v, margin_dist.max_v, margin_dist.mean_v, margin_dist.median_v);
+  std::printf("top vulnerable patterns (by min margin):\n");
+  for (std::size_t i = 0; i < vulnerable_idx.size(); ++i) {
+    const PerPatternCompareRow& r = rows[vulnerable_idx[i]];
+    std::printf("  rank%zu p=%d margin(b/e)=%.9e/%.9e mse=%.9e maxabs=%.9e xflip=%zu sflip=%zu\n",
+      i + 1U,
+      r.pattern_index,
+      r.cmp.baseline_min_abs_margin,
+      r.cmp.experiment_min_abs_margin,
+      r.cmp.logits_diff.mse,
+      r.cmp.logits_diff.max_abs,
+      r.cmp.x_pred_mismatch_count,
+      r.cmp.sign_flip_count);
+  }
   std::printf("BER/FER evaluator             : unavailable in this AECCT_ac_ref flow (baseline-relative compare only)\n");
 
   return 0;
