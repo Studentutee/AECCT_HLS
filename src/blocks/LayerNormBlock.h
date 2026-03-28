@@ -8,6 +8,7 @@
 #include "AecctProtocol.h"
 #include "AecctRanges.h"
 #include "AecctUtil.h"
+#include "AttnTopManagedPackets.h"
 #include "LayerNormDesc.h"
 #include "QuantDesc.h"
 
@@ -47,8 +48,235 @@ struct LayerNormCfg {
     u32_t eps_bits;
 };
 
-static inline void LayerNormBlock(
-    u32_t* sram,
+struct LayerNormTopManagedTileMeta {
+    u16_t phase_id;
+    u16_t subphase_id;
+    u16_t token_begin;
+    u16_t token_end;
+    u16_t token_idx;
+    u16_t tile_begin;
+    u16_t tile_end;
+    u16_t tile_idx;
+    u16_t tile_valid_words;
+};
+
+static inline bool layernorm_top_managed_tile_meta_ok(
+    const LayerNormTopManagedTileMeta& m,
+    uint32_t expect_phase_id,
+    uint32_t expect_token_idx,
+    uint32_t expect_tile_idx
+) {
+    if ((uint32_t)m.phase_id.to_uint() != expect_phase_id) { return false; }
+    if ((uint32_t)m.token_idx.to_uint() != expect_token_idx) { return false; }
+    if ((uint32_t)m.tile_idx.to_uint() != expect_tile_idx) { return false; }
+
+    const uint32_t t_begin = (uint32_t)m.token_begin.to_uint();
+    const uint32_t t_end = (uint32_t)m.token_end.to_uint();
+    const uint32_t dt_begin = (uint32_t)m.tile_begin.to_uint();
+    const uint32_t dt_end = (uint32_t)m.tile_end.to_uint();
+    const uint32_t valid = (uint32_t)m.tile_valid_words.to_uint();
+
+    if (t_end <= t_begin) { return false; }
+    if (dt_end <= dt_begin) { return false; }
+    if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) { return false; }
+    return true;
+}
+
+template<typename SramView>
+static inline void LayerNormBlockCoreWindow(
+    SramView& sram,
+    const LayerNormCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t x_out_base_word,
+    const LayerNormBlockContract& contract
+) {
+    uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
+    uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+    if (token_count == 0u) { token_count = (uint32_t)LN_TOKEN_COUNT; }
+    if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
+    if (token_count == 0u || d_model == 0u) {
+        return;
+    }
+
+    const fp32_t eps = fp32_from_bits(cfg.eps_bits);
+    const uint32_t x_in_base = (uint32_t)x_in_base_word.to_uint();
+    const uint32_t x_out_base = (uint32_t)x_out_base_word.to_uint();
+    const uint32_t gamma_base = (uint32_t)contract.gamma_base_word.to_uint();
+    const uint32_t beta_base = (uint32_t)contract.beta_base_word.to_uint();
+
+    const uint32_t tile_words = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+    const uint32_t d_model_tile_count = attn_top_managed_tile_count(d_model, tile_words);
+    if (tile_words == 0u || d_model_tile_count == 0u) {
+        return;
+    }
+
+    uint32_t token_begin = (uint32_t)contract.token_range.begin.to_uint();
+    uint32_t token_end = (uint32_t)contract.token_range.end.to_uint();
+    if (token_begin > token_count) { token_begin = token_count; }
+    if (token_end > token_count) { token_end = token_count; }
+    if (token_end <= token_begin) {
+        return;
+    }
+
+    uint32_t tile_begin = (uint32_t)contract.tile_range.begin.to_uint();
+    uint32_t tile_end = (uint32_t)contract.tile_range.end.to_uint();
+    if (tile_begin > d_model_tile_count) { tile_begin = d_model_tile_count; }
+    if (tile_end > d_model_tile_count) { tile_end = d_model_tile_count; }
+    if (tile_end <= tile_begin) {
+        return;
+    }
+
+    const uint32_t phase_id_u32 = (uint32_t)contract.phase_id;
+    const uint32_t subphase_id_u32 = (uint32_t)ATTN_SUBPHASE_OUT;
+
+    LAYERNORM_TOP_MANAGED_TOKEN_LOOP: for (uint32_t t = token_begin; t < token_end; ++t) {
+        const uint32_t row_in_base = x_in_base + t * d_model;
+        const uint32_t row_out_base = x_out_base + t * d_model;
+
+        fp32_t sum_fp = fp32_zero();
+        fp32_t sq_sum_fp = fp32_zero();
+#ifndef __SYNTHESIS__
+        // Legacy fixed-point accumulators are retained for P11AI root-cause diagnostics.
+        quant_acc_t legacy_sum = 0;
+        quant_acc_t legacy_sq_sum = 0;
+        fp32_t x_min = fp32_zero();
+        fp32_t x_max = fp32_zero();
+        bool x_minmax_init = false;
+        bool input_nonfinite = false;
+#endif
+
+        // Pass-1: token-wise mean/variance accumulation over Top-provided d-model tiles.
+        LAYERNORM_TOP_MANAGED_PASS1_TILE_LOOP: for (uint32_t dt = tile_begin; dt < tile_end; ++dt) {
+            const uint32_t tile_offset = dt * tile_words;
+            const uint32_t valid = attn_top_managed_tile_valid_words(d_model, tile_words, dt);
+
+            LayerNormTopManagedTileMeta meta;
+            meta.phase_id = (u16_t)phase_id_u32;
+            meta.subphase_id = (u16_t)subphase_id_u32;
+            meta.token_begin = (u16_t)token_begin;
+            meta.token_end = (u16_t)token_end;
+            meta.token_idx = (u16_t)t;
+            meta.tile_begin = (u16_t)tile_begin;
+            meta.tile_end = (u16_t)tile_end;
+            meta.tile_idx = (u16_t)dt;
+            meta.tile_valid_words = (u16_t)valid;
+            if (!layernorm_top_managed_tile_meta_ok(meta, phase_id_u32, t, dt)) {
+                continue;
+            }
+
+            LAYERNORM_TOP_MANAGED_PASS1_TILE_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                const uint32_t c = tile_offset + i;
+                const u32_t x_bits = sram[row_in_base + c];
+                const fp32_t x = fp32_from_bits(x_bits);
+                sum_fp += x;
+                sq_sum_fp += (x * x);
+#ifndef __SYNTHESIS__
+                const quant_act_t x_q = quant_act_from_bits(x_bits);
+                legacy_sum += x_q;
+                legacy_sq_sum += (quant_acc_t(x_q) * quant_acc_t(x_q));
+                if (!x_minmax_init) {
+                    x_min = x;
+                    x_max = x;
+                    x_minmax_init = true;
+                } else {
+                    if (x < x_min) { x_min = x; }
+                    if (x > x_max) { x_max = x; }
+                }
+                const uint32_t raw = (uint32_t)x_bits.to_uint();
+                if ((raw & 0x7F800000u) == 0x7F800000u) {
+                    input_nonfinite = true;
+                }
+#endif
+            }
+        }
+
+        fp32_t mean = fp32_zero();
+        fp32_t inv_std = fp32_one();
+        ac_int<32, true> d_model_i = (ac_int<32, true>)d_model;
+        fp32_t inv_n_den(d_model_i);
+
+        mean = sum_fp / inv_n_den;
+        fp32_t var = (sq_sum_fp / inv_n_den) - (mean * mean);
+#ifndef __SYNTHESIS__
+        static bool p11ai_ln_root_cause_logged = false;
+        if (!p11ai_ln_root_cause_logged) {
+            const fp32_t legacy_sum_fp(legacy_sum);
+            const fp32_t legacy_sq_sum_fp(legacy_sq_sum);
+            const fp32_t legacy_mean = legacy_sum_fp / inv_n_den;
+            const fp32_t legacy_var = (legacy_sq_sum_fp / inv_n_den) - (legacy_mean * legacy_mean);
+            if (legacy_var <= fp32_zero() && var > fp32_zero()) {
+                p11ai_ln_root_cause_logged = true;
+                std::printf(
+                    "[p11ai][LN_ROOT_CAUSE] token=%u input_nonfinite=%d legacy_var_bits=0x%08X fp32_var_bits=0x%08X legacy_sq_sum_bits=0x%08X fp32_sq_sum_bits=0x%08X legacy_sum_bits=0x%08X fp32_sum_bits=0x%08X x_min_bits=0x%08X x_max_bits=0x%08X\n",
+                    (unsigned)t,
+                    input_nonfinite ? 1 : 0,
+                    (unsigned)bits_from_fp32(legacy_var).to_uint(),
+                    (unsigned)bits_from_fp32(var).to_uint(),
+                    (unsigned)bits_from_fp32(legacy_sq_sum_fp).to_uint(),
+                    (unsigned)bits_from_fp32(sq_sum_fp).to_uint(),
+                    (unsigned)bits_from_fp32(legacy_sum_fp).to_uint(),
+                    (unsigned)bits_from_fp32(sum_fp).to_uint(),
+                    (unsigned)bits_from_fp32(x_min).to_uint(),
+                    (unsigned)bits_from_fp32(x_max).to_uint());
+            }
+        }
+#endif
+
+        fp32_t var_plus_eps = var + eps;
+        if (var_plus_eps <= fp32_zero()) {
+#ifndef __SYNTHESIS__
+            static bool p11ai_ln_guard_logged = false;
+            if (!p11ai_ln_guard_logged) {
+                p11ai_ln_guard_logged = true;
+                const u32_t var_bits = bits_from_fp32(var);
+                const u32_t vpe_bits = bits_from_fp32(var_plus_eps);
+                std::printf(
+                    "[p11ai][LN_ASSERT_GUARD] token=%u var_bits=0x%08X var_plus_eps_bits=0x%08X eps_bits=0x%08X\n",
+                    (unsigned)t,
+                    (unsigned)var_bits.to_uint(),
+                    (unsigned)vpe_bits.to_uint(),
+                    (unsigned)cfg.eps_bits.to_uint());
+            }
+#endif
+            var_plus_eps = eps;
+        }
+        const fp32_t std_val = var_plus_eps.template sqrt<AC_RND_CONV, false>();
+        inv_std = fp32_one().template div<AC_RND_CONV, false>(std_val);
+
+        // Pass-2: normalize + affine writeback, still token-wise and tile-driven.
+        LAYERNORM_TOP_MANAGED_PASS2_TILE_LOOP: for (uint32_t dt = tile_begin; dt < tile_end; ++dt) {
+            const uint32_t tile_offset = dt * tile_words;
+            const uint32_t valid = attn_top_managed_tile_valid_words(d_model, tile_words, dt);
+
+            LayerNormTopManagedTileMeta meta;
+            meta.phase_id = (u16_t)phase_id_u32;
+            meta.subphase_id = (u16_t)subphase_id_u32;
+            meta.token_begin = (u16_t)token_begin;
+            meta.token_end = (u16_t)token_end;
+            meta.token_idx = (u16_t)t;
+            meta.tile_begin = (u16_t)tile_begin;
+            meta.tile_end = (u16_t)tile_end;
+            meta.tile_idx = (u16_t)dt;
+            meta.tile_valid_words = (u16_t)valid;
+            if (!layernorm_top_managed_tile_meta_ok(meta, phase_id_u32, t, dt)) {
+                continue;
+            }
+
+            LAYERNORM_TOP_MANAGED_PASS2_TILE_STORE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                const uint32_t c = tile_offset + i;
+                const fp32_t x = fp32_from_bits(sram[row_in_base + c]);
+                const fp32_t g = fp32_from_bits(sram[gamma_base + c]);
+                const fp32_t b = fp32_from_bits(sram[beta_base + c]);
+                const fp32_t y = ((x - mean) * inv_std) * g + b;
+                sram[row_out_base + c] = bits_from_fp32(y);
+            }
+        }
+    }
+}
+
+template<typename SramView>
+static inline void LayerNormBlockCoreWindowDirect(
+    SramView& sram,
     const LayerNormCfg& cfg,
     u32_t x_in_base_word,
     u32_t x_out_base_word,
@@ -166,6 +394,95 @@ static inline void LayerNormBlock(
             sram[row_out_base + c] = bits_from_fp32(y);
         }
     }
+}
+
+static inline void LayerNormBlock(
+    u32_t* sram,
+    const LayerNormCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t x_out_base_word,
+    u32_t gamma_base_word,
+    u32_t beta_base_word
+) {
+    LayerNormBlockContract contract;
+    clear_layernorm_contract(contract);
+    contract.start = true;
+    contract.done = false;
+    contract.phase_id = PHASE_END_LN;
+    contract.x_work_base_word = x_in_base_word;
+    contract.gamma_base_word = gamma_base_word;
+    contract.beta_base_word = beta_base_word;
+    uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
+    uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+    if (token_count == 0u) { token_count = (uint32_t)LN_TOKEN_COUNT; }
+    if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
+    const uint32_t tile_count =
+        attn_top_managed_tile_count(d_model, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+    contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+    contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+
+    // Mainline migration: default LN entry now consumes Top-managed token/tile range metadata.
+    LayerNormBlockCoreWindow<u32_t*>(
+        sram,
+        cfg,
+        x_in_base_word,
+        x_out_base_word,
+        contract
+    );
+    contract.done = true;
+}
+
+template<uint32_t SRAM_WORDS>
+static inline void LayerNormBlockTopManagedWindowBridge(
+    u32_t (&sram_window)[SRAM_WORDS],
+    const LayerNormCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t x_out_base_word,
+    const LayerNormBlockContract& contract
+) {
+    LayerNormBlockCoreWindow<u32_t (&)[SRAM_WORDS]>(
+        sram_window,
+        cfg,
+        x_in_base_word,
+        x_out_base_word,
+        contract
+    );
+}
+
+template<uint32_t SRAM_WORDS>
+static inline void LayerNormBlockTopManagedWindowBridge(
+    u32_t (&sram_window)[SRAM_WORDS],
+    const LayerNormCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t x_out_base_word,
+    u32_t gamma_base_word,
+    u32_t beta_base_word,
+    PhaseId phase_id = PHASE_END_LN
+) {
+    LayerNormBlockContract contract;
+    clear_layernorm_contract(contract);
+    contract.start = true;
+    contract.done = false;
+    contract.phase_id = phase_id;
+    contract.x_work_base_word = x_in_base_word;
+    contract.gamma_base_word = gamma_base_word;
+    contract.beta_base_word = beta_base_word;
+    uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
+    uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+    if (token_count == 0u) { token_count = (uint32_t)LN_TOKEN_COUNT; }
+    if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
+    const uint32_t tile_count =
+        attn_top_managed_tile_count(d_model, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+    contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+    contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+
+    LayerNormBlockTopManagedWindowBridge(
+        sram_window,
+        cfg,
+        x_in_base_word,
+        x_out_base_word,
+        contract
+    );
 }
 
 } // namespace aecct

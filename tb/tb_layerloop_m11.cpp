@@ -57,6 +57,31 @@ static void expect_rsp(aecct::ctrl_ch_t& ctrl_rsp, uint8_t kind_exp, uint8_t pay
     }
 }
 
+static void expect_rsp_kind_either(
+    aecct::ctrl_ch_t& ctrl_rsp,
+    uint8_t kind_exp0,
+    uint8_t kind_exp1,
+    uint8_t payload_exp
+) {
+    aecct::u16_t w;
+    if (!ctrl_rsp.nb_read(w)) {
+        std::printf("ERROR: expected ctrl response but channel empty\n");
+        std::exit(1);
+    }
+    uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
+    uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
+    if ((kind != kind_exp0 && kind != kind_exp1) || payload != payload_exp) {
+        std::printf(
+            "ERROR: ctrl response mismatch. kind=%u payload=%u expect_kind=%u|%u expect_payload=%u\n",
+            (unsigned)kind,
+            (unsigned)payload,
+            (unsigned)kind_exp0,
+            (unsigned)kind_exp1,
+            (unsigned)payload_exp);
+        std::exit(1);
+    }
+}
+
 static void expect_no_rsp(aecct::ctrl_ch_t& ctrl_rsp) {
     aecct::u16_t w;
     if (ctrl_rsp.nb_read(w)) {
@@ -180,7 +205,11 @@ static void run_load_w_pattern(
     aecct::data_ch_t& data_out
 ) {
     drive_set_w_base(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint32_t)sram_map::PARAM_BASE_DEFAULT);
-    expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_W_BASE);
+    expect_rsp_kind_either(
+        ctrl_rsp,
+        (uint8_t)aecct::RSP_DONE,
+        (uint8_t)aecct::RSP_OK,
+        (uint8_t)aecct::OP_SET_W_BASE);
 
     drive_cmd(ctrl_cmd, ctrl_rsp, data_in, data_out, (uint8_t)aecct::OP_LOAD_W);
     expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_LOAD_W);

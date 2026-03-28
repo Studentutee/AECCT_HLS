@@ -157,13 +157,14 @@ static inline void TransformerLayerTopManagedAttnBridge(
     ln_cfg.d_model = (u32_t)d_model;
     ln_cfg.eps_bits = LN_EPS_BITS;
 
-    LayerNormBlock(
+    LayerNormBlockTopManagedWindowBridge(
         sram_window,
         ln_cfg,
         (u32_t)add2_base,
         x_out_base_word,
         (u32_t)gamma_base,
-        (u32_t)beta_base
+        (u32_t)beta_base,
+        PHASE_LAYER0
     );
 }
 
