@@ -322,7 +322,10 @@ static inline void FFNLayer0(
     u32_t param_base_word,
     u32_t layer_id = (u32_t)0
 ) {
-    FFNLayer0CoreWindowDirect<STAGE_MODE, u32_t*>(
+    // Mainline migration note:
+    // Default FFN entry now runs through the Top-managed tile/window core.
+    // Direct core remains as legacy helper only and is no longer the main path.
+    FFNLayer0CoreWindow<STAGE_MODE, u32_t*>(
         sram,
         cfg,
         x_in_base_word,
