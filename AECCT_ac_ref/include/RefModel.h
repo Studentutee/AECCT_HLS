@@ -17,6 +17,8 @@ struct RefModelIO {
   double* out_logits;
   // output x_pred: [B, N] (0/1)
   bit1_t* out_x_pred;
+  // optional FinalHead scalar s_t dump: [B, 75], row-major
+  double* out_finalhead_s_t;
 
   int B;
   int N;

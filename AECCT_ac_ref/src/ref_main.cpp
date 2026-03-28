@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,12 +13,14 @@
 #include <vector>
 
 #include "../include/RefExperimentMetrics.h"
+#include "../include/RefE4M3Helpers.h"
 #include "../include/RefModel.h"
 #include "../include/RefPrecisionMode.h"
 
 #include "input_y_step0.h"
 #include "output_logits_step0.h"
 #include "output_x_pred_step0.h"
+#include "weights.h"
 
 namespace {
 
@@ -39,6 +42,7 @@ struct CliOptions {
   int pattern_begin;
   int pattern_count;
   int topk;
+  bool summary_only;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
 };
@@ -98,6 +102,26 @@ struct GoldenAggregateMetrics {
   std::size_t x_pred_total_count;
 };
 
+struct PerfBreakdownSec {
+  double startup_init_s;
+  double baseline_model_s;
+  double experiment_path_s;
+  double compare_aggregation_s;
+  double file_io_s;
+  double total_s;
+};
+
+static inline std::chrono::steady_clock::time_point now_tp() {
+  return std::chrono::steady_clock::now();
+}
+
+static inline double elapsed_sec(
+  const std::chrono::steady_clock::time_point& t0,
+  const std::chrono::steady_clock::time_point& t1
+) {
+  return std::chrono::duration<double>(t1 - t0).count();
+}
+
 static void print_usage() {
   std::printf("Usage: ref_sim [pattern_index] [options]\n");
   std::printf("Options:\n");
@@ -105,6 +129,8 @@ static void print_usage() {
   std::printf("  --pattern N\n");
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
+  std::printf("  --summary-only\n");
+  std::printf("  --quiet (alias of --summary-only)\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
   std::printf("  --help\n");
@@ -148,6 +174,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.pattern_begin = -1;
   opts.pattern_count = -1;
   opts.topk = 5;
+  opts.summary_only = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
 
@@ -199,6 +226,10 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
         return CliParseResult::ERROR;
       }
       opts.topk = std::atoi(argv[++i]);
+      continue;
+    }
+    if (std::strcmp(arg, "--summary-only") == 0 || std::strcmp(arg, "--quiet") == 0) {
+      opts.summary_only = true;
       continue;
     }
     if (std::strcmp(arg, "--summary-csv") == 0) {
@@ -314,6 +345,7 @@ static void run_ref_single_pattern(
   io.input_y_fp32 = input_ptr;
   io.out_logits = out.logits.data();
   io.out_x_pred = out.x_pred.data();
+  io.out_finalhead_s_t = nullptr;
   io.B = 1;
   io.N = n_vars;
   model.infer_step0(io);
@@ -321,6 +353,110 @@ static void run_ref_single_pattern(
   out.logits_vs_golden = aecct_ref::compute_metrics(golden_logits, out.logits.data(), out.logits.size());
   out.x_pred_match_count = compute_x_pred_match_count(golden_x_pred, out.x_pred);
   out.x_pred_total_count = out.x_pred.size();
+}
+
+static void run_ref_batch(
+  aecct_ref::RefModel& model,
+  const PatternRange& range,
+  int n_vars,
+  std::vector<double>& logits,
+  std::vector<aecct_ref::bit1_t>& x_pred,
+  double* out_finalhead_s_t
+) {
+  const int run_b = range.count;
+  const std::size_t logits_count = static_cast<std::size_t>(run_b * n_vars);
+  logits.assign(logits_count, 0.0);
+  x_pred.assign(logits_count, aecct_ref::bit1_t(0));
+
+  aecct_ref::RefModelIO io{};
+  io.input_y = nullptr;
+  io.input_y_fp32 = &trace_input_y_step0_tensor[range.begin * n_vars];
+  io.out_logits = logits.data();
+  io.out_x_pred = x_pred.data();
+  io.out_finalhead_s_t = out_finalhead_s_t;
+  io.B = run_b;
+  io.N = n_vars;
+  model.infer_step0(io);
+}
+
+static inline aecct_ref::ref_fp32_t sign_fp32_local(aecct_ref::ref_fp32_t x) {
+  if (x > aecct_ref::ref_fp32_t(0.0f)) return aecct_ref::ref_fp32_t(1.0f);
+  if (x < aecct_ref::ref_fp32_t(0.0f)) return aecct_ref::ref_fp32_t(-1.0f);
+  return aecct_ref::ref_fp32_t(0.0f);
+}
+
+static void run_experiment_from_baseline_finalhead(
+  const PatternRange& range,
+  int n_vars,
+  const std::vector<double>& baseline_finalhead_s_t,
+  std::vector<double>& experiment_logits,
+  std::vector<aecct_ref::bit1_t>& experiment_x_pred
+) {
+  static constexpr int kTokensT = 75;
+  static constexpr int kVars = 63;
+  const int run_b = range.count;
+  const std::size_t logits_count = static_cast<std::size_t>(run_b * n_vars);
+  experiment_logits.assign(logits_count, 0.0);
+  experiment_x_pred.assign(logits_count, aecct_ref::bit1_t(0));
+
+  for (int b = 0; b < run_b; ++b) {
+    aecct_ref::ref_fp32_t out_fc_in[kTokensT];
+    for (int t = 0; t < kTokensT; ++t) {
+      const double s_t = baseline_finalhead_s_t[static_cast<std::size_t>(b * kTokensT + t)];
+      aecct_ref::ref_fp32_t x = aecct_ref::ref_fp32_t(static_cast<float>(s_t));
+      out_fc_in[t] = aecct_ref::roundtrip_through_generic_e4m3(x);
+    }
+
+    const int src_pattern = range.begin + b;
+    const double* input_y = &trace_input_y_step0_tensor[src_pattern * n_vars];
+    for (int n = 0; n < kVars; ++n) {
+      aecct_ref::ref_fp32_t acc = aecct_ref::ref_fp32_t(static_cast<float>(w_out_fc_bias[n]));
+      for (int t = 0; t < kTokensT; ++t) {
+        acc += aecct_ref::ref_fp32_t(static_cast<float>(w_out_fc_weight[n * kTokensT + t])) * out_fc_in[t];
+      }
+
+      experiment_logits[static_cast<std::size_t>(b * n_vars + n)] = static_cast<double>(acc.to_float());
+      const aecct_ref::ref_fp32_t y = aecct_ref::ref_fp32_t(static_cast<float>(input_y[n]));
+      const aecct_ref::ref_fp32_t decision = acc * sign_fp32_local(y);
+      experiment_x_pred[static_cast<std::size_t>(b * n_vars + n)] =
+        aecct_ref::bit1_t((decision < aecct_ref::ref_fp32_t(0.0f)) ? 1 : 0);
+    }
+
+    for (int n = kVars; n < n_vars; ++n) {
+      experiment_logits[static_cast<std::size_t>(b * n_vars + n)] = 0.0;
+      experiment_x_pred[static_cast<std::size_t>(b * n_vars + n)] = aecct_ref::bit1_t(0);
+    }
+  }
+}
+
+static aecct_ref::Metrics compute_pattern_logits_vs_golden(
+  const std::vector<double>& logits,
+  int batch_index,
+  int pattern_index,
+  int n_vars
+) {
+  const double* golden_logits = &trace_output_logits_step0_tensor[pattern_index * n_vars];
+  const double* pred_logits = &logits[static_cast<std::size_t>(batch_index * n_vars)];
+  return aecct_ref::compute_metrics(golden_logits, pred_logits, static_cast<std::size_t>(n_vars));
+}
+
+static std::size_t compute_pattern_xpred_match_vs_golden(
+  const std::vector<aecct_ref::bit1_t>& x_pred,
+  int batch_index,
+  int pattern_index,
+  int n_vars
+) {
+  const double* golden_x_pred = &trace_output_x_pred_step0_tensor[pattern_index * n_vars];
+  const aecct_ref::bit1_t* pred_x = &x_pred[static_cast<std::size_t>(batch_index * n_vars)];
+  std::size_t match = 0;
+  for (int i = 0; i < n_vars; ++i) {
+    const int g = (golden_x_pred[i] != 0.0) ? 1 : 0;
+    const int p = pred_x[i].to_int();
+    if (g == p) {
+      match++;
+    }
+  }
+  return match;
 }
 
 static void print_vs_golden_summary(const char* tag, const RefRunOutputs& run) {
@@ -632,6 +768,33 @@ static bool write_batch_summary_txt(
   return ofs.good();
 }
 
+static std::string derive_timing_txt_path(const std::string& csv_path) {
+  if (csv_path.size() >= 4U && csv_path.substr(csv_path.size() - 4U) == ".csv") {
+    return csv_path.substr(0, csv_path.size() - 4U) + "_timing.txt";
+  }
+  return csv_path + "_timing.txt";
+}
+
+static bool write_timing_txt(const std::string& path, const PerfBreakdownSec& perf) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  ofs << "startup_init_s       : " << perf.startup_init_s << "\n";
+  ofs << "baseline_model_s     : " << perf.baseline_model_s << "\n";
+  ofs << "experiment_path_s    : " << perf.experiment_path_s << "\n";
+  ofs << "compare_aggregation_s: " << perf.compare_aggregation_s << "\n";
+  ofs << "file_io_s            : " << perf.file_io_s << "\n";
+  ofs << "total_s              : " << perf.total_s << "\n";
+  return ofs.good();
+}
+
 static int run_single_mode(
   aecct_ref::RefPrecisionMode precision_mode,
   const char* tag,
@@ -681,6 +844,8 @@ static int run_single_mode(
 } // anonymous namespace
 
 int main(int argc, char** argv) {
+  const auto t_program_start = now_tp();
+  PerfBreakdownSec perf{};
   const int B = trace_input_y_step0_tensor_shape[0];
   const int N = trace_input_y_step0_tensor_shape[1];
   const int logits_B = trace_output_logits_step0_tensor_shape[0];
@@ -717,6 +882,9 @@ int main(int argc, char** argv) {
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
   std::printf("  pattern_range  : begin=%d count=%d\n", range.begin, range.count);
   std::printf("  topk           : %d\n", opts.topk);
+  std::printf("  summary_only   : %d\n", opts.summary_only ? 1 : 0);
+
+  perf.startup_init_s = elapsed_sec(t_program_start, now_tp());
 
   if (opts.run_mode == CliRunMode::BASELINE_ONLY) {
     return run_single_mode(aecct_ref::RefPrecisionMode::BASELINE_FP32, "baseline", range, N, opts);
@@ -726,60 +894,87 @@ int main(int argc, char** argv) {
   }
 
   aecct_ref::RefModel baseline_model;
-  aecct_ref::RefModel experiment_model;
   aecct_ref::RefRunConfig baseline_cfg{};
   baseline_cfg.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
   baseline_cfg.algo_variant = opts.algo_variant;
   baseline_model.set_run_config(baseline_cfg);
 
-  aecct_ref::RefRunConfig experiment_cfg{};
-  experiment_cfg.precision_mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
-  experiment_cfg.algo_variant = opts.algo_variant;
-  experiment_model.set_run_config(experiment_cfg);
-
   BatchCompareSummary batch{};
   init_batch_summary(batch);
   std::vector<PerPatternCompareRow> rows;
   rows.reserve(static_cast<std::size_t>(range.count));
+  std::vector<double> baseline_logits_batch;
+  std::vector<aecct_ref::bit1_t> baseline_x_pred_batch;
+  std::vector<double> baseline_finalhead_s_t;
+  baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
+  std::vector<double> experiment_logits_batch;
+  std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
 
+  const auto t_baseline_start = now_tp();
+  run_ref_batch(
+    baseline_model,
+    range,
+    N,
+    baseline_logits_batch,
+    baseline_x_pred_batch,
+    baseline_finalhead_s_t.data()
+  );
+  perf.baseline_model_s = elapsed_sec(t_baseline_start, now_tp());
+
+  const auto t_experiment_start = now_tp();
+  run_experiment_from_baseline_finalhead(
+    range,
+    N,
+    baseline_finalhead_s_t,
+    experiment_logits_batch,
+    experiment_x_pred_batch
+  );
+  perf.experiment_path_s = elapsed_sec(t_experiment_start, now_tp());
+
+  const auto t_compare_start = now_tp();
   for (int off = 0; off < range.count; ++off) {
     const int pattern = range.begin + off;
-    RefRunOutputs baseline{};
-    RefRunOutputs experiment{};
-    run_ref_single_pattern(baseline_model, pattern, N, baseline);
-    run_ref_single_pattern(experiment_model, pattern, N, experiment);
-
+    const std::size_t base_idx = static_cast<std::size_t>(off * N);
     PerPatternCompareRow row{};
     row.pattern_index = pattern;
-    row.baseline_vs_golden = baseline.logits_vs_golden;
-    row.experiment_vs_golden = experiment.logits_vs_golden;
+    row.baseline_vs_golden = compute_pattern_logits_vs_golden(baseline_logits_batch, off, pattern, N);
+    row.experiment_vs_golden = compute_pattern_logits_vs_golden(experiment_logits_batch, off, pattern, N);
     row.cmp = aecct_ref::compute_experiment_compare_metrics(
-      baseline.logits.data(),
-      experiment.logits.data(),
-      baseline.x_pred.data(),
-      experiment.x_pred.data(),
-      baseline.logits.size(),
-      baseline.x_pred.size(),
+      &baseline_logits_batch[base_idx],
+      &experiment_logits_batch[base_idx],
+      &baseline_x_pred_batch[base_idx],
+      &experiment_x_pred_batch[base_idx],
+      static_cast<std::size_t>(N),
+      static_cast<std::size_t>(N),
       static_cast<std::size_t>(opts.topk)
     );
 
     rows.push_back(row);
     update_batch_summary(batch, row);
 
-    std::printf("[pattern %d] mse=%.9e maxabs=%.9e xpred_flip=%zu (%.9e) sign_flip=%zu margin(b/e)=%.9e/%.9e naninf(b)=%zu/%zu naninf(e)=%zu/%zu\n",
-      row.pattern_index,
-      row.cmp.logits_diff.mse,
-      row.cmp.logits_diff.max_abs,
-      row.cmp.x_pred_mismatch_count,
-      row.cmp.x_pred_mismatch_ratio,
-      row.cmp.sign_flip_count,
-      row.cmp.baseline_min_abs_margin,
-      row.cmp.experiment_min_abs_margin,
-      row.cmp.baseline_logits_nonfinite.nan_count,
-      row.cmp.baseline_logits_nonfinite.inf_count,
-      row.cmp.experiment_logits_nonfinite.nan_count,
-      row.cmp.experiment_logits_nonfinite.inf_count);
+    if (!opts.summary_only) {
+      std::printf("[pattern %d] mse=%.9e maxabs=%.9e xpred_flip=%zu (%.9e) sign_flip=%zu margin(b/e)=%.9e/%.9e naninf(b)=%zu/%zu naninf(e)=%zu/%zu b_mse_g=%.9e e_mse_g=%.9e xmatch(b/e)=%zu/%zu,%zu/%zu\n",
+        row.pattern_index,
+        row.cmp.logits_diff.mse,
+        row.cmp.logits_diff.max_abs,
+        row.cmp.x_pred_mismatch_count,
+        row.cmp.x_pred_mismatch_ratio,
+        row.cmp.sign_flip_count,
+        row.cmp.baseline_min_abs_margin,
+        row.cmp.experiment_min_abs_margin,
+        row.cmp.baseline_logits_nonfinite.nan_count,
+        row.cmp.baseline_logits_nonfinite.inf_count,
+        row.cmp.experiment_logits_nonfinite.nan_count,
+        row.cmp.experiment_logits_nonfinite.inf_count,
+        row.baseline_vs_golden.mse,
+        row.experiment_vs_golden.mse,
+        compute_pattern_xpred_match_vs_golden(baseline_x_pred_batch, off, pattern, N),
+        static_cast<std::size_t>(N),
+        compute_pattern_xpred_match_vs_golden(experiment_x_pred_batch, off, pattern, N),
+        static_cast<std::size_t>(N));
+    }
   }
+  perf.compare_aggregation_s = elapsed_sec(t_compare_start, now_tp());
 
   const DistributionStats margin_dist = compute_distribution_stats(batch.per_pattern_min_margin);
   const std::vector<std::size_t> vulnerable_idx = collect_top_vulnerable_indices(rows, 5U);
@@ -788,6 +983,7 @@ int main(int argc, char** argv) {
     ? opts.summary_csv_path
     : ("build/ref_eval/compare_summary_begin" + std::to_string(range.begin) +
        "_count" + std::to_string(range.count) + ".csv");
+  const auto t_fileio_start = now_tp();
   if (write_compare_csv(csv_path, rows)) {
     std::printf("Per-pattern summary csv : %s\n", csv_path.c_str());
   } else {
@@ -798,6 +994,14 @@ int main(int argc, char** argv) {
     std::printf("Reviewer summary txt    : %s\n", txt_path.c_str());
   } else {
     std::printf("[warn] Failed to write reviewer summary txt: %s\n", txt_path.c_str());
+  }
+  const std::string timing_path = derive_timing_txt_path(csv_path);
+  perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
+  perf.total_s = elapsed_sec(t_program_start, now_tp());
+  if (write_timing_txt(timing_path, perf)) {
+    std::printf("Timing summary txt      : %s\n", timing_path.c_str());
+  } else {
+    std::printf("[warn] Failed to write timing summary txt: %s\n", timing_path.c_str());
   }
 
   std::printf("=== Batch Compare Summary ===\n");
@@ -833,6 +1037,13 @@ int main(int argc, char** argv) {
       r.cmp.x_pred_mismatch_count,
       r.cmp.sign_flip_count);
   }
+  std::printf("=== Timing Breakdown (sec) ===\n");
+  std::printf("startup/init             : %.6f\n", perf.startup_init_s);
+  std::printf("baseline model run       : %.6f\n", perf.baseline_model_s);
+  std::printf("experiment path run      : %.6f\n", perf.experiment_path_s);
+  std::printf("compare aggregation      : %.6f\n", perf.compare_aggregation_s);
+  std::printf("file I/O                 : %.6f\n", perf.file_io_s);
+  std::printf("total runtime            : %.6f\n", perf.total_s);
   std::printf("BER/FER evaluator             : unavailable in this AECCT_ac_ref flow (baseline-relative compare only)\n");
 
   return 0;

@@ -796,6 +796,9 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
       final_node_logits[t][0] = s_t;
       out_fc_in[0][t] = s_t;
+      if (io.out_finalhead_s_t != nullptr) {
+        io.out_finalhead_s_t[b * TOKENS_T + t] = static_cast<double>(s_t.to_float());
+      }
     }
 
     static fp32_ref_t final_logits[1][VAR_N];
