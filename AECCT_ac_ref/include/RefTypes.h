@@ -1,11 +1,16 @@
 #pragma once
 #include "ac_fixed.h"
 #include "ac_int.h"
+#include "ac_std_float.h"
 
 // Keep ALL quant formats here (single source of truth for the ref harness).
 // Edit these typedefs when you sweep bit-widths.
 
 namespace aecct_ref {
+
+// Floating-point domains used by the ref flow.
+typedef ac_ieee_float<binary32> ref_fp32_t;
+typedef ac_std_float<8, 4> ref_generic_e4m3_t;
 
 // Activation (example): signed, 16-bit total, 4 integer bits (incl sign).
 typedef ac_fixed<16, 4, true, AC_RND_CONV, AC_SAT_SYM> act_t;

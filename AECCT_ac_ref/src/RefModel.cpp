@@ -11,8 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "ac_std_float.h"
-
+#include "../include/RefE4M3Helpers.h"
 #include "../include/InvSqrtApprox.h"
 #include "../include/SoftmaxApprox.h"
 #include "weights.h"
@@ -20,7 +19,7 @@
 namespace aecct_ref {
 namespace {
 
-typedef ac_ieee_float<binary32> fp32_ref_t;
+typedef ref_fp32_t fp32_ref_t;
 
 static constexpr int TOKENS_T = 75;
 static constexpr int VAR_N = 63;
@@ -50,6 +49,10 @@ static inline fp32_ref_t sign_fp32(fp32_ref_t x) {
 
 static inline fp32_ref_t fp32_round(fp32_ref_t x) {
   return x.round();
+}
+
+static inline bool use_generic_e4m3_finalhead(const RefRunConfig& cfg) {
+  return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
 }
 
 static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
@@ -591,9 +594,19 @@ static void run_layer(const int layer_idx,
 } // namespace
 
 RefModel::RefModel() {
+  run_cfg_.precision_mode = RefPrecisionMode::BASELINE_FP32;
+  run_cfg_.algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
   dump_cfg_.enabled = false;
   dump_cfg_.dump_dir = nullptr;
   dump_cfg_.pattern_index = -1;
+}
+
+void RefModel::set_run_config(const RefRunConfig& cfg) {
+  run_cfg_ = cfg;
+}
+
+RefRunConfig RefModel::get_run_config() const {
+  return run_cfg_;
 }
 
 void RefModel::set_dump_config(const RefDumpConfig& cfg) {
@@ -612,6 +625,10 @@ void RefModel::infer_step0(const RefModelIO& io) const {
   const int N_out = (N < VAR_N) ? N : VAR_N;
 
   assert(io.input_y_fp32 != nullptr && "input_y_fp32 must be provided for alignment mode");
+  if (run_cfg_.algo_variant != RefAlgoVariant::BASELINE_SPEC_FLOW) {
+    std::printf("[warn] Unsupported algo variant %s. Fallback to BASELINE_SPEC_FLOW.\n",
+      to_string(run_cfg_.algo_variant));
+  }
 
   bool one_ring[TOKENS_T][TOKENS_T];
   bool second_ring[TOKENS_T][TOKENS_T];
@@ -773,8 +790,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       for (int i = 0; i < D_MODEL; ++i) {
         acc += end_norm[t][i] * fp32_ref_t(static_cast<float>(w_oned_final_embed_0_weight[i]));
       }
-      final_node_logits[t][0] = acc;
-      out_fc_in[0][t] = acc;
+      fp32_ref_t s_t = acc;
+      if (use_generic_e4m3_finalhead(run_cfg_)) {
+        s_t = roundtrip_through_generic_e4m3(s_t);
+      }
+      final_node_logits[t][0] = s_t;
+      out_fc_in[0][t] = s_t;
     }
 
     static fp32_ref_t final_logits[1][VAR_N];
@@ -816,8 +837,3 @@ void RefModel::infer_step0(const RefModelIO& io) const {
 }
 
 } // namespace aecct_ref
-
-
-
-
-

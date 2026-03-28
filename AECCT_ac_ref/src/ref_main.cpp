@@ -1,13 +1,12 @@
 #include <cstdio>
 #include <cstdlib>
-#include <cstdint>
+#include <cstring>
+#include <string>
+#include <vector>
 
-#include "ac_channel.h"
-
-#include "../include/RefMetrics.h"
-#include "../include/RefStep0ShapeBridge.h"
-#include "../include/RefStep0RunReport.h"
-#include "../synth/RefStep0Synth.h"
+#include "../include/RefExperimentMetrics.h"
+#include "../include/RefModel.h"
+#include "../include/RefPrecisionMode.h"
 
 #include "input_y_step0.h"
 #include "output_logits_step0.h"
@@ -15,246 +14,292 @@
 
 namespace {
 
-static const int kVars = ModelShapes::N_VARS;
-static const int kOutDim = ModelShapes::OUT_DIM;
-static const int kXPredWords = ModelShapes::XPRED_WORDS;
+enum class CliRunMode : unsigned char {
+  COMPARE = 0,
+  BASELINE_ONLY = 1,
+  EXPERIMENT_ONLY = 2
+};
 
-static void print_first_k(const char *name, const double *x, int k) {
-  std::printf("%s[0:%d]:\n", name, k);
-  for (int i = 0; i < k; ++i) {
-    std::printf("  [%d] %.9f\n", i, x[i]);
+struct CliOptions {
+  CliRunMode run_mode;
+  int pattern_index;
+  aecct_ref::RefAlgoVariant algo_variant;
+};
+
+struct RefRunOutputs {
+  std::vector<double> logits;
+  std::vector<aecct_ref::bit1_t> x_pred;
+  aecct_ref::Metrics logits_vs_golden;
+  std::size_t x_pred_match_count;
+  std::size_t x_pred_total_count;
+};
+
+static void print_usage() {
+  std::printf("Usage: ref_sim [pattern_index] [--mode compare|baseline|experiment] [--pattern index]\n");
+  std::printf("       ref_sim --help\n");
+}
+
+static bool parse_run_mode(const char* text, CliRunMode& mode) {
+  if (std::strcmp(text, "compare") == 0) {
+    mode = CliRunMode::COMPARE;
+    return true;
   }
+  if (std::strcmp(text, "baseline") == 0) {
+    mode = CliRunMode::BASELINE_ONLY;
+    return true;
+  }
+  if (std::strcmp(text, "experiment") == 0) {
+    mode = CliRunMode::EXPERIMENT_ONLY;
+    return true;
+  }
+  return false;
 }
 
-static inline double fp32_bits_to_double(aecct_ref::u32_word_t bits) {
-  aecct_ref::fp32_ref_t x;
-  x.set_data(static_cast<ac_int<32, true> >(bits));
-  return static_cast<double>(x.to_float());
+static bool parse_algo_variant(const char* text, aecct_ref::RefAlgoVariant& variant) {
+  if (std::strcmp(text, "baseline_spec_flow") == 0) {
+    variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
+    return true;
+  }
+  if (std::strcmp(text, "reserved_softmax_alt") == 0) {
+    variant = aecct_ref::RefAlgoVariant::RESERVED_SOFTMAX_ALT;
+    return true;
+  }
+  if (std::strcmp(text, "reserved_finalhead_alt") == 0) {
+    variant = aecct_ref::RefAlgoVariant::RESERVED_FINALHEAD_ALT;
+    return true;
+  }
+  return false;
 }
 
-static void run_synth_step0_pattern_mode(
-  const double *input_y,
-  uint32_t mode,
-  aecct_ref::u32_word_t *out_words,
-  int max_words,
-  int &got_words,
-  aecct_ref::RefStep0RunReport &report
+static bool parse_cli(int argc, char** argv, CliOptions& opts) {
+  opts.run_mode = CliRunMode::COMPARE;
+  opts.pattern_index = -1;
+  opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
+
+  bool positional_pattern_used = false;
+  for (int i = 1; i < argc; ++i) {
+    const char* arg = argv[i];
+    if (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0) {
+      print_usage();
+      return false;
+    }
+    if (std::strcmp(arg, "--mode") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --mode\n");
+        return false;
+      }
+      if (!parse_run_mode(argv[++i], opts.run_mode)) {
+        std::printf("Unsupported mode: %s\n", argv[i]);
+        return false;
+      }
+      continue;
+    }
+    if (std::strcmp(arg, "--pattern") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --pattern\n");
+        return false;
+      }
+      opts.pattern_index = std::atoi(argv[++i]);
+      positional_pattern_used = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--algo") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --algo\n");
+        return false;
+      }
+      if (!parse_algo_variant(argv[++i], opts.algo_variant)) {
+        std::printf("Unsupported algo variant: %s\n", argv[i]);
+        return false;
+      }
+      continue;
+    }
+    if (arg[0] == '-') {
+      std::printf("Unknown flag: %s\n", arg);
+      return false;
+    }
+    if (positional_pattern_used) {
+      std::printf("Unexpected positional arg: %s\n", arg);
+      return false;
+    }
+    opts.pattern_index = std::atoi(arg);
+    positional_pattern_used = true;
+  }
+  return true;
+}
+
+static std::size_t compute_x_pred_match_count(
+  const double* golden_x_pred,
+  const std::vector<aecct_ref::bit1_t>& predicted_x_pred
 ) {
-  ac_channel<aecct_ref::fp32_ref_t> in_y_ch;
-  ac_channel<aecct_ref::u32_word_t> data_out;
-
-  for (int i = 0; i < kVars; ++i) {
-    in_y_ch.write(aecct_ref::fp32_ref_t(static_cast<float>(input_y[i])));
-  }
-
-  aecct_ref::ref_step0_set_outmode(ac_int<2, false>(mode));
-  aecct_ref::ref_step0_synth(in_y_ch, data_out);
-  report = aecct_ref::ref_step0_get_last_report();
-
-  got_words = 0;
-  aecct_ref::u32_word_t w;
-  while (data_out.nb_read(w)) {
-    if (got_words < max_words) {
-      out_words[got_words] = w;
-    }
-    got_words++;
-  }
-}
-
-static void decode_xpred_words(
-  const aecct_ref::u32_word_t *words,
-  aecct_ref::bit1_t *xpred_bits
-) {
-  for (int var_idx = 0; var_idx < kVars; ++var_idx) {
-    const int word_idx = (var_idx >> 5);
-    const int bit_idx = (var_idx & 31);
-    const uint32_t packed = static_cast<uint32_t>(words[word_idx].to_uint());
-    const uint32_t bit = (packed >> bit_idx) & 1u;
-    xpred_bits[var_idx] = aecct_ref::bit1_t(bit);
-  }
-}
-
-static void print_run_report(const char *tag, const aecct_ref::RefStep0RunReport &r) {
-  std::printf("=== %s RunReport ===\n", tag);
-  std::printf("final_scalar_base_word         : %u\n", r.final_scalar_base_word);
-  std::printf("final_scalar_words             : %u\n", r.final_scalar_words);
-  std::printf("scratch_base_word              : %u\n", r.scratch_base_word);
-  std::printf("scratch_words                  : %u\n", r.scratch_words);
-  std::printf("final_scalar_in_scratch        : %d\n", r.final_scalar_in_scratch ? 1 : 0);
-  std::printf("final_scalar_range_ok          : %d\n", r.final_scalar_range_ok ? 1 : 0);
-  std::printf("final_scalar_capacity_ok       : %d\n", r.final_scalar_capacity_ok ? 1 : 0);
-  std::printf("addr_overlap_scr_k             : %d\n", r.final_scalar_addr_overlap_scr_k ? 1 : 0);
-  std::printf("addr_overlap_scr_v             : %d\n", r.final_scalar_addr_overlap_scr_v ? 1 : 0);
-  std::printf("live_conflict_scr_k            : %d\n", r.final_scalar_live_conflict_scr_k ? 1 : 0);
-  std::printf("live_conflict_scr_v            : %d\n", r.final_scalar_live_conflict_scr_v ? 1 : 0);
-  std::printf("final_scalar_overlap_conflict  : %d\n", r.final_scalar_overlap_conflict ? 1 : 0);
-  std::printf("final_layer_no_writeback       : %d\n", r.final_layer_no_writeback_enforced ? 1 : 0);
-  std::printf("final_layer_writeback_words    : %u\n", r.final_layer_writeback_words);
-  std::printf("final_head_used_page_next      : %d\n", r.final_head_used_page_next ? 1 : 0);
-  std::printf("pass_b_executed                : %d\n", r.pass_b_executed ? 1 : 0);
-  std::printf("output_words                   : %u\n", r.output_words);
-  std::printf("has_error                      : %d\n", r.has_error ? 1 : 0);
-  std::printf("error_code                     : 0x%08X\n", r.error_code);
-  std::printf("error_msg                      : %s\n", aecct_ref::ref_step0_error_msg_text(r.error_msg));
-}
-
-} // anonymous namespace
-
-int main(int argc, char **argv) {
-  int b_sel = -1;
-  if (argc >= 2) {
-    b_sel = std::atoi(argv[1]);
-  }
-
-  const int B = trace_input_y_step0_tensor_shape[0];
-  const int N = trace_input_y_step0_tensor_shape[1];
-  const int logits_n = trace_output_logits_step0_tensor_shape[1];
-  const int xpred_n = trace_output_x_pred_step0_tensor_shape[1];
-
-  if (N != kVars) {
-    std::printf("Unexpected input N=%d, expected ModelShapes::N_VARS=%d\n", N, kVars);
-    return 1;
-  }
-  if (logits_n != kOutDim) {
-    std::printf("Unexpected logits dim=%d, expected ModelShapes::OUT_DIM=%d\n", logits_n, kOutDim);
-    return 1;
-  }
-  if (xpred_n != kVars) {
-    std::printf("Unexpected x_pred dim=%d, expected ModelShapes::N_VARS=%d\n", xpred_n, kVars);
-    return 1;
-  }
-
-  if (b_sel >= 0 && b_sel >= B) {
-    std::printf("Usage: ref_sim [pattern_index]\n");
-    std::printf("pattern_index must be in [0, %d)\n", B);
-    return 1;
-  }
-
-  const int run_B = (b_sel >= 0) ? 1 : B;
-
-  double *out_logits = new double[run_B * kOutDim];
-  aecct_ref::bit1_t *out_xpred = new aecct_ref::bit1_t[run_B * kVars];
-
-  aecct_ref::RefStep0RunReport report_mode0 = {};
-  aecct_ref::RefStep0RunReport report_mode1 = {};
-  aecct_ref::RefStep0RunReport report_mode2 = {};
-
-  for (int rb = 0; rb < run_B; ++rb) {
-    const int src_b = (b_sel >= 0) ? b_sel : rb;
-    const int src_base = src_b * N;
-
-    aecct_ref::u32_word_t mode0_words[kXPredWords + 4];
-    aecct_ref::u32_word_t mode1_words[kOutDim + 4];
-    aecct_ref::u32_word_t mode2_words[4];
-
-    int got0 = 0;
-    int got1 = 0;
-    int got2 = 0;
-
-    run_synth_step0_pattern_mode(
-      &trace_input_y_step0_tensor[src_base],
-      0u,
-      mode0_words,
-      kXPredWords + 4,
-      got0,
-      report_mode0
-    );
-
-    if (report_mode0.has_error || got0 != static_cast<int>(report_mode0.output_words) ||
-        report_mode0.output_words != static_cast<uint32_t>(kXPredWords)) {
-      std::printf("OUTMODE=0 failed at pattern %d: got=%d report_words=%u err=%d\n",
-        src_b, got0, report_mode0.output_words, report_mode0.has_error ? 1 : 0);
-      print_run_report("OUTMODE=0", report_mode0);
-      delete[] out_logits;
-      delete[] out_xpred;
-      return 2;
-    }
-
-    decode_xpred_words(mode0_words, &out_xpred[rb * kVars]);
-
-    run_synth_step0_pattern_mode(
-      &trace_input_y_step0_tensor[src_base],
-      1u,
-      mode1_words,
-      kOutDim + 4,
-      got1,
-      report_mode1
-    );
-
-    if (report_mode1.has_error || got1 != static_cast<int>(report_mode1.output_words) ||
-        report_mode1.output_words != static_cast<uint32_t>(kOutDim)) {
-      std::printf("OUTMODE=1 failed at pattern %d: got=%d report_words=%u err=%d\n",
-        src_b, got1, report_mode1.output_words, report_mode1.has_error ? 1 : 0);
-      print_run_report("OUTMODE=1", report_mode1);
-      delete[] out_logits;
-      delete[] out_xpred;
-      return 3;
-    }
-
-    for (int i = 0; i < kOutDim; ++i) {
-      out_logits[rb * kOutDim + i] = fp32_bits_to_double(mode1_words[i]);
-    }
-
-    run_synth_step0_pattern_mode(
-      &trace_input_y_step0_tensor[src_base],
-      2u,
-      mode2_words,
-      4,
-      got2,
-      report_mode2
-    );
-
-    if (report_mode2.has_error || got2 != 0 || report_mode2.output_words != 0u || report_mode2.pass_b_executed) {
-      std::printf("OUTMODE=2 failed at pattern %d: got=%d report_words=%u pass_b=%d err=%d\n",
-        src_b, got2, report_mode2.output_words, report_mode2.pass_b_executed ? 1 : 0,
-        report_mode2.has_error ? 1 : 0);
-      print_run_report("OUTMODE=2", report_mode2);
-      delete[] out_logits;
-      delete[] out_xpred;
-      return 4;
-    }
-  }
-
-  const double *golden_logits =
-    (b_sel >= 0) ? &trace_output_logits_step0_tensor[b_sel * kOutDim]
-                 : trace_output_logits_step0_tensor;
-
-  aecct_ref::Metrics m_logits =
-    aecct_ref::compute_metrics(golden_logits, out_logits, static_cast<std::size_t>(run_B * kOutDim));
-
-  std::printf("=== Step0 logits metrics vs golden ===\n");
-  std::printf("MSE     : %.6e\n", m_logits.mse);
-  std::printf("RMSE    : %.6e\n", m_logits.rmse);
-  std::printf("MAE     : %.6e\n", m_logits.mae);
-  std::printf("MaxAbs  : %.6e\n", m_logits.max_abs);
-
-  const double *golden_xpred =
-    (b_sel >= 0) ? &trace_output_x_pred_step0_tensor[b_sel * kVars]
-                 : trace_output_x_pred_step0_tensor;
-
   std::size_t match = 0;
-  for (int i = 0; i < run_B * kVars; ++i) {
-    const int g = (golden_xpred[i] != 0.0) ? 1 : 0;
-    const int p = static_cast<int>(out_xpred[i].to_int());
+  for (std::size_t i = 0; i < predicted_x_pred.size(); ++i) {
+    const int g = (golden_x_pred[i] != 0.0) ? 1 : 0;
+    const int p = predicted_x_pred[i].to_int();
     if (g == p) {
       match++;
     }
   }
-  const double acc = (run_B * kVars > 0)
-    ? (100.0 * static_cast<double>(match) / static_cast<double>(run_B * kVars))
-    : 0.0;
-
-  std::printf("x_pred match: %.2f%% (%zu / %d)\n", acc, match, run_B * kVars);
-  print_first_k("golden_logits", golden_logits, 8);
-  print_first_k("ref_logits   ", out_logits, 8);
-
-  print_run_report("OUTMODE=0", report_mode0);
-  print_run_report("OUTMODE=1", report_mode1);
-  print_run_report("OUTMODE=2", report_mode2);
-
-  delete[] out_logits;
-  delete[] out_xpred;
-
-  return 0;
+  return match;
 }
 
+static void run_ref_mode(
+  aecct_ref::RefPrecisionMode precision_mode,
+  const CliOptions& opts,
+  RefRunOutputs& out
+) {
+  const int B = trace_input_y_step0_tensor_shape[0];
+  const int N = trace_input_y_step0_tensor_shape[1];
+
+  const int run_B = (opts.pattern_index >= 0) ? 1 : B;
+  const std::size_t logits_count = static_cast<std::size_t>(run_B * N);
+  const std::size_t x_pred_count = logits_count;
+
+  const double* input_ptr = (opts.pattern_index >= 0)
+    ? &trace_input_y_step0_tensor[opts.pattern_index * N]
+    : trace_input_y_step0_tensor;
+  const double* golden_logits = (opts.pattern_index >= 0)
+    ? &trace_output_logits_step0_tensor[opts.pattern_index * N]
+    : trace_output_logits_step0_tensor;
+  const double* golden_x_pred = (opts.pattern_index >= 0)
+    ? &trace_output_x_pred_step0_tensor[opts.pattern_index * N]
+    : trace_output_x_pred_step0_tensor;
+
+  out.logits.assign(logits_count, 0.0);
+  out.x_pred.assign(x_pred_count, aecct_ref::bit1_t(0));
+
+  aecct_ref::RefModel model;
+  aecct_ref::RefRunConfig cfg{};
+  cfg.precision_mode = precision_mode;
+  cfg.algo_variant = opts.algo_variant;
+  model.set_run_config(cfg);
+
+  aecct_ref::RefModelIO io{};
+  io.input_y = nullptr;
+  io.input_y_fp32 = input_ptr;
+  io.out_logits = out.logits.data();
+  io.out_x_pred = out.x_pred.data();
+  io.B = run_B;
+  io.N = N;
+  model.infer_step0(io);
+
+  out.logits_vs_golden = aecct_ref::compute_metrics(golden_logits, out.logits.data(), logits_count);
+  out.x_pred_match_count = compute_x_pred_match_count(golden_x_pred, out.x_pred);
+  out.x_pred_total_count = x_pred_count;
+}
+
+static void print_vs_golden_summary(
+  const char* tag,
+  const RefRunOutputs& run
+) {
+  const double match_ratio = (run.x_pred_total_count > 0U)
+    ? (100.0 * static_cast<double>(run.x_pred_match_count) /
+       static_cast<double>(run.x_pred_total_count))
+    : 0.0;
+
+  std::printf("=== %s vs golden ===\n", tag);
+  std::printf("logits MSE    : %.9e\n", run.logits_vs_golden.mse);
+  std::printf("logits RMSE   : %.9e\n", run.logits_vs_golden.rmse);
+  std::printf("logits MAE    : %.9e\n", run.logits_vs_golden.mae);
+  std::printf("logits MaxAbs : %.9e\n", run.logits_vs_golden.max_abs);
+  std::printf("x_pred match  : %.2f%% (%zu / %zu)\n",
+    match_ratio, run.x_pred_match_count, run.x_pred_total_count);
+}
+
+static void print_first_k_compare(
+  const RefRunOutputs& baseline,
+  const RefRunOutputs& experiment,
+  int k
+) {
+  const int n = static_cast<int>(baseline.logits.size());
+  const int kk = (k < n) ? k : n;
+  std::printf("logits first %d (baseline / experiment / delta):\n", kk);
+  for (int i = 0; i < kk; ++i) {
+    const double b = baseline.logits[static_cast<std::size_t>(i)];
+    const double e = experiment.logits[static_cast<std::size_t>(i)];
+    std::printf("  [%d] %.9f / %.9f / %.9f\n", i, b, e, (e - b));
+  }
+}
+
+} // anonymous namespace
+
+int main(int argc, char** argv) {
+  const int B = trace_input_y_step0_tensor_shape[0];
+  const int N = trace_input_y_step0_tensor_shape[1];
+  const int logits_B = trace_output_logits_step0_tensor_shape[0];
+  const int logits_N = trace_output_logits_step0_tensor_shape[1];
+  const int xpred_B = trace_output_x_pred_step0_tensor_shape[0];
+  const int xpred_N = trace_output_x_pred_step0_tensor_shape[1];
+
+  if (logits_B != B || xpred_B != B || logits_N != N || xpred_N != N) {
+    std::printf("Trace shape mismatch between input/logits/x_pred headers.\n");
+    return 2;
+  }
+
+  CliOptions opts{};
+  if (!parse_cli(argc, argv, opts)) {
+    return 1;
+  }
+  if (opts.pattern_index >= B) {
+    std::printf("pattern_index out of range: %d (valid [0, %d))\n", opts.pattern_index, B);
+    return 1;
+  }
+
+  std::printf("Run config:\n");
+  std::printf("  mode           : %s\n",
+    (opts.run_mode == CliRunMode::COMPARE) ? "compare"
+      : ((opts.run_mode == CliRunMode::BASELINE_ONLY) ? "baseline" : "experiment"));
+  std::printf("  precision(base): %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::BASELINE_FP32));
+  std::printf("  precision(exp) : %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD));
+  std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
+  if (opts.pattern_index >= 0) {
+    std::printf("  pattern_index  : %d\n", opts.pattern_index);
+  } else {
+    std::printf("  pattern_index  : ALL (%d patterns)\n", B);
+  }
+
+  if (opts.run_mode == CliRunMode::BASELINE_ONLY) {
+    RefRunOutputs baseline{};
+    run_ref_mode(aecct_ref::RefPrecisionMode::BASELINE_FP32, opts, baseline);
+    print_vs_golden_summary("baseline", baseline);
+    return 0;
+  }
+
+  if (opts.run_mode == CliRunMode::EXPERIMENT_ONLY) {
+    RefRunOutputs experiment{};
+    run_ref_mode(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD, opts, experiment);
+    print_vs_golden_summary("experiment", experiment);
+    return 0;
+  }
+
+  RefRunOutputs baseline{};
+  RefRunOutputs experiment{};
+  run_ref_mode(aecct_ref::RefPrecisionMode::BASELINE_FP32, opts, baseline);
+  run_ref_mode(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD, opts, experiment);
+
+  print_vs_golden_summary("baseline", baseline);
+  print_vs_golden_summary("experiment", experiment);
+
+  const aecct_ref::RefExperimentCompareMetrics cmp = aecct_ref::compute_experiment_compare_metrics(
+    baseline.logits.data(),
+    experiment.logits.data(),
+    baseline.x_pred.data(),
+    experiment.x_pred.data(),
+    baseline.logits.size(),
+    baseline.x_pred.size()
+  );
+
+  std::printf("=== baseline vs experiment ===\n");
+  std::printf("logits MSE              : %.9e\n", cmp.logits_diff.mse);
+  std::printf("logits MaxAbs diff      : %.9e\n", cmp.logits_diff.max_abs);
+  std::printf("x_pred mismatch count   : %zu\n", cmp.x_pred_mismatch_count);
+  std::printf("x_pred mismatch ratio   : %.9e\n", cmp.x_pred_mismatch_ratio);
+  std::printf("baseline logits NaN/Inf : %zu / %zu\n",
+    cmp.baseline_logits_nonfinite.nan_count, cmp.baseline_logits_nonfinite.inf_count);
+  std::printf("experiment logits NaN/Inf: %zu / %zu\n",
+    cmp.experiment_logits_nonfinite.nan_count, cmp.experiment_logits_nonfinite.inf_count);
+  std::printf("BER/FER evaluator       : unavailable in this AECCT_ac_ref flow (baseline-relative compare only)\n");
+
+  print_first_k_compare(baseline, experiment, 8);
+  return 0;
+}

@@ -1,5 +1,8 @@
 ﻿#pragma once
 #include <cstddef>
+
+#include "RefAlgoVariant.h"
+#include "RefPrecisionMode.h"
 #include "RefTypes.h"
 
 namespace aecct_ref {
@@ -25,9 +28,17 @@ struct RefDumpConfig {
   int pattern_index;
 };
 
+struct RefRunConfig {
+  RefPrecisionMode precision_mode;
+  RefAlgoVariant algo_variant;
+};
+
 class RefModel {
 public:
   RefModel();
+
+  void set_run_config(const RefRunConfig& cfg);
+  RefRunConfig get_run_config() const;
 
   void set_dump_config(const RefDumpConfig& cfg);
   void clear_dump_config();
@@ -36,6 +47,7 @@ public:
   void infer_step0(const RefModelIO& io) const;
 
 private:
+  RefRunConfig run_cfg_;
   RefDumpConfig dump_cfg_;
 };
 
