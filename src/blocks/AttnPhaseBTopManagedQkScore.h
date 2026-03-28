@@ -12,6 +12,8 @@
 
 namespace aecct {
 
+typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_q_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_k_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_phaseb_qk_pkt_ch_t;
 
 template<typename SramView>
@@ -50,7 +52,7 @@ static inline bool attn_phaseb_emit_qsrc_tile(
     u32_t tile_begin,
     u32_t tile_end,
     u32_t tile_valid_words,
-    attn_phaseb_qk_pkt_ch_t& in_ch
+    attn_phaseb_q_pkt_ch_t& q_ch
 ) {
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
@@ -74,7 +76,7 @@ static inline bool attn_phaseb_emit_qsrc_tile(
     for (uint32_t i = 0u; i < valid; ++i) {
         pkt.data[i] = sram[(uint32_t)q_tile_base_word.to_uint() + i];
     }
-    in_ch.write(pkt);
+    q_ch.write(pkt);
     return true;
 }
 
@@ -89,7 +91,7 @@ static inline bool attn_phaseb_emit_kvscan_tile(
     u32_t tile_begin,
     u32_t tile_end,
     u32_t tile_valid_words,
-    attn_phaseb_qk_pkt_ch_t& in_ch
+    attn_phaseb_k_pkt_ch_t& k_ch
 ) {
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
@@ -113,12 +115,13 @@ static inline bool attn_phaseb_emit_kvscan_tile(
     for (uint32_t i = 0u; i < valid; ++i) {
         pkt.data[i] = sram[(uint32_t)k_tile_base_word.to_uint() + i];
     }
-    in_ch.write(pkt);
+    k_ch.write(pkt);
     return true;
 }
 
 static inline bool attn_phaseb_block_qk_dot_consume_emit(
-    attn_phaseb_qk_pkt_ch_t& in_ch,
+    attn_phaseb_q_pkt_ch_t& q_ch,
+    attn_phaseb_k_pkt_ch_t& k_ch,
     attn_phaseb_qk_pkt_ch_t& out_ch,
     u32_t token_idx,
     u32_t key_token_idx,
@@ -141,7 +144,7 @@ static inline bool attn_phaseb_block_qk_dot_consume_emit(
     ATTN_P11AE_DOT_TILE_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
         AttnTopManagedWorkPacket q_pkt;
         AttnTopManagedWorkPacket k_pkt;
-        if (!in_ch.nb_read(q_pkt) || !in_ch.nb_read(k_pkt)) {
+        if (!q_ch.nb_read(q_pkt) || !k_ch.nb_read(k_pkt)) {
             return false;
         }
         if ((uint32_t)q_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_Q) { return false; }

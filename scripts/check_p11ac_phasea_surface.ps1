@@ -116,6 +116,12 @@ $attnText = Get-Content -Path (Join-Path $repo "src/blocks/AttnLayer0.h") -Raw
 Require-TextContains -Text $attnText -Needle "kv_prebuilt_from_top_managed" -Reason "AttnLayer0 top-managed hook missing"
 Require-TextContains -Text $attnText -Needle "skip_kv_materialization" -Reason "AttnLayer0 K/V materialization skip guard missing"
 
+$kvText = Get-Content -Path (Join-Path $repo "src/blocks/AttnPhaseATopManagedKv.h") -Raw
+Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_x_work_pkt_ch_t;" -Reason "KV helper split type attn_x_work_pkt_ch_t missing"
+Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_wk_work_pkt_ch_t;" -Reason "KV helper split type attn_wk_work_pkt_ch_t missing"
+Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_wv_work_pkt_ch_t;" -Reason "KV helper split type attn_wv_work_pkt_ch_t missing"
+Require-TextContains -Text $kvText -Needle "!x_ch.nb_read(x_pkt) || !wk_ch.nb_read(wk_pkt) || !wv_ch.nb_read(wv_pkt)" -Reason "KV helper split consume path missing x/wk/wv split reads"
+
 $runnerText = Get-Content -Path (Join-Path $repo "scripts/local/run_p11ac_phasea_top_managed.ps1") -Raw
 Require-TextContains -Text $runnerText -Needle "PASS: run_p11ac_phasea_top_managed" -Reason "runner PASS banner missing"
 Require-TextContains -Text $runnerText -Needle "MAINLINE_PATH_TAKEN PASS" -Reason "runner must gate on mainline path banner"

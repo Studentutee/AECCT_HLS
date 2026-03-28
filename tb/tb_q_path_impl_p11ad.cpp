@@ -187,8 +187,7 @@ private:
             }
 
             aecct::u32_t out_inv_sw_bits = (aecct::u32_t)0u;
-            aecct::TernaryLiveL0WqRowTop wq_top;
-            if (!wq_top.run(
+            if (!aecct::ternary_live_l0_wq_materialize_row_kernel_split(
                     x_row,
                     wq_payload_.data(),
                     wq_inv_sw_bits_,

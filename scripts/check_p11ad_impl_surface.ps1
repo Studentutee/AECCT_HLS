@@ -123,6 +123,12 @@ $attnText = Get-Content -Path (Join-Path $repo "src/blocks/AttnLayer0.h") -Raw
 Require-TextContains -Text $attnText -Needle "q_prebuilt_from_top_managed" -Reason "AttnLayer0 Q hook missing"
 Require-TextContains -Text $attnText -Needle "skip_q_materialization" -Reason "AttnLayer0 skip_q_materialization marker missing"
 
+$qText = Get-Content -Path (Join-Path $repo "src/blocks/AttnPhaseATopManagedQ.h") -Raw
+Require-TextContains -Text $qText -Needle "attn_q_x_work_pkt_ch_t" -Reason "AD X work-channel split typedef missing"
+Require-TextContains -Text $qText -Needle "attn_q_wq_work_pkt_ch_t" -Reason "AD WQ work-channel split typedef missing"
+Require-TextContains -Text $qText -Needle "x_ch.nb_read(x_pkt)" -Reason "AD X consume must read from x_ch"
+Require-TextContains -Text $qText -Needle "wq_ch.nb_read(wq_pkt)" -Reason "AD WQ consume must read from wq_ch"
+
 $runnerText = Get-Content -Path (Join-Path $repo "scripts/local/run_p11ad_impl_q_path.ps1") -Raw
 Require-TextContains -Text $runnerText -Needle "PASS: run_p11ad_impl_q_path" -Reason "runner PASS banner missing"
 Require-TextContains -Text $runnerText -Needle "MAINLINE_Q_PATH_TAKEN PASS" -Reason "runner must gate on mainline Q path banner"

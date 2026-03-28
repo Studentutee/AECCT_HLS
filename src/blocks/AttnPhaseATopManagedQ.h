@@ -13,6 +13,8 @@
 namespace aecct {
 
 typedef ac_channel<AttnTopManagedPacket> attn_q_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_q_x_work_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_q_wq_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_q_work_pkt_ch_t;
 
 template<typename SramView>
@@ -139,7 +141,8 @@ static inline bool attn_top_emit_phasea_q_work_tile(
     u32_t tile_begin,
     u32_t tile_end,
     u32_t tile_valid_words,
-    attn_q_work_pkt_ch_t& in_ch
+    attn_q_x_work_pkt_ch_t& x_ch,
+    attn_q_wq_work_pkt_ch_t& wq_ch
 ) {
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
@@ -161,7 +164,7 @@ static inline bool attn_top_emit_phasea_q_work_tile(
     for (uint32_t i = 0u; i < valid; ++i) {
         x_pkt.data[i] = sram[(uint32_t)x_tile_base_word.to_uint() + i];
     }
-    in_ch.write(x_pkt);
+    x_ch.write(x_pkt);
 
     AttnTopManagedWorkPacket wq_pkt;
     attn_work_packet_clear(wq_pkt);
@@ -175,12 +178,13 @@ static inline bool attn_top_emit_phasea_q_work_tile(
     wq_pkt.tile_begin = (u16_t)tile_begin;
     wq_pkt.tile_end = (u16_t)tile_end;
     wq_pkt.tile_valid_words = (u16_t)tile_valid_words;
-    in_ch.write(wq_pkt);
+    wq_ch.write(wq_pkt);
     return true;
 }
 
 static inline bool attn_block_phasea_q_consume_emit_token_work_tiles(
-    attn_q_work_pkt_ch_t& in_ch,
+    attn_q_x_work_pkt_ch_t& x_ch,
+    attn_q_wq_work_pkt_ch_t& wq_ch,
     attn_q_work_pkt_ch_t& out_ch,
     const u32_t wq_payload_words[kTernaryLiveL0WqPayloadWords],
     u32_t wq_inv_sw_bits,
@@ -211,7 +215,7 @@ static inline bool attn_block_phasea_q_consume_emit_token_work_tiles(
     ATTN_P11AD_TILE_CONSUME_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
         AttnTopManagedWorkPacket x_pkt;
         AttnTopManagedWorkPacket wq_pkt;
-        if (!in_ch.nb_read(x_pkt) || !in_ch.nb_read(wq_pkt)) {
+        if (!x_ch.nb_read(x_pkt) || !wq_ch.nb_read(wq_pkt)) {
             return false;
         }
         if ((uint32_t)x_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_X) { return false; }

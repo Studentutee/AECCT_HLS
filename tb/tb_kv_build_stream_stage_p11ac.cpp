@@ -261,9 +261,8 @@ private:
                 x_row_[i] = sram_[x_row_base(t) + i];
             }
 
-            aecct::TernaryLiveL0WkRowTop wk_top;
             aecct::u32_t out_inv_sw_k = 0;
-            if (!wk_top.run(
+            if (!aecct::ternary_live_l0_wk_materialize_row_kernel_split(
                     x_row_,
                     wk_payload_.data(),
                     wk_inv_sw_bits_,
@@ -273,9 +272,8 @@ private:
                 return false;
             }
 
-            aecct::TernaryLiveL0WvRowTop wv_top;
             aecct::u32_t out_inv_sw_v = 0;
-            if (!wv_top.run(
+            if (!aecct::ternary_live_l0_wv_materialize_row_kernel_split(
                     x_row_,
                     wv_payload_.data(),
                     wv_inv_sw_bits_,
@@ -289,10 +287,11 @@ private:
     }
 
     bool run_top_managed_stage() {
+        aecct::u32_t* sram_ptr = sram_.data();
         for (uint32_t t = 0u; t < token_count_; ++t) {
             for (uint32_t dt = 0u; dt < d_tile_count_; ++dt) {
                 if (!aecct::attn_top_emit_phasea_kv_work_unit(
-                        sram_.data(),
+                        sram_ptr,
                         (aecct::u32_t)x_row_base(t),
                         (aecct::u32_t)t,
                         (aecct::u32_t)dt,
@@ -322,7 +321,7 @@ private:
                 mark_stream(t, dt, (uint32_t)aecct::ATTN_PKT_V);
 
                 if (!aecct::attn_top_writeback_phasea_kv_work_unit(
-                        sram_.data(),
+                        sram_ptr,
                         (aecct::u32_t)scr_k_row_base(t),
                         (aecct::u32_t)scr_v_row_base(t),
                         (aecct::u32_t)t,

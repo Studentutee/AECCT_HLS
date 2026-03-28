@@ -60,8 +60,8 @@ This acceptance is intentionally limited to:
 - **non-regression within the requested local wrapper family**
 
 This acceptance does **not** claim:
-- Catapult closure
-- SCVerify closure
+- not Catapult closure
+- not SCVerify closure
 - full runtime closure
 - full numeric closure
 - full algorithm closure

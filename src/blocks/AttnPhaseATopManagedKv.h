@@ -13,6 +13,9 @@
 namespace aecct {
 
 typedef ac_channel<AttnTopManagedPacket> attn_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_x_work_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_wk_work_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_wv_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_work_pkt_ch_t;
 
 template<typename SramView>
@@ -179,7 +182,9 @@ static inline bool attn_top_emit_phasea_kv_work_tile(
     u32_t tile_begin,
     u32_t tile_end,
     u32_t tile_valid_words,
-    attn_work_pkt_ch_t& in_ch
+    attn_x_work_pkt_ch_t& x_ch,
+    attn_wk_work_pkt_ch_t& wk_ch,
+    attn_wv_work_pkt_ch_t& wv_ch
 ) {
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
@@ -201,7 +206,7 @@ static inline bool attn_top_emit_phasea_kv_work_tile(
     for (uint32_t i = 0u; i < valid; ++i) {
         x_pkt.data[i] = sram[(uint32_t)x_tile_base_word.to_uint() + i];
     }
-    in_ch.write(x_pkt);
+    x_ch.write(x_pkt);
 
     AttnTopManagedWorkPacket wk_pkt;
     attn_work_packet_clear(wk_pkt);
@@ -215,7 +220,7 @@ static inline bool attn_top_emit_phasea_kv_work_tile(
     wk_pkt.tile_begin = (u16_t)tile_begin;
     wk_pkt.tile_end = (u16_t)tile_end;
     wk_pkt.tile_valid_words = (u16_t)tile_valid_words;
-    in_ch.write(wk_pkt);
+    wk_ch.write(wk_pkt);
 
     AttnTopManagedWorkPacket wv_pkt;
     attn_work_packet_clear(wv_pkt);
@@ -229,12 +234,14 @@ static inline bool attn_top_emit_phasea_kv_work_tile(
     wv_pkt.tile_begin = (u16_t)tile_begin;
     wv_pkt.tile_end = (u16_t)tile_end;
     wv_pkt.tile_valid_words = (u16_t)tile_valid_words;
-    in_ch.write(wv_pkt);
+    wv_ch.write(wv_pkt);
     return true;
 }
 
 static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
-    attn_work_pkt_ch_t& in_ch,
+    attn_x_work_pkt_ch_t& x_ch,
+    attn_wk_work_pkt_ch_t& wk_ch,
+    attn_wv_work_pkt_ch_t& wv_ch,
     attn_work_pkt_ch_t& out_ch,
     const u32_t wk_payload_words[kTernaryLiveL0WkPayloadWords],
     u32_t wk_inv_sw_bits,
@@ -270,7 +277,7 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
         AttnTopManagedWorkPacket x_pkt;
         AttnTopManagedWorkPacket wk_pkt;
         AttnTopManagedWorkPacket wv_pkt;
-        if (!in_ch.nb_read(x_pkt) || !in_ch.nb_read(wk_pkt) || !in_ch.nb_read(wv_pkt)) {
+        if (!x_ch.nb_read(x_pkt) || !wk_ch.nb_read(wk_pkt) || !wv_ch.nb_read(wv_pkt)) {
             return false;
         }
         if ((uint32_t)x_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_X) { return false; }

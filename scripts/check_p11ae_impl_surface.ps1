@@ -126,6 +126,12 @@ Require-TextContains -Text $trText -Needle "score_prebuilt_from_top_managed" -Re
 $attnText = Get-Content -Path (Join-Path $repo "src/blocks/AttnLayer0.h") -Raw
 Require-TextContains -Text $attnText -Needle "score_prebuilt_from_top_managed" -Reason "AttnLayer0 AE hook missing"
 
+$aeText = Get-Content -Path (Join-Path $repo "src/blocks/AttnPhaseBTopManagedQkScore.h") -Raw
+Require-TextContains -Text $aeText -Needle "attn_phaseb_q_pkt_ch_t" -Reason "AE Q channel split typedef missing"
+Require-TextContains -Text $aeText -Needle "attn_phaseb_k_pkt_ch_t" -Reason "AE K channel split typedef missing"
+Require-TextContains -Text $aeText -Needle "q_ch.nb_read(q_pkt)" -Reason "AE Q consume must read from q_ch"
+Require-TextContains -Text $aeText -Needle "k_ch.nb_read(k_pkt)" -Reason "AE K consume must read from k_ch"
+
 $runnerText = Get-Content -Path (Join-Path $repo "scripts/local/run_p11ae_impl_qk_score.ps1") -Raw
 Require-TextContains -Text $runnerText -Needle "PASS: run_p11ae_impl_qk_score" -Reason "runner PASS banner missing"
 Require-TextContains -Text $runnerText -Needle "QK_SCORE_MAINLINE PASS" -Reason "runner must gate on score mainline banner"
