@@ -111,6 +111,9 @@ public:
             std::printf("[p11ad][FAIL] payload/expected preparation failed\n");
             return 1;
         }
+        if (!run_legacy_work_unit_split_probe()) {
+            return 1;
+        }
         if (!run_design_mainline_probe()) {
             return 1;
         }
@@ -200,6 +203,84 @@ private:
                 return false;
             }
         }
+        return true;
+    }
+
+    bool run_legacy_work_unit_split_probe() {
+        std::vector<aecct::u32_t> probe_sram = sram_before_;
+        const aecct::LayerScratch layer_sc =
+            aecct::make_layer_scratch((aecct::u32_t)aecct::LN_X_OUT_BASE_WORD);
+        const aecct::AttnScratch sc = layer_sc.attn;
+
+        aecct::attn_q_x_pkt_ch_t x_ch;
+        aecct::attn_q_wq_pkt_ch_t wq_ch;
+        aecct::attn_q_pkt_ch_t q_ch;
+
+        for (uint32_t t = 0u; t < kTokenCount; ++t) {
+            if (!aecct::attn_top_emit_phasea_q_work_unit(
+                    probe_sram,
+                    (aecct::u32_t)x_row_base(t),
+                    (aecct::u32_t)t,
+                    (aecct::u32_t)0u,
+                    x_ch,
+                    wq_ch)) {
+                std::printf("[p11ad][FAIL] legacy split emit failed token=%u\n", (unsigned)t);
+                return false;
+            }
+
+            if (!aecct::attn_block_phasea_q_consume_emit(
+                    x_ch,
+                    wq_ch,
+                    q_ch,
+                    wq_payload_.data(),
+                    wq_inv_sw_bits_)) {
+                std::printf("[p11ad][FAIL] legacy split consume failed token=%u\n", (unsigned)t);
+                return false;
+            }
+
+            if (!aecct::attn_top_writeback_phasea_q_work_unit(
+                    probe_sram,
+                    (aecct::u32_t)q_row_base(sc, t),
+                    (aecct::u32_t)q_act_q_row_base(sc, t),
+                    (aecct::u32_t)sc.q_sx_base_word.to_uint(),
+                    (aecct::u32_t)t,
+                    (aecct::u32_t)0u,
+                    q_ch)) {
+                std::printf("[p11ad][FAIL] legacy split writeback failed token=%u\n", (unsigned)t);
+                return false;
+            }
+
+            const uint32_t q_base = q_row_base(sc, t);
+            const uint32_t q_act_q_base = q_act_q_row_base(sc, t);
+            for (uint32_t i = 0u; i < kTileWords; ++i) {
+                const uint32_t got_q = (uint32_t)probe_sram[q_base + i].to_uint();
+                const uint32_t exp_q = (uint32_t)expected_q_[t][i].to_uint();
+                if (got_q != exp_q) {
+                    std::printf("[p11ad][FAIL] legacy split Q mismatch token=%u idx=%u got=0x%08X exp=0x%08X\n",
+                                (unsigned)t, (unsigned)i, (unsigned)got_q, (unsigned)exp_q);
+                    return false;
+                }
+
+                const uint32_t got_q_act_q = (uint32_t)probe_sram[q_act_q_base + i].to_uint();
+                const uint32_t exp_q_act_q = (uint32_t)expected_q_act_q_[t][i].to_uint();
+                if (got_q_act_q != exp_q_act_q) {
+                    std::printf("[p11ad][FAIL] legacy split Q_act_q mismatch token=%u idx=%u got=0x%08X exp=0x%08X\n",
+                                (unsigned)t, (unsigned)i, (unsigned)got_q_act_q, (unsigned)exp_q_act_q);
+                    return false;
+                }
+            }
+        }
+
+        const uint32_t got_q_sx = (uint32_t)probe_sram[(uint32_t)sc.q_sx_base_word.to_uint()].to_uint();
+        const uint32_t exp_q_sx = (uint32_t)expected_q_sx_bits_.to_uint();
+        if (got_q_sx != exp_q_sx) {
+            std::printf("[p11ad][FAIL] legacy split Q_sx mismatch got=0x%08X exp=0x%08X\n",
+                        (unsigned)got_q_sx,
+                        (unsigned)exp_q_sx);
+            return false;
+        }
+
+        std::printf("LEGACY_WORK_UNIT_SPLIT_PATH PASS\n");
         return true;
     }
 

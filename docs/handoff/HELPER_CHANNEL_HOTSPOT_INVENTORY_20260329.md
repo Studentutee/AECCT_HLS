@@ -14,22 +14,21 @@
 ## Hotspot Table
 | file | type name | payload classes | active mainline or helper-only | current risk level | can split now? | reason |
 | --- | --- | --- | --- | --- | --- | --- |
-| `src/blocks/AttnPhaseATopManagedKv.h` | `attn_pkt_ch_t` (`in_ch` in `attn_top_emit_phasea_kv_work_unit` / `attn_block_phasea_kv_consume_emit`) | `X + WK + WV` | helper-only (TB-local legacy work-unit path) | HIGH | YES | 3 payload classes on one channel; explicit HOL exposure if producer/consumer cadence drifts. No Top contract coupling. |
-| `src/blocks/AttnPhaseATopManagedKv.h` | `attn_pkt_ch_t` (`out_ch` in `attn_block_phasea_kv_consume_emit` / `attn_top_writeback_phasea_kv_work_unit`) | `K + V` | helper-only (TB-local legacy work-unit path) | MED | YES | Currently lockstep K->V pair, but still mixed channel. Split is local and contained to helper/TB-local path. |
 | `src/blocks/AttnPhaseATopManagedKv.h` | `attn_work_pkt_ch_t` (`out_ch` in `attn_block_phasea_kv_consume_emit_token_work_tiles` / `attn_top_writeback_phasea_kv_work_tile`) | `K + V` | helper/staging-only (no current Top mainline callsite) | MED | YES | Mixed payload class remains in tile helper channel. Split is feasible with local-only interface update. |
-| `src/blocks/AttnPhaseATopManagedQ.h` | `attn_q_pkt_ch_t` (`in_ch` in `attn_top_emit_phasea_q_work_unit` / `attn_block_phasea_q_consume_emit`) | `X + WQ` | helper-only (legacy work-unit path) | MED | YES | 2 payload classes on single channel; low coupling to Top ownership, but no active runner currently exercises this path. |
 
 ## Already-Split Paths Rechecked (Not Remaining Hotspots)
 - `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`: `score`/`v` split confirmed.
 - `src/blocks/AttnPhaseBTopManagedQkScore.h`: `q`/`k` split confirmed.
 - `src/blocks/AttnPhaseATopManagedQ.h` (work-tile path): `x`/`wq` split confirmed.
+- `src/blocks/AttnPhaseATopManagedQ.h` (legacy work-unit path): `x`/`wq` packet-channel split confirmed (C2).
 - `src/blocks/AttnPhaseATopManagedKv.h` (work-tile input path): `x`/`wk`/`wv` split confirmed.
+- `src/blocks/AttnPhaseATopManagedKv.h` (legacy work-unit path): `x/wk/wv` and `k/v` split confirmed.
 
 ## Candidate Ranking For TASK D
-1. Candidate C1 (recommended): `AttnPhaseATopManagedKv.h` legacy work-unit `in_ch` + `out_ch` split (`X/WK/WV` and `K/V`) with `tb/tb_kv_build_stream_stage_p11ac.cpp` update.
-   - Why first: helper-only + existing runner (`run_p11ac_phasea_top_managed.ps1`) gives fast local evidence.
-2. Candidate C2: `AttnPhaseATopManagedQ.h` legacy work-unit `in_ch` split (`X/WQ`).
-   - Why second: helper-only and small cut, but lacks dedicated active runner coverage at present.
+1. Next candidate (recommended): `AttnPhaseATopManagedKv.h` work-tile `attn_work_pkt_ch_t out_ch` split (`K/V`) in `attn_block_phasea_kv_consume_emit_token_work_tiles` + `attn_top_writeback_phasea_kv_work_tile`.
+   - Why next: helper/staging-only and no Top formal contract coupling.
+2. Optional follow-up candidate: AD/AC legacy helper-path static tightening checker-only pass (no new rewiring), if code split is deferred.
+   - Why optional: may reduce regression risk without touching broader dataflow.
 
 ## Inventory Posture
 - This inventory is local static/diff evidence for helper/staging channel topology.

@@ -73,6 +73,7 @@ try {
 
     $requiredPassLines = @(
         'PASS: tb_q_path_impl_p11ad',
+        'LEGACY_WORK_UNIT_SPLIT_PATH PASS',
         'Q_PATH_MAINLINE PASS',
         'Q_EXPECTED_COMPARE PASS',
         'Q_TARGET_SPAN_WRITE PASS',

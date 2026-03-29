@@ -124,13 +124,19 @@ Require-TextContains -Text $attnText -Needle "q_prebuilt_from_top_managed" -Reas
 Require-TextContains -Text $attnText -Needle "skip_q_materialization" -Reason "AttnLayer0 skip_q_materialization marker missing"
 
 $qText = Get-Content -Path (Join-Path $repo "src/blocks/AttnPhaseATopManagedQ.h") -Raw
+Require-TextContains -Text $qText -Needle "attn_q_x_pkt_ch_t" -Reason "AD legacy X packet-channel split typedef missing"
+Require-TextContains -Text $qText -Needle "attn_q_wq_pkt_ch_t" -Reason "AD legacy WQ packet-channel split typedef missing"
 Require-TextContains -Text $qText -Needle "attn_q_x_work_pkt_ch_t" -Reason "AD X work-channel split typedef missing"
 Require-TextContains -Text $qText -Needle "attn_q_wq_work_pkt_ch_t" -Reason "AD WQ work-channel split typedef missing"
+Require-TextContains -Text $qText -Needle "attn_block_phasea_q_consume_emit(" -Reason "AD legacy consume helper missing"
+Require-TextContains -Text $qText -Needle "attn_q_x_pkt_ch_t& x_ch" -Reason "AD legacy consume must use split x packet channel"
+Require-TextContains -Text $qText -Needle "attn_q_wq_pkt_ch_t& wq_ch" -Reason "AD legacy consume must use split wq packet channel"
 Require-TextContains -Text $qText -Needle "x_ch.nb_read(x_pkt)" -Reason "AD X consume must read from x_ch"
 Require-TextContains -Text $qText -Needle "wq_ch.nb_read(wq_pkt)" -Reason "AD WQ consume must read from wq_ch"
 
 $runnerText = Get-Content -Path (Join-Path $repo "scripts/local/run_p11ad_impl_q_path.ps1") -Raw
 Require-TextContains -Text $runnerText -Needle "PASS: run_p11ad_impl_q_path" -Reason "runner PASS banner missing"
+Require-TextContains -Text $runnerText -Needle "LEGACY_WORK_UNIT_SPLIT_PATH PASS" -Reason "runner must gate on legacy split path PASS banner"
 Require-TextContains -Text $runnerText -Needle "MAINLINE_Q_PATH_TAKEN PASS" -Reason "runner must gate on mainline Q path banner"
 Require-TextContains -Text $runnerText -Needle "FALLBACK_NOT_TAKEN PASS" -Reason "runner must gate on fallback-not-taken banner"
 Require-TextContains -Text $runnerText -Needle "fallback_taken = false" -Reason "runner must gate on fallback false evidence"

@@ -13,6 +13,8 @@
 namespace aecct {
 
 typedef ac_channel<AttnTopManagedPacket> attn_q_pkt_ch_t;
+typedef ac_channel<AttnTopManagedPacket> attn_q_x_pkt_ch_t;
+typedef ac_channel<AttnTopManagedPacket> attn_q_wq_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_q_x_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_q_wq_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_q_work_pkt_ch_t;
@@ -39,7 +41,8 @@ static inline bool attn_top_emit_phasea_q_work_unit(
     u32_t x_row_base_word,
     u32_t token_idx,
     u32_t d_tile_idx,
-    attn_q_pkt_ch_t& in_ch
+    attn_q_x_pkt_ch_t& x_ch,
+    attn_q_wq_pkt_ch_t& wq_ch
 ) {
     AttnTopManagedPacket x_pkt;
     attn_packet_clear(x_pkt);
@@ -49,26 +52,27 @@ static inline bool attn_top_emit_phasea_q_work_unit(
     for (unsigned i = 0; i < ATTN_TOP_MANAGED_TILE_WORDS; ++i) {
         x_pkt.data[i] = sram[(uint32_t)x_row_base_word.to_uint() + i];
     }
-    in_ch.write(x_pkt);
+    x_ch.write(x_pkt);
 
     AttnTopManagedPacket wq_pkt;
     attn_packet_clear(wq_pkt);
     wq_pkt.kind = (u16_t)ATTN_PKT_WQ;
     wq_pkt.token_idx = (u16_t)token_idx;
     wq_pkt.d_tile_idx = (u16_t)d_tile_idx;
-    in_ch.write(wq_pkt);
+    wq_ch.write(wq_pkt);
     return true;
 }
 
 static inline bool attn_block_phasea_q_consume_emit(
-    attn_q_pkt_ch_t& in_ch,
+    attn_q_x_pkt_ch_t& x_ch,
+    attn_q_wq_pkt_ch_t& wq_ch,
     attn_q_pkt_ch_t& out_ch,
     const u32_t wq_payload_words[kTernaryLiveL0WqPayloadWords],
     u32_t wq_inv_sw_bits
 ) {
     AttnTopManagedPacket x_pkt;
     AttnTopManagedPacket wq_pkt;
-    if (!in_ch.nb_read(x_pkt) || !in_ch.nb_read(wq_pkt)) {
+    if (!x_ch.nb_read(x_pkt) || !wq_ch.nb_read(wq_pkt)) {
         return false;
     }
     if ((uint32_t)x_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_X) { return false; }

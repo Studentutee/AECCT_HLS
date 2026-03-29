@@ -100,6 +100,7 @@ $targets = @(
     "src/blocks/AttnPhaseBTopManagedQkScore.h",
     "src/blocks/AttnPhaseATopManagedQ.h",
     "src/blocks/AttnPhaseATopManagedKv.h",
+    "tb/tb_q_path_impl_p11ad.cpp",
     "tb/tb_kv_build_stream_stage_p11ac.cpp"
 )
 foreach ($rel in $targets) {
@@ -110,12 +111,14 @@ $afPath = Join-Path $repo "src/blocks/AttnPhaseBTopManagedSoftmaxOut.h"
 $aePath = Join-Path $repo "src/blocks/AttnPhaseBTopManagedQkScore.h"
 $adPath = Join-Path $repo "src/blocks/AttnPhaseATopManagedQ.h"
 $acPath = Join-Path $repo "src/blocks/AttnPhaseATopManagedKv.h"
+$tbAdPath = Join-Path $repo "tb/tb_q_path_impl_p11ad.cpp"
 $tbAcPath = Join-Path $repo "tb/tb_kv_build_stream_stage_p11ac.cpp"
 
 $afText = Get-Content -Path $afPath -Raw
 $aeText = Get-Content -Path $aePath -Raw
 $adText = Get-Content -Path $adPath -Raw
 $acText = Get-Content -Path $acPath -Raw
+$tbAdText = Get-Content -Path $tbAdPath -Raw
 $tbAcText = Get-Content -Path $tbAcPath -Raw
 
 # AF guard: score + v must not collapse back into a shared helper input channel.
@@ -135,12 +138,22 @@ Require-Regex -Text $aeText -Pattern '\bk_ch\.nb_read\s*\(\s*k_pkt\s*\)' -Reason
 Forbid-Regex -Text $aeText -Pattern 'attn_phaseb_block_qk_dot_consume_emit\s*\(\s*attn_phaseb_qk_pkt_ch_t&\s*in_ch' -Reason "AE regression detected: shared in_ch consume signature restored"
 
 # AD guard: x + wq must not collapse back into a shared helper input channel.
+Require-Regex -Text $adText -Pattern '(?m)^\s*typedef\s+ac_channel<AttnTopManagedPacket>\s+attn_q_x_pkt_ch_t\s*;' -Reason "AD legacy split typedef (x packet channel) missing"
+Require-Regex -Text $adText -Pattern '(?m)^\s*typedef\s+ac_channel<AttnTopManagedPacket>\s+attn_q_wq_pkt_ch_t\s*;' -Reason "AD legacy split typedef (wq packet channel) missing"
 Require-Regex -Text $adText -Pattern '(?m)^\s*typedef\s+ac_channel<AttnTopManagedWorkPacket>\s+attn_q_x_work_pkt_ch_t\s*;' -Reason "AD split typedef (x channel) missing"
 Require-Regex -Text $adText -Pattern '(?m)^\s*typedef\s+ac_channel<AttnTopManagedWorkPacket>\s+attn_q_wq_work_pkt_ch_t\s*;' -Reason "AD split typedef (wq channel) missing"
+Require-Regex -Text $adText -Pattern 'attn_top_emit_phasea_q_work_unit\s*\(\s*const\s+SramView&\s+sram\s*,\s*u32_t\s+x_row_base_word\s*,\s*u32_t\s+token_idx\s*,\s*u32_t\s+d_tile_idx\s*,\s*attn_q_x_pkt_ch_t&\s*x_ch\s*,\s*attn_q_wq_pkt_ch_t&\s*wq_ch' -Reason "AD legacy emit signature must keep x/wq split packet channels"
+Require-Regex -Text $adText -Pattern 'attn_block_phasea_q_consume_emit\s*\(\s*attn_q_x_pkt_ch_t&\s*x_ch\s*,\s*attn_q_wq_pkt_ch_t&\s*wq_ch\s*,\s*attn_q_pkt_ch_t&\s*out_ch' -Reason "AD legacy consume signature must keep x/wq split packet channels"
 Require-Regex -Text $adText -Pattern 'attn_block_phasea_q_consume_emit_token_work_tiles\s*\(\s*attn_q_x_work_pkt_ch_t&\s*x_ch\s*,\s*attn_q_wq_work_pkt_ch_t&\s*wq_ch\s*,' -Reason "AD consume signature must keep x/wq split channels"
 Require-Regex -Text $adText -Pattern '\bx_ch\.nb_read\s*\(\s*x_pkt\s*\)' -Reason "AD consume path must read X from x_ch"
 Require-Regex -Text $adText -Pattern '\bwq_ch\.nb_read\s*\(\s*wq_pkt\s*\)' -Reason "AD consume path must read WQ from wq_ch"
+Forbid-Regex -Text $adText -Pattern 'attn_top_emit_phasea_q_work_unit\s*\([^\)]*attn_q_pkt_ch_t&\s*in_ch' -Reason "AD legacy regression detected: single in_ch emit signature restored"
+Forbid-Regex -Text $adText -Pattern 'attn_block_phasea_q_consume_emit\s*\(\s*attn_q_pkt_ch_t&\s*in_ch\s*,\s*attn_q_pkt_ch_t&\s*out_ch' -Reason "AD legacy regression detected: shared in_ch consume signature restored"
 Forbid-Regex -Text $adText -Pattern 'attn_block_phasea_q_consume_emit_token_work_tiles\s*\(\s*attn_q_work_pkt_ch_t&\s*in_ch' -Reason "AD regression detected: shared in_ch consume signature restored"
+
+Require-Regex -Text $tbAdText -Pattern '\baecct::attn_q_x_pkt_ch_t\s+x_ch\s*;' -Reason "AD TB must instantiate legacy split x packet channel"
+Require-Regex -Text $tbAdText -Pattern '\baecct::attn_q_wq_pkt_ch_t\s+wq_ch\s*;' -Reason "AD TB must instantiate legacy split wq packet channel"
+Require-Regex -Text $tbAdText -Pattern 'LEGACY_WORK_UNIT_SPLIT_PATH PASS' -Reason "AD TB must report legacy split path PASS banner"
 
 # AC guard: x + wk + wv must not collapse back into a shared helper input channel.
 Require-Regex -Text $acText -Pattern '(?m)^\s*typedef\s+ac_channel<AttnTopManagedWorkPacket>\s+attn_x_work_pkt_ch_t\s*;' -Reason "AC split typedef (x channel) missing"
@@ -174,6 +187,7 @@ Require-Regex -Text $tbAcText -Pattern '\baecct::attn_v_pkt_ch_t\s+v_ch_' -Reaso
 Write-Log "guard: AF score/v split anchors OK"
 Write-Log "guard: AE q/k split anchors OK"
 Write-Log "guard: AD x/wq split anchors OK"
+Write-Log "guard: AD legacy work-unit split anchors OK"
 Write-Log "guard: AC x/wk/wv split anchors OK"
 Write-Log "guard: AC legacy work-unit split anchors OK"
 Write-Log "PASS: check_helper_channel_split_regression"
