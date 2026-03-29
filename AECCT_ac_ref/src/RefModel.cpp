@@ -61,8 +61,46 @@ static inline bool use_full_e4m3_nonlinear_stress(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS;
 }
 
+static inline bool use_frag_group_bisect(const RefRunConfig& cfg) {
+  return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT;
+}
+
+static inline bool frag_group_includes(RefFragGroup selected, RefFragGroup g) {
+  switch (selected) {
+    case RefFragGroup::G1_LAYERNORM: return g == RefFragGroup::G1_LAYERNORM;
+    case RefFragGroup::G2_RESIDUAL: return g == RefFragGroup::G2_RESIDUAL;
+    case RefFragGroup::G3_ATTN_CONTEXT: return g == RefFragGroup::G3_ATTN_CONTEXT;
+    case RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD: return g == RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD;
+    case RefFragGroup::G5_PREPROC_EMBED: return g == RefFragGroup::G5_PREPROC_EMBED;
+    case RefFragGroup::C1_G1_G2:
+      return g == RefFragGroup::G1_LAYERNORM || g == RefFragGroup::G2_RESIDUAL;
+    case RefFragGroup::C2_G1_G3:
+      return g == RefFragGroup::G1_LAYERNORM || g == RefFragGroup::G3_ATTN_CONTEXT;
+    case RefFragGroup::C3_G2_G3:
+      return g == RefFragGroup::G2_RESIDUAL || g == RefFragGroup::G3_ATTN_CONTEXT;
+    case RefFragGroup::C4_G1_G4:
+      return g == RefFragGroup::G1_LAYERNORM || g == RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD;
+    default:
+      return false;
+  }
+}
+
+static inline bool should_apply_e4m3_group_roundtrip(
+  const RefRunConfig& cfg,
+  RefFragGroup g
+) {
+  if (use_full_e4m3_nonlinear_stress(cfg)) {
+    return true;
+  }
+  if (!use_frag_group_bisect(cfg)) {
+    return false;
+  }
+  return frag_group_includes(cfg.frag_group, g);
+}
+
 static inline bool use_island_s0(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
+         use_frag_group_bisect(cfg) ||
          (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage));
 }
 
@@ -85,15 +123,24 @@ static inline void bump_first_nonfinite_block(RefFullQuantStats* stats, const ch
 static inline fp32_ref_t stress_roundtrip_e4m3(
   fp32_ref_t x,
   const RefRunConfig& cfg,
+  RefFragGroup group,
   RefFullQuantStats* stats,
   const char* block_name
 ) {
-  if (!use_full_e4m3_nonlinear_stress(cfg)) {
+  if (!should_apply_e4m3_group_roundtrip(cfg, group)) {
     return x;
   }
 
   if (stats != nullptr) {
     stats->e4m3.roundtrip_count++;
+    switch (group) {
+      case RefFragGroup::G1_LAYERNORM: stats->e4m3.roundtrip_g1_count++; break;
+      case RefFragGroup::G2_RESIDUAL: stats->e4m3.roundtrip_g2_count++; break;
+      case RefFragGroup::G3_ATTN_CONTEXT: stats->e4m3.roundtrip_g3_count++; break;
+      case RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD: stats->e4m3.roundtrip_g4_count++; break;
+      case RefFragGroup::G5_PREPROC_EMBED: stats->e4m3.roundtrip_g5_count++; break;
+      default: break;
+    }
     const float xin = x.to_float();
     if (std::isnan(xin)) {
       stats->e4m3.nan_in_count++;
@@ -602,7 +649,12 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
         for (int dh = 0; dh < D_HEAD; ++dh) {
           dot += q[i][base + dh] * k[j][base + dh];
         }
-        const fp32_ref_t score = stress_roundtrip_e4m3(dot * inv_sqrt_dh, run_cfg, stats, "attention_score");
+        const fp32_ref_t score = stress_roundtrip_e4m3(
+          dot * inv_sqrt_dh,
+          run_cfg,
+          RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
+          stats,
+          "attention_score");
         scores[h][i][j] = score;
         online_softmax_update(
           online_init,
@@ -632,14 +684,25 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
         const fp32_ref_t w = stress_roundtrip_e4m3(
           ref_softmax_exp_lut(scores[h][i][j] - online_max),
           run_cfg,
+          RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
           stats,
           "softmax_weight"
         );
-        probs[h][i][j] = stress_roundtrip_e4m3(w * inv_sumexp, run_cfg, stats, "softmax_prob");
+        probs[h][i][j] = stress_roundtrip_e4m3(
+          w * inv_sumexp,
+          run_cfg,
+          RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
+          stats,
+          "softmax_prob");
       }
 
       for (int dh = 0; dh < D_HEAD; ++dh) {
-        ctx[h][i][dh] = stress_roundtrip_e4m3(acc_vec[dh] * inv_sumexp, run_cfg, stats, "attention_ctx");
+        ctx[h][i][dh] = stress_roundtrip_e4m3(
+          acc_vec[dh] * inv_sumexp,
+          run_cfg,
+          RefFragGroup::G3_ATTN_CONTEXT,
+          stats,
+          "attention_ctx");
       }
     }
   }
@@ -651,6 +714,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
         post_concat[t][base + dh] = stress_roundtrip_e4m3(
           ctx[h][t][dh],
           run_cfg,
+          RefFragGroup::G3_ATTN_CONTEXT,
           stats,
           "attention_post_concat"
         );
@@ -776,9 +840,12 @@ static void run_layer(const int layer_idx,
   if (use_full_e4m3_nonlinear_stress(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
-        q_out[t][d] = stress_roundtrip_e4m3(q_out[t][d], run_cfg, stats, "q_out");
-        k_out[t][d] = stress_roundtrip_e4m3(k_out[t][d], run_cfg, stats, "k_out");
-        v_out[t][d] = stress_roundtrip_e4m3(v_out[t][d], run_cfg, stats, "v_out");
+        q_out[t][d] = stress_roundtrip_e4m3(
+          q_out[t][d], run_cfg, RefFragGroup::NONE, stats, "q_out");
+        k_out[t][d] = stress_roundtrip_e4m3(
+          k_out[t][d], run_cfg, RefFragGroup::NONE, stats, "k_out");
+        v_out[t][d] = stress_roundtrip_e4m3(
+          v_out[t][d], run_cfg, RefFragGroup::NONE, stats, "v_out");
       }
     }
   }
@@ -806,24 +873,33 @@ static void run_layer(const int layer_idx,
                           stats,
                           "Wo");
 
-  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) ||
+      should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G3_ATTN_CONTEXT)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
-        attn_out[t][d] = stress_roundtrip_e4m3(attn_out[t][d], run_cfg, stats, "attn_out");
+        attn_out[t][d] = stress_roundtrip_e4m3(
+          attn_out[t][d], run_cfg, RefFragGroup::G3_ATTN_CONTEXT, stats, "attn_out");
       }
     }
   }
 
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int d = 0; d < D_MODEL; ++d) {
-      ln_in[t][d] = stress_roundtrip_e4m3(attn_out[t][d] + x_in[t][d], run_cfg, stats, "residual_attn");
+      ln_in[t][d] = stress_roundtrip_e4m3(
+        attn_out[t][d] + x_in[t][d],
+        run_cfg,
+        RefFragGroup::G2_RESIDUAL,
+        stats,
+        "residual_attn");
     }
   }
   apply_layernorm_tokens(ln_in, ln0_w, ln0_b, ln_out);
-  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) ||
+      should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
-        ln_out[t][d] = stress_roundtrip_e4m3(ln_out[t][d], run_cfg, stats, "ln_out");
+        ln_out[t][d] = stress_roundtrip_e4m3(
+          ln_out[t][d], run_cfg, RefFragGroup::G1_LAYERNORM, stats, "ln_out");
       }
     }
   }
@@ -841,7 +917,8 @@ static void run_layer(const int layer_idx,
   if (use_full_e4m3_nonlinear_stress(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int i = 0; i < FF_DIM; ++i) {
-        ffn1_out[t][i] = stress_roundtrip_e4m3(ffn1_out[t][i], run_cfg, stats, "ffn1_out");
+        ffn1_out[t][i] = stress_roundtrip_e4m3(
+          ffn1_out[t][i], run_cfg, RefFragGroup::NONE, stats, "ffn1_out");
       }
     }
   }
@@ -852,6 +929,7 @@ static void run_layer(const int layer_idx,
       act_out[t][i] = stress_roundtrip_e4m3(
         (vff > fp32_ref_t(0.0f)) ? vff : fp32_ref_t(0.0f),
         run_cfg,
+        RefFragGroup::NONE,
         stats,
         "ffn_relu_out"
       );
@@ -871,7 +949,8 @@ static void run_layer(const int layer_idx,
   if (use_full_e4m3_nonlinear_stress(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
-        ffn2_out[t][d] = stress_roundtrip_e4m3(ffn2_out[t][d], run_cfg, stats, "ffn2_out");
+        ffn2_out[t][d] = stress_roundtrip_e4m3(
+          ffn2_out[t][d], run_cfg, RefFragGroup::NONE, stats, "ffn2_out");
       }
     }
   }
@@ -879,14 +958,21 @@ static void run_layer(const int layer_idx,
   fp32_ref_t ffn_ln_in[TOKENS_T][D_MODEL];
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int d = 0; d < D_MODEL; ++d) {
-      ffn_ln_in[t][d] = stress_roundtrip_e4m3(ffn2_out[t][d] + ln_out[t][d], run_cfg, stats, "residual_ffn");
+      ffn_ln_in[t][d] = stress_roundtrip_e4m3(
+        ffn2_out[t][d] + ln_out[t][d],
+        run_cfg,
+        RefFragGroup::G2_RESIDUAL,
+        stats,
+        "residual_ffn");
     }
   }
   apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, ffn_ln_out);
-  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) ||
+      should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
-        ffn_ln_out[t][d] = stress_roundtrip_e4m3(ffn_ln_out[t][d], run_cfg, stats, "ffn_ln_out");
+        ffn_ln_out[t][d] = stress_roundtrip_e4m3(
+          ffn_ln_out[t][d], run_cfg, RefFragGroup::G1_LAYERNORM, stats, "ffn_ln_out");
       }
     }
   }
@@ -974,6 +1060,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         preproc_x[t][k] = stress_roundtrip_e4m3(
           node_feature[t] * fp32_ref_t(static_cast<float>(w_src_embed[t * 24 + k])),
           run_cfg_,
+          RefFragGroup::G5_PREPROC_EMBED,
           &local_stats,
           "preproc_src_embed"
         );
@@ -982,6 +1069,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         preproc_x[t][24 + k] = stress_roundtrip_e4m3(
           fp32_ref_t(static_cast<float>(w_lpe_token[t * 8 + k])),
           run_cfg_,
+          RefFragGroup::G5_PREPROC_EMBED,
           &local_stats,
           "preproc_lpe"
         );
@@ -1043,10 +1131,16 @@ void RefModel::infer_step0(const RefModelIO& io) const {
                            w_decoder_norm2_weight,
                            w_decoder_norm2_bias,
                            mid_norm);
-    if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+    if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
+        should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          mid_norm[t][d] = stress_roundtrip_e4m3(mid_norm[t][d], run_cfg_, &local_stats, "mid_norm");
+          mid_norm[t][d] = stress_roundtrip_e4m3(
+            mid_norm[t][d],
+            run_cfg_,
+            RefFragGroup::G1_LAYERNORM,
+            &local_stats,
+            "mid_norm");
         }
       }
     }
@@ -1105,10 +1199,16 @@ void RefModel::infer_step0(const RefModelIO& io) const {
                            w_decoder_norm_weight,
                            w_decoder_norm_bias,
                            end_norm);
-    if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+    if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
+        should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          end_norm[t][d] = stress_roundtrip_e4m3(end_norm[t][d], run_cfg_, &local_stats, "end_norm");
+          end_norm[t][d] = stress_roundtrip_e4m3(
+            end_norm[t][d],
+            run_cfg_,
+            RefFragGroup::G1_LAYERNORM,
+            &local_stats,
+            "end_norm");
         }
       }
     }
@@ -1124,7 +1224,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       fp32_ref_t s_t_embed_out = acc;
       if (use_island_s3(run_cfg_)) {
         if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
-          s_t_embed_out = stress_roundtrip_e4m3(s_t_embed_out, run_cfg_, &local_stats, "final_embedding_s3");
+          s_t_embed_out = stress_roundtrip_e4m3(
+            s_t_embed_out,
+            run_cfg_,
+            RefFragGroup::NONE,
+            &local_stats,
+            "final_embedding_s3");
         } else {
           s_t_embed_out = roundtrip_through_generic_e4m3(s_t_embed_out);
         }
@@ -1134,7 +1239,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       fp32_ref_t s_t_out_fc = s_t_embed_out;
       if (use_island_s0(run_cfg_)) {
         if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
-          s_t_out_fc = stress_roundtrip_e4m3(s_t_out_fc, run_cfg_, &local_stats, "final_readout_s0");
+          s_t_out_fc = stress_roundtrip_e4m3(
+            s_t_out_fc,
+            run_cfg_,
+            RefFragGroup::NONE,
+            &local_stats,
+            "final_readout_s0");
         } else {
           s_t_out_fc = roundtrip_through_generic_e4m3(s_t_out_fc);
         }
@@ -1153,7 +1263,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         fp32_ref_t mul_in = out_fc_in[0][t];
         if (use_island_s1(run_cfg_)) {
           if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
-            mul_in = stress_roundtrip_e4m3(mul_in, run_cfg_, &local_stats, "out_fc_pre_mac_s1");
+            mul_in = stress_roundtrip_e4m3(
+              mul_in,
+              run_cfg_,
+              RefFragGroup::NONE,
+              &local_stats,
+              "out_fc_pre_mac_s1");
           } else {
             mul_in = roundtrip_through_generic_e4m3(mul_in);
           }
@@ -1161,7 +1276,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         acc += fp32_ref_t(static_cast<float>(w_out_fc_weight[n * TOKENS_T + t])) * mul_in;
       }
       if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
-        acc = stress_roundtrip_e4m3(acc, run_cfg_, &local_stats, "final_logits");
+        acc = stress_roundtrip_e4m3(
+          acc,
+          run_cfg_,
+          RefFragGroup::NONE,
+          &local_stats,
+          "final_logits");
       }
       final_logits[0][n] = acc;
 

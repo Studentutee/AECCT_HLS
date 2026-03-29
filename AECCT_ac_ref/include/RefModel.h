@@ -2,6 +2,7 @@
 #include <cstddef>
 
 #include "RefAlgoVariant.h"
+#include "RefFragGroupConfig.h"
 #include "RefPrecisionMode.h"
 #include "RefStageConfig.h"
 #include "RefTypes.h"
@@ -35,6 +36,7 @@ struct RefRunConfig {
   RefPrecisionMode precision_mode;
   RefAlgoVariant algo_variant;
   RefFinalHeadExploreStage finalhead_stage = RefFinalHeadExploreStage::S0;
+  RefFragGroup frag_group = RefFragGroup::NONE;
 };
 
 class RefModel {

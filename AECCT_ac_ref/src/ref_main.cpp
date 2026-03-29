@@ -52,6 +52,7 @@ struct CliOptions {
   aecct_ref::RefAlgoVariant algo_variant;
   aecct_ref::RefFinalHeadExploreStage finalhead_stage;
   aecct_ref::RefPrecisionMode experiment_precision_mode;
+  aecct_ref::RefFragGroup frag_group;
 };
 
 struct PatternRange {
@@ -180,7 +181,8 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
-  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress\n");
+  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect\n");
+  std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
   std::printf("  --summary-csv PATH\n");
@@ -273,6 +275,54 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
     mode = aecct_ref::RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS;
     return true;
   }
+  if (std::strcmp(text, "generic_e4m3_frag_bisect") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT;
+    return true;
+  }
+  return false;
+}
+
+static bool parse_frag_group(const char* text, aecct_ref::RefFragGroup& g) {
+  if (std::strcmp(text, "NONE") == 0 || std::strcmp(text, "none") == 0) {
+    g = aecct_ref::RefFragGroup::NONE;
+    return true;
+  }
+  if (std::strcmp(text, "G1") == 0 || std::strcmp(text, "g1") == 0) {
+    g = aecct_ref::RefFragGroup::G1_LAYERNORM;
+    return true;
+  }
+  if (std::strcmp(text, "G2") == 0 || std::strcmp(text, "g2") == 0) {
+    g = aecct_ref::RefFragGroup::G2_RESIDUAL;
+    return true;
+  }
+  if (std::strcmp(text, "G3") == 0 || std::strcmp(text, "g3") == 0) {
+    g = aecct_ref::RefFragGroup::G3_ATTN_CONTEXT;
+    return true;
+  }
+  if (std::strcmp(text, "G4") == 0 || std::strcmp(text, "g4") == 0) {
+    g = aecct_ref::RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD;
+    return true;
+  }
+  if (std::strcmp(text, "G5") == 0 || std::strcmp(text, "g5") == 0) {
+    g = aecct_ref::RefFragGroup::G5_PREPROC_EMBED;
+    return true;
+  }
+  if (std::strcmp(text, "C1") == 0 || std::strcmp(text, "c1") == 0) {
+    g = aecct_ref::RefFragGroup::C1_G1_G2;
+    return true;
+  }
+  if (std::strcmp(text, "C2") == 0 || std::strcmp(text, "c2") == 0) {
+    g = aecct_ref::RefFragGroup::C2_G1_G3;
+    return true;
+  }
+  if (std::strcmp(text, "C3") == 0 || std::strcmp(text, "c3") == 0) {
+    g = aecct_ref::RefFragGroup::C3_G2_G3;
+    return true;
+  }
+  if (std::strcmp(text, "C4") == 0 || std::strcmp(text, "c4") == 0) {
+    g = aecct_ref::RefFragGroup::C4_G1_G4;
+    return true;
+  }
   return false;
 }
 
@@ -287,6 +337,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
   opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
   opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
+  opts.frag_group = aecct_ref::RefFragGroup::NONE;
 
   bool positional_pattern_used = false;
   for (int i = 1; i < argc; ++i) {
@@ -351,6 +402,17 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
     }
     if (std::strcmp(arg, "--summary-only") == 0 || std::strcmp(arg, "--quiet") == 0) {
       opts.summary_only = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--frag-group") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --frag-group\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_frag_group(argv[++i], opts.frag_group)) {
+        std::printf("Unsupported --frag-group value: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
       continue;
     }
     if (std::strcmp(arg, "--precision-exp") == 0) {
@@ -874,6 +936,12 @@ static bool write_eval_single_summary_txt(
     ofs << "int16 overflow count       : " << full_stats->int_linear.int16_overflow_count << "\n";
     ofs << "dequant restore count      : " << full_stats->int_linear.dequant_restore_count << "\n";
     ofs << "e4m3 roundtrip count       : " << full_stats->e4m3.roundtrip_count << "\n";
+    ofs << "e4m3 roundtrip g1/g2/g3/g4/g5 : "
+        << full_stats->e4m3.roundtrip_g1_count << "/"
+        << full_stats->e4m3.roundtrip_g2_count << "/"
+        << full_stats->e4m3.roundtrip_g3_count << "/"
+        << full_stats->e4m3.roundtrip_g4_count << "/"
+        << full_stats->e4m3.roundtrip_g5_count << "\n";
     ofs << "e4m3 nan in/out            : " << full_stats->e4m3.nan_in_count
         << "/" << full_stats->e4m3.nan_out_count << "\n";
     ofs << "e4m3 inf in/out            : " << full_stats->e4m3.inf_in_count
@@ -942,6 +1010,12 @@ static bool write_eval_compare_summary_txt(
     ofs << "int16 overflow count       : " << experiment_full_stats->int_linear.int16_overflow_count << "\n";
     ofs << "dequant restore count      : " << experiment_full_stats->int_linear.dequant_restore_count << "\n";
     ofs << "e4m3 roundtrip count       : " << experiment_full_stats->e4m3.roundtrip_count << "\n";
+    ofs << "e4m3 roundtrip g1/g2/g3/g4/g5 : "
+        << experiment_full_stats->e4m3.roundtrip_g1_count << "/"
+        << experiment_full_stats->e4m3.roundtrip_g2_count << "/"
+        << experiment_full_stats->e4m3.roundtrip_g3_count << "/"
+        << experiment_full_stats->e4m3.roundtrip_g4_count << "/"
+        << experiment_full_stats->e4m3.roundtrip_g5_count << "\n";
     ofs << "e4m3 nan in/out            : " << experiment_full_stats->e4m3.nan_in_count
         << "/" << experiment_full_stats->e4m3.nan_out_count << "\n";
     ofs << "e4m3 inf in/out            : " << experiment_full_stats->e4m3.inf_in_count
@@ -1181,6 +1255,12 @@ static bool write_batch_summary_txt(
     ofs << "int16 overflow count          : " << experiment_full_stats->int_linear.int16_overflow_count << "\n";
     ofs << "dequant restore count         : " << experiment_full_stats->int_linear.dequant_restore_count << "\n";
     ofs << "e4m3 roundtrip count          : " << experiment_full_stats->e4m3.roundtrip_count << "\n";
+    ofs << "e4m3 roundtrip g1/g2/g3/g4/g5 : "
+        << experiment_full_stats->e4m3.roundtrip_g1_count << " / "
+        << experiment_full_stats->e4m3.roundtrip_g2_count << " / "
+        << experiment_full_stats->e4m3.roundtrip_g3_count << " / "
+        << experiment_full_stats->e4m3.roundtrip_g4_count << " / "
+        << experiment_full_stats->e4m3.roundtrip_g5_count << "\n";
     ofs << "e4m3 nan in/out               : " << experiment_full_stats->e4m3.nan_in_count
         << " / " << experiment_full_stats->e4m3.nan_out_count << "\n";
     ofs << "e4m3 inf in/out               : " << experiment_full_stats->e4m3.inf_in_count
@@ -1292,6 +1372,12 @@ static void print_full_stress_console_summary(const aecct_ref::RefFullQuantStats
     static_cast<unsigned long long>(stats.int_linear.dequant_restore_count));
   std::printf("e4m3 roundtrip count       : %llu\n",
     static_cast<unsigned long long>(stats.e4m3.roundtrip_count));
+  std::printf("e4m3 roundtrip g1/g2/g3/g4/g5 : %llu / %llu / %llu / %llu / %llu\n",
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g1_count),
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g2_count),
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g3_count),
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g4_count),
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g5_count));
   std::printf("e4m3 nan in/out            : %llu / %llu\n",
     static_cast<unsigned long long>(stats.e4m3.nan_in_count),
     static_cast<unsigned long long>(stats.e4m3.nan_out_count));
@@ -1537,6 +1623,7 @@ static int run_single_mode(
   cfg.precision_mode = precision_mode;
   cfg.algo_variant = opts.algo_variant;
   cfg.finalhead_stage = opts.finalhead_stage;
+  cfg.frag_group = opts.frag_group;
   model.set_run_config(cfg);
 
   GoldenAggregateMetrics agg{};
@@ -1603,12 +1690,23 @@ int main(int argc, char** argv) {
   if (!resolve_pattern_range(opts, B, range)) {
     return 1;
   }
+  if (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT &&
+      opts.frag_group == aecct_ref::RefFragGroup::NONE &&
+      opts.run_mode != CliRunMode::BASELINE_ONLY) {
+    std::printf("For generic_e4m3_frag_bisect, --frag-group must be one of G1..G5 or C1..C4\n");
+    return 1;
+  }
 
   std::printf("Run config:\n");
+  const aecct_ref::RefPrecisionMode effective_baseline_precision =
+    (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT)
+      ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
+      : aecct_ref::RefPrecisionMode::BASELINE_FP32;
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
-  std::printf("  precision(base): %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::BASELINE_FP32));
+  std::printf("  precision(base): %s\n", aecct_ref::to_string(effective_baseline_precision));
   std::printf("  precision(exp) : %s\n", aecct_ref::to_string(opts.experiment_precision_mode));
   std::printf("  finalhead_stage: %s\n", aecct_ref::to_string(opts.finalhead_stage));
+  std::printf("  frag_group     : %s\n", aecct_ref::to_string(opts.frag_group));
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
   std::printf("  pattern_range  : begin=%d count=%d\n", range.begin, range.count);
   std::printf("  topk           : %d\n", opts.topk);
@@ -1810,11 +1908,18 @@ int main(int argc, char** argv) {
   if (opts.run_mode == CliRunMode::EVAL_BASELINE ||
       opts.run_mode == CliRunMode::EVAL_EXPERIMENT ||
       opts.run_mode == CliRunMode::EVAL_COMPARE) {
+    const bool use_frag_bisect_precision =
+      (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT);
     aecct_ref::RefModel baseline_model_eval;
     aecct_ref::RefRunConfig baseline_cfg_eval{};
-    baseline_cfg_eval.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+    baseline_cfg_eval.precision_mode = use_frag_bisect_precision
+      ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
+      : aecct_ref::RefPrecisionMode::BASELINE_FP32;
     baseline_cfg_eval.algo_variant = opts.algo_variant;
-    baseline_cfg_eval.finalhead_stage = opts.finalhead_stage;
+    baseline_cfg_eval.finalhead_stage = use_frag_bisect_precision
+      ? aecct_ref::RefFinalHeadExploreStage::S0
+      : opts.finalhead_stage;
+    baseline_cfg_eval.frag_group = aecct_ref::RefFragGroup::NONE;
     baseline_model_eval.set_run_config(baseline_cfg_eval);
 
     std::vector<double> baseline_logits_batch;
@@ -1861,7 +1966,12 @@ int main(int argc, char** argv) {
         aecct_ref::RefRunConfig experiment_cfg_eval{};
         experiment_cfg_eval.precision_mode = opts.experiment_precision_mode;
         experiment_cfg_eval.algo_variant = opts.algo_variant;
-        experiment_cfg_eval.finalhead_stage = opts.finalhead_stage;
+        experiment_cfg_eval.finalhead_stage = use_frag_bisect_precision
+          ? aecct_ref::RefFinalHeadExploreStage::S0
+          : opts.finalhead_stage;
+        experiment_cfg_eval.frag_group = use_frag_bisect_precision
+          ? opts.frag_group
+          : aecct_ref::RefFragGroup::NONE;
         experiment_model_eval.set_run_config(experiment_cfg_eval);
         run_ref_batch(
           experiment_model_eval,
@@ -1884,10 +1994,13 @@ int main(int argc, char** argv) {
     } else if (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
       default_eval_name = "eval_experiment";
     }
+    const std::string mode_suffix = use_frag_bisect_precision
+      ? ("_frag_" + std::string(aecct_ref::to_string(opts.frag_group)))
+      : std::string();
     const std::string csv_path = !opts.summary_csv_path.empty()
       ? opts.summary_csv_path
       : ("build/ref_eval/" + default_eval_name + "_begin" + std::to_string(range.begin) +
-         "_count" + std::to_string(range.count) + ".csv");
+         "_count" + std::to_string(range.count) + mode_suffix + ".csv");
 
     const auto t_eval_agg_start = now_tp();
     if (opts.run_mode == CliRunMode::EVAL_BASELINE || opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
@@ -2055,11 +2168,18 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  const bool use_frag_bisect_precision =
+    (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT);
   aecct_ref::RefModel baseline_model;
   aecct_ref::RefRunConfig baseline_cfg{};
-  baseline_cfg.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+  baseline_cfg.precision_mode = use_frag_bisect_precision
+    ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
+    : aecct_ref::RefPrecisionMode::BASELINE_FP32;
   baseline_cfg.algo_variant = opts.algo_variant;
-  baseline_cfg.finalhead_stage = opts.finalhead_stage;
+  baseline_cfg.finalhead_stage = use_frag_bisect_precision
+    ? aecct_ref::RefFinalHeadExploreStage::S0
+    : opts.finalhead_stage;
+  baseline_cfg.frag_group = aecct_ref::RefFragGroup::NONE;
   baseline_model.set_run_config(baseline_cfg);
 
   BatchCompareSummary batch{};
@@ -2106,7 +2226,12 @@ int main(int argc, char** argv) {
     aecct_ref::RefRunConfig experiment_cfg{};
     experiment_cfg.precision_mode = opts.experiment_precision_mode;
     experiment_cfg.algo_variant = opts.algo_variant;
-    experiment_cfg.finalhead_stage = opts.finalhead_stage;
+    experiment_cfg.finalhead_stage = use_frag_bisect_precision
+      ? aecct_ref::RefFinalHeadExploreStage::S0
+      : opts.finalhead_stage;
+    experiment_cfg.frag_group = use_frag_bisect_precision
+      ? opts.frag_group
+      : aecct_ref::RefFragGroup::NONE;
     experiment_model.set_run_config(experiment_cfg);
     run_ref_batch(
       experiment_model,
@@ -2168,10 +2293,13 @@ int main(int argc, char** argv) {
   const DistributionStats margin_dist = compute_distribution_stats(batch.per_pattern_min_margin);
   const std::vector<std::size_t> vulnerable_idx = collect_top_vulnerable_indices(rows, 5U);
 
+  const std::string mode_suffix = use_frag_bisect_precision
+    ? ("_frag_" + std::string(aecct_ref::to_string(opts.frag_group)))
+    : std::string();
   const std::string csv_path = !opts.summary_csv_path.empty()
     ? opts.summary_csv_path
     : ("build/ref_eval/compare_summary_begin" + std::to_string(range.begin) +
-       "_count" + std::to_string(range.count) + ".csv");
+       "_count" + std::to_string(range.count) + mode_suffix + ".csv");
   const auto t_fileio_start = now_tp();
   if (write_compare_csv(csv_path, rows)) {
     std::printf("Per-pattern summary csv : %s\n", csv_path.c_str());
