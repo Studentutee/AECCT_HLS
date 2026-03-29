@@ -112,4 +112,4 @@
 - Full ingest (CFG/PARAM/INFER) metadata unification remains deferred.
 
 7. Next recommended step
-- Plan a scoped follow-up for G4-D unified ingest metadata path without broad rewiring.
+- Plan a scoped follow-up for G4-E cross-command ingest metadata harmonization without broad rewiring.

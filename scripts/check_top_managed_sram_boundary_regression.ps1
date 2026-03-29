@@ -113,6 +113,7 @@ Require-Regex -Text $topText -Pattern '(?ms)infer_ingest_one_word[\s\S]*?infer_e
 Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+bool\s+infer_contract_span_in_sram\s*\(\s*const\s+InferIngestContract&\s+c\s*\)' -Reason "infer_contract_span_in_sram helper missing"
 Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+void\s+infer_contract_arm_for_op_infer\s*\(\s*TopRegs&\s+regs\s*\)' -Reason "infer_contract_arm_for_op_infer helper missing"
 Require-Regex -Text $topText -Pattern '(?ms)else\s+if\s*\(\s*op\s*==\s*\(uint8_t\)OP_INFER\s*\)[\s\S]*?infer_contract_arm_for_op_infer\s*\(\s*regs\s*\)\s*;[\s\S]*?infer_contract_span_in_sram\s*\(\s*regs\.infer_ingest_contract\s*\)' -Reason "OP_INFER entry must arm and validate infer ingest contract"
+Require-Regex -Text $topText -Pattern '(?ms)else\s+if\s*\(\s*op\s*==\s*\(uint8_t\)OP_INFER\s*\)[\s\S]*?if\s*\(\s*!infer_contract_span_in_sram\s*\(\s*regs\.infer_ingest_contract\s*\)\s*\)\s*\{\s*ctrl_rsp\.write\s*\(\s*pack_ctrl_rsp_err\s*\(\s*\(uint8_t\)ERR_MEM_RANGE\s*\)\s*\)\s*;[\s\S]*?\}\s*else\s*\{\s*regs\.state\s*=\s*ST_INFER_RX\s*;\s*ctrl_rsp\.write\s*\(\s*pack_ctrl_rsp_ok\s*\(\s*\(uint8_t\)OP_INFER\s*\)\s*\)\s*;' -Reason "OP_INFER preflight reject/accept response contract missing"
 Forbid-Regex -Text $topText -Pattern '(?ms)infer_ingest_one_word[\s\S]{0,900}\bsram\s*\[\s*IN_BASE_WORD\s*\+\s*idx\s*\]\s*=\s*w\s*;' -Reason "infer_ingest_one_word regressed to hardcoded IN_BASE_WORD direct write"
 Forbid-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]{0,1800}regs\.infer_input_shadow' -Reason "run_infer_pipeline regressed to shadow-array label source"
 
@@ -148,6 +149,7 @@ Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloade
 
 Write-Log "guard: Top-owned preproc/layernorm/final-head contract dispatch anchors OK"
 Write-Log "guard: G4 infer ingest contractized base/len dispatch anchors OK"
+Write-Log "guard: OP_INFER preflight reject path maps invalid span to ERR_MEM_RANGE"
 Write-Log "guard: Top preloaded sublayer1 norm params before layer dispatch anchors OK"
 Write-Log "guard: TransformerLayer guarded preload fallback anchors OK"
 Write-Log "PASS: check_top_managed_sram_boundary_regression"

@@ -49,3 +49,18 @@
 
 ## Recommended Next Step
 - Plan the next G4 step as bounded metadata harmonization across CFG/PARAM/INFER ingest without broad rewrite.
+
+## Hardening Follow-Up (night-batch closeout)
+- Added targeted negative validation for infer ingest preflight span guard:
+  - `scripts/local/run_p11g4_infer_ingest_preflight_negative.ps1`
+  - `tb/tb_infer_ingest_preflight_negative_p11g4.cpp`
+- Added explicit regression anchor for OP_INFER reject/accept response behavior:
+  - `scripts/check_top_managed_sram_boundary_regression.ps1`
+  - requires invalid contract span rejection to map to `ERR_MEM_RANGE`
+- Added hygiene completion coverage:
+  - `check_repo_hygiene -Phase post` now included in closeout evidence bundle.
+- Side-change status:
+  - `AECCT_ac_ref/include/RefPrecisionMode.h`
+  - `AECCT_ac_ref/src/RefModel.cpp`
+  - `AECCT_ac_ref/src/ref_main.cpp`
+  - current worktree has no active diff for these files; they are treated as out-of-scope for G4 mincut acceptance.

@@ -79,3 +79,44 @@
 
 ### Deferred boundary
 - Full cross-command unified ingest rearchitecture (CFG/PARAM/INFER metadata harmonization) remains deferred.
+
+## G4 Hardening Closeout (hygiene/evidence/consistency)
+- This closeout round does not add a broad architecture rewrite.
+- Focus is acceptance hardening for already-landed G4 mincut:
+  - completion report hygiene,
+  - handoff consistency,
+  - evidence bundle completeness,
+  - targeted preflight negative validation.
+
+### Exact files changed (closeout round)
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g4_infer_ingest_preflight_negative.ps1`
+- `tb/tb_infer_ingest_preflight_negative_p11g4.cpp`
+- `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4_INGEST_MINCUT_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_EVIDENCE_INDEX_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_COMPLETION_20260329.md`
+
+### Additional local-only evidence (closeout round)
+- `build/evidence/g4_hardening_20260329/evidence_manifest.txt`
+- `build/p11g4/infer_ingest_preflight_negative/run.log`: PASS
+  - `PREFLIGHT_INVALID_BASE_REJECT PASS`
+  - `PREFLIGHT_INVALID_SPAN_REJECT PASS`
+  - `PREFLIGHT_ERR_MEM_RANGE_GUARD_BEHAVIOR PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: OP_INFER preflight reject path maps invalid span to ERR_MEM_RANGE`
+- `check_repo_hygiene -Phase post`: PASS (captured in evidence bundle)
+
+### Side-change disposition
+- `AECCT_ac_ref/include/RefPrecisionMode.h`
+- `AECCT_ac_ref/src/RefModel.cpp`
+- `AECCT_ac_ref/src/ref_main.cpp`
+- Current repo reality check found no active diff on these paths in this closeout round; they are excluded from G4 acceptance payload.
+
+### Posture
+- local-only evidence
+- not Catapult closure
+- not SCVerify closure
+- remote PLI / site-local simulator line not touched
