@@ -68,3 +68,48 @@
 
 7. Next recommended step
 - Gradually require preload flag in additional Top-managed callsites, then narrow legacy fallback usage.
+
+## Task C3: G4 INFER Ingest/Base-Shadow Contractization
+1. Summary
+- Added explicit Top-side ingest contract metadata (`InferIngestContract`) for INFER payload dispatch.
+- Added Top-side ingest window metadata (`phase_id`, `token_range`, `tile_range`) and preflight span validation at `OP_INFER`.
+- Shifted Preproc infer input base/len dispatch to ingest contract anchors.
+- Switched FinalHead label-source pointer to Top-managed SRAM ingest view instead of shadow-array source.
+
+2. Exact files changed
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1 -BuildDir build/p11ah/g4_night_batch`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1 -BuildDir build/p11aj/g4_night_batch`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+
+4. Actual execution evidence / log excerpt
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: G4 infer ingest contractized base/len dispatch anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+- `build/p11ah/g4_night_batch/run.log`:
+  - `FULL_LOOP_MAINLINE_PATH_TAKEN PASS`
+  - `FULL_LOOP_FALLBACK_NOT_TAKEN PASS`
+  - `PASS: run_p11ah_full_loop_local_e2e`
+- `build/p11aj/g4_night_batch/run.log`:
+  - `PROVENANCE_STAGE_AC PASS`
+  - `PROVENANCE_STAGE_AD PASS`
+  - `PROVENANCE_STAGE_AE PASS`
+  - `PROVENANCE_STAGE_AF PASS`
+  - `PASS: run_p11aj_top_managed_sram_provenance`
+
+5. Governance posture
+- Local-only architecture-forward mincut.
+- Top ownership boundary tightened for infer ingest base/len/window dispatch semantics.
+- not Catapult closure; not SCVerify closure.
+
+6. Residual risks
+- `infer_input_shadow` still exists as local debug/probe mirror.
+- Full ingest (CFG/PARAM/INFER) metadata unification remains deferred.
+
+7. Next recommended step
+- Plan a scoped follow-up for G4-D unified ingest metadata path without broad rewiring.

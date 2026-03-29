@@ -136,6 +136,44 @@ namespace aecct {
         }
     };
 
+    struct InferIngestContract {
+        bool start;
+        bool done;
+        u32_t in_base_word;
+        u32_t len_words_expected;
+        u32_t len_words_valid;
+        TokenRange token_range;
+        TileRange tile_range;
+        PhaseId phase_id;
+    };
+
+    static inline void infer_refresh_preproc_ranges(
+        InferIngestContract& c,
+        uint32_t x_out_words
+    ) {
+        if (x_out_words == 0u) {
+            x_out_words = (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED;
+        }
+        const uint32_t token_stride = (uint32_t)PREPROC_X_TOKEN_STRIDE_WORDS;
+        const uint32_t token_count =
+            (token_stride == 0u) ? 0u : ((x_out_words + token_stride - 1u) / token_stride);
+        const uint32_t tile_count =
+            (token_stride == 0u) ? 0u :
+            attn_top_managed_tile_count(token_stride, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+        c.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+        c.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+        c.phase_id = PHASE_PREPROC;
+    }
+
+    static inline void clear_infer_ingest_contract(InferIngestContract& c) {
+        c.start = false;
+        c.done = false;
+        c.in_base_word = (u32_t)IN_BASE_WORD;
+        c.len_words_expected = (u32_t)INFER_IN_WORDS_EXPECTED;
+        c.len_words_valid = 0;
+        infer_refresh_preproc_ranges(c, (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED);
+    }
+
     // Persistent top-level internal registers.
     // These registers are the single source of truth for Top-owned runtime state.
     struct TopRegs {
@@ -151,6 +189,8 @@ namespace aecct {
         bool infer_mid_valid;
         u32_t infer_logits_base_word;
         u32_t infer_xpred_base_word;
+        InferIngestContract infer_ingest_contract;
+        // Local mirror for INFER payload debug/probe only; not a shared-SRAM owner contract.
         u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
         bool p11ac_mainline_path_taken;
         bool p11ac_fallback_taken;
@@ -207,6 +247,7 @@ namespace aecct {
             infer_mid_valid = false;
             infer_logits_base_word = (u32_t)FINAL_LOGITS_BASE_WORD;
             infer_xpred_base_word = (u32_t)FINAL_XPRED_BASE_WORD;
+            clear_infer_ingest_contract(infer_ingest_contract);
             for (unsigned i = 0; i < INFER_IN_WORDS_EXPECTED; ++i) {
                 infer_input_shadow[i] = 0;
             }
@@ -413,6 +454,54 @@ namespace aecct {
 
     static inline void infer_session_clear(TopRegs& regs) {
         regs.input_count = 0;
+        clear_infer_ingest_contract(regs.infer_ingest_contract);
+    }
+
+    static inline uint32_t infer_expected_words(const TopRegs& regs) {
+        uint32_t expected = (uint32_t)regs.infer_ingest_contract.len_words_expected.to_uint();
+        if (expected == 0u) { expected = (uint32_t)INFER_IN_WORDS_EXPECTED; }
+        return expected;
+    }
+
+    static inline uint32_t infer_input_base_word(const TopRegs& regs) {
+        return (uint32_t)regs.infer_ingest_contract.in_base_word.to_uint();
+    }
+
+    static inline bool infer_contract_span_in_sram(const InferIngestContract& c) {
+        const unsigned long long base = (unsigned long long)(uint32_t)c.in_base_word.to_uint();
+        unsigned long long len = (unsigned long long)(uint32_t)c.len_words_expected.to_uint();
+        if (len == 0ull) {
+            len = (unsigned long long)INFER_IN_WORDS_EXPECTED;
+        }
+        const unsigned long long end_excl = base + len;
+        return (base < (unsigned long long)sram_map::SRAM_WORDS_TOTAL) &&
+            (end_excl <= (unsigned long long)sram_map::SRAM_WORDS_TOTAL);
+    }
+
+    static inline void infer_contract_arm_for_op_infer(TopRegs& regs) {
+        regs.infer_ingest_contract.start = true;
+        regs.infer_ingest_contract.done = false;
+        infer_refresh_preproc_ranges(
+            regs.infer_ingest_contract,
+            (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED
+        );
+    }
+
+    static inline const u32_t* infer_label_words_view(const TopRegs& regs, const u32_t* sram) {
+        const uint32_t base = infer_input_base_word(regs);
+        return &sram[base];
+    }
+
+    static inline void infer_store_one_word(
+        TopRegs& regs,
+        u32_t* sram,
+        uint32_t idx,
+        u32_t w
+    ) {
+        const uint32_t in_base = infer_input_base_word(regs);
+        sram[in_base + idx] = w;
+        regs.infer_input_shadow[idx] = w;
+        regs.infer_ingest_contract.len_words_valid = (u32_t)(idx + 1u);
     }
 
     static inline bool is_param_base_in_w_region(uint32_t w_base_word) {
@@ -650,31 +739,31 @@ namespace aecct {
 
     static inline void run_preproc_block(TopRegs& regs, u32_t* sram) {
         PreprocCfg cfg;
-        cfg.infer_in_words = (u32_t)INFER_IN_WORDS_EXPECTED;
+        uint32_t infer_in_words = (uint32_t)regs.infer_ingest_contract.len_words_valid.to_uint();
+        if (infer_in_words == 0u) {
+            infer_in_words = infer_expected_words(regs);
+        }
+        cfg.infer_in_words = (u32_t)infer_in_words;
         cfg.x_out_words = (u32_t)X_OUT_WORDS_EXPECTED;
+        const u32_t in_base_word = regs.infer_ingest_contract.in_base_word;
+        infer_refresh_preproc_ranges(
+            regs.infer_ingest_contract,
+            (uint32_t)cfg.x_out_words.to_uint()
+        );
 
         PreprocBlockContract& contract = regs.preproc_contract;
         clear_preproc_contract(contract);
         contract.start = true;
-        contract.phase_id = PHASE_PREPROC;
+        contract.phase_id = regs.infer_ingest_contract.phase_id;
         contract.x_work_base_word = (u32_t)X_OUT_BASE_WORD;
-
-        uint32_t x_out_words = (uint32_t)cfg.x_out_words.to_uint();
-        if (x_out_words == 0u) { x_out_words = (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED; }
-        const uint32_t token_stride = (uint32_t)PREPROC_X_TOKEN_STRIDE_WORDS;
-        const uint32_t token_count =
-            (token_stride == 0u) ? 0u : ((x_out_words + token_stride - 1u) / token_stride);
-        const uint32_t tile_count =
-            (token_stride == 0u) ? 0u :
-            attn_top_managed_tile_count(token_stride, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
-        contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
-        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+        contract.token_range = regs.infer_ingest_contract.token_range;
+        contract.tile_range = regs.infer_ingest_contract.tile_range;
 
         // Top-owned dispatch: Top builds the contract and block consumes this window.
         PreprocEmbedSPECoreWindow<u32_t*>(
             sram,
             cfg,
-            (u32_t)IN_BASE_WORD,
+            in_base_word,
             (u32_t)X_OUT_BASE_WORD,
             contract
         );
@@ -1340,7 +1429,7 @@ namespace aecct {
             sram,
             build_layer_cfg(regs),
             regs.infer_final_x_base_word,
-            regs.infer_input_shadow,
+            infer_label_words_view(regs, sram),
             regs.infer_logits_base_word,
             regs.infer_xpred_base_word,
             hp,
@@ -1388,8 +1477,10 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_out,
         u32_t* sram
     ) {
+        const uint32_t expected_words = infer_expected_words(regs);
         unsigned idx = (unsigned)regs.input_count.to_uint();
-        if (idx >= INFER_IN_WORDS_EXPECTED) {
+        if (idx >= expected_words) {
+            regs.infer_ingest_contract.done = true;
             const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
             if (!finalhead_streamed) {
                 infer_emit_outmode_payload(regs, data_out, sram);
@@ -1402,11 +1493,11 @@ namespace aecct {
         u32_t w;
         if (!top_data_nb_read(data_in, w)) { return; }
 
-        sram[IN_BASE_WORD + idx] = w;
-        regs.infer_input_shadow[idx] = w;
+        infer_store_one_word(regs, sram, idx, w);
         regs.input_count = regs.input_count + 1;
 
-        if ((unsigned)regs.input_count.to_uint() == INFER_IN_WORDS_EXPECTED) {
+        if ((unsigned)regs.input_count.to_uint() == expected_words) {
+            regs.infer_ingest_contract.done = true;
             const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
             if (!finalhead_streamed) {
                 infer_emit_outmode_payload(regs, data_out, sram);
@@ -1542,9 +1633,14 @@ namespace aecct {
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
                     }
                     else {
-                        regs.state = ST_INFER_RX;
                         infer_session_clear(regs);
-                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_INFER));
+                        infer_contract_arm_for_op_infer(regs);
+                        if (!infer_contract_span_in_sram(regs.infer_ingest_contract)) {
+                            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
+                        } else {
+                            regs.state = ST_INFER_RX;
+                            ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_INFER));
+                        }
                     }
                 }
                 else if (op == (uint8_t)OP_READ_MEM) {

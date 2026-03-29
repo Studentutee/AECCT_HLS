@@ -103,6 +103,19 @@ Require-True -Condition (Test-Path $layerPath) -Reason "required file missing: s
 $topText = Get-Content -Path $topPath -Raw
 $layerText = Get-Content -Path $layerPath -Raw
 
+# G4 ingest/base-shadow ownership anchors: infer ingest should be explicit Top contract dispatch.
+Require-Regex -Text $topText -Pattern '(?ms)struct\s+InferIngestContract\s*\{[\s\S]*?in_base_word\s*;[\s\S]*?len_words_expected\s*;[\s\S]*?len_words_valid\s*;[\s\S]*?token_range\s*;[\s\S]*?tile_range\s*;[\s\S]*?phase_id\s*;' -Reason "InferIngestContract fields missing"
+Require-Regex -Text $topText -Pattern '(?ms)infer_refresh_preproc_ranges\s*\(\s*InferIngestContract&\s+c\s*,\s*uint32_t\s+x_out_words\s*\)' -Reason "infer_refresh_preproc_ranges helper missing"
+Require-Regex -Text $topText -Pattern '(?ms)clear_infer_ingest_contract\s*\(\s*regs\.infer_ingest_contract\s*\)\s*;' -Reason "infer_session_clear must reset infer ingest contract"
+Require-Regex -Text $topText -Pattern '(?ms)run_preproc_block[\s\S]*?regs\.infer_ingest_contract\.len_words_valid[\s\S]*?regs\.infer_ingest_contract\.in_base_word[\s\S]*?contract\.phase_id\s*=\s*regs\.infer_ingest_contract\.phase_id[\s\S]*?contract\.token_range\s*=\s*regs\.infer_ingest_contract\.token_range[\s\S]*?contract\.tile_range\s*=\s*regs\.infer_ingest_contract\.tile_range' -Reason "run_preproc_block must consume infer ingest contract len/base/phase/range"
+Require-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]*?infer_label_words_view\s*\(\s*regs\s*,\s*sram\s*\)' -Reason "run_infer_pipeline must source FinalHead labels from Top-managed SRAM ingest view"
+Require-Regex -Text $topText -Pattern '(?ms)infer_ingest_one_word[\s\S]*?infer_expected_words\s*\(\s*regs\s*\)[\s\S]*?infer_store_one_word\s*\(\s*regs\s*,\s*sram\s*,\s*idx\s*,\s*w\s*\)' -Reason "infer_ingest_one_word must dispatch via infer ingest helpers"
+Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+bool\s+infer_contract_span_in_sram\s*\(\s*const\s+InferIngestContract&\s+c\s*\)' -Reason "infer_contract_span_in_sram helper missing"
+Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+void\s+infer_contract_arm_for_op_infer\s*\(\s*TopRegs&\s+regs\s*\)' -Reason "infer_contract_arm_for_op_infer helper missing"
+Require-Regex -Text $topText -Pattern '(?ms)else\s+if\s*\(\s*op\s*==\s*\(uint8_t\)OP_INFER\s*\)[\s\S]*?infer_contract_arm_for_op_infer\s*\(\s*regs\s*\)\s*;[\s\S]*?infer_contract_span_in_sram\s*\(\s*regs\.infer_ingest_contract\s*\)' -Reason "OP_INFER entry must arm and validate infer ingest contract"
+Forbid-Regex -Text $topText -Pattern '(?ms)infer_ingest_one_word[\s\S]{0,900}\bsram\s*\[\s*IN_BASE_WORD\s*\+\s*idx\s*\]\s*=\s*w\s*;' -Reason "infer_ingest_one_word regressed to hardcoded IN_BASE_WORD direct write"
+Forbid-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]{0,1800}regs\.infer_input_shadow' -Reason "run_infer_pipeline regressed to shadow-array label source"
+
 # Top-owned contract dispatch anchors: preproc/layernorm/final head.
 Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+void\s+run_preproc_block\s*\(\s*TopRegs&\s*regs\s*,\s*u32_t\*\s*sram\s*\)' -Reason "Top preproc dispatch must take TopRegs& for contract ownership"
 Require-Regex -Text $topText -Pattern '(?ms)PreprocBlockContract&\s+contract\s*=\s*regs\.preproc_contract\s*;' -Reason "Top preproc contract ownership anchor missing"
@@ -134,6 +147,7 @@ Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloade
 Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloaded_by_top\s*\)\s*\{[\s\S]*?load_layer_sublayer1_norm_params\s*\(\s*sram\s*,' -Reason "TransformerLayer fallback load guard missing"
 
 Write-Log "guard: Top-owned preproc/layernorm/final-head contract dispatch anchors OK"
+Write-Log "guard: G4 infer ingest contractized base/len dispatch anchors OK"
 Write-Log "guard: Top preloaded sublayer1 norm params before layer dispatch anchors OK"
 Write-Log "guard: TransformerLayer guarded preload fallback anchors OK"
 Write-Log "PASS: check_top_managed_sram_boundary_regression"

@@ -62,3 +62,20 @@
 - Top remains sole production shared-SRAM owner at active boundaries touched in this round.
 - not Catapult closure.
 - not SCVerify closure.
+
+## Night-Batch Extension: G4 Ingest/Base-Shadow Push
+- Added Top-managed infer ingest contractization in active path:
+  - `InferIngestContract` in `src/Top.h`
+  - `run_preproc_block` consumes ingest contract base/valid-length/window range
+  - `run_infer_pipeline` FinalHead label source routed to Top-managed SRAM ingest view
+  - `OP_INFER` now performs contract span preflight validation before RX state entry
+- Expanded boundary regression guard:
+  - `scripts/check_top_managed_sram_boundary_regression.ps1` now enforces G4 ingest anchors.
+
+### Additional local evidence (this batch)
+- `build/p11ah/g4_night_batch/run.log`: PASS
+- `build/p11aj/g4_night_batch/run.log`: PASS
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+
+### Deferred boundary
+- Full cross-command unified ingest rearchitecture (CFG/PARAM/INFER metadata harmonization) remains deferred.

@@ -37,3 +37,17 @@
 ## Inventory Posture
 - Evidence posture: local-only survey and local execution evidence.
 - Closure posture: not Catapult closure; not SCVerify closure.
+
+## Night-Batch G4 Remap Update (2026-03-29)
+| gap_id | file | scope | current status | can fix tonight? | note |
+| --- | --- | --- | --- | --- | --- |
+| G4-A | `src/Top.h` | INFER ingest base dispatch ownership | DONE (this round) | YES | Added explicit `InferIngestContract` in Top for base/len/valid tracking. |
+| G4-B | `src/Top.h` + `Preproc` dispatch callsite | Preproc infer input len/base still constant-flavored | DONE (this round) | YES | `run_preproc_block` now consumes ingest contract `in_base_word` + `len_words_valid`. |
+| G4-C | `src/Top.h` + `FinalHead` dispatch callsite | FinalHead label source depended on shadow path | DONE (this round) | YES | FinalHead now consumes SRAM ingest view (`infer_label_words_view`). |
+| G4-D | `src/Top.h` | INFER-side metadata harmonization (`phase/token/tile/span`) | DONE (this round) | YES | Added infer contract window metadata + OP_INFER span preflight validation. |
+| G4-E | `src/Top.h` | Broader CFG/PARAM/INFER ingest unified rearchitecture | DEFERRED | NO | Cross-command unification still cross-cutting and exceeds night-batch change budget. |
+
+### Primary / Secondary / Tertiary Ranking (Current Round)
+1. Primary: G4-A/B/C combined Top-side ingest contractization (`src/Top.h`) with guard expansion.
+2. Secondary: stricter shadow deprecation pass (remove mirror writes for normal infer path).
+3. Tertiary: staged unified ingest rearchitecture (CFG/PARAM/INFER metadata harmonization).

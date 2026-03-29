@@ -3,8 +3,27 @@
 ## Quick Goal
 - Verify the overnight architecture-forward cuts that move SRAM ownership semantics toward Top-managed dispatch.
 - Confirm no overclaim: local-only evidence; not Catapult closure; not SCVerify closure.
+- Include the latest G4 ingest/base-shadow mincut verification in this review pass.
 
 ## Suggested 10-Minute Review Order
+1. Open `src/Top.h` diff for G4 ingest patch (2 min)
+   - Confirm `InferIngestContract` exists and is armed at `OP_INFER`.
+   - Confirm infer contract now carries `phase_id/token_range/tile_range`.
+   - Confirm `OP_INFER` checks `infer_contract_span_in_sram` before entering `ST_INFER_RX`.
+   - Confirm `run_preproc_block` uses ingest contract `in_base_word`/`len_words_valid`.
+   - Confirm FinalHead label source comes from SRAM ingest view (`infer_label_words_view`), not shadow source.
+2. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: G4 infer ingest contractized base/len dispatch anchors OK`.
+3. Open `build/p11ah/g4_night_batch/run.log` and `build/p11aj/g4_night_batch/run.log` (2 min)
+   - Confirm mainline/fallback/compare PASS anchors.
+4. Open `docs/handoff/TOP_MANAGED_SRAM_ARCH_GAP_INVENTORY_20260329.md` (2 min)
+   - Confirm G4-A/B/C moved to DONE and G4-D remains deferred.
+5. Open `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md` Task C3 (2 min)
+   - Confirm exact commands and evidence chain.
+6. Open `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md` extension section (1 min)
+   - Confirm deferred boundary and no overclaim posture.
+
+## Prior-Round Review Order (reference)
 1. Open `docs/handoff/TOP_MANAGED_SRAM_ARCH_GAP_INVENTORY_20260329.md` (2 min)
    - Confirm selected cuts C1/C2 and why broader candidates were deferred.
 2. Open `src/Top.h` diff (3 min)
@@ -34,6 +53,8 @@
 ## Accepted / Likely-Good
 - Top-managed contract dispatch anchors are in place and guarded.
 - Layer submodule now supports Top preloaded norm-param ownership handoff.
+- G4 infer ingest path now has explicit Top contractized base/len dispatch anchors.
+- G4 infer ingest path now has explicit Top contractized base/len/window dispatch anchors.
 - Existing helper-channel regression guard remains PASS.
 
 ## Residual Risks Needing Human Attention
@@ -42,10 +63,14 @@
 - Ingest base/shadow architecture remains for a future dedicated rework pack.
 
 ## Artifact Index
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
 - `docs/handoff/TOP_MANAGED_SRAM_ARCH_GAP_INVENTORY_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
 - `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
+- `build/p11ah/g4_night_batch/run.log`
+- `build/p11aj/g4_night_batch/run.log`
 - `build/p11ah/top_managed_sram_push/run.log`
 - `build/p11aj/top_managed_sram_push/run.log`
 - `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`
