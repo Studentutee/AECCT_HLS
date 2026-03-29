@@ -69,6 +69,28 @@ static inline bool use_generic_e4m3_except_g5(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5;
 }
 
+static inline bool use_generic_e4m3_g5_pairwise(const RefRunConfig& cfg) {
+  return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G5_G4 ||
+         cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G5_G1 ||
+         cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G5_G3 ||
+         cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G5_G2;
+}
+
+static inline bool g5_pairwise_mode_includes_group(RefPrecisionMode mode, RefFragGroup g) {
+  switch (mode) {
+    case RefPrecisionMode::GENERIC_E4M3_G5_G4:
+      return g == RefFragGroup::G5_PREPROC_EMBED || g == RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD;
+    case RefPrecisionMode::GENERIC_E4M3_G5_G1:
+      return g == RefFragGroup::G5_PREPROC_EMBED || g == RefFragGroup::G1_LAYERNORM;
+    case RefPrecisionMode::GENERIC_E4M3_G5_G3:
+      return g == RefFragGroup::G5_PREPROC_EMBED || g == RefFragGroup::G3_ATTN_CONTEXT;
+    case RefPrecisionMode::GENERIC_E4M3_G5_G2:
+      return g == RefFragGroup::G5_PREPROC_EMBED || g == RefFragGroup::G2_RESIDUAL;
+    default:
+      return false;
+  }
+}
+
 static inline bool frag_group_includes(RefFragGroup selected, RefFragGroup g) {
   switch (selected) {
     case RefFragGroup::G1_LAYERNORM: return g == RefFragGroup::G1_LAYERNORM;
@@ -102,6 +124,9 @@ static inline bool should_apply_e4m3_group_roundtrip(
            g == RefFragGroup::G3_ATTN_CONTEXT ||
            g == RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD;
   }
+  if (use_generic_e4m3_g5_pairwise(cfg)) {
+    return g5_pairwise_mode_includes_group(cfg.precision_mode, g);
+  }
   if (!use_frag_group_bisect(cfg)) {
     return false;
   }
@@ -111,6 +136,7 @@ static inline bool should_apply_e4m3_group_roundtrip(
 static inline bool use_island_s0(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
          use_generic_e4m3_except_g5(cfg) ||
+         use_generic_e4m3_g5_pairwise(cfg) ||
          use_frag_group_bisect(cfg) ||
          (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage));
 }

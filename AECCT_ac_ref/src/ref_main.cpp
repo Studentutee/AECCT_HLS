@@ -181,7 +181,7 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
-  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5\n");
+  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2\n");
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
@@ -281,6 +281,22 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
   }
   if (std::strcmp(text, "generic_e4m3_except_g5") == 0) {
     mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g5_g4") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G4;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g5_g1") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G1;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g5_g3") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G3;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g5_g2") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2;
     return true;
   }
   return false;
@@ -512,7 +528,11 @@ static bool resolve_pattern_range(const CliOptions& opts, int total_patterns, Pa
 
 static inline bool precision_mode_anchors_to_finalhead_s0(aecct_ref::RefPrecisionMode mode) {
   return mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT ||
-         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5;
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5 ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G4 ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G1 ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G3 ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2;
 }
 
 static inline bool precision_mode_requires_frag_group(aecct_ref::RefPrecisionMode mode) {
@@ -528,6 +548,18 @@ static std::string precision_mode_output_suffix(
   }
   if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5) {
     return "_except_g5";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G4) {
+    return "_g5_g4";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G1) {
+    return "_g5_g1";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G3) {
+    return "_g5_g3";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2) {
+    return "_g5_g2";
   }
   return std::string();
 }
