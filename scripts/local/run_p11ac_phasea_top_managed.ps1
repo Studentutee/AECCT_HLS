@@ -73,6 +73,7 @@ try {
 
     $requiredPassLines = @(
         'PASS: tb_kv_build_stream_stage_p11ac',
+        'WORK_TILE_OUT_SPLIT_PATH PASS',
         'STREAM_ORDER PASS',
         'MEMORY_ORDER PASS',
         'SINGLE_READ_X_REUSE PASS',

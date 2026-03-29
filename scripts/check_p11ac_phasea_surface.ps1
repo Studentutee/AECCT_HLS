@@ -120,10 +120,18 @@ $kvText = Get-Content -Path (Join-Path $repo "src/blocks/AttnPhaseATopManagedKv.
 Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_x_work_pkt_ch_t;" -Reason "KV helper split type attn_x_work_pkt_ch_t missing"
 Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_wk_work_pkt_ch_t;" -Reason "KV helper split type attn_wk_work_pkt_ch_t missing"
 Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_wv_work_pkt_ch_t;" -Reason "KV helper split type attn_wv_work_pkt_ch_t missing"
+Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_k_work_pkt_ch_t;" -Reason "KV helper split type attn_k_work_pkt_ch_t missing"
+Require-TextContains -Text $kvText -Needle "typedef ac_channel<AttnTopManagedWorkPacket> attn_v_work_pkt_ch_t;" -Reason "KV helper split type attn_v_work_pkt_ch_t missing"
 Require-TextContains -Text $kvText -Needle "!x_ch.nb_read(x_pkt) || !wk_ch.nb_read(wk_pkt) || !wv_ch.nb_read(wv_pkt)" -Reason "KV helper split consume path missing x/wk/wv split reads"
+Require-TextContains -Text $kvText -Needle "attn_k_work_pkt_ch_t& k_ch" -Reason "KV work-tile out split must use dedicated k_ch"
+Require-TextContains -Text $kvText -Needle "attn_v_work_pkt_ch_t& v_ch" -Reason "KV work-tile out split must use dedicated v_ch"
+Require-TextContains -Text $kvText -Needle "k_ch.write(k_pkt);" -Reason "KV work-tile emit must write K to k_ch"
+Require-TextContains -Text $kvText -Needle "v_ch.write(v_pkt);" -Reason "KV work-tile emit must write V to v_ch"
+Require-TextContains -Text $kvText -Needle "!k_ch.nb_read(k_pkt) || !v_ch.nb_read(v_pkt)" -Reason "KV work-tile writeback must read from split k/v channels"
 
 $runnerText = Get-Content -Path (Join-Path $repo "scripts/local/run_p11ac_phasea_top_managed.ps1") -Raw
 Require-TextContains -Text $runnerText -Needle "PASS: run_p11ac_phasea_top_managed" -Reason "runner PASS banner missing"
+Require-TextContains -Text $runnerText -Needle "WORK_TILE_OUT_SPLIT_PATH PASS" -Reason "runner must gate on work-tile out split PASS banner"
 Require-TextContains -Text $runnerText -Needle "MAINLINE_PATH_TAKEN PASS" -Reason "runner must gate on mainline path banner"
 Require-TextContains -Text $runnerText -Needle "FALLBACK_NOT_TAKEN PASS" -Reason "runner must gate on fallback-not-taken banner"
 Require-TextContains -Text $runnerText -Needle "fallback_taken = false" -Reason "runner must gate on fallback false evidence"

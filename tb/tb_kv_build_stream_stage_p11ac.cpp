@@ -147,6 +147,10 @@ public:
             std::printf("[p11ac][FAIL] payload preparation failed\n");
             return 1;
         }
+        if (!run_work_tile_out_split_probe()) {
+            std::printf("[p11ac][FAIL] work-tile out-channel split probe failed\n");
+            return 1;
+        }
         if (!run_top_managed_stage()) {
             std::printf("[p11ac][FAIL] top-managed stage execution failed\n");
             return 1;
@@ -286,6 +290,118 @@ private:
                 return false;
             }
         }
+        return true;
+    }
+
+    bool run_work_tile_out_split_probe() {
+        std::vector<aecct::u32_t> probe_sram = sram_before_;
+        aecct::attn_x_work_pkt_ch_t x_work_ch;
+        aecct::attn_wk_work_pkt_ch_t wk_work_ch;
+        aecct::attn_wv_work_pkt_ch_t wv_work_ch;
+        aecct::attn_k_work_pkt_ch_t k_work_ch;
+        aecct::attn_v_work_pkt_ch_t v_work_ch;
+
+        const uint32_t tile_words = (uint32_t)aecct::ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        const uint32_t work_d_tile_count =
+            aecct::attn_top_managed_tile_count(kTileWords, tile_words);
+        if (work_d_tile_count == 0u) {
+            std::printf("[p11ac][FAIL] invalid work-tile count in split probe\n");
+            return false;
+        }
+        const uint32_t tile_begin = 0u;
+        const uint32_t tile_end = work_d_tile_count;
+
+        for (uint32_t t = 0u; t < token_count_; ++t) {
+            const uint32_t token_begin = t;
+            const uint32_t token_end = t + 1u;
+            for (uint32_t dt = 0u; dt < work_d_tile_count; ++dt) {
+                const uint32_t tile_offset = dt * tile_words;
+                const uint32_t valid =
+                    aecct::attn_top_managed_tile_valid_words(kTileWords, tile_words, dt);
+                if (valid == 0u || valid > tile_words) {
+                    std::printf("[p11ac][FAIL] invalid tile valid words in work-tile probe token=%u dt=%u\n",
+                                (unsigned)t, (unsigned)dt);
+                    return false;
+                }
+
+                if (!aecct::attn_top_emit_phasea_kv_work_tile(
+                        probe_sram,
+                        (aecct::u32_t)(x_row_base(t) + tile_offset),
+                        (aecct::u32_t)t,
+                        (aecct::u32_t)token_begin,
+                        (aecct::u32_t)token_end,
+                        (aecct::u32_t)dt,
+                        (aecct::u32_t)tile_begin,
+                        (aecct::u32_t)tile_end,
+                        (aecct::u32_t)valid,
+                        x_work_ch,
+                        wk_work_ch,
+                        wv_work_ch)) {
+                    std::printf("[p11ac][FAIL] work-tile emit failed token=%u dt=%u\n",
+                                (unsigned)t, (unsigned)dt);
+                    return false;
+                }
+            }
+
+            if (!aecct::attn_block_phasea_kv_consume_emit_token_work_tiles(
+                    x_work_ch,
+                    wk_work_ch,
+                    wv_work_ch,
+                    k_work_ch,
+                    v_work_ch,
+                    wk_payload_.data(),
+                    wk_inv_sw_bits_,
+                    wv_payload_.data(),
+                    wv_inv_sw_bits_,
+                    (aecct::u32_t)t,
+                    (aecct::u32_t)token_begin,
+                    (aecct::u32_t)token_end,
+                    (aecct::u32_t)tile_begin,
+                    (aecct::u32_t)tile_end,
+                    (aecct::u32_t)kTileWords)) {
+                std::printf("[p11ac][FAIL] work-tile consume failed token=%u\n",
+                            (unsigned)t);
+                return false;
+            }
+
+            for (uint32_t dt = 0u; dt < work_d_tile_count; ++dt) {
+                const uint32_t tile_offset = dt * tile_words;
+                if (!aecct::attn_top_writeback_phasea_kv_work_tile(
+                        probe_sram,
+                        (aecct::u32_t)(scr_k_row_base(t) + tile_offset),
+                        (aecct::u32_t)(scr_v_row_base(t) + tile_offset),
+                        (aecct::u32_t)t,
+                        (aecct::u32_t)token_begin,
+                        (aecct::u32_t)token_end,
+                        (aecct::u32_t)dt,
+                        (aecct::u32_t)tile_begin,
+                        (aecct::u32_t)tile_end,
+                        k_work_ch,
+                        v_work_ch)) {
+                    std::printf("[p11ac][FAIL] work-tile writeback failed token=%u dt=%u\n",
+                                (unsigned)t, (unsigned)dt);
+                    return false;
+                }
+            }
+        }
+
+        for (uint32_t t = 0u; t < token_count_; ++t) {
+            const uint32_t k_base = scr_k_row_base(t);
+            const uint32_t v_base = scr_v_row_base(t);
+            for (uint32_t i = 0u; i < kTileWords; ++i) {
+                const uint32_t got_k = (uint32_t)probe_sram[k_base + i].to_uint();
+                const uint32_t exp_k = (uint32_t)expected_k_[t][i].to_uint();
+                const uint32_t got_v = (uint32_t)probe_sram[v_base + i].to_uint();
+                const uint32_t exp_v = (uint32_t)expected_v_[t][i].to_uint();
+                if (got_k != exp_k || got_v != exp_v) {
+                    std::printf("[p11ac][FAIL] work-tile split compare mismatch token=%u idx=%u\n",
+                                (unsigned)t, (unsigned)i);
+                    return false;
+                }
+            }
+        }
+
+        std::printf("WORK_TILE_OUT_SPLIT_PATH PASS\n");
         return true;
     }
 

@@ -21,6 +21,8 @@ typedef ac_channel<AttnTopManagedPacket> attn_v_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_x_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_wk_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_wv_work_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_k_work_pkt_ch_t;
+typedef ac_channel<AttnTopManagedWorkPacket> attn_v_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_work_pkt_ch_t;
 
 template<typename SramView>
@@ -253,7 +255,8 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
     attn_x_work_pkt_ch_t& x_ch,
     attn_wk_work_pkt_ch_t& wk_ch,
     attn_wv_work_pkt_ch_t& wv_ch,
-    attn_work_pkt_ch_t& out_ch,
+    attn_k_work_pkt_ch_t& k_ch,
+    attn_v_work_pkt_ch_t& v_ch,
     const u32_t wk_payload_words[kTernaryLiveL0WkPayloadWords],
     u32_t wk_inv_sw_bits,
     const u32_t wv_payload_words[kTernaryLiveL0WvPayloadWords],
@@ -365,7 +368,7 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
         ATTN_P11AC_K_TILE_COPY_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
             k_pkt.data[i] = k_out[tile_offset + i];
         }
-        out_ch.write(k_pkt);
+        k_ch.write(k_pkt);
 
         AttnTopManagedWorkPacket v_pkt;
         attn_work_packet_clear(v_pkt);
@@ -383,7 +386,7 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
         ATTN_P11AC_V_TILE_COPY_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
             v_pkt.data[i] = v_out[tile_offset + i];
         }
-        out_ch.write(v_pkt);
+        v_ch.write(v_pkt);
     }
 
     return true;
@@ -400,11 +403,12 @@ static inline bool attn_top_writeback_phasea_kv_work_tile(
     u32_t d_tile_idx,
     u32_t tile_begin,
     u32_t tile_end,
-    attn_work_pkt_ch_t& out_ch
+    attn_k_work_pkt_ch_t& k_ch,
+    attn_v_work_pkt_ch_t& v_ch
 ) {
     AttnTopManagedWorkPacket k_pkt;
     AttnTopManagedWorkPacket v_pkt;
-    if (!out_ch.nb_read(k_pkt) || !out_ch.nb_read(v_pkt)) {
+    if (!k_ch.nb_read(k_pkt) || !v_ch.nb_read(v_pkt)) {
         return false;
     }
     if ((uint32_t)k_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_K) { return false; }

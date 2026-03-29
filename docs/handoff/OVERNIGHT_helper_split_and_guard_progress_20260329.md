@@ -2,42 +2,44 @@
 
 ## Executive Summary
 - Continued helper-channel mixed-payload HOL risk reduction on existing repo foundation.
-- Completed acceptance audit for prior AF/AE/AD/AC split claims using real diffs and real logs.
-- Added repo-tracked mixed-payload regression checker for helper split anchors.
-- Completed repo-wide helper/staging hotspot inventory.
-- Executed one additional low-risk helper-only split (AC legacy work-unit path) with local evidence PASS.
-- Completed deferred C2 split (AD legacy `X/WQ` work-unit path) with local runner/surface/checker PASS.
+- Prior AF/AE/AD/AC split claims remain audited and accepted.
+- Added and extended regression guard coverage, including AC work-tile `K/V` out-channel split anchors.
+- Completed low-risk helper/staging split this round:
+  - `src/blocks/AttnPhaseATopManagedKv.h` work-tile output path (`K/V`) now split by payload class.
+- Current helper/staging hotspot inventory has no unresolved mixed-payload single-channel hotspot in scoped paths.
 - Governance posture remains local-only: not Catapult closure; not SCVerify closure.
 
 ## Accepted / Likely-Good Tasks
-- TASK A: helper split acceptance audit (AF/AE/AD/AC) completed and marked ACCEPTABLE.
+- TASK A (prior): helper split acceptance audit completed; AF/AE/AD/AC marked ACCEPTABLE.
   - artifact: `docs/handoff/HELPER_SPLIT_ACCEPTANCE_AUDIT_20260329.md`
-- TASK B: mixed-payload regression guard checker added and passing.
+- TASK B: mixed-payload regression guard checker maintained and expanded.
   - artifacts:
     - `scripts/check_helper_channel_split_regression.ps1`
     - `docs/handoff/HELPER_CHANNEL_REGRESSION_GUARD_20260329.md`
     - `build/helper_channel_guard/check_helper_channel_split_regression.log`
-- TASK C: helper/staging hotspot inventory completed with risk ranking and candidate shortlist.
+- TASK C: helper/staging hotspot inventory updated to reflect latest split state.
   - artifact: `docs/handoff/HELPER_CHANNEL_HOTSPOT_INVENTORY_20260329.md`
-- TASK D: candidate C1 split completed (AC legacy work-unit in/out channel split) with runner/checker PASS.
-  - artifact: `docs/handoff/HELPER_LOWRISK_SPLIT_TASKD_20260329.md`
-- TASK 1(C2): deferred AD legacy `X/WQ` work-unit split completed with direct runner evidence.
-  - artifact: `docs/handoff/HELPER_LOWRISK_SPLIT_C2_20260329.md`
+- TASK D (this round): AC work-tile `K/V` out-channel split completed with local validation PASS.
+  - artifact: `docs/handoff/HELPER_LOWRISK_SPLIT_KV_OUT_20260329.md`
 
 ## Tasks Needing Human Diff Review
-- `src/blocks/AttnPhaseATopManagedQ.h`
-  - C2 legacy helper signatures changed from shared `attn_q_pkt_ch_t in_ch` to split packet channels (`x_ch/wq_ch`).
-- `tb/tb_q_path_impl_p11ad.cpp`
-  - added legacy split probe and explicit `LEGACY_WORK_UNIT_SPLIT_PATH PASS` evidence banner.
-- `scripts/local/run_p11ad_impl_q_path.ps1`
-  - runner pass-gate now includes legacy split path PASS line.
-- `scripts/check_p11ad_impl_surface.ps1`
-  - surface guard expanded for AD legacy split anchors.
+- `src/blocks/AttnPhaseATopManagedKv.h`
+  - work-tile output channel changed from shared `attn_work_pkt_ch_t out_ch` to split `attn_k_work_pkt_ch_t k_ch` + `attn_v_work_pkt_ch_t v_ch`.
+- `tb/tb_kv_build_stream_stage_p11ac.cpp`
+  - added work-tile out split probe with explicit `WORK_TILE_OUT_SPLIT_PATH PASS`.
+- `scripts/local/run_p11ac_phasea_top_managed.ps1`
+  - runner pass-gate extended to require work-tile out split probe PASS.
+- `scripts/check_p11ac_phasea_surface.ps1`
+  - surface anchors extended for work-tile out split signatures and read/write split anchors.
 - `scripts/check_helper_channel_split_regression.ps1`
-  - guard coverage expanded to AD legacy work-unit split anchors (plus AC legacy anchors retained).
+  - AC work-tile `K/V` out split anti-regression anchors added.
 
 ## Tasks Attempted But Blocked
-- No hard blocker in this run.
+- No hard blocker in this round.
+- During TB probe bring-up, two local iterations were needed before final PASS:
+  - iteration 1: probe compare mismatch due tile-span assumption.
+  - iteration 2: probe consume timing mismatch.
+  - iteration 3: fixed and PASS.
 
 ## Exact Artifact Index
 - Acceptance / analysis:
@@ -48,31 +50,25 @@
   - `docs/handoff/HELPER_CHANNEL_REGRESSION_GUARD_20260329.md`
   - `build/helper_channel_guard/check_helper_channel_split_regression.log`
   - `build/helper_channel_guard/check_helper_channel_split_regression_summary.txt`
-- Additional split:
-  - `docs/handoff/HELPER_LOWRISK_SPLIT_TASKD_20260329.md`
-  - `build/p11ac_impl_split_taskd/build.log`
-  - `build/p11ac_impl_split_taskd/run.log`
-  - `build/p11ac_impl_split_taskd/verdict.txt`
-- C2 split:
-  - `docs/handoff/HELPER_LOWRISK_SPLIT_C2_20260329.md`
-  - `build/p11ad_impl_c2/build.log`
-  - `build/p11ad_impl_c2/run.log`
-  - `build/p11ad_impl_c2/verdict.txt`
-  - `build/p11ad_c2/check_p11ad_impl_surface.log`
-  - `build/p11ad_c2/check_p11ad_impl_surface_summary.txt`
-- Acceptance evidence baselines used:
-  - `build/p11af_impl_split_night/run.log`
-  - `build/p11ae_impl_split/run.log`
-  - `build/p11ad_impl_split/run.log`
-  - `build/p11ac_impl_split/run.log`
-  - `build/p11ah_full_loop_night/run.log`
+- This-round split:
+  - `docs/handoff/HELPER_LOWRISK_SPLIT_KV_OUT_20260329.md`
+  - `build/p11ac_kv_out_impl/run.log`
+  - `build/p11ac_kv_out/check_p11ac_phasea_surface.log`
 
 ## Suggested 10-Minute Review Order
-1. Read `docs/handoff/HELPER_SPLIT_ACCEPTANCE_AUDIT_20260329.md` for AF/AE/AD/AC verdict baseline.
-2. Read `docs/handoff/HELPER_CHANNEL_HOTSPOT_INVENTORY_20260329.md` to confirm remaining hotspots and ranking logic.
-3. Review C2 diffs in `src/blocks/AttnPhaseATopManagedQ.h` and `tb/tb_q_path_impl_p11ad.cpp`.
-4. Check `build/p11ad_impl_c2/run.log` for `LEGACY_WORK_UNIT_SPLIT_PATH PASS` + mainline/fallback PASS lines.
-5. Confirm guard log `build/helper_channel_guard/check_helper_channel_split_regression.log`.
+1. Open `docs/handoff/HELPER_LOWRISK_SPLIT_KV_OUT_20260329.md` to confirm scope and evidence.
+2. Review `src/blocks/AttnPhaseATopManagedKv.h` split signatures and split read/write anchors.
+3. Open `build/p11ac_kv_out_impl/run.log` and verify:
+   - `WORK_TILE_OUT_SPLIT_PATH PASS`
+   - `STREAM_ORDER PASS`
+   - `MEMORY_ORDER PASS`
+   - `EXACT_SCR_KV_COMPARE PASS`
+   - `MAINLINE_PATH_TAKEN PASS`
+   - `FALLBACK_NOT_TAKEN PASS`
+4. Open `build/helper_channel_guard/check_helper_channel_split_regression.log` and verify:
+   - `guard: AC work-tile k/v out split anchors OK`
+   - `PASS: check_helper_channel_split_regression`
+5. Confirm inventory closure in `docs/handoff/HELPER_CHANNEL_HOTSPOT_INVENTORY_20260329.md`.
 
 ## Governance Posture
 - local-only evidence only

@@ -27,9 +27,14 @@
     - Require TB legacy probe PASS banner (`LEGACY_WORK_UNIT_SPLIT_PATH PASS`).
 - AC (`x + wk + wv`):
   - Work-tile path:
-    - Require split typedef anchors: `attn_x_work_pkt_ch_t`, `attn_wk_work_pkt_ch_t`, `attn_wv_work_pkt_ch_t`.
-    - Require split consume signature and split reads (`x_ch`, `wk_ch`, `wv_ch`).
-    - Forbid old shared consume signature using single `attn_work_pkt_ch_t& in_ch`.
+    - Input split anchors: `attn_x_work_pkt_ch_t`, `attn_wk_work_pkt_ch_t`, `attn_wv_work_pkt_ch_t`.
+    - Output split anchors: `attn_k_work_pkt_ch_t`, `attn_v_work_pkt_ch_t`.
+    - Require work-tile consume signature to keep split in/out channels:
+      - `attn_block_phasea_kv_consume_emit_token_work_tiles(... x_ch, wk_ch, wv_ch, k_ch, v_ch, ...)`
+    - Require work-tile writeback signature to keep split output channels:
+      - `attn_top_writeback_phasea_kv_work_tile(..., k_ch, v_ch)`
+    - Require split write/read anchors: `k_ch.write(k_pkt)`, `v_ch.write(v_pkt)`, `k_ch.nb_read(k_pkt)`, `v_ch.nb_read(v_pkt)`.
+    - Forbid old shared `attn_work_pkt_ch_t& out_ch` work-tile signatures.
   - Legacy work-unit path:
     - Require split packet typedef anchors: `attn_x_pkt_ch_t`, `attn_wk_pkt_ch_t`, `attn_wv_pkt_ch_t`, `attn_k_pkt_ch_t`, `attn_v_pkt_ch_t`.
     - Require split emit/consume/writeback signatures and TB split-channel declarations.
@@ -51,6 +56,7 @@
 - `guard: AD x/wq split anchors OK`
 - `guard: AD legacy work-unit split anchors OK`
 - `guard: AC x/wk/wv split anchors OK`
+- `guard: AC work-tile k/v out split anchors OK`
 - `guard: AC legacy work-unit split anchors OK`
 - `PASS: check_helper_channel_split_regression`
 

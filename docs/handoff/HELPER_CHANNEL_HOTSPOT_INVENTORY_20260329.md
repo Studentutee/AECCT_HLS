@@ -14,7 +14,7 @@
 ## Hotspot Table
 | file | type name | payload classes | active mainline or helper-only | current risk level | can split now? | reason |
 | --- | --- | --- | --- | --- | --- | --- |
-| `src/blocks/AttnPhaseATopManagedKv.h` | `attn_work_pkt_ch_t` (`out_ch` in `attn_block_phasea_kv_consume_emit_token_work_tiles` / `attn_top_writeback_phasea_kv_work_tile`) | `K + V` | helper/staging-only (no current Top mainline callsite) | MED | YES | Mixed payload class remains in tile helper channel. Split is feasible with local-only interface update. |
+| `(none unresolved in current helper/staging scope)` | n/a | n/a | n/a | n/a | n/a | AC work-tile `K/V` out-channel split completed in this round. |
 
 ## Already-Split Paths Rechecked (Not Remaining Hotspots)
 - `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`: `score`/`v` split confirmed.
@@ -22,13 +22,12 @@
 - `src/blocks/AttnPhaseATopManagedQ.h` (work-tile path): `x`/`wq` split confirmed.
 - `src/blocks/AttnPhaseATopManagedQ.h` (legacy work-unit path): `x`/`wq` packet-channel split confirmed (C2).
 - `src/blocks/AttnPhaseATopManagedKv.h` (work-tile input path): `x`/`wk`/`wv` split confirmed.
+- `src/blocks/AttnPhaseATopManagedKv.h` (work-tile output path): `k`/`v` split confirmed (`attn_k_work_pkt_ch_t`, `attn_v_work_pkt_ch_t`) in this round.
 - `src/blocks/AttnPhaseATopManagedKv.h` (legacy work-unit path): `x/wk/wv` and `k/v` split confirmed.
 
 ## Candidate Ranking For TASK D
-1. Next candidate (recommended): `AttnPhaseATopManagedKv.h` work-tile `attn_work_pkt_ch_t out_ch` split (`K/V`) in `attn_block_phasea_kv_consume_emit_token_work_tiles` + `attn_top_writeback_phasea_kv_work_tile`.
-   - Why next: helper/staging-only and no Top formal contract coupling.
-2. Optional follow-up candidate: AD/AC legacy helper-path static tightening checker-only pass (no new rewiring), if code split is deferred.
-   - Why optional: may reduce regression risk without touching broader dataflow.
+1. Optional follow-up candidate: checker-hardening pass only (no dataflow rewiring), focusing on stronger anti-regression anchors and wording drift prevention.
+   - Why next: current known mixed-payload helper hotspots are closed; remaining work is guard hardening and maintenance.
 
 ## Inventory Posture
 - This inventory is local static/diff evidence for helper/staging channel topology.
