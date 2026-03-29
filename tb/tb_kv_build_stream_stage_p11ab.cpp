@@ -319,6 +319,7 @@ public:
         if (!run_stream_staging()) {
             return fail("stream staging flow failed");
         }
+        std::printf("WORK_UNIT_SPLIT_PATH PASS\n");
 
         if (!validate_stream_order()) {
             return 1;
@@ -369,8 +370,11 @@ private:
     std::vector< std::vector<aecct::u32_t> > expected_k_;
     std::vector< std::vector<aecct::u32_t> > expected_v_;
 
-    TileChannel in_ch_;
-    TileChannel out_ch_;
+    TileChannel x_ch_;
+    TileChannel wk_ch_;
+    TileChannel wv_ch_;
+    TileChannel k_ch_;
+    TileChannel v_ch_;
     WorkCounters per_work_[kTokenCount][kDTileCount];
     std::vector<EventTag> stream_events_;
     std::vector<EventTag> mem_events_;
@@ -560,7 +564,7 @@ public:
             p.words[i] = sram_dut_[base + i];
         }
 
-        in_ch_.write(p);
+        x_ch_.write(p);
         mark_stream_event(token, d_tile, EVT_STREAM_X);
         mark_mem_event(token, d_tile, EVT_MEM_READ_X_WORK);
         ++per_work_[token][d_tile].x_reads;
@@ -584,7 +588,11 @@ public:
         }
         p.inv_sw_bits = sram_dut_[param_base_word_ + inv_meta.offset_w];
 
-        in_ch_.write(p);
+        if (stream_kind == EVT_STREAM_WK) {
+            wk_ch_.write(p);
+        } else {
+            wv_ch_.write(p);
+        }
         mark_stream_event(token, d_tile, stream_kind);
         if (stream_kind == EVT_STREAM_WK) {
             mark_mem_event(token, d_tile, EVT_MEM_READ_WK);
@@ -602,7 +610,7 @@ public:
         TilePacket x_pkt;
         TilePacket wk_pkt;
         TilePacket wv_pkt;
-        if (!in_ch_.nb_read(x_pkt) || !in_ch_.nb_read(wk_pkt) || !in_ch_.nb_read(wv_pkt)) {
+        if (!x_ch_.nb_read(x_pkt) || !wk_ch_.nb_read(wk_pkt) || !wv_ch_.nb_read(wv_pkt)) {
             return false;
         }
         if (x_pkt.kind != EVT_STREAM_X || wk_pkt.kind != EVT_STREAM_WK || wv_pkt.kind != EVT_STREAM_WV) {
@@ -651,7 +659,7 @@ public:
         for (uint32_t i = 0u; i < tile_words_; ++i) {
             k_pkt.words[i] = k_out[i];
         }
-        out_ch_.write(k_pkt);
+        k_ch_.write(k_pkt);
         mark_stream_event(token, d_tile, EVT_STREAM_K);
 
         aecct::u32_t x_row_wv[aecct::kTernaryLiveL0WvCols];
@@ -684,7 +692,7 @@ public:
         for (uint32_t i = 0u; i < tile_words_; ++i) {
             v_pkt.words[i] = v_out[i];
         }
-        out_ch_.write(v_pkt);
+        v_ch_.write(v_pkt);
         mark_stream_event(token, d_tile, EVT_STREAM_V);
 
         return true;
@@ -693,7 +701,7 @@ public:
     bool top_writeback(uint32_t token, uint32_t d_tile) {
         TilePacket k_pkt;
         TilePacket v_pkt;
-        if (!out_ch_.nb_read(k_pkt) || !out_ch_.nb_read(v_pkt)) {
+        if (!k_ch_.nb_read(k_pkt) || !v_ch_.nb_read(v_pkt)) {
             return false;
         }
         if (k_pkt.kind != EVT_STREAM_K || v_pkt.kind != EVT_STREAM_V) {
@@ -754,7 +762,8 @@ public:
                 }
             }
         }
-        return in_ch_.empty() && out_ch_.empty();
+        return x_ch_.empty() && wk_ch_.empty() && wv_ch_.empty() &&
+               k_ch_.empty() && v_ch_.empty();
     }
 
     bool validate_stream_order() {

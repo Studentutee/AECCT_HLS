@@ -39,6 +39,20 @@
     - Require split packet typedef anchors: `attn_x_pkt_ch_t`, `attn_wk_pkt_ch_t`, `attn_wv_pkt_ch_t`, `attn_k_pkt_ch_t`, `attn_v_pkt_ch_t`.
     - Require split emit/consume/writeback signatures and TB split-channel declarations.
     - Forbid old shared `attn_pkt_ch_t in_ch/out_ch` legacy signatures.
+- AB helper-local staging TB (`x + wk + wv` and `k + v`):
+  - Require split helper-local channel anchors in `tb/tb_kv_build_stream_stage_p11ab.cpp`:
+    - `TileChannel x_ch_`, `TileChannel wk_ch_`, `TileChannel wv_ch_`
+    - `TileChannel k_ch_`, `TileChannel v_ch_`
+  - Require split consume/emit/writeback anchors:
+    - `x_ch_.nb_read(...) || !wk_ch_.nb_read(...) || !wv_ch_.nb_read(...)`
+    - `k_ch_.write(k_pkt)`, `v_ch_.write(v_pkt)`
+    - `k_ch_.nb_read(...) || !v_ch_.nb_read(...)`
+  - Require explicit split path banner:
+    - `WORK_UNIT_SPLIT_PATH PASS`
+  - Forbid old shared helper-local channels:
+    - `TileChannel in_ch_`
+    - `TileChannel out_ch_`
+    - `in_ch_.nb_read(...)`, `out_ch_.write(...)`, `out_ch_.nb_read(...)`
 
 ## Checker Execution
 - Command:
@@ -58,6 +72,7 @@
 - `guard: AC x/wk/wv split anchors OK`
 - `guard: AC work-tile k/v out split anchors OK`
 - `guard: AC legacy work-unit split anchors OK`
+- `guard: AB helper-local x/wk/wv and k/v split anchors OK`
 - `PASS: check_helper_channel_split_regression`
 
 ## Residual Risk

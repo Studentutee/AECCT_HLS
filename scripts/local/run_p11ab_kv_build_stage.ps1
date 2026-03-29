@@ -72,6 +72,7 @@ try {
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
     Require-PassString -LogPath $runLog -Needle 'PASS: tb_kv_build_stream_stage_p11ab'
+    Require-PassString -LogPath $runLog -Needle 'WORK_UNIT_SPLIT_PATH PASS'
 
     Add-Content -Path $runLog -Value 'PASS: run_p11ab_kv_build_stage' -Encoding UTF8
 

@@ -101,7 +101,8 @@ $targets = @(
     "src/blocks/AttnPhaseATopManagedQ.h",
     "src/blocks/AttnPhaseATopManagedKv.h",
     "tb/tb_q_path_impl_p11ad.cpp",
-    "tb/tb_kv_build_stream_stage_p11ac.cpp"
+    "tb/tb_kv_build_stream_stage_p11ac.cpp",
+    "tb/tb_kv_build_stream_stage_p11ab.cpp"
 )
 foreach ($rel in $targets) {
     Require-True -Condition (Test-Path (Join-Path $repo $rel)) -Reason ("required file missing: {0}" -f $rel)
@@ -113,6 +114,7 @@ $adPath = Join-Path $repo "src/blocks/AttnPhaseATopManagedQ.h"
 $acPath = Join-Path $repo "src/blocks/AttnPhaseATopManagedKv.h"
 $tbAdPath = Join-Path $repo "tb/tb_q_path_impl_p11ad.cpp"
 $tbAcPath = Join-Path $repo "tb/tb_kv_build_stream_stage_p11ac.cpp"
+$tbAbPath = Join-Path $repo "tb/tb_kv_build_stream_stage_p11ab.cpp"
 
 $afText = Get-Content -Path $afPath -Raw
 $aeText = Get-Content -Path $aePath -Raw
@@ -120,6 +122,7 @@ $adText = Get-Content -Path $adPath -Raw
 $acText = Get-Content -Path $acPath -Raw
 $tbAdText = Get-Content -Path $tbAdPath -Raw
 $tbAcText = Get-Content -Path $tbAcPath -Raw
+$tbAbText = Get-Content -Path $tbAbPath -Raw
 
 # AF guard: score + v must not collapse back into a shared helper input channel.
 Require-Regex -Text $afText -Pattern '(?m)^\s*typedef\s+ac_channel<AttnTopManagedWorkPacket>\s+attn_phaseb_softmax_score_ch_t\s*;' -Reason "AF split typedef (score channel) missing"
@@ -194,6 +197,23 @@ Require-Regex -Text $tbAcText -Pattern '\baecct::attn_k_pkt_ch_t\s+k_ch_' -Reaso
 Require-Regex -Text $tbAcText -Pattern '\baecct::attn_v_pkt_ch_t\s+v_ch_' -Reason "AC TB must declare split v channel"
 Require-Regex -Text $tbAcText -Pattern 'WORK_TILE_OUT_SPLIT_PATH PASS' -Reason "AC TB must report work-tile out split path PASS banner"
 
+# AB helper-local staging TB guard: x/wk/wv input and k/v output must stay split in channel topology.
+Require-Regex -Text $tbAbText -Pattern '\bTileChannel\s+x_ch_\s*;' -Reason "AB TB must keep split x channel"
+Require-Regex -Text $tbAbText -Pattern '\bTileChannel\s+wk_ch_\s*;' -Reason "AB TB must keep split wk channel"
+Require-Regex -Text $tbAbText -Pattern '\bTileChannel\s+wv_ch_\s*;' -Reason "AB TB must keep split wv channel"
+Require-Regex -Text $tbAbText -Pattern '\bTileChannel\s+k_ch_\s*;' -Reason "AB TB must keep split k channel"
+Require-Regex -Text $tbAbText -Pattern '\bTileChannel\s+v_ch_\s*;' -Reason "AB TB must keep split v channel"
+Require-Regex -Text $tbAbText -Pattern '\bx_ch_\.nb_read\s*\(\s*x_pkt\s*\)\s*\|\|\s*!wk_ch_\.nb_read\s*\(\s*wk_pkt\s*\)\s*\|\|\s*!wv_ch_\.nb_read\s*\(\s*wv_pkt\s*\)' -Reason "AB TB consume path must read x/wk/wv from split channels"
+Require-Regex -Text $tbAbText -Pattern '\bk_ch_\.write\s*\(\s*k_pkt\s*\)' -Reason "AB TB emit path must write K to split k channel"
+Require-Regex -Text $tbAbText -Pattern '\bv_ch_\.write\s*\(\s*v_pkt\s*\)' -Reason "AB TB emit path must write V to split v channel"
+Require-Regex -Text $tbAbText -Pattern '\bk_ch_\.nb_read\s*\(\s*k_pkt\s*\)\s*\|\|\s*!v_ch_\.nb_read\s*\(\s*v_pkt\s*\)' -Reason "AB TB writeback path must read k/v from split channels"
+Require-Regex -Text $tbAbText -Pattern 'WORK_UNIT_SPLIT_PATH PASS' -Reason "AB TB must report work-unit split path PASS banner"
+Forbid-Regex -Text $tbAbText -Pattern '\bTileChannel\s+in_ch_\s*;' -Reason "AB regression detected: shared in_ch restored"
+Forbid-Regex -Text $tbAbText -Pattern '\bTileChannel\s+out_ch_\s*;' -Reason "AB regression detected: shared out_ch restored"
+Forbid-Regex -Text $tbAbText -Pattern '\bin_ch_\.nb_read\s*\(' -Reason "AB regression detected: consume path reading shared in_ch"
+Forbid-Regex -Text $tbAbText -Pattern '\bout_ch_\.write\s*\(' -Reason "AB regression detected: emit path writing shared out_ch"
+Forbid-Regex -Text $tbAbText -Pattern '\bout_ch_\.nb_read\s*\(' -Reason "AB regression detected: writeback path reading shared out_ch"
+
 Write-Log "guard: AF score/v split anchors OK"
 Write-Log "guard: AE q/k split anchors OK"
 Write-Log "guard: AD x/wq split anchors OK"
@@ -201,6 +221,7 @@ Write-Log "guard: AD legacy work-unit split anchors OK"
 Write-Log "guard: AC x/wk/wv split anchors OK"
 Write-Log "guard: AC work-tile k/v out split anchors OK"
 Write-Log "guard: AC legacy work-unit split anchors OK"
+Write-Log "guard: AB helper-local x/wk/wv and k/v split anchors OK"
 Write-Log "PASS: check_helper_channel_split_regression"
 Write-Summary -Status "PASS" -Detail "all helper split regression guards passed"
 exit 0
