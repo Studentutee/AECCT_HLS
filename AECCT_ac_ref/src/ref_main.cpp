@@ -14,6 +14,7 @@
 
 #include "../include/RefExperimentMetrics.h"
 #include "../include/RefE4M3Helpers.h"
+#include "../include/RefFullQuantStats.h"
 #include "../include/RefModel.h"
 #include "../include/RefPrecisionMode.h"
 
@@ -50,6 +51,7 @@ struct CliOptions {
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
   aecct_ref::RefFinalHeadExploreStage finalhead_stage;
+  aecct_ref::RefPrecisionMode experiment_precision_mode;
 };
 
 struct PatternRange {
@@ -178,6 +180,7 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
+  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
   std::printf("  --summary-csv PATH\n");
@@ -257,6 +260,22 @@ static bool parse_finalhead_stage(const char* text, aecct_ref::RefFinalHeadExplo
   return false;
 }
 
+static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& mode) {
+  if (std::strcmp(text, "baseline_fp32") == 0) {
+    mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_finalhead") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
+    return true;
+  }
+  if (std::strcmp(text, "full_e4m3_nonlinear_stress") == 0) {
+    mode = aecct_ref::RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS;
+    return true;
+  }
+  return false;
+}
+
 static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.run_mode = CliRunMode::COMPARE;
   opts.pattern_index = -1;
@@ -267,6 +286,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
   opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
+  opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
 
   bool positional_pattern_used = false;
   for (int i = 1; i < argc; ++i) {
@@ -331,6 +351,17 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
     }
     if (std::strcmp(arg, "--summary-only") == 0 || std::strcmp(arg, "--quiet") == 0) {
       opts.summary_only = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--precision-exp") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --precision-exp\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_precision_mode(argv[++i], opts.experiment_precision_mode)) {
+        std::printf("Unsupported --precision-exp value: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
       continue;
     }
     if (std::strcmp(arg, "--summary-csv") == 0) {
@@ -814,7 +845,8 @@ static bool write_eval_single_summary_txt(
   const std::string& path,
   const char* tag,
   const EvalAggregateStats& stats,
-  const std::vector<EvalPatternRow>& rows
+  const std::vector<EvalPatternRow>& rows,
+  const aecct_ref::RefFullQuantStats* full_stats = nullptr
 ) {
   std::filesystem::path p(path);
   if (p.has_parent_path()) {
@@ -835,6 +867,26 @@ static bool write_eval_single_summary_txt(
   ofs << "FER                        : " << stats.fer << "\n";
   ofs << "x_pred/target match count  : " << stats.x_pred_match_count << "\n";
   ofs << "x_pred/target match ratio  : " << stats.x_pred_match_ratio << "\n";
+  if (full_stats != nullptr) {
+    ofs << "\n";
+    ofs << "=== Full E4M3 Stress Counters (experiment) ===\n";
+    ofs << "int8 clamp count           : " << full_stats->int_linear.int8_clamp_count << "\n";
+    ofs << "int16 overflow count       : " << full_stats->int_linear.int16_overflow_count << "\n";
+    ofs << "dequant restore count      : " << full_stats->int_linear.dequant_restore_count << "\n";
+    ofs << "e4m3 roundtrip count       : " << full_stats->e4m3.roundtrip_count << "\n";
+    ofs << "e4m3 nan in/out            : " << full_stats->e4m3.nan_in_count
+        << "/" << full_stats->e4m3.nan_out_count << "\n";
+    ofs << "e4m3 inf in/out            : " << full_stats->e4m3.inf_in_count
+        << "/" << full_stats->e4m3.inf_out_count << "\n";
+    ofs << "first nonfinite block      : "
+        << (full_stats->e4m3.first_nonfinite_block.empty()
+            ? "none" : full_stats->e4m3.first_nonfinite_block)
+        << "\n";
+    ofs << "first int16 overflow block : "
+        << (full_stats->int_linear.first_int16_overflow_block.empty()
+            ? "none" : full_stats->int_linear.first_int16_overflow_block)
+        << "\n";
+  }
   ofs << "\n";
   ofs << "per-pattern bit/frame summary:\n";
   for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -853,7 +905,8 @@ static bool write_eval_compare_summary_txt(
   const std::string& path,
   const EvalAggregateStats& baseline_stats,
   const EvalAggregateStats& experiment_stats,
-  const std::vector<EvalComparePatternRow>& rows
+  const std::vector<EvalComparePatternRow>& rows,
+  const aecct_ref::RefFullQuantStats* experiment_full_stats = nullptr
 ) {
   std::filesystem::path p(path);
   if (p.has_parent_path()) {
@@ -882,6 +935,26 @@ static bool write_eval_compare_summary_txt(
   ofs << "delta FER (exp-base)       : " << delta_fer << "\n";
   ofs << "baseline x_pred match ratio: " << baseline_stats.x_pred_match_ratio << "\n";
   ofs << "experiment x_pred match ratio: " << experiment_stats.x_pred_match_ratio << "\n";
+  if (experiment_full_stats != nullptr) {
+    ofs << "\n";
+    ofs << "=== Full E4M3 Stress Counters (experiment) ===\n";
+    ofs << "int8 clamp count           : " << experiment_full_stats->int_linear.int8_clamp_count << "\n";
+    ofs << "int16 overflow count       : " << experiment_full_stats->int_linear.int16_overflow_count << "\n";
+    ofs << "dequant restore count      : " << experiment_full_stats->int_linear.dequant_restore_count << "\n";
+    ofs << "e4m3 roundtrip count       : " << experiment_full_stats->e4m3.roundtrip_count << "\n";
+    ofs << "e4m3 nan in/out            : " << experiment_full_stats->e4m3.nan_in_count
+        << "/" << experiment_full_stats->e4m3.nan_out_count << "\n";
+    ofs << "e4m3 inf in/out            : " << experiment_full_stats->e4m3.inf_in_count
+        << "/" << experiment_full_stats->e4m3.inf_out_count << "\n";
+    ofs << "first nonfinite block      : "
+        << (experiment_full_stats->e4m3.first_nonfinite_block.empty()
+            ? "none" : experiment_full_stats->e4m3.first_nonfinite_block)
+        << "\n";
+    ofs << "first int16 overflow block : "
+        << (experiment_full_stats->int_linear.first_int16_overflow_block.empty()
+            ? "none" : experiment_full_stats->int_linear.first_int16_overflow_block)
+        << "\n";
+  }
   ofs << "\n";
   ofs << "per-pattern bit/frame summary:\n";
   for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -1067,7 +1140,8 @@ static bool write_batch_summary_txt(
   const BatchCompareSummary& batch,
   const DistributionStats& margin_dist,
   const std::vector<PerPatternCompareRow>& rows,
-  const std::vector<std::size_t>& vulnerable_idx
+  const std::vector<std::size_t>& vulnerable_idx,
+  const aecct_ref::RefFullQuantStats* experiment_full_stats = nullptr
 ) {
   std::filesystem::path p(path);
   if (p.has_parent_path()) {
@@ -1100,6 +1174,26 @@ static bool write_batch_summary_txt(
   ofs << "total experiment NaN / Inf    : "
       << batch.experiment_nonfinite_total.nan_count << " / "
       << batch.experiment_nonfinite_total.inf_count << "\n";
+  if (experiment_full_stats != nullptr) {
+    ofs << "\n";
+    ofs << "=== Full E4M3 Stress Counters (experiment) ===\n";
+    ofs << "int8 clamp count              : " << experiment_full_stats->int_linear.int8_clamp_count << "\n";
+    ofs << "int16 overflow count          : " << experiment_full_stats->int_linear.int16_overflow_count << "\n";
+    ofs << "dequant restore count         : " << experiment_full_stats->int_linear.dequant_restore_count << "\n";
+    ofs << "e4m3 roundtrip count          : " << experiment_full_stats->e4m3.roundtrip_count << "\n";
+    ofs << "e4m3 nan in/out               : " << experiment_full_stats->e4m3.nan_in_count
+        << " / " << experiment_full_stats->e4m3.nan_out_count << "\n";
+    ofs << "e4m3 inf in/out               : " << experiment_full_stats->e4m3.inf_in_count
+        << " / " << experiment_full_stats->e4m3.inf_out_count << "\n";
+    ofs << "first nonfinite block         : "
+        << (experiment_full_stats->e4m3.first_nonfinite_block.empty()
+            ? "none" : experiment_full_stats->e4m3.first_nonfinite_block)
+        << "\n";
+    ofs << "first int16 overflow block    : "
+        << (experiment_full_stats->int_linear.first_int16_overflow_block.empty()
+            ? "none" : experiment_full_stats->int_linear.first_int16_overflow_block)
+        << "\n";
+  }
   ofs << "\n";
 
   ofs << "margin distribution (per-pattern min(abs(logit)), using min(baseline,experiment)):\n";
@@ -1186,6 +1280,29 @@ static void print_eval_compare_console_summary(
   std::printf("delta FER (exp-base)       : %.9e\n", delta_fer);
   std::printf("baseline x_pred match ratio: %.9e\n", baseline_stats.x_pred_match_ratio);
   std::printf("experiment x_pred match ratio: %.9e\n", experiment_stats.x_pred_match_ratio);
+}
+
+static void print_full_stress_console_summary(const aecct_ref::RefFullQuantStats& stats) {
+  std::printf("=== Full E4M3 Stress Counters (experiment) ===\n");
+  std::printf("int8 clamp count           : %llu\n",
+    static_cast<unsigned long long>(stats.int_linear.int8_clamp_count));
+  std::printf("int16 overflow count       : %llu\n",
+    static_cast<unsigned long long>(stats.int_linear.int16_overflow_count));
+  std::printf("dequant restore count      : %llu\n",
+    static_cast<unsigned long long>(stats.int_linear.dequant_restore_count));
+  std::printf("e4m3 roundtrip count       : %llu\n",
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_count));
+  std::printf("e4m3 nan in/out            : %llu / %llu\n",
+    static_cast<unsigned long long>(stats.e4m3.nan_in_count),
+    static_cast<unsigned long long>(stats.e4m3.nan_out_count));
+  std::printf("e4m3 inf in/out            : %llu / %llu\n",
+    static_cast<unsigned long long>(stats.e4m3.inf_in_count),
+    static_cast<unsigned long long>(stats.e4m3.inf_out_count));
+  std::printf("first nonfinite block      : %s\n",
+    stats.e4m3.first_nonfinite_block.empty() ? "none" : stats.e4m3.first_nonfinite_block.c_str());
+  std::printf("first int16 overflow block : %s\n",
+    stats.int_linear.first_int16_overflow_block.empty()
+      ? "none" : stats.int_linear.first_int16_overflow_block.c_str());
 }
 
 struct StageCompareEvalSnapshot {
@@ -1490,7 +1607,7 @@ int main(int argc, char** argv) {
   std::printf("Run config:\n");
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
   std::printf("  precision(base): %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::BASELINE_FP32));
-  std::printf("  precision(exp) : %s\n", aecct_ref::to_string(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD));
+  std::printf("  precision(exp) : %s\n", aecct_ref::to_string(opts.experiment_precision_mode));
   std::printf("  finalhead_stage: %s\n", aecct_ref::to_string(opts.finalhead_stage));
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
   std::printf("  pattern_range  : begin=%d count=%d\n", range.begin, range.count);
@@ -1503,7 +1620,7 @@ int main(int argc, char** argv) {
     return run_single_mode(aecct_ref::RefPrecisionMode::BASELINE_FP32, "baseline", range, N, opts);
   }
   if (opts.run_mode == CliRunMode::EXPERIMENT_ONLY) {
-    return run_single_mode(aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD, "experiment", range, N, opts);
+    return run_single_mode(opts.experiment_precision_mode, "experiment", range, N, opts);
   }
 
   if (opts.run_mode == CliRunMode::EXPLORE) {
@@ -1705,10 +1822,14 @@ int main(int argc, char** argv) {
     std::vector<double> baseline_finalhead_s_t;
     std::vector<double> experiment_logits_batch;
     std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
+    aecct_ref::RefFullQuantStats experiment_full_stats{};
 
-    const bool need_experiment_path =
+    const bool need_experiment_outputs =
       (opts.run_mode == CliRunMode::EVAL_EXPERIMENT || opts.run_mode == CliRunMode::EVAL_COMPARE);
-    if (need_experiment_path) {
+    const bool experiment_use_reconstruct =
+      need_experiment_outputs &&
+      (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD);
+    if (experiment_use_reconstruct) {
       baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
     }
 
@@ -1719,20 +1840,39 @@ int main(int argc, char** argv) {
       N,
       baseline_logits_batch,
       baseline_x_pred_batch,
-      need_experiment_path ? baseline_finalhead_s_t.data() : nullptr
+      experiment_use_reconstruct ? baseline_finalhead_s_t.data() : nullptr
     );
     perf.baseline_model_s = elapsed_sec(t_baseline_start, now_tp());
 
-    if (need_experiment_path) {
+    if (need_experiment_outputs) {
       const auto t_experiment_start = now_tp();
-      run_experiment_from_baseline_finalhead(
-        range,
-        N,
-        opts.finalhead_stage,
-        baseline_finalhead_s_t,
-        experiment_logits_batch,
-        experiment_x_pred_batch
-      );
+      aecct_ref::reset_ref_full_quant_stats();
+      if (experiment_use_reconstruct) {
+        run_experiment_from_baseline_finalhead(
+          range,
+          N,
+          opts.finalhead_stage,
+          baseline_finalhead_s_t,
+          experiment_logits_batch,
+          experiment_x_pred_batch
+        );
+      } else {
+        aecct_ref::RefModel experiment_model_eval;
+        aecct_ref::RefRunConfig experiment_cfg_eval{};
+        experiment_cfg_eval.precision_mode = opts.experiment_precision_mode;
+        experiment_cfg_eval.algo_variant = opts.algo_variant;
+        experiment_cfg_eval.finalhead_stage = opts.finalhead_stage;
+        experiment_model_eval.set_run_config(experiment_cfg_eval);
+        run_ref_batch(
+          experiment_model_eval,
+          range,
+          N,
+          experiment_logits_batch,
+          experiment_x_pred_batch,
+          nullptr
+        );
+      }
+      experiment_full_stats = aecct_ref::get_ref_full_quant_stats();
       perf.experiment_path_s = elapsed_sec(t_experiment_start, now_tp());
     } else {
       perf.experiment_path_s = 0.0;
@@ -1791,11 +1931,14 @@ int main(int argc, char** argv) {
         std::printf("[warn] Failed to write per-pattern eval csv: %s\n", csv_path.c_str());
       }
       const std::string txt_path = derive_summary_txt_path(csv_path);
+      const aecct_ref::RefFullQuantStats* single_eval_full_stats =
+        (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) ? &experiment_full_stats : nullptr;
       if (write_eval_single_summary_txt(
             txt_path,
             (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
             stats,
-            rows)) {
+            rows,
+            single_eval_full_stats)) {
         std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
       } else {
         std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
@@ -1813,6 +1956,9 @@ int main(int argc, char** argv) {
         (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
         stats
       );
+      if (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
+        print_full_stress_console_summary(experiment_full_stats);
+      }
       std::printf("=== Timing Breakdown (sec) ===\n");
       std::printf("startup/init             : %.6f\n", perf.startup_init_s);
       std::printf("baseline model run       : %.6f\n", perf.baseline_model_s);
@@ -1883,7 +2029,7 @@ int main(int argc, char** argv) {
       std::printf("[warn] Failed to write per-pattern eval csv: %s\n", csv_path.c_str());
     }
     const std::string txt_path = derive_summary_txt_path(csv_path);
-    if (write_eval_compare_summary_txt(txt_path, baseline_stats, experiment_stats, rows)) {
+    if (write_eval_compare_summary_txt(txt_path, baseline_stats, experiment_stats, rows, &experiment_full_stats)) {
       std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
     } else {
       std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
@@ -1898,6 +2044,7 @@ int main(int argc, char** argv) {
     }
 
     print_eval_compare_console_summary(baseline_stats, experiment_stats);
+    print_full_stress_console_summary(experiment_full_stats);
     std::printf("=== Timing Breakdown (sec) ===\n");
     std::printf("startup/init             : %.6f\n", perf.startup_init_s);
     std::printf("baseline model run       : %.6f\n", perf.baseline_model_s);
@@ -1922,9 +2069,15 @@ int main(int argc, char** argv) {
   std::vector<double> baseline_logits_batch;
   std::vector<aecct_ref::bit1_t> baseline_x_pred_batch;
   std::vector<double> baseline_finalhead_s_t;
-  baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
   std::vector<double> experiment_logits_batch;
   std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
+  aecct_ref::RefFullQuantStats experiment_full_stats{};
+
+  const bool experiment_use_reconstruct =
+    (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD);
+  if (experiment_use_reconstruct) {
+    baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
+  }
 
   const auto t_baseline_start = now_tp();
   run_ref_batch(
@@ -1933,19 +2086,38 @@ int main(int argc, char** argv) {
     N,
     baseline_logits_batch,
     baseline_x_pred_batch,
-    baseline_finalhead_s_t.data()
+    experiment_use_reconstruct ? baseline_finalhead_s_t.data() : nullptr
   );
   perf.baseline_model_s = elapsed_sec(t_baseline_start, now_tp());
 
   const auto t_experiment_start = now_tp();
-  run_experiment_from_baseline_finalhead(
-    range,
-    N,
-    opts.finalhead_stage,
-    baseline_finalhead_s_t,
-    experiment_logits_batch,
-    experiment_x_pred_batch
-  );
+  aecct_ref::reset_ref_full_quant_stats();
+  if (experiment_use_reconstruct) {
+    run_experiment_from_baseline_finalhead(
+      range,
+      N,
+      opts.finalhead_stage,
+      baseline_finalhead_s_t,
+      experiment_logits_batch,
+      experiment_x_pred_batch
+    );
+  } else {
+    aecct_ref::RefModel experiment_model;
+    aecct_ref::RefRunConfig experiment_cfg{};
+    experiment_cfg.precision_mode = opts.experiment_precision_mode;
+    experiment_cfg.algo_variant = opts.algo_variant;
+    experiment_cfg.finalhead_stage = opts.finalhead_stage;
+    experiment_model.set_run_config(experiment_cfg);
+    run_ref_batch(
+      experiment_model,
+      range,
+      N,
+      experiment_logits_batch,
+      experiment_x_pred_batch,
+      nullptr
+    );
+  }
+  experiment_full_stats = aecct_ref::get_ref_full_quant_stats();
   perf.experiment_path_s = elapsed_sec(t_experiment_start, now_tp());
 
   const auto t_compare_start = now_tp();
@@ -2007,7 +2179,7 @@ int main(int argc, char** argv) {
     std::printf("[warn] Failed to write csv summary: %s\n", csv_path.c_str());
   }
   const std::string txt_path = derive_summary_txt_path(csv_path);
-  if (write_batch_summary_txt(txt_path, batch, margin_dist, rows, vulnerable_idx)) {
+  if (write_batch_summary_txt(txt_path, batch, margin_dist, rows, vulnerable_idx, &experiment_full_stats)) {
     std::printf("Reviewer summary txt    : %s\n", txt_path.c_str());
   } else {
     std::printf("[warn] Failed to write reviewer summary txt: %s\n", txt_path.c_str());
@@ -2039,6 +2211,7 @@ int main(int argc, char** argv) {
     batch.baseline_nonfinite_total.nan_count, batch.baseline_nonfinite_total.inf_count);
   std::printf("total experiment NaN / Inf    : %zu / %zu\n",
     batch.experiment_nonfinite_total.nan_count, batch.experiment_nonfinite_total.inf_count);
+  print_full_stress_console_summary(experiment_full_stats);
   std::printf("margin dist (risk=min(b/e))   : min=%.9e max=%.9e mean=%.9e median=%.9e\n",
     margin_dist.min_v, margin_dist.max_v, margin_dist.mean_v, margin_dist.median_v);
   std::printf("top vulnerable patterns (by min margin):\n");

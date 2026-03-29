@@ -1,0 +1,58 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+namespace aecct_ref {
+
+struct RefIntLinearStats {
+  std::uint64_t int8_clamp_count = 0;
+  std::uint64_t int16_overflow_count = 0;
+  std::uint64_t dequant_restore_count = 0;
+  std::string first_int16_overflow_block;
+};
+
+struct RefE4M3PathStats {
+  std::uint64_t roundtrip_count = 0;
+  std::uint64_t nan_in_count = 0;
+  std::uint64_t nan_out_count = 0;
+  std::uint64_t inf_in_count = 0;
+  std::uint64_t inf_out_count = 0;
+  std::string first_nonfinite_block;
+};
+
+struct RefFullQuantStats {
+  RefIntLinearStats int_linear;
+  RefE4M3PathStats e4m3;
+};
+
+inline RefFullQuantStats g_ref_full_quant_stats{};
+
+static inline void reset_ref_full_quant_stats() {
+  g_ref_full_quant_stats = RefFullQuantStats{};
+}
+
+static inline RefFullQuantStats get_ref_full_quant_stats() {
+  return g_ref_full_quant_stats;
+}
+
+static inline void add_ref_full_quant_stats(const RefFullQuantStats& delta) {
+  RefFullQuantStats& s = g_ref_full_quant_stats;
+  s.int_linear.int8_clamp_count += delta.int_linear.int8_clamp_count;
+  s.int_linear.int16_overflow_count += delta.int_linear.int16_overflow_count;
+  s.int_linear.dequant_restore_count += delta.int_linear.dequant_restore_count;
+  if (s.int_linear.first_int16_overflow_block.empty()) {
+    s.int_linear.first_int16_overflow_block = delta.int_linear.first_int16_overflow_block;
+  }
+
+  s.e4m3.roundtrip_count += delta.e4m3.roundtrip_count;
+  s.e4m3.nan_in_count += delta.e4m3.nan_in_count;
+  s.e4m3.nan_out_count += delta.e4m3.nan_out_count;
+  s.e4m3.inf_in_count += delta.e4m3.inf_in_count;
+  s.e4m3.inf_out_count += delta.e4m3.inf_out_count;
+  if (s.e4m3.first_nonfinite_block.empty()) {
+    s.e4m3.first_nonfinite_block = delta.e4m3.first_nonfinite_block;
+  }
+}
+
+} // namespace aecct_ref

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "../include/RefE4M3Helpers.h"
+#include "../include/RefFullQuantStats.h"
 #include "../include/InvSqrtApprox.h"
 #include "../include/SoftmaxApprox.h"
 #include "weights.h"
@@ -55,16 +57,65 @@ static inline bool use_generic_e4m3_finalhead(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
 }
 
+static inline bool use_full_e4m3_nonlinear_stress(const RefRunConfig& cfg) {
+  return cfg.precision_mode == RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS;
+}
+
 static inline bool use_island_s0(const RefRunConfig& cfg) {
-  return use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage);
+  return use_full_e4m3_nonlinear_stress(cfg) ||
+         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage));
 }
 
 static inline bool use_island_s1(const RefRunConfig& cfg) {
-  return use_generic_e4m3_finalhead(cfg) && stage_uses_island_s1(cfg.finalhead_stage);
+  return use_full_e4m3_nonlinear_stress(cfg) ||
+         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s1(cfg.finalhead_stage));
 }
 
 static inline bool use_island_s3(const RefRunConfig& cfg) {
-  return use_generic_e4m3_finalhead(cfg) && stage_uses_island_s3(cfg.finalhead_stage);
+  return use_full_e4m3_nonlinear_stress(cfg) ||
+         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s3(cfg.finalhead_stage));
+}
+
+static inline void bump_first_nonfinite_block(RefFullQuantStats* stats, const char* block_name) {
+  if (stats != nullptr && stats->e4m3.first_nonfinite_block.empty()) {
+    stats->e4m3.first_nonfinite_block = block_name;
+  }
+}
+
+static inline fp32_ref_t stress_roundtrip_e4m3(
+  fp32_ref_t x,
+  const RefRunConfig& cfg,
+  RefFullQuantStats* stats,
+  const char* block_name
+) {
+  if (!use_full_e4m3_nonlinear_stress(cfg)) {
+    return x;
+  }
+
+  if (stats != nullptr) {
+    stats->e4m3.roundtrip_count++;
+    const float xin = x.to_float();
+    if (std::isnan(xin)) {
+      stats->e4m3.nan_in_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    } else if (std::isinf(xin)) {
+      stats->e4m3.inf_in_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    }
+  }
+
+  const fp32_ref_t y = roundtrip_through_generic_e4m3(x);
+  if (stats != nullptr) {
+    const float yout = y.to_float();
+    if (std::isnan(yout)) {
+      stats->e4m3.nan_out_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    } else if (std::isinf(yout)) {
+      stats->e4m3.inf_out_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    }
+  }
+  return y;
 }
 
 static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
@@ -72,6 +123,33 @@ static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
   if (q > kActQMax) q = kActQMax;
   if (q < kActQMin) q = kActQMin;
   return q;
+}
+
+static inline int32_t clamp_int32(int32_t x, int32_t lo, int32_t hi) {
+  return (x < lo) ? lo : ((x > hi) ? hi : x);
+}
+
+static inline int16_t quantize_int8_to_i16(
+  fp32_ref_t x,
+  float s_x,
+  RefFullQuantStats* stats
+) {
+  const float scaled = x.to_float() * s_x;
+  int32_t q = static_cast<int32_t>(std::lround(scaled));
+  if (q > 127) {
+    q = 127;
+    if (stats != nullptr) stats->int_linear.int8_clamp_count++;
+  } else if (q < -127) {
+    q = -127;
+    if (stats != nullptr) stats->int_linear.int8_clamp_count++;
+  }
+  return static_cast<int16_t>(q);
+}
+
+static inline int16_t quantize_weight_to_i16(double w, float s_w) {
+  int32_t q = static_cast<int32_t>(std::lround(static_cast<float>(w) * s_w));
+  q = clamp_int32(q, -127, 127);
+  return static_cast<int16_t>(q);
 }
 
 static bool write_npy_f32(const std::string& path,
@@ -222,21 +300,64 @@ static void quant_linear_75x32_to32(const fp32_ref_t x[TOKENS_T][D_MODEL],
                                     const double b[D_MODEL],
                                     float s_x,
                                     float s_w,
-                                    fp32_ref_t y[TOKENS_T][D_MODEL]) {
+                                    fp32_ref_t y[TOKENS_T][D_MODEL],
+                                    bool strict_int16_acc,
+                                    RefFullQuantStats* stats,
+                                    const char* block_name) {
   fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   for (int t = 0; t < TOKENS_T; ++t) {
-    fp32_ref_t qx[D_MODEL];
-    for (int i = 0; i < D_MODEL; ++i) {
-      qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
-    }
-
-    for (int o = 0; o < D_MODEL; ++o) {
-      fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
-      const int base = o * D_MODEL;
+    if (strict_int16_acc) {
+      int16_t qx_i16[D_MODEL];
       for (int i = 0; i < D_MODEL; ++i) {
-        acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
+        qx_i16[i] = quantize_int8_to_i16(x[t][i], s_x, stats);
       }
-      y[t][o] = acc;
+      for (int o = 0; o < D_MODEL; ++o) {
+        int32_t acc_i32 = 0;
+        const int base = o * D_MODEL;
+        for (int i = 0; i < D_MODEL; ++i) {
+          const int16_t qw_i16 = quantize_weight_to_i16(w[base + i], s_w);
+          const int32_t prod = static_cast<int32_t>(qx_i16[i]) * static_cast<int32_t>(qw_i16);
+          int32_t sum = acc_i32 + prod;
+          if (sum > 32767) {
+            sum = 32767;
+            if (stats != nullptr) {
+              stats->int_linear.int16_overflow_count++;
+              if (stats->int_linear.first_int16_overflow_block.empty()) {
+                stats->int_linear.first_int16_overflow_block = block_name;
+              }
+            }
+          } else if (sum < -32768) {
+            sum = -32768;
+            if (stats != nullptr) {
+              stats->int_linear.int16_overflow_count++;
+              if (stats->int_linear.first_int16_overflow_block.empty()) {
+                stats->int_linear.first_int16_overflow_block = block_name;
+              }
+            }
+          }
+          acc_i32 = sum;
+        }
+        const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
+        const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
+        y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
+        if (stats != nullptr) {
+          stats->int_linear.dequant_restore_count++;
+        }
+      }
+    } else {
+      fp32_ref_t qx[D_MODEL];
+      for (int i = 0; i < D_MODEL; ++i) {
+        qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
+      }
+
+      for (int o = 0; o < D_MODEL; ++o) {
+        fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
+        const int base = o * D_MODEL;
+        for (int i = 0; i < D_MODEL; ++i) {
+          acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
+        }
+        y[t][o] = acc;
+      }
     }
   }
 }
@@ -246,21 +367,64 @@ static void quant_linear_75x32_to128(const fp32_ref_t x[TOKENS_T][D_MODEL],
                                      const double b[FF_DIM],
                                      float s_x,
                                      float s_w,
-                                     fp32_ref_t y[TOKENS_T][FF_DIM]) {
+                                     fp32_ref_t y[TOKENS_T][FF_DIM],
+                                     bool strict_int16_acc,
+                                     RefFullQuantStats* stats,
+                                     const char* block_name) {
   fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   for (int t = 0; t < TOKENS_T; ++t) {
-    fp32_ref_t qx[D_MODEL];
-    for (int i = 0; i < D_MODEL; ++i) {
-      qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
-    }
-
-    for (int o = 0; o < FF_DIM; ++o) {
-      fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
-      const int base = o * D_MODEL;
+    if (strict_int16_acc) {
+      int16_t qx_i16[D_MODEL];
       for (int i = 0; i < D_MODEL; ++i) {
-        acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
+        qx_i16[i] = quantize_int8_to_i16(x[t][i], s_x, stats);
       }
-      y[t][o] = acc;
+      for (int o = 0; o < FF_DIM; ++o) {
+        int32_t acc_i32 = 0;
+        const int base = o * D_MODEL;
+        for (int i = 0; i < D_MODEL; ++i) {
+          const int16_t qw_i16 = quantize_weight_to_i16(w[base + i], s_w);
+          const int32_t prod = static_cast<int32_t>(qx_i16[i]) * static_cast<int32_t>(qw_i16);
+          int32_t sum = acc_i32 + prod;
+          if (sum > 32767) {
+            sum = 32767;
+            if (stats != nullptr) {
+              stats->int_linear.int16_overflow_count++;
+              if (stats->int_linear.first_int16_overflow_block.empty()) {
+                stats->int_linear.first_int16_overflow_block = block_name;
+              }
+            }
+          } else if (sum < -32768) {
+            sum = -32768;
+            if (stats != nullptr) {
+              stats->int_linear.int16_overflow_count++;
+              if (stats->int_linear.first_int16_overflow_block.empty()) {
+                stats->int_linear.first_int16_overflow_block = block_name;
+              }
+            }
+          }
+          acc_i32 = sum;
+        }
+        const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
+        const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
+        y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
+        if (stats != nullptr) {
+          stats->int_linear.dequant_restore_count++;
+        }
+      }
+    } else {
+      fp32_ref_t qx[D_MODEL];
+      for (int i = 0; i < D_MODEL; ++i) {
+        qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
+      }
+
+      for (int o = 0; o < FF_DIM; ++o) {
+        fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
+        const int base = o * D_MODEL;
+        for (int i = 0; i < D_MODEL; ++i) {
+          acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
+        }
+        y[t][o] = acc;
+      }
     }
   }
 }
@@ -270,21 +434,64 @@ static void quant_linear_75x128_to32(const fp32_ref_t x[TOKENS_T][FF_DIM],
                                      const double b[D_MODEL],
                                      float s_x,
                                      float s_w,
-                                     fp32_ref_t y[TOKENS_T][D_MODEL]) {
+                                     fp32_ref_t y[TOKENS_T][D_MODEL],
+                                     bool strict_int16_acc,
+                                     RefFullQuantStats* stats,
+                                     const char* block_name) {
   fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   for (int t = 0; t < TOKENS_T; ++t) {
-    fp32_ref_t qx[FF_DIM];
-    for (int i = 0; i < FF_DIM; ++i) {
-      qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
-    }
-
-    for (int o = 0; o < D_MODEL; ++o) {
-      fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
-      const int base = o * FF_DIM;
+    if (strict_int16_acc) {
+      int16_t qx_i16[FF_DIM];
       for (int i = 0; i < FF_DIM; ++i) {
-        acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
+        qx_i16[i] = quantize_int8_to_i16(x[t][i], s_x, stats);
       }
-      y[t][o] = acc;
+      for (int o = 0; o < D_MODEL; ++o) {
+        int32_t acc_i32 = 0;
+        const int base = o * FF_DIM;
+        for (int i = 0; i < FF_DIM; ++i) {
+          const int16_t qw_i16 = quantize_weight_to_i16(w[base + i], s_w);
+          const int32_t prod = static_cast<int32_t>(qx_i16[i]) * static_cast<int32_t>(qw_i16);
+          int32_t sum = acc_i32 + prod;
+          if (sum > 32767) {
+            sum = 32767;
+            if (stats != nullptr) {
+              stats->int_linear.int16_overflow_count++;
+              if (stats->int_linear.first_int16_overflow_block.empty()) {
+                stats->int_linear.first_int16_overflow_block = block_name;
+              }
+            }
+          } else if (sum < -32768) {
+            sum = -32768;
+            if (stats != nullptr) {
+              stats->int_linear.int16_overflow_count++;
+              if (stats->int_linear.first_int16_overflow_block.empty()) {
+                stats->int_linear.first_int16_overflow_block = block_name;
+              }
+            }
+          }
+          acc_i32 = sum;
+        }
+        const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
+        const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
+        y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
+        if (stats != nullptr) {
+          stats->int_linear.dequant_restore_count++;
+        }
+      }
+    } else {
+      fp32_ref_t qx[FF_DIM];
+      for (int i = 0; i < FF_DIM; ++i) {
+        qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
+      }
+
+      for (int o = 0; o < D_MODEL; ++o) {
+        fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
+        const int base = o * FF_DIM;
+        for (int i = 0; i < FF_DIM; ++i) {
+          acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
+        }
+        y[t][o] = acc;
+      }
     }
   }
 }
@@ -361,6 +568,8 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
                             const fp32_ref_t v[TOKENS_T][D_MODEL],
                             const bool one_ring[TOKENS_T][TOKENS_T],
                             const bool second_ring[TOKENS_T][TOKENS_T],
+                            const RefRunConfig& run_cfg,
+                            RefFullQuantStats* stats,
                             fp32_ref_t scores[HEADS][TOKENS_T][TOKENS_T],
                             fp32_ref_t probs[HEADS][TOKENS_T][TOKENS_T],
                             fp32_ref_t ctx[HEADS][TOKENS_T][D_HEAD],
@@ -393,7 +602,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
         for (int dh = 0; dh < D_HEAD; ++dh) {
           dot += q[i][base + dh] * k[j][base + dh];
         }
-        const fp32_ref_t score = dot * inv_sqrt_dh;
+        const fp32_ref_t score = stress_roundtrip_e4m3(dot * inv_sqrt_dh, run_cfg, stats, "attention_score");
         scores[h][i][j] = score;
         online_softmax_update(
           online_init,
@@ -420,12 +629,17 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
           probs[h][i][j] = fp32_ref_t(0.0f);
           continue;
         }
-        const fp32_ref_t w = ref_softmax_exp_lut(scores[h][i][j] - online_max);
-        probs[h][i][j] = w * inv_sumexp;
+        const fp32_ref_t w = stress_roundtrip_e4m3(
+          ref_softmax_exp_lut(scores[h][i][j] - online_max),
+          run_cfg,
+          stats,
+          "softmax_weight"
+        );
+        probs[h][i][j] = stress_roundtrip_e4m3(w * inv_sumexp, run_cfg, stats, "softmax_prob");
       }
 
       for (int dh = 0; dh < D_HEAD; ++dh) {
-        ctx[h][i][dh] = acc_vec[dh] * inv_sumexp;
+        ctx[h][i][dh] = stress_roundtrip_e4m3(acc_vec[dh] * inv_sumexp, run_cfg, stats, "attention_ctx");
       }
     }
   }
@@ -434,7 +648,12 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
     for (int h = 0; h < HEADS; ++h) {
       const int base = h * D_HEAD;
       for (int dh = 0; dh < D_HEAD; ++dh) {
-        post_concat[t][base + dh] = ctx[h][t][dh];
+        post_concat[t][base + dh] = stress_roundtrip_e4m3(
+          ctx[h][t][dh],
+          run_cfg,
+          stats,
+          "attention_post_concat"
+        );
       }
     }
   }
@@ -442,6 +661,8 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
 // SOFTMAX_APPROX_END
 
 static void run_layer(const int layer_idx,
+                      const RefRunConfig& run_cfg,
+                      RefFullQuantStats* stats,
                       const fp32_ref_t x_in[TOKENS_T][D_MODEL],
                       const bool one_ring[TOKENS_T][TOKENS_T],
                       const bool second_ring[TOKENS_T][TOKENS_T],
@@ -458,6 +679,7 @@ static void run_layer(const int layer_idx,
                       fp32_ref_t act_out[TOKENS_T][FF_DIM],
                       fp32_ref_t ffn2_out[TOKENS_T][D_MODEL],
                       fp32_ref_t ffn_ln_out[TOKENS_T][D_MODEL]) {
+  const bool strict_int16 = use_full_e4m3_nonlinear_stress(run_cfg);
   const double* w_q = nullptr;
   const double* b_q = nullptr;
   const double* sw_q = nullptr;
@@ -544,9 +766,22 @@ static void run_layer(const int layer_idx,
     s_x_ff2 = static_cast<float>(l1_ff2_s_x);
   }
 
-  quant_linear_75x32_to32(x_in, w_q, b_q, s_x_in, static_cast<float>(sw_q[0]), q_out);
-  quant_linear_75x32_to32(x_in, w_k, b_k, s_x_in, static_cast<float>(sw_k[0]), k_out);
-  quant_linear_75x32_to32(x_in, w_v, b_v, s_x_in, static_cast<float>(sw_v[0]), v_out);
+  quant_linear_75x32_to32(
+    x_in, w_q, b_q, s_x_in, static_cast<float>(sw_q[0]), q_out, strict_int16, stats, "Wq");
+  quant_linear_75x32_to32(
+    x_in, w_k, b_k, s_x_in, static_cast<float>(sw_k[0]), k_out, strict_int16, stats, "Wk");
+  quant_linear_75x32_to32(
+    x_in, w_v, b_v, s_x_in, static_cast<float>(sw_v[0]), v_out, strict_int16, stats, "Wv");
+
+  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        q_out[t][d] = stress_roundtrip_e4m3(q_out[t][d], run_cfg, stats, "q_out");
+        k_out[t][d] = stress_roundtrip_e4m3(k_out[t][d], run_cfg, stats, "k_out");
+        v_out[t][d] = stress_roundtrip_e4m3(v_out[t][d], run_cfg, stats, "v_out");
+      }
+    }
+  }
 
   fp32_ref_t post_concat[TOKENS_T][D_MODEL];
   attention_block(q_out,
@@ -554,6 +789,8 @@ static void run_layer(const int layer_idx,
                   v_out,
                   one_ring,
                   second_ring,
+                  run_cfg,
+                  stats,
                   attn_scores,
                   attn_probs,
                   ctx,
@@ -564,26 +801,60 @@ static void run_layer(const int layer_idx,
                           b_o,
                           s_x_o,
                           static_cast<float>(sw_o[0]),
-                          attn_out);
+                          attn_out,
+                          strict_int16,
+                          stats,
+                          "Wo");
+
+  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        attn_out[t][d] = stress_roundtrip_e4m3(attn_out[t][d], run_cfg, stats, "attn_out");
+      }
+    }
+  }
 
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int d = 0; d < D_MODEL; ++d) {
-      ln_in[t][d] = attn_out[t][d] + x_in[t][d];
+      ln_in[t][d] = stress_roundtrip_e4m3(attn_out[t][d] + x_in[t][d], run_cfg, stats, "residual_attn");
     }
   }
   apply_layernorm_tokens(ln_in, ln0_w, ln0_b, ln_out);
+  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        ln_out[t][d] = stress_roundtrip_e4m3(ln_out[t][d], run_cfg, stats, "ln_out");
+      }
+    }
+  }
 
   quant_linear_75x32_to128(ln_out,
                            w_ff1,
                            b_ff1,
                            s_x_ff1,
                            static_cast<float>(sw_ff1[0]),
-                           ffn1_out);
+                           ffn1_out,
+                           strict_int16,
+                           stats,
+                           "Wff1");
+
+  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int i = 0; i < FF_DIM; ++i) {
+        ffn1_out[t][i] = stress_roundtrip_e4m3(ffn1_out[t][i], run_cfg, stats, "ffn1_out");
+      }
+    }
+  }
 
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int i = 0; i < FF_DIM; ++i) {
       fp32_ref_t vff = ffn1_out[t][i];
-      act_out[t][i] = (vff > fp32_ref_t(0.0f)) ? vff : fp32_ref_t(0.0f);
+      act_out[t][i] = stress_roundtrip_e4m3(
+        (vff > fp32_ref_t(0.0f)) ? vff : fp32_ref_t(0.0f),
+        run_cfg,
+        stats,
+        "ffn_relu_out"
+      );
     }
   }
 
@@ -592,15 +863,33 @@ static void run_layer(const int layer_idx,
                            b_ff2,
                            s_x_ff2,
                            static_cast<float>(sw_ff2[0]),
-                           ffn2_out);
+                           ffn2_out,
+                           strict_int16,
+                           stats,
+                           "Wff2");
+
+  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        ffn2_out[t][d] = stress_roundtrip_e4m3(ffn2_out[t][d], run_cfg, stats, "ffn2_out");
+      }
+    }
+  }
 
   fp32_ref_t ffn_ln_in[TOKENS_T][D_MODEL];
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int d = 0; d < D_MODEL; ++d) {
-      ffn_ln_in[t][d] = ffn2_out[t][d] + ln_out[t][d];
+      ffn_ln_in[t][d] = stress_roundtrip_e4m3(ffn2_out[t][d] + ln_out[t][d], run_cfg, stats, "residual_ffn");
     }
   }
   apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, ffn_ln_out);
+  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        ffn_ln_out[t][d] = stress_roundtrip_e4m3(ffn_ln_out[t][d], run_cfg, stats, "ffn_ln_out");
+      }
+    }
+  }
 }
 
 } // namespace
@@ -646,6 +935,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
   bool one_ring[TOKENS_T][TOKENS_T];
   bool second_ring[TOKENS_T][TOKENS_T];
   build_masks(one_ring, second_ring);
+  RefFullQuantStats local_stats{};
 
   for (int b = 0; b < B; ++b) {
     DumpContext dump;
@@ -681,10 +971,20 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t preproc_x[TOKENS_T][D_MODEL];
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int k = 0; k < 24; ++k) {
-        preproc_x[t][k] = node_feature[t] * fp32_ref_t(static_cast<float>(w_src_embed[t * 24 + k]));
+        preproc_x[t][k] = stress_roundtrip_e4m3(
+          node_feature[t] * fp32_ref_t(static_cast<float>(w_src_embed[t * 24 + k])),
+          run_cfg_,
+          &local_stats,
+          "preproc_src_embed"
+        );
       }
       for (int k = 0; k < 8; ++k) {
-        preproc_x[t][24 + k] = fp32_ref_t(static_cast<float>(w_lpe_token[t * 8 + k]));
+        preproc_x[t][24 + k] = stress_roundtrip_e4m3(
+          fp32_ref_t(static_cast<float>(w_lpe_token[t * 8 + k])),
+          run_cfg_,
+          &local_stats,
+          "preproc_lpe"
+        );
       }
     }
 
@@ -705,6 +1005,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
 
     run_layer(0,
+              run_cfg_,
+              &local_stats,
               preproc_x,
               one_ring,
               second_ring,
@@ -741,6 +1043,13 @@ void RefModel::infer_step0(const RefModelIO& io) const {
                            w_decoder_norm2_weight,
                            w_decoder_norm2_bias,
                            mid_norm);
+    if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          mid_norm[t][d] = stress_roundtrip_e4m3(mid_norm[t][d], run_cfg_, &local_stats, "mid_norm");
+        }
+      }
+    }
 
     static fp32_ref_t layer1_q[TOKENS_T][D_MODEL];
     static fp32_ref_t layer1_k[TOKENS_T][D_MODEL];
@@ -757,6 +1066,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer1_ffn_ln_out[TOKENS_T][D_MODEL];
 
     run_layer(1,
+              run_cfg_,
+              &local_stats,
               mid_norm,
               one_ring,
               second_ring,
@@ -794,6 +1105,13 @@ void RefModel::infer_step0(const RefModelIO& io) const {
                            w_decoder_norm_weight,
                            w_decoder_norm_bias,
                            end_norm);
+    if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          end_norm[t][d] = stress_roundtrip_e4m3(end_norm[t][d], run_cfg_, &local_stats, "end_norm");
+        }
+      }
+    }
 
     // Logical name: s_t (token-wise FinalEmbedding scalar), trace tensor name kept stable.
     static fp32_ref_t final_node_logits[TOKENS_T][1];
@@ -805,13 +1123,21 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
       fp32_ref_t s_t_embed_out = acc;
       if (use_island_s3(run_cfg_)) {
-        s_t_embed_out = roundtrip_through_generic_e4m3(s_t_embed_out);
+        if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+          s_t_embed_out = stress_roundtrip_e4m3(s_t_embed_out, run_cfg_, &local_stats, "final_embedding_s3");
+        } else {
+          s_t_embed_out = roundtrip_through_generic_e4m3(s_t_embed_out);
+        }
       }
       final_node_logits[t][0] = s_t_embed_out;
 
       fp32_ref_t s_t_out_fc = s_t_embed_out;
       if (use_island_s0(run_cfg_)) {
-        s_t_out_fc = roundtrip_through_generic_e4m3(s_t_out_fc);
+        if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+          s_t_out_fc = stress_roundtrip_e4m3(s_t_out_fc, run_cfg_, &local_stats, "final_readout_s0");
+        } else {
+          s_t_out_fc = roundtrip_through_generic_e4m3(s_t_out_fc);
+        }
       }
       out_fc_in[0][t] = s_t_out_fc;
       if (io.out_finalhead_s_t != nullptr) {
@@ -826,9 +1152,16 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       for (int t = 0; t < TOKENS_T; ++t) {
         fp32_ref_t mul_in = out_fc_in[0][t];
         if (use_island_s1(run_cfg_)) {
-          mul_in = roundtrip_through_generic_e4m3(mul_in);
+          if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+            mul_in = stress_roundtrip_e4m3(mul_in, run_cfg_, &local_stats, "out_fc_pre_mac_s1");
+          } else {
+            mul_in = roundtrip_through_generic_e4m3(mul_in);
+          }
         }
         acc += fp32_ref_t(static_cast<float>(w_out_fc_weight[n * TOKENS_T + t])) * mul_in;
+      }
+      if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+        acc = stress_roundtrip_e4m3(acc, run_cfg_, &local_stats, "final_logits");
       }
       final_logits[0][n] = acc;
 
@@ -859,6 +1192,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     xp_shape.push_back(VAR_N);
     dump_tensor(dump, "final_x_pred", xp_buf.data(), xp_buf.size(), xp_shape);
   }
+
+  add_ref_full_quant_stats(local_stats);
 }
 
 } // namespace aecct_ref
