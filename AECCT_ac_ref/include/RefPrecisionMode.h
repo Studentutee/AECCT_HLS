@@ -6,7 +6,8 @@ enum class RefPrecisionMode : unsigned char {
   BASELINE_FP32 = 0,
   GENERIC_E4M3_FINALHEAD = 1,
   FULL_E4M3_NONLINEAR_STRESS = 2,
-  GENERIC_E4M3_FRAG_BISECT = 3
+  GENERIC_E4M3_FRAG_BISECT = 3,
+  GENERIC_E4M3_EXCEPT_G5 = 4
 };
 
 static inline const char* to_string(RefPrecisionMode mode) {
@@ -19,6 +20,8 @@ static inline const char* to_string(RefPrecisionMode mode) {
       return "FULL_E4M3_NONLINEAR_STRESS";
     case RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT:
       return "GENERIC_E4M3_FRAG_BISECT";
+    case RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5:
+      return "GENERIC_E4M3_EXCEPT_G5";
     default:
       return "UNKNOWN_PRECISION_MODE";
   }

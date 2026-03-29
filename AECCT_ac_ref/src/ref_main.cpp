@@ -181,7 +181,7 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
-  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect\n");
+  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5\n");
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
@@ -277,6 +277,10 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
   }
   if (std::strcmp(text, "generic_e4m3_frag_bisect") == 0) {
     mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_except_g5") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5;
     return true;
   }
   return false;
@@ -504,6 +508,28 @@ static bool resolve_pattern_range(const CliOptions& opts, int total_patterns, Pa
   range.begin = 0;
   range.count = total_patterns;
   return true;
+}
+
+static inline bool precision_mode_anchors_to_finalhead_s0(aecct_ref::RefPrecisionMode mode) {
+  return mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5;
+}
+
+static inline bool precision_mode_requires_frag_group(aecct_ref::RefPrecisionMode mode) {
+  return mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT;
+}
+
+static std::string precision_mode_output_suffix(
+  aecct_ref::RefPrecisionMode mode,
+  aecct_ref::RefFragGroup group
+) {
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT) {
+    return "_frag_" + std::string(aecct_ref::to_string(group));
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5) {
+    return "_except_g5";
+  }
+  return std::string();
 }
 
 static std::size_t compute_x_pred_match_count(
@@ -1690,7 +1716,7 @@ int main(int argc, char** argv) {
   if (!resolve_pattern_range(opts, B, range)) {
     return 1;
   }
-  if (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT &&
+  if (precision_mode_requires_frag_group(opts.experiment_precision_mode) &&
       opts.frag_group == aecct_ref::RefFragGroup::NONE &&
       opts.run_mode != CliRunMode::BASELINE_ONLY) {
     std::printf("For generic_e4m3_frag_bisect, --frag-group must be one of G1..G5 or C1..C4\n");
@@ -1699,7 +1725,7 @@ int main(int argc, char** argv) {
 
   std::printf("Run config:\n");
   const aecct_ref::RefPrecisionMode effective_baseline_precision =
-    (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT)
+    precision_mode_anchors_to_finalhead_s0(opts.experiment_precision_mode)
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
@@ -1908,15 +1934,17 @@ int main(int argc, char** argv) {
   if (opts.run_mode == CliRunMode::EVAL_BASELINE ||
       opts.run_mode == CliRunMode::EVAL_EXPERIMENT ||
       opts.run_mode == CliRunMode::EVAL_COMPARE) {
-    const bool use_frag_bisect_precision =
-      (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT);
+    const bool anchor_finalhead_s0 =
+      precision_mode_anchors_to_finalhead_s0(opts.experiment_precision_mode);
+    const bool use_frag_group_for_experiment =
+      precision_mode_requires_frag_group(opts.experiment_precision_mode);
     aecct_ref::RefModel baseline_model_eval;
     aecct_ref::RefRunConfig baseline_cfg_eval{};
-    baseline_cfg_eval.precision_mode = use_frag_bisect_precision
+    baseline_cfg_eval.precision_mode = anchor_finalhead_s0
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
     baseline_cfg_eval.algo_variant = opts.algo_variant;
-    baseline_cfg_eval.finalhead_stage = use_frag_bisect_precision
+    baseline_cfg_eval.finalhead_stage = anchor_finalhead_s0
       ? aecct_ref::RefFinalHeadExploreStage::S0
       : opts.finalhead_stage;
     baseline_cfg_eval.frag_group = aecct_ref::RefFragGroup::NONE;
@@ -1966,10 +1994,10 @@ int main(int argc, char** argv) {
         aecct_ref::RefRunConfig experiment_cfg_eval{};
         experiment_cfg_eval.precision_mode = opts.experiment_precision_mode;
         experiment_cfg_eval.algo_variant = opts.algo_variant;
-        experiment_cfg_eval.finalhead_stage = use_frag_bisect_precision
+        experiment_cfg_eval.finalhead_stage = anchor_finalhead_s0
           ? aecct_ref::RefFinalHeadExploreStage::S0
           : opts.finalhead_stage;
-        experiment_cfg_eval.frag_group = use_frag_bisect_precision
+        experiment_cfg_eval.frag_group = use_frag_group_for_experiment
           ? opts.frag_group
           : aecct_ref::RefFragGroup::NONE;
         experiment_model_eval.set_run_config(experiment_cfg_eval);
@@ -1994,9 +2022,10 @@ int main(int argc, char** argv) {
     } else if (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
       default_eval_name = "eval_experiment";
     }
-    const std::string mode_suffix = use_frag_bisect_precision
-      ? ("_frag_" + std::string(aecct_ref::to_string(opts.frag_group)))
-      : std::string();
+    const std::string mode_suffix = precision_mode_output_suffix(
+      opts.experiment_precision_mode,
+      opts.frag_group
+    );
     const std::string csv_path = !opts.summary_csv_path.empty()
       ? opts.summary_csv_path
       : ("build/ref_eval/" + default_eval_name + "_begin" + std::to_string(range.begin) +
@@ -2168,15 +2197,17 @@ int main(int argc, char** argv) {
     return 0;
   }
 
-  const bool use_frag_bisect_precision =
-    (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT);
+  const bool anchor_finalhead_s0 =
+    precision_mode_anchors_to_finalhead_s0(opts.experiment_precision_mode);
+  const bool use_frag_group_for_experiment =
+    precision_mode_requires_frag_group(opts.experiment_precision_mode);
   aecct_ref::RefModel baseline_model;
   aecct_ref::RefRunConfig baseline_cfg{};
-  baseline_cfg.precision_mode = use_frag_bisect_precision
+  baseline_cfg.precision_mode = anchor_finalhead_s0
     ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
     : aecct_ref::RefPrecisionMode::BASELINE_FP32;
   baseline_cfg.algo_variant = opts.algo_variant;
-  baseline_cfg.finalhead_stage = use_frag_bisect_precision
+  baseline_cfg.finalhead_stage = anchor_finalhead_s0
     ? aecct_ref::RefFinalHeadExploreStage::S0
     : opts.finalhead_stage;
   baseline_cfg.frag_group = aecct_ref::RefFragGroup::NONE;
@@ -2226,10 +2257,10 @@ int main(int argc, char** argv) {
     aecct_ref::RefRunConfig experiment_cfg{};
     experiment_cfg.precision_mode = opts.experiment_precision_mode;
     experiment_cfg.algo_variant = opts.algo_variant;
-    experiment_cfg.finalhead_stage = use_frag_bisect_precision
+    experiment_cfg.finalhead_stage = anchor_finalhead_s0
       ? aecct_ref::RefFinalHeadExploreStage::S0
       : opts.finalhead_stage;
-    experiment_cfg.frag_group = use_frag_bisect_precision
+    experiment_cfg.frag_group = use_frag_group_for_experiment
       ? opts.frag_group
       : aecct_ref::RefFragGroup::NONE;
     experiment_model.set_run_config(experiment_cfg);
@@ -2293,9 +2324,10 @@ int main(int argc, char** argv) {
   const DistributionStats margin_dist = compute_distribution_stats(batch.per_pattern_min_margin);
   const std::vector<std::size_t> vulnerable_idx = collect_top_vulnerable_indices(rows, 5U);
 
-  const std::string mode_suffix = use_frag_bisect_precision
-    ? ("_frag_" + std::string(aecct_ref::to_string(opts.frag_group)))
-    : std::string();
+  const std::string mode_suffix = precision_mode_output_suffix(
+    opts.experiment_precision_mode,
+    opts.frag_group
+  );
   const std::string csv_path = !opts.summary_csv_path.empty()
     ? opts.summary_csv_path
     : ("build/ref_eval/compare_summary_begin" + std::to_string(range.begin) +
