@@ -648,32 +648,72 @@ namespace aecct {
         }
     }
 
-    static inline void run_preproc_block(u32_t* sram) {
+    static inline void run_preproc_block(TopRegs& regs, u32_t* sram) {
         PreprocCfg cfg;
         cfg.infer_in_words = (u32_t)INFER_IN_WORDS_EXPECTED;
         cfg.x_out_words = (u32_t)X_OUT_WORDS_EXPECTED;
-        PreprocEmbedSPE(
+
+        PreprocBlockContract& contract = regs.preproc_contract;
+        clear_preproc_contract(contract);
+        contract.start = true;
+        contract.phase_id = PHASE_PREPROC;
+        contract.x_work_base_word = (u32_t)X_OUT_BASE_WORD;
+
+        uint32_t x_out_words = (uint32_t)cfg.x_out_words.to_uint();
+        if (x_out_words == 0u) { x_out_words = (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED; }
+        const uint32_t token_stride = (uint32_t)PREPROC_X_TOKEN_STRIDE_WORDS;
+        const uint32_t token_count =
+            (token_stride == 0u) ? 0u : ((x_out_words + token_stride - 1u) / token_stride);
+        const uint32_t tile_count =
+            (token_stride == 0u) ? 0u :
+            attn_top_managed_tile_count(token_stride, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+        contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+
+        // Top-owned dispatch: Top builds the contract and block consumes this window.
+        PreprocEmbedSPECoreWindow<u32_t*>(
             sram,
             cfg,
             (u32_t)IN_BASE_WORD,
-            (u32_t)X_OUT_BASE_WORD
+            (u32_t)X_OUT_BASE_WORD,
+            contract
         );
+        contract.done = true;
     }
 
-    static inline void run_layernorm_block(u32_t* sram) {
+    static inline void run_layernorm_block(TopRegs& regs, u32_t* sram) {
         LayerNormCfg cfg;
         cfg.token_count = (u32_t)LN_TOKEN_COUNT;
         cfg.d_model = (u32_t)LN_D_MODEL;
         cfg.eps_bits = LN_EPS_BITS;
 
-        LayerNormBlock(
+        LayerNormBlockContract& contract = regs.layernorm_contract;
+        clear_layernorm_contract(contract);
+        contract.start = true;
+        // Compatibility note: this pre-layernorm path currently shares END_LN phase id.
+        contract.phase_id = PHASE_END_LN;
+        contract.x_work_base_word = (u32_t)LN_X_IN_BASE_WORD;
+        contract.gamma_base_word = (u32_t)LN_GAMMA_BASE_WORD;
+        contract.beta_base_word = (u32_t)LN_BETA_BASE_WORD;
+
+        uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (token_count == 0u) { token_count = (uint32_t)LN_TOKEN_COUNT; }
+        if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
+        const uint32_t tile_count =
+            attn_top_managed_tile_count(d_model, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+        contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+
+        // Top-owned dispatch: Top builds the contract and block consumes this window.
+        LayerNormBlockCoreWindow<u32_t*>(
             sram,
             cfg,
             (u32_t)LN_X_IN_BASE_WORD,
             (u32_t)LN_X_OUT_BASE_WORD,
-            (u32_t)LN_GAMMA_BASE_WORD,
-            (u32_t)LN_BETA_BASE_WORD
+            contract
         );
+        contract.done = true;
     }
 
     static inline CfgRegs build_layer_cfg(const TopRegs& regs) {
@@ -856,13 +896,33 @@ namespace aecct {
         }
     }
 
+    static inline void top_preload_layer_sublayer1_norm_params(
+        u32_t* sram,
+        const LayerParamBase& pb,
+        u32_t layer_id,
+        const LayerScratch& sc,
+        uint32_t d_model
+    ) {
+        const uint32_t gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
+        const uint32_t beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
+        load_layer_sublayer1_norm_params(
+            sram,
+            (uint32_t)pb.param_base_word.to_uint(),
+            (uint32_t)layer_id.to_uint(),
+            gamma_base,
+            beta_base,
+            d_model
+        );
+    }
+
     static inline void run_mid_or_end_layernorm(
         bool is_mid_norm,
         const CfgRegs& cfg_regs,
         u32_t* sram,
         u32_t param_base_word,
         u32_t x_in_base_word,
-        u32_t x_out_base_word
+        u32_t x_out_base_word,
+        LayerNormBlockContract* top_owned_contract = 0
     ) {
         uint32_t d_model = (uint32_t)cfg_regs.d_model.to_uint();
         if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
@@ -876,14 +936,28 @@ namespace aecct {
         ln_cfg.d_model = (u32_t)d_model;
         ln_cfg.eps_bits = LN_EPS_BITS;
 
-        LayerNormBlock(
+        LayerNormBlockContract local_contract;
+        LayerNormBlockContract& contract =
+            (top_owned_contract != 0) ? *top_owned_contract : local_contract;
+        clear_layernorm_contract(contract);
+        contract.start = true;
+        contract.phase_id = is_mid_norm ? PHASE_MID_LN : PHASE_END_LN;
+        contract.x_work_base_word = x_in_base_word;
+        contract.gamma_base_word = (u32_t)gamma_base;
+        contract.beta_base_word = (u32_t)beta_base;
+        contract.token_range = make_token_range((u32_t)0u, (u32_t)LN_TOKEN_COUNT);
+        const uint32_t tile_count =
+            attn_top_managed_tile_count(d_model, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+
+        LayerNormBlockCoreWindow<u32_t*>(
             sram,
             ln_cfg,
             x_in_base_word,
             x_out_base_word,
-            (u32_t)gamma_base,
-            (u32_t)beta_base
+            contract
         );
+        contract.done = true;
     }
 
     // Top-level layer orchestration boundary.
@@ -893,6 +967,8 @@ namespace aecct {
     static inline void run_transformer_layer_loop(TopRegs& regs, u32_t* sram) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
         int mid_index = (int)(n_layers / 2u) - 1;
 
         u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
@@ -991,6 +1067,14 @@ namespace aecct {
                 regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
             }
 
+            top_preload_layer_sublayer1_norm_params(
+                sram,
+                pb,
+                (u32_t)lid,
+                sc,
+                d_model
+            );
+
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
             TransformerLayer(
                 sram,
@@ -1003,7 +1087,8 @@ namespace aecct {
                 kv_prebuilt_from_top_managed,
                 q_prebuilt_from_top_managed,
                 score_prebuilt_from_top_managed,
-                out_prebuilt_from_top_managed
+                out_prebuilt_from_top_managed,
+                true
             );
 
             x_in_base = x_out_base;
@@ -1011,7 +1096,15 @@ namespace aecct {
 
             if ((int)lid == mid_index) {
                 // mid LN must be out-of-place: current_x -> other_x
-                run_mid_or_end_layernorm(true, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
+                run_mid_or_end_layernorm(
+                    true,
+                    cfg,
+                    sram,
+                    regs.w_base_word,
+                    x_in_base,
+                    x_out_base,
+                    &regs.layernorm_contract
+                );
                 x_in_base = x_out_base;
                 x_out_base = alternate_x_page(x_in_base);
 
@@ -1021,7 +1114,15 @@ namespace aecct {
         }
 
         // end LN must be out-of-place and always runs before FinalHead.
-        run_mid_or_end_layernorm(false, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
+        run_mid_or_end_layernorm(
+            false,
+            cfg,
+            sram,
+            regs.w_base_word,
+            x_in_base,
+            x_out_base,
+            &regs.layernorm_contract
+        );
         x_in_base = x_out_base;
         x_out_base = alternate_x_page(x_in_base);
 
@@ -1047,6 +1148,8 @@ namespace aecct {
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
         int mid_index = (int)(n_layers / 2u) - 1;
 
         u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
@@ -1141,6 +1244,14 @@ namespace aecct {
                 regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
             }
 
+            top_preload_layer_sublayer1_norm_params(
+                sram,
+                pb,
+                (u32_t)lid,
+                sc,
+                d_model
+            );
+
             TransformerLayerTopManagedAttnBridge(
                 sram,
                 cfg,
@@ -1152,14 +1263,23 @@ namespace aecct {
                 kv_prebuilt_from_top_managed,
                 q_prebuilt_from_top_managed,
                 score_prebuilt_from_top_managed,
-                out_prebuilt_from_top_managed
+                out_prebuilt_from_top_managed,
+                true
             );
 
             x_in_base = x_out_base;
             x_out_base = alternate_x_page(x_in_base);
 
             if ((int)lid == mid_index) {
-                run_mid_or_end_layernorm(true, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
+                run_mid_or_end_layernorm(
+                    true,
+                    cfg,
+                    sram,
+                    regs.w_base_word,
+                    x_in_base,
+                    x_out_base,
+                    &regs.layernorm_contract
+                );
                 x_in_base = x_out_base;
                 x_out_base = alternate_x_page(x_in_base);
 
@@ -1168,7 +1288,15 @@ namespace aecct {
             }
         }
 
-        run_mid_or_end_layernorm(false, cfg, sram, regs.w_base_word, x_in_base, x_out_base);
+        run_mid_or_end_layernorm(
+            false,
+            cfg,
+            sram,
+            regs.w_base_word,
+            x_in_base,
+            x_out_base,
+            &regs.layernorm_contract
+        );
         x_in_base = x_out_base;
         x_out_base = alternate_x_page(x_in_base);
 
@@ -1188,13 +1316,27 @@ namespace aecct {
         u32_t* sram,
         ac_channel<ac_int<32, false> >& data_out
     ) {
-        run_preproc_block(sram);
-        run_layernorm_block(sram);
+        run_preproc_block(regs, sram);
+        run_layernorm_block(regs, sram);
         run_transformer_layer_loop(regs, sram);
 
         HeadParamBase hp = make_head_param_base(regs.w_base_word);
         const u32_t outmode = regs.outmode;
-        FinalHead(
+        FinalHeadContract& contract = regs.final_head_contract;
+        clear_final_head_contract(contract);
+        contract.start = true;
+        contract.phase_id = PHASE_FINAL_HEAD;
+        contract.x_work_base_word = regs.infer_final_x_base_word;
+        contract.final_scalar_base_word = (u32_t)sram_map::SCR_FINAL_SCALAR_BASE_W;
+        contract.w_base_word = hp.param_base_word;
+        contract.token_range = make_token_range((u32_t)0u, (u32_t)N_NODES);
+        const uint32_t class_tile_count = attn_top_managed_tile_count(
+            (uint32_t)EXP_LEN_OUT_LOGITS_WORDS,
+            (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS
+        );
+        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)class_tile_count);
+
+        (void)FinalHeadCorePassABTopManaged<u32_t*>(
             sram,
             build_layer_cfg(regs),
             regs.infer_final_x_base_word,
@@ -1202,9 +1344,11 @@ namespace aecct {
             regs.infer_logits_base_word,
             regs.infer_xpred_base_word,
             hp,
+            contract,
             &data_out,
             outmode
         );
+        contract.done = true;
         const uint32_t mode = (uint32_t)outmode.to_uint();
         return (mode == (uint32_t)FINAL_HEAD_OUTMODE_XPRED) ||
             (mode == (uint32_t)FINAL_HEAD_OUTMODE_LOGITS);

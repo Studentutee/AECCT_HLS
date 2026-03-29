@@ -89,7 +89,8 @@ static inline void TransformerLayerTopManagedAttnBridge(
     bool kv_prebuilt_from_top_managed = false,
     bool q_prebuilt_from_top_managed = false,
     bool score_prebuilt_from_top_managed = false,
-    bool out_prebuilt_from_top_managed = false
+    bool out_prebuilt_from_top_managed = false,
+    bool sublayer1_norm_preloaded_by_top = false
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -143,14 +144,17 @@ static inline void TransformerLayerTopManagedAttnBridge(
 
     uint32_t gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
     uint32_t beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
-    load_layer_sublayer1_norm_params(
-        sram_window,
-        (uint32_t)pb.param_base_word.to_uint(),
-        (uint32_t)layer_id.to_uint(),
-        gamma_base,
-        beta_base,
-        d_model
-    );
+    if (!sublayer1_norm_preloaded_by_top) {
+        // Legacy fallback: keep in-block param fetch only when Top did not preload.
+        load_layer_sublayer1_norm_params(
+            sram_window,
+            (uint32_t)pb.param_base_word.to_uint(),
+            (uint32_t)layer_id.to_uint(),
+            gamma_base,
+            beta_base,
+            d_model
+        );
+    }
 
     LayerNormCfg ln_cfg;
     ln_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
@@ -183,7 +187,8 @@ static inline void TransformerLayer(
     bool kv_prebuilt_from_top_managed = false,
     bool q_prebuilt_from_top_managed = false,
     bool score_prebuilt_from_top_managed = false,
-    bool out_prebuilt_from_top_managed = false
+    bool out_prebuilt_from_top_managed = false,
+    bool sublayer1_norm_preloaded_by_top = false
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -238,7 +243,17 @@ static inline void TransformerLayer(
 
     uint32_t gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
     uint32_t beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
-    load_layer_sublayer1_norm_params(sram, (uint32_t)pb.param_base_word.to_uint(), (uint32_t)layer_id.to_uint(), gamma_base, beta_base, d_model);
+    if (!sublayer1_norm_preloaded_by_top) {
+        // Legacy fallback: keep in-block param fetch only when Top did not preload.
+        load_layer_sublayer1_norm_params(
+            sram,
+            (uint32_t)pb.param_base_word.to_uint(),
+            (uint32_t)layer_id.to_uint(),
+            gamma_base,
+            beta_base,
+            d_model
+        );
+    }
 
     LayerNormCfg ln_cfg;
     ln_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
