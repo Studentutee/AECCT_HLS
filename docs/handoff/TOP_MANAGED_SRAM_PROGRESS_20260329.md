@@ -120,3 +120,37 @@
 - not Catapult closure
 - not SCVerify closure
 - remote PLI / site-local simulator line not touched
+
+## Night-Batch Extension: G4-E Bounded Metadata Harmonization
+- Added a bounded Top-only cross-command metadata surface:
+  - `IngestMetadataSurface` in `src/Top.h`
+  - shared helper anchors:
+    - `ingest_meta_expected_words(...)`
+    - `ingest_meta_span_in_sram(...)`
+    - `ingest_meta_owner_matches_rx(...)`
+  - metadata surface builders:
+    - `cfg_metadata_surface(...)`
+    - `param_metadata_surface(...)`
+    - `infer_metadata_surface(...)`
+- Updated preflight callsites to consume harmonized metadata surface:
+  - OP_LOAD_W preflight now uses `param_ingest_span_legal(regs)`
+  - OP_INFER preflight now uses `infer_metadata_surface(regs)` + `ingest_meta_span_in_sram(...)`
+- Added G4-E targeted mismatch validation:
+  - `scripts/local/run_p11g4e_cross_command_metadata_negative.ps1`
+  - `tb/tb_g4e_cross_command_metadata_negative_p11g4e.cpp`
+
+### G4-E local evidence (this batch)
+- `build/p11g4e/cross_command_metadata_negative/run.log`: PASS
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G4-E cross-command ingest metadata surface helpers anchored`
+- `build/p11ah/g4e_metadata_mincut/run.log`: PASS
+- `build/p11aj/g4e_metadata_mincut/run.log`: PASS
+
+### G4-E artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G4E_METADATA_MINCUT_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4E_EVIDENCE_INDEX_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4E_COMPLETION_20260329.md`
+- `build/evidence/g4e_metadata_mincut_20260329/evidence_manifest.txt`
+
+### Deferred boundary after G4-E mincut
+- Full cross-command ingest metadata semantic unification (beyond helper/preflight surface) remains deferred.

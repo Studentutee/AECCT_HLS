@@ -147,6 +147,16 @@ namespace aecct {
         PhaseId phase_id;
     };
 
+    // Cross-command metadata surface for Top ingest lifecycle tracking.
+    // This is local-only Top bookkeeping and does not change external protocol.
+    struct IngestMetadataSurface {
+        u32_t owner_opcode;
+        u32_t base_word;
+        u32_t len_words_expected;
+        u32_t len_words_valid;
+        bool active;
+    };
+
     static inline void infer_refresh_preproc_ranges(
         InferIngestContract& c,
         uint32_t x_out_words
@@ -172,6 +182,56 @@ namespace aecct {
         c.len_words_expected = (u32_t)INFER_IN_WORDS_EXPECTED;
         c.len_words_valid = 0;
         infer_refresh_preproc_ranges(c, (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED);
+    }
+
+    static inline IngestMetadataSurface make_ingest_metadata_surface(
+        u32_t owner_opcode,
+        u32_t base_word,
+        u32_t len_words_expected,
+        u32_t len_words_valid,
+        bool active
+    ) {
+        IngestMetadataSurface m;
+        m.owner_opcode = owner_opcode;
+        m.base_word = base_word;
+        m.len_words_expected = len_words_expected;
+        m.len_words_valid = len_words_valid;
+        m.active = active;
+        return m;
+    }
+
+    static inline uint32_t ingest_meta_expected_words(
+        const IngestMetadataSurface& m,
+        uint32_t fallback_words
+    ) {
+        uint32_t expected = (uint32_t)m.len_words_expected.to_uint();
+        if (expected == 0u) {
+            expected = fallback_words;
+        }
+        return expected;
+    }
+
+    static inline bool ingest_meta_span_in_sram(
+        const IngestMetadataSurface& m,
+        uint32_t fallback_words
+    ) {
+        const unsigned long long base = (unsigned long long)(uint32_t)m.base_word.to_uint();
+        const unsigned long long len =
+            (unsigned long long)ingest_meta_expected_words(m, fallback_words);
+        const unsigned long long end_excl = base + len;
+        return (base < (unsigned long long)sram_map::SRAM_WORDS_TOTAL) &&
+            (end_excl <= (unsigned long long)sram_map::SRAM_WORDS_TOTAL);
+    }
+
+    static inline bool ingest_meta_owner_matches_rx(
+        const IngestMetadataSurface& m,
+        ReceiverState rx
+    ) {
+        const uint32_t owner = (uint32_t)m.owner_opcode.to_uint();
+        if (owner == (uint32_t)OP_CFG_BEGIN) { return rx == RX_CFG; }
+        if (owner == (uint32_t)OP_LOAD_W) { return rx == RX_PARAM; }
+        if (owner == (uint32_t)OP_INFER) { return rx == RX_INFER; }
+        return false;
     }
 
     // Persistent top-level internal registers.
@@ -339,6 +399,36 @@ namespace aecct {
     static inline unsigned top_peek_input_count() { return (unsigned)top_regs().input_count.to_uint(); }
     static inline u32_t top_peek_w_base_word() { return top_regs().w_base_word; }
     static inline bool top_peek_halt_active() { return top_regs().halt_active; }
+
+    static inline IngestMetadataSurface cfg_metadata_surface(const TopRegs& regs) {
+        return make_ingest_metadata_surface(
+            (u32_t)OP_CFG_BEGIN,
+            (u32_t)0u,
+            (u32_t)CFG_WORDS_EXPECTED,
+            regs.cfg_count,
+            !regs.cfg_ready
+        );
+    }
+
+    static inline IngestMetadataSurface param_metadata_surface(const TopRegs& regs) {
+        return make_ingest_metadata_surface(
+            (u32_t)OP_LOAD_W,
+            regs.w_base_word,
+            (u32_t)PARAM_WORDS_EXPECTED,
+            regs.param_count,
+            ((uint32_t)regs.param_count.to_uint() < (uint32_t)PARAM_WORDS_EXPECTED)
+        );
+    }
+
+    static inline IngestMetadataSurface infer_metadata_surface(const TopRegs& regs) {
+        return make_ingest_metadata_surface(
+            (u32_t)OP_INFER,
+            regs.infer_ingest_contract.in_base_word,
+            regs.infer_ingest_contract.len_words_expected,
+            regs.infer_ingest_contract.len_words_valid,
+            regs.infer_ingest_contract.start && !regs.infer_ingest_contract.done
+        );
+    }
     static inline u32_t top_peek_dbg_k_value() { return top_regs().dbg_k_value; }
     static inline u32_t top_peek_outmode() { return top_regs().outmode; }
     static inline u32_t top_peek_cfg_word(unsigned idx) {
@@ -458,9 +548,8 @@ namespace aecct {
     }
 
     static inline uint32_t infer_expected_words(const TopRegs& regs) {
-        uint32_t expected = (uint32_t)regs.infer_ingest_contract.len_words_expected.to_uint();
-        if (expected == 0u) { expected = (uint32_t)INFER_IN_WORDS_EXPECTED; }
-        return expected;
+        const IngestMetadataSurface meta = infer_metadata_surface(regs);
+        return ingest_meta_expected_words(meta, (uint32_t)INFER_IN_WORDS_EXPECTED);
     }
 
     static inline uint32_t infer_input_base_word(const TopRegs& regs) {
@@ -468,14 +557,14 @@ namespace aecct {
     }
 
     static inline bool infer_contract_span_in_sram(const InferIngestContract& c) {
-        const unsigned long long base = (unsigned long long)(uint32_t)c.in_base_word.to_uint();
-        unsigned long long len = (unsigned long long)(uint32_t)c.len_words_expected.to_uint();
-        if (len == 0ull) {
-            len = (unsigned long long)INFER_IN_WORDS_EXPECTED;
-        }
-        const unsigned long long end_excl = base + len;
-        return (base < (unsigned long long)sram_map::SRAM_WORDS_TOTAL) &&
-            (end_excl <= (unsigned long long)sram_map::SRAM_WORDS_TOTAL);
+        const IngestMetadataSurface meta = make_ingest_metadata_surface(
+            (u32_t)OP_INFER,
+            c.in_base_word,
+            c.len_words_expected,
+            c.len_words_valid,
+            c.start && !c.done
+        );
+        return ingest_meta_span_in_sram(meta, (uint32_t)INFER_IN_WORDS_EXPECTED);
     }
 
     static inline void infer_contract_arm_for_op_infer(TopRegs& regs) {
@@ -519,6 +608,13 @@ namespace aecct {
         unsigned long long region_begin = (unsigned long long)sram_map::W_REGION_BASE;
         unsigned long long region_end = region_begin + (unsigned long long)sram_map::W_REGION_WORDS;
         return (begin >= region_begin) && (end_excl <= region_end);
+    }
+
+    static inline bool param_ingest_span_legal(const TopRegs& regs) {
+        const IngestMetadataSurface meta = param_metadata_surface(regs);
+        const bool in_sram = ingest_meta_span_in_sram(meta, (uint32_t)PARAM_WORDS_EXPECTED);
+        const bool in_w_region = is_param_span_in_w_region((uint32_t)regs.w_base_word.to_uint());
+        return in_sram && in_w_region;
     }
 
     static inline bool is_valid_outmode(uint32_t outmode) {
@@ -686,14 +782,19 @@ namespace aecct {
 
     static inline void cfg_ingest_one_word(TopRegs& regs, ac_channel<ac_int<32, false> >& data_in) {
         if (regs.cfg_ready) { return; }
+        const IngestMetadataSurface meta = cfg_metadata_surface(regs);
+        const unsigned expected_words =
+            (unsigned)ingest_meta_expected_words(meta, (uint32_t)CFG_WORDS_EXPECTED);
+        if (!ingest_meta_owner_matches_rx(meta, RX_CFG)) { return; }
+
         u32_t w;
         if (!top_data_nb_read(data_in, w)) { return; }
 
         unsigned idx = (unsigned)regs.cfg_count.to_uint();
-        if (idx < CFG_WORDS_EXPECTED) {
+        if (idx < expected_words) {
             regs.cfg_words[idx] = w;
             regs.cfg_count = regs.cfg_count + 1;
-            if ((unsigned)regs.cfg_count.to_uint() == CFG_WORDS_EXPECTED) {
+            if ((unsigned)regs.cfg_count.to_uint() == expected_words) {
                 regs.cfg_ready = true;
             }
         }
@@ -706,8 +807,17 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_out,
         u32_t* sram
     ) {
+        const IngestMetadataSurface meta = param_metadata_surface(regs);
+        const unsigned expected_words =
+            (unsigned)ingest_meta_expected_words(meta, (uint32_t)PARAM_WORDS_EXPECTED);
+        if (!ingest_meta_owner_matches_rx(meta, RX_PARAM)) {
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+            return;
+        }
+
         unsigned idx = (unsigned)regs.param_count.to_uint();
-        if (idx >= PARAM_WORDS_EXPECTED) {
+        if (idx >= expected_words) {
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
             return;
@@ -730,7 +840,7 @@ namespace aecct {
             return;
         }
 
-        if ((unsigned)regs.param_count.to_uint() == PARAM_WORDS_EXPECTED) {
+        if ((unsigned)regs.param_count.to_uint() == expected_words) {
             // LOAD_W transaction complete.
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
@@ -1477,7 +1587,15 @@ namespace aecct {
         ac_channel<ac_int<32, false> >& data_out,
         u32_t* sram
     ) {
-        const uint32_t expected_words = infer_expected_words(regs);
+        const IngestMetadataSurface meta = infer_metadata_surface(regs);
+        const uint32_t expected_words =
+            ingest_meta_expected_words(meta, (uint32_t)INFER_IN_WORDS_EXPECTED);
+        if (!ingest_meta_owner_matches_rx(meta, RX_INFER)) {
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+            return;
+        }
+
         unsigned idx = (unsigned)regs.input_count.to_uint();
         if (idx >= expected_words) {
             regs.infer_ingest_contract.done = true;
@@ -1608,7 +1726,7 @@ namespace aecct {
                     if (!regs.w_base_set) {
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
                     }
-                    else if (!is_param_span_in_w_region((uint32_t)regs.w_base_word.to_uint())) {
+                    else if (!param_ingest_span_legal(regs)) {
                         ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
                     }
                     else {
@@ -1635,7 +1753,8 @@ namespace aecct {
                     else {
                         infer_session_clear(regs);
                         infer_contract_arm_for_op_infer(regs);
-                        if (!infer_contract_span_in_sram(regs.infer_ingest_contract)) {
+                        const IngestMetadataSurface infer_meta = infer_metadata_surface(regs);
+                        if (!ingest_meta_span_in_sram(infer_meta, (uint32_t)INFER_IN_WORDS_EXPECTED)) {
                             ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
                         } else {
                             regs.state = ST_INFER_RX;

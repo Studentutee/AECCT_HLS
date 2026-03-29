@@ -4,12 +4,13 @@
 - Verify the overnight architecture-forward cuts that move SRAM ownership semantics toward Top-managed dispatch.
 - Confirm no overclaim: local-only evidence; not Catapult closure; not SCVerify closure.
 - Include the latest G4 ingest/base-shadow mincut verification in this review pass.
+- Include the bounded G4-E cross-command metadata harmonization mincut verification.
 
 ## Suggested 10-Minute Review Order
 1. Open `src/Top.h` diff for G4 ingest patch (2 min)
    - Confirm `InferIngestContract` exists and is armed at `OP_INFER`.
    - Confirm infer contract now carries `phase_id/token_range/tile_range`.
-   - Confirm `OP_INFER` checks `infer_contract_span_in_sram` before entering `ST_INFER_RX`.
+   - Confirm `OP_INFER` checks metadata-surface span helper before entering `ST_INFER_RX`.
    - Confirm `run_preproc_block` uses ingest contract `in_base_word`/`len_words_valid`.
    - Confirm FinalHead label source comes from SRAM ingest view (`infer_label_words_view`), not shadow source.
 2. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
@@ -24,6 +25,10 @@
    - Confirm deferred boundary and no overclaim posture.
 7. Open `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_EVIDENCE_INDEX_20260329.md` (1 min)
    - Confirm targeted negative preflight validation evidence is present and mapped.
+8. Open `docs/handoff/TOP_MANAGED_SRAM_G4E_METADATA_MINCUT_20260329.md` (1 min)
+   - Confirm bounded harmonization scope and non-overclaim boundary.
+9. Open `build/p11g4e/cross_command_metadata_negative/run.log` (1 min)
+   - Confirm cross-command mismatch reject anchors PASS.
 
 ## Prior-Round Review Order (reference)
 1. Open `docs/handoff/TOP_MANAGED_SRAM_ARCH_GAP_INVENTORY_20260329.md` (2 min)
@@ -68,20 +73,27 @@
 - `src/Top.h`
 - `scripts/check_top_managed_sram_boundary_regression.ps1`
 - `scripts/local/run_p11g4_infer_ingest_preflight_negative.ps1`
+- `scripts/local/run_p11g4e_cross_command_metadata_negative.ps1`
 - `tb/tb_infer_ingest_preflight_negative_p11g4.cpp`
+- `tb/tb_g4e_cross_command_metadata_negative_p11g4e.cpp`
 - `docs/handoff/TOP_MANAGED_SRAM_ARCH_GAP_INVENTORY_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4E_METADATA_MINCUT_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4E_EVIDENCE_INDEX_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4E_COMPLETION_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_EVIDENCE_INDEX_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_COMPLETION_20260329.md`
 - `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
 - `build/p11ah/g4_night_batch/run.log`
 - `build/p11aj/g4_night_batch/run.log`
 - `build/p11g4/infer_ingest_preflight_negative/run.log`
+- `build/p11g4e/cross_command_metadata_negative/run.log`
 - `build/p11ah/top_managed_sram_push/run.log`
 - `build/p11aj/top_managed_sram_push/run.log`
 - `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`
 - `build/evidence/g4_hardening_20260329/evidence_manifest.txt`
+- `build/evidence/g4e_metadata_mincut_20260329/evidence_manifest.txt`
 
 ## Copy-Ready GPT Review Prompt
 - `Please review src/Top.h and src/blocks/TransformerLayer.h for Top-managed SRAM ownership convergence. Focus on: (1) whether Top now builds and owns preproc/layernorm/final-head contracts in active infer path, (2) whether Transformer sublayer1 norm params are preloaded by Top with safe fallback, and (3) whether local evidence (p11ah/p11aj + boundary guard) supports acceptance without overclaim. Keep posture local-only and do not claim Catapult/SCVerify closure.`
