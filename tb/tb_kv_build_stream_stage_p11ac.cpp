@@ -191,8 +191,11 @@ private:
     std::vector<aecct::u32_t> expected_k_[kTokenCount];
     std::vector<aecct::u32_t> expected_v_[kTokenCount];
 
-    aecct::attn_pkt_ch_t in_ch_;
-    aecct::attn_pkt_ch_t out_ch_;
+    aecct::attn_x_pkt_ch_t x_ch_;
+    aecct::attn_wk_pkt_ch_t wk_ch_;
+    aecct::attn_wv_pkt_ch_t wv_ch_;
+    aecct::attn_k_pkt_ch_t k_ch_;
+    aecct::attn_v_pkt_ch_t v_ch_;
 
     static uint32_t x_row_base(uint32_t token) {
         return (uint32_t)sram_map::BASE_X_WORK_W + token * kTileWords;
@@ -295,7 +298,9 @@ private:
                         (aecct::u32_t)x_row_base(t),
                         (aecct::u32_t)t,
                         (aecct::u32_t)dt,
-                        in_ch_)) {
+                        x_ch_,
+                        wk_ch_,
+                        wv_ch_)) {
                     return false;
                 }
                 mark_stream(t, dt, (uint32_t)aecct::ATTN_PKT_X);
@@ -309,8 +314,11 @@ private:
                 ++per_work_[t][dt].wv_reads;
 
                 if (!aecct::attn_block_phasea_kv_consume_emit(
-                        in_ch_,
-                        out_ch_,
+                        x_ch_,
+                        wk_ch_,
+                        wv_ch_,
+                        k_ch_,
+                        v_ch_,
                         wk_payload_.data(),
                         wk_inv_sw_bits_,
                         wv_payload_.data(),
@@ -326,7 +334,8 @@ private:
                         (aecct::u32_t)scr_v_row_base(t),
                         (aecct::u32_t)t,
                         (aecct::u32_t)dt,
-                        out_ch_)) {
+                        k_ch_,
+                        v_ch_)) {
                     return false;
                 }
                 mark_mem(t, dt, (uint32_t)aecct::ATTN_PKT_K);

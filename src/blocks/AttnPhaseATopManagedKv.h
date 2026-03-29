@@ -13,6 +13,11 @@
 namespace aecct {
 
 typedef ac_channel<AttnTopManagedPacket> attn_pkt_ch_t;
+typedef ac_channel<AttnTopManagedPacket> attn_x_pkt_ch_t;
+typedef ac_channel<AttnTopManagedPacket> attn_wk_pkt_ch_t;
+typedef ac_channel<AttnTopManagedPacket> attn_wv_pkt_ch_t;
+typedef ac_channel<AttnTopManagedPacket> attn_k_pkt_ch_t;
+typedef ac_channel<AttnTopManagedPacket> attn_v_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_x_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_wk_work_pkt_ch_t;
 typedef ac_channel<AttnTopManagedWorkPacket> attn_wv_work_pkt_ch_t;
@@ -37,7 +42,9 @@ static inline bool attn_top_emit_phasea_kv_work_unit(
     u32_t x_row_base_word,
     u32_t token_idx,
     u32_t d_tile_idx,
-    attn_pkt_ch_t& in_ch
+    attn_x_pkt_ch_t& x_ch,
+    attn_wk_pkt_ch_t& wk_ch,
+    attn_wv_pkt_ch_t& wv_ch
 ) {
     AttnTopManagedPacket x_pkt;
     attn_packet_clear(x_pkt);
@@ -47,28 +54,31 @@ static inline bool attn_top_emit_phasea_kv_work_unit(
     for (unsigned i = 0; i < ATTN_TOP_MANAGED_TILE_WORDS; ++i) {
         x_pkt.data[i] = sram[(uint32_t)x_row_base_word.to_uint() + i];
     }
-    in_ch.write(x_pkt);
+    x_ch.write(x_pkt);
 
     AttnTopManagedPacket wk_pkt;
     attn_packet_clear(wk_pkt);
     wk_pkt.kind = (u16_t)ATTN_PKT_WK;
     wk_pkt.token_idx = (u16_t)token_idx;
     wk_pkt.d_tile_idx = (u16_t)d_tile_idx;
-    in_ch.write(wk_pkt);
+    wk_ch.write(wk_pkt);
 
     AttnTopManagedPacket wv_pkt;
     attn_packet_clear(wv_pkt);
     wv_pkt.kind = (u16_t)ATTN_PKT_WV;
     wv_pkt.token_idx = (u16_t)token_idx;
     wv_pkt.d_tile_idx = (u16_t)d_tile_idx;
-    in_ch.write(wv_pkt);
+    wv_ch.write(wv_pkt);
 
     return true;
 }
 
 static inline bool attn_block_phasea_kv_consume_emit(
-    attn_pkt_ch_t& in_ch,
-    attn_pkt_ch_t& out_ch,
+    attn_x_pkt_ch_t& x_ch,
+    attn_wk_pkt_ch_t& wk_ch,
+    attn_wv_pkt_ch_t& wv_ch,
+    attn_k_pkt_ch_t& k_ch,
+    attn_v_pkt_ch_t& v_ch,
     const u32_t wk_payload_words[kTernaryLiveL0WkPayloadWords],
     u32_t wk_inv_sw_bits,
     const u32_t wv_payload_words[kTernaryLiveL0WvPayloadWords],
@@ -77,7 +87,7 @@ static inline bool attn_block_phasea_kv_consume_emit(
     AttnTopManagedPacket x_pkt;
     AttnTopManagedPacket wk_pkt;
     AttnTopManagedPacket wv_pkt;
-    if (!in_ch.nb_read(x_pkt) || !in_ch.nb_read(wk_pkt) || !in_ch.nb_read(wv_pkt)) {
+    if (!x_ch.nb_read(x_pkt) || !wk_ch.nb_read(wk_pkt) || !wv_ch.nb_read(wv_pkt)) {
         return false;
     }
     if ((uint32_t)x_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_X) { return false; }
@@ -121,7 +131,7 @@ static inline bool attn_block_phasea_kv_consume_emit(
     for (unsigned i = 0; i < ATTN_TOP_MANAGED_TILE_WORDS; ++i) {
         k_pkt.data[i] = k_out[i];
     }
-    out_ch.write(k_pkt);
+    k_ch.write(k_pkt);
 
     AttnTopManagedPacket v_pkt;
     attn_packet_clear(v_pkt);
@@ -132,7 +142,7 @@ static inline bool attn_block_phasea_kv_consume_emit(
     for (unsigned i = 0; i < ATTN_TOP_MANAGED_TILE_WORDS; ++i) {
         v_pkt.data[i] = v_out[i];
     }
-    out_ch.write(v_pkt);
+    v_ch.write(v_pkt);
 
     return true;
 }
@@ -144,11 +154,12 @@ static inline bool attn_top_writeback_phasea_kv_work_unit(
     u32_t scr_v_row_base_word,
     u32_t token_idx,
     u32_t d_tile_idx,
-    attn_pkt_ch_t& out_ch
+    attn_k_pkt_ch_t& k_ch,
+    attn_v_pkt_ch_t& v_ch
 ) {
     AttnTopManagedPacket k_pkt;
     AttnTopManagedPacket v_pkt;
-    if (!out_ch.nb_read(k_pkt) || !out_ch.nb_read(v_pkt)) {
+    if (!k_ch.nb_read(k_pkt) || !v_ch.nb_read(v_pkt)) {
         return false;
     }
     if ((uint32_t)k_pkt.kind.to_uint() != (uint32_t)ATTN_PKT_K) { return false; }
