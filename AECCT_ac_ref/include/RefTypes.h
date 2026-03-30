@@ -10,6 +10,7 @@ namespace aecct_ref {
 
 // Floating-point domains used by the ref flow.
 typedef ac_ieee_float<binary32> ref_fp32_t;
+typedef ac_std_float<16, 5> ref_fp16_t;
 typedef ac_std_float<8, 4> ref_generic_e4m3_t;
 
 // Activation (example): signed, 16-bit total, 4 integer bits (incl sign).

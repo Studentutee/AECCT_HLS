@@ -61,6 +61,10 @@ static inline bool use_full_e4m3_nonlinear_stress(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS;
 }
 
+static inline bool use_fp16_replace_fp32_global(const RefRunConfig& cfg) {
+  return cfg.precision_mode == RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
+}
+
 static inline bool use_frag_group_bisect(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT;
 }
@@ -181,6 +185,9 @@ static inline bool should_apply_e4m3_group_roundtrip(
   const RefRunConfig& cfg,
   RefFragGroup g
 ) {
+  if (use_fp16_replace_fp32_global(cfg)) {
+    return true;
+  }
   if (use_full_e4m3_nonlinear_stress(cfg)) {
     return true;
   }
@@ -204,6 +211,7 @@ static inline bool should_apply_e4m3_group_roundtrip(
 
 static inline bool use_island_s0(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
+         use_fp16_replace_fp32_global(cfg) ||
          use_generic_e4m3_except_g5(cfg) ||
          use_generic_e4m3_g5_pairwise(cfg) ||
          use_generic_e4m3_g2_g5_submode(cfg) ||
@@ -214,17 +222,25 @@ static inline bool use_island_s0(const RefRunConfig& cfg) {
 
 static inline bool use_island_s1(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
+         use_fp16_replace_fp32_global(cfg) ||
          (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s1(cfg.finalhead_stage));
 }
 
 static inline bool use_island_s3(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
+         use_fp16_replace_fp32_global(cfg) ||
          (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s3(cfg.finalhead_stage));
 }
 
 static inline void bump_first_nonfinite_block(RefFullQuantStats* stats, const char* block_name) {
   if (stats != nullptr && stats->e4m3.first_nonfinite_block.empty()) {
     stats->e4m3.first_nonfinite_block = block_name;
+  }
+}
+
+static inline void bump_first_fp16_nonfinite_block(RefFullQuantStats* stats, const char* block_name) {
+  if (stats != nullptr && stats->fp16.first_nonfinite_block.empty()) {
+    stats->fp16.first_nonfinite_block = block_name;
   }
 }
 
@@ -355,6 +371,41 @@ static inline fp32_ref_t apply_roundtrip_and_update_stats(
   return y;
 }
 
+static inline fp32_ref_t apply_roundtrip_fp16_and_update_stats(
+  fp32_ref_t x,
+  RefFullQuantStats* stats,
+  const char* block_name
+) {
+  if (stats != nullptr) {
+    stats->fp16.roundtrip_count++;
+    const float xin = x.to_float();
+    if (std::isnan(xin)) {
+      stats->fp16.nan_in_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    } else if (std::isinf(xin)) {
+      stats->fp16.inf_in_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    }
+  }
+
+  const ref_fp16_t h(x);
+  const fp32_ref_t y(h.to_ac_float());
+  if (stats != nullptr) {
+    const float xin = x.to_float();
+    const float yout = y.to_float();
+    if (std::isnan(yout)) {
+      stats->fp16.nan_out_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    } else if (std::isinf(yout)) {
+      stats->fp16.inf_out_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    } else if ((xin != 0.0f) && (yout == 0.0f)) {
+      stats->fp16.underflow_to_zero_count++;
+    }
+  }
+  return y;
+}
+
 static inline fp32_ref_t stress_roundtrip_e4m3(
   fp32_ref_t x,
   const RefRunConfig& cfg,
@@ -362,6 +413,10 @@ static inline fp32_ref_t stress_roundtrip_e4m3(
   RefFullQuantStats* stats,
   const char* block_name
 ) {
+  if (use_fp16_replace_fp32_global(cfg)) {
+    return apply_roundtrip_fp16_and_update_stats(x, stats, block_name);
+  }
+
   int zone_id = 0;
   int shared_exp = 0;
   if (select_int8_fixedexp_zone(cfg, group, RefG5SubIsland::NONE, &zone_id, &shared_exp)) {
@@ -398,6 +453,10 @@ static inline fp32_ref_t stress_roundtrip_e4m3_g5_sub(
   RefFullQuantStats* stats,
   const char* block_name
 ) {
+  if (use_fp16_replace_fp32_global(cfg)) {
+    return apply_roundtrip_fp16_and_update_stats(x, stats, block_name);
+  }
+
   int zone_id = 0;
   int shared_exp = 0;
   if (select_int8_fixedexp_zone(cfg, RefFragGroup::G5_PREPROC_EMBED, site, &zone_id, &shared_exp)) {
@@ -1113,7 +1172,7 @@ static void run_layer(const int layer_idx,
   quant_linear_75x32_to32(
     x_in, w_v, b_v, s_x_in, static_cast<float>(sw_v[0]), v_out, strict_int16, stats, "Wv");
 
-  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
         q_out[t][d] = stress_roundtrip_e4m3(
@@ -1190,7 +1249,7 @@ static void run_layer(const int layer_idx,
                            stats,
                            "Wff1");
 
-  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int i = 0; i < FF_DIM; ++i) {
         ffn1_out[t][i] = stress_roundtrip_e4m3(
@@ -1222,7 +1281,7 @@ static void run_layer(const int layer_idx,
                            stats,
                            "Wff2");
 
-  if (use_full_e4m3_nonlinear_stress(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
         ffn2_out[t][d] = stress_roundtrip_e4m3(
@@ -1524,6 +1583,13 @@ void RefModel::infer_step0(const RefModelIO& io) const {
             RefFragGroup::NONE,
             &local_stats,
             "final_embedding_s3");
+        } else if (use_fp16_replace_fp32_global(run_cfg_)) {
+          s_t_embed_out = stress_roundtrip_e4m3(
+            s_t_embed_out,
+            run_cfg_,
+            RefFragGroup::NONE,
+            &local_stats,
+            "final_embedding_s3_fp16");
         } else {
           s_t_embed_out = roundtrip_through_generic_e4m3(s_t_embed_out);
         }
@@ -1539,6 +1605,13 @@ void RefModel::infer_step0(const RefModelIO& io) const {
             RefFragGroup::NONE,
             &local_stats,
             "final_readout_s0");
+        } else if (use_fp16_replace_fp32_global(run_cfg_)) {
+          s_t_out_fc = stress_roundtrip_e4m3(
+            s_t_out_fc,
+            run_cfg_,
+            RefFragGroup::NONE,
+            &local_stats,
+            "final_readout_s0_fp16");
         } else {
           s_t_out_fc = roundtrip_through_generic_e4m3(s_t_out_fc);
         }
@@ -1563,13 +1636,20 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               RefFragGroup::NONE,
               &local_stats,
               "out_fc_pre_mac_s1");
+          } else if (use_fp16_replace_fp32_global(run_cfg_)) {
+            mul_in = stress_roundtrip_e4m3(
+              mul_in,
+              run_cfg_,
+              RefFragGroup::NONE,
+              &local_stats,
+              "out_fc_pre_mac_s1_fp16");
           } else {
             mul_in = roundtrip_through_generic_e4m3(mul_in);
           }
         }
         acc += fp32_ref_t(static_cast<float>(w_out_fc_weight[n * TOKENS_T + t])) * mul_in;
       }
-      if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
+      if (use_full_e4m3_nonlinear_stress(run_cfg_) || use_fp16_replace_fp32_global(run_cfg_)) {
         acc = stress_roundtrip_e4m3(
           acc,
           run_cfg_,

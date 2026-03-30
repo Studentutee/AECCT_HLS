@@ -181,7 +181,7 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
-  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2\n");
+  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2|fp16_replace_fp32_global\n");
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
@@ -321,6 +321,10 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
   }
   if (std::strcmp(text, "int8_fixedexp_zone4_embed_g2") == 0) {
     mode = aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2;
+    return true;
+  }
+  if (std::strcmp(text, "fp16_replace_fp32_global") == 0) {
+    mode = aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
     return true;
   }
   return false;
@@ -562,7 +566,8 @@ static inline bool precision_mode_anchors_to_finalhead_s0(aecct_ref::RefPrecisio
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY ||
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF ||
          mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2 ||
-         mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2;
+         mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2 ||
+         mode == aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
 }
 
 static inline bool precision_mode_requires_frag_group(aecct_ref::RefPrecisionMode mode) {
@@ -608,6 +613,9 @@ static std::string precision_mode_output_suffix(
   }
   if (mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2) {
     return "_int8fx_z4_embed_g2";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL) {
+    return "_fp16_replace_fp32_global";
   }
   return std::string();
 }
@@ -1079,6 +1087,16 @@ static bool write_eval_single_summary_txt(
         << (full_stats->int8_fixedexp.first_clamp_block.empty()
             ? "none" : full_stats->int8_fixedexp.first_clamp_block)
         << "\n";
+    ofs << "fp16 roundtrip count      : " << full_stats->fp16.roundtrip_count << "\n";
+    ofs << "fp16 nan in/out           : " << full_stats->fp16.nan_in_count
+        << "/" << full_stats->fp16.nan_out_count << "\n";
+    ofs << "fp16 inf in/out           : " << full_stats->fp16.inf_in_count
+        << "/" << full_stats->fp16.inf_out_count << "\n";
+    ofs << "fp16 underflow->zero      : " << full_stats->fp16.underflow_to_zero_count << "\n";
+    ofs << "fp16 first nonfinite block: "
+        << (full_stats->fp16.first_nonfinite_block.empty()
+            ? "none" : full_stats->fp16.first_nonfinite_block)
+        << "\n";
   }
   ofs << "\n";
   ofs << "per-pattern bit/frame summary:\n";
@@ -1171,6 +1189,16 @@ static bool write_eval_compare_summary_txt(
     ofs << "int8 fixedexp first clamp block : "
         << (experiment_full_stats->int8_fixedexp.first_clamp_block.empty()
             ? "none" : experiment_full_stats->int8_fixedexp.first_clamp_block)
+        << "\n";
+    ofs << "fp16 roundtrip count      : " << experiment_full_stats->fp16.roundtrip_count << "\n";
+    ofs << "fp16 nan in/out           : " << experiment_full_stats->fp16.nan_in_count
+        << "/" << experiment_full_stats->fp16.nan_out_count << "\n";
+    ofs << "fp16 inf in/out           : " << experiment_full_stats->fp16.inf_in_count
+        << "/" << experiment_full_stats->fp16.inf_out_count << "\n";
+    ofs << "fp16 underflow->zero      : " << experiment_full_stats->fp16.underflow_to_zero_count << "\n";
+    ofs << "fp16 first nonfinite block: "
+        << (experiment_full_stats->fp16.first_nonfinite_block.empty()
+            ? "none" : experiment_full_stats->fp16.first_nonfinite_block)
         << "\n";
   }
   ofs << "\n";
@@ -1436,6 +1464,16 @@ static bool write_batch_summary_txt(
         << (experiment_full_stats->int8_fixedexp.first_clamp_block.empty()
             ? "none" : experiment_full_stats->int8_fixedexp.first_clamp_block)
         << "\n";
+    ofs << "fp16 roundtrip count        : " << experiment_full_stats->fp16.roundtrip_count << "\n";
+    ofs << "fp16 nan in/out             : " << experiment_full_stats->fp16.nan_in_count
+        << " / " << experiment_full_stats->fp16.nan_out_count << "\n";
+    ofs << "fp16 inf in/out             : " << experiment_full_stats->fp16.inf_in_count
+        << " / " << experiment_full_stats->fp16.inf_out_count << "\n";
+    ofs << "fp16 underflow->zero        : " << experiment_full_stats->fp16.underflow_to_zero_count << "\n";
+    ofs << "fp16 first nonfinite block  : "
+        << (experiment_full_stats->fp16.first_nonfinite_block.empty()
+            ? "none" : experiment_full_stats->fp16.first_nonfinite_block)
+        << "\n";
   }
   ofs << "\n";
 
@@ -1572,6 +1610,19 @@ static void print_full_stress_console_summary(const aecct_ref::RefFullQuantStats
   std::printf("int8 fixedexp first clamp block : %s\n",
     stats.int8_fixedexp.first_clamp_block.empty()
       ? "none" : stats.int8_fixedexp.first_clamp_block.c_str());
+  std::printf("fp16 roundtrip count      : %llu\n",
+    static_cast<unsigned long long>(stats.fp16.roundtrip_count));
+  std::printf("fp16 nan in/out           : %llu / %llu\n",
+    static_cast<unsigned long long>(stats.fp16.nan_in_count),
+    static_cast<unsigned long long>(stats.fp16.nan_out_count));
+  std::printf("fp16 inf in/out           : %llu / %llu\n",
+    static_cast<unsigned long long>(stats.fp16.inf_in_count),
+    static_cast<unsigned long long>(stats.fp16.inf_out_count));
+  std::printf("fp16 underflow->zero      : %llu\n",
+    static_cast<unsigned long long>(stats.fp16.underflow_to_zero_count));
+  std::printf("fp16 first nonfinite block: %s\n",
+    stats.fp16.first_nonfinite_block.empty()
+      ? "none" : stats.fp16.first_nonfinite_block.c_str());
 }
 
 struct StageCompareEvalSnapshot {

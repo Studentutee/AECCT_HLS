@@ -71,3 +71,13 @@
 - not Catapult closure
 - not SCVerify closure
 - trace-reference-aligned BER/FER interpretation
+
+## 9. FP16 Global Follow-up (2026-03-30)
+- 新模式：`FP16_REPLACE_FP32_GLOBAL`（native linear quant 主集合不變，原 FP32 islands 走 FP16 roundtrip）。
+- 視窗結果：
+  - `0~3`：delta BER/FER = 0，x_pred/sign flips = 0
+  - `4~15`：delta BER/FER = 0，x_pred/sign flips = 0
+  - `16~31`：delta BER/FER = 0，x_pred/sign flips = 0
+- 解讀：
+  - FP16 在目前 coverage 下可作為高敏感例外層候選。
+  - 仍不可直接外推為全模型最終 policy closure。

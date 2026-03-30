@@ -42,10 +42,21 @@ struct RefInt8FixedExpStats {
   std::string first_clamp_block;
 };
 
+struct RefFp16PathStats {
+  std::uint64_t roundtrip_count = 0;
+  std::uint64_t nan_in_count = 0;
+  std::uint64_t nan_out_count = 0;
+  std::uint64_t inf_in_count = 0;
+  std::uint64_t inf_out_count = 0;
+  std::uint64_t underflow_to_zero_count = 0;
+  std::string first_nonfinite_block;
+};
+
 struct RefFullQuantStats {
   RefIntLinearStats int_linear;
   RefE4M3PathStats e4m3;
   RefInt8FixedExpStats int8_fixedexp;
+  RefFp16PathStats fp16;
 };
 
 inline RefFullQuantStats g_ref_full_quant_stats{};
@@ -95,6 +106,16 @@ static inline void add_ref_full_quant_stats(const RefFullQuantStats& delta) {
   s.int8_fixedexp.footprint_g5_embed_count += delta.int8_fixedexp.footprint_g5_embed_count;
   if (s.int8_fixedexp.first_clamp_block.empty()) {
     s.int8_fixedexp.first_clamp_block = delta.int8_fixedexp.first_clamp_block;
+  }
+
+  s.fp16.roundtrip_count += delta.fp16.roundtrip_count;
+  s.fp16.nan_in_count += delta.fp16.nan_in_count;
+  s.fp16.nan_out_count += delta.fp16.nan_out_count;
+  s.fp16.inf_in_count += delta.fp16.inf_in_count;
+  s.fp16.inf_out_count += delta.fp16.inf_out_count;
+  s.fp16.underflow_to_zero_count += delta.fp16.underflow_to_zero_count;
+  if (s.fp16.first_nonfinite_block.empty()) {
+    s.fp16.first_nonfinite_block = delta.fp16.first_nonfinite_block;
   }
 }
 
