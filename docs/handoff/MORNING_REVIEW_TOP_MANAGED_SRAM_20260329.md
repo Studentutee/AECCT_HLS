@@ -371,3 +371,42 @@
 - `build/p11g6/ffn_w1_bias_descriptor/run.log`
 - `build/p11g6/ffn_fallback_observability/run.log`
 - `build/evidence/g6_multi_track_20260330/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (W4-M1 QK-score Probe Latest)
+1. Open `src/blocks/AttnPhaseBTopManagedQkScore.h` (2 min)
+   - Confirm phase-entry probe anchors:
+     - `phase_entry_probe_enabled`
+     - `ATTN_P11AE_PHASE_ENTRY_PROBE_COL_LOOP`
+     - ownership/compare observability outputs.
+2. Open `src/Top.h` (1 min)
+   - Confirm `run_p11ae_layer0_top_managed_qk_score(...)` includes probe passthrough args.
+3. Open `build/p11w4m1/qkscore_phase_entry_probe/run.log` (1 min)
+   - Confirm:
+     - `W4M1_QKSCORE_CALLER_FED_DESCRIPTOR_VISIBLE PASS`
+     - `W4M1_QKSCORE_OWNERSHIP_CHECK PASS`
+     - `W4M1_QKSCORE_NO_SPURIOUS_TOUCH PASS`
+     - `W4M1_QKSCORE_EXPECTED_COMPARE PASS`
+4. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: W4-M1 QK-score phase-entry caller-fed descriptor probe anchors OK`.
+5. Open retained regression logs (2 min)
+   - `build/p11g6/ffn_w1_bias_descriptor/run.log`
+   - `build/p11g6/ffn_fallback_observability/run.log`
+   - `build/p11g5/ffn_w1_fallback_policy/run.log`
+   - `build/p11g5/ffn_fallback_policy/run.log`
+   - `build/p11g5/ffn_closure_campaign/run.log`
+6. Open `build/p11ah/full_loop/run.log` and `build/p11aj/p11aj/run.log` (1 min)
+7. Open `docs/handoff/TOP_MANAGED_SRAM_W4M1_QKSCORE_PROBE_20260330.md` and `docs/handoff/TOP_MANAGED_SRAM_W4M1_COMPLETION_20260330.md` (1 min)
+8. Open `build/evidence/w4m1_qkscore_probe_20260330/evidence_manifest.txt` (1 min)
+9. Open `docs/handoff/TOP_MANAGED_SRAM_W4M1_EVIDENCE_INDEX_20260330.md` (1 min)
+
+## Latest artifact additions (W4-M1)
+- `scripts/local/run_p11w4m1_qkscore_phase_entry_probe.ps1`
+- `tb/tb_w4m1_qkscore_phase_entry_probe.cpp`
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M1_QKSCORE_PROBE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M1_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M1_COMPLETION_20260330.md`
+- `build/p11w4m1/qkscore_phase_entry_probe/run.log`
+- `build/evidence/w4m1_qkscore_probe_20260330/evidence_manifest.txt`

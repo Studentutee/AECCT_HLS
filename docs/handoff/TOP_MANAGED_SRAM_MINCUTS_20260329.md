@@ -662,3 +662,57 @@
 
 7. Next recommended step
 - Choose one dedicated Wave4 micro-cut task (single phase-entry descriptor probe) with an isolated ownership-focused TB before touching coupled inner loops.
+
+## Task C14: W4-M1 Single Phase-Entry Caller-Fed Descriptor Probe (QK-score)
+1. Summary
+- Landed one bounded Wave4 micro-cut on QK-score phase entry.
+- Added optional caller-fed descriptor probe passthrough on Top helper and phase-entry consume visibility check in QK-score mainline.
+- Inner compute/writeback loops intentionally untouched.
+
+2. Exact files changed
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11w4m1_qkscore_phase_entry_probe.ps1`
+- `tb/tb_w4m1_qkscore_phase_entry_probe.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m1_qkscore_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_w1_bias_descriptor.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_fallback_observability.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11w4m1/qkscore_phase_entry_probe/run.log`:
+  - `W4M1_QKSCORE_CALLER_FED_DESCRIPTOR_VISIBLE PASS`
+  - `W4M1_QKSCORE_OWNERSHIP_CHECK PASS`
+  - `W4M1_QKSCORE_NO_SPURIOUS_TOUCH PASS`
+  - `W4M1_QKSCORE_EXPECTED_COMPARE PASS`
+  - `PASS: run_p11w4m1_qkscore_phase_entry_probe`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: W4-M1 QK-score phase-entry caller-fed descriptor probe anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+
+5. Governance posture
+- local-only bounded micro-cut.
+- not Catapult closure; not SCVerify closure.
+- no external formal contract change.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- Wave4 payload path is not fully migrated.
+- QK-score inner compute/writeback loops remain SRAM-centric.
+
+7. Next recommended step
+- Run W4-M2 bounded probe on softmax-out phase-entry (single V-tile descriptor probe + no-spurious/ownership TB).

@@ -472,3 +472,47 @@
 - FFN strict/no-fallback full closure is still deferred.
 - FFN writeback boundary streamization remains deferred.
 - Wave4 implementation remains feasibility-only in this round.
+
+## Night-Batch Extension: W4-M1 QK-Score Phase-Entry Caller-Fed Probe (Bounded)
+- Completed one Wave4 bounded micro-cut on QK-score phase entry.
+- Added optional caller-fed descriptor probe passthrough at:
+  - `run_p11ae_layer0_top_managed_qk_score(...)`
+  - `attn_phaseb_top_managed_qk_score_mainline(...)`
+- Probe validates phase-entry visibility + ownership + descriptor compare without touching inner compute/writeback loops.
+
+### W4-M1 local-only evidence
+- `build/p11w4m1/qkscore_phase_entry_probe/run.log`: PASS
+  - `W4M1_QKSCORE_CALLER_FED_DESCRIPTOR_VISIBLE PASS`
+  - `W4M1_QKSCORE_OWNERSHIP_CHECK PASS`
+  - `W4M1_QKSCORE_NO_SPURIOUS_TOUCH PASS`
+  - `W4M1_QKSCORE_EXPECTED_COMPARE PASS`
+  - `W4M1_QKSCORE_PROBE_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: W4-M1 QK-score phase-entry caller-fed descriptor probe anchors OK`
+- Required regression chain retained PASS:
+  - `build/p11g6/ffn_w1_bias_descriptor/run.log`
+  - `build/p11g6/ffn_fallback_observability/run.log`
+  - `build/p11g5/ffn_w1_fallback_policy/run.log`
+  - `build/p11g5/ffn_fallback_policy/run.log`
+  - `build/p11g5/ffn_closure_campaign/run.log`
+  - `build/p11g5/wave3_ffn_payload_migration/run.log`
+  - `build/p11g5/wave35_ffn_w1_weight_migration/run.log`
+  - `build/p11ah/full_loop/run.log`
+  - `build/p11aj/p11aj/run.log`
+- Bundle:
+  - `build/evidence/w4m1_qkscore_probe_20260330/evidence_manifest.txt`
+
+### W4-M1 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_W4M1_QKSCORE_PROBE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M1_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M1_COMPLETION_20260330.md`
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11w4m1_qkscore_phase_entry_probe.ps1`
+- `tb/tb_w4m1_qkscore_phase_entry_probe.cpp`
+
+### Deferred boundary after W4-M1
+- This round does not migrate full Wave4 payload compute path.
+- QK-score inner loops remain SRAM-centric by design in bounded scope.
+- Wave4 broader migration remains deferred.

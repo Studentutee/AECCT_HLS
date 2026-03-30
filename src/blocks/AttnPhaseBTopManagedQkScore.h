@@ -225,9 +225,20 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     const AttnCfg& cfg,
     const AttnScratch& sc,
     u32_t token_idx,
-    bool& fallback_taken
+    bool& fallback_taken,
+    u32_t phase_entry_probe_q_base_word = (u32_t)0u,
+    u32_t phase_entry_probe_k_base_word = (u32_t)0u,
+    const u32_t* phase_entry_probe_q_words = 0,
+    const u32_t* phase_entry_probe_k_words = 0,
+    u32_t phase_entry_probe_words_valid = (u32_t)0u,
+    u32_t* phase_entry_probe_visible = 0,
+    u32_t* phase_entry_probe_owner_ok = 0,
+    u32_t* phase_entry_probe_compare_ok = 0
 ) {
     fallback_taken = true;
+    if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
+    if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
+    if (phase_entry_probe_compare_ok != 0) { *phase_entry_probe_compare_ok = (u32_t)0u; }
     if (!attn_phaseb_sram_view_ok(sram)) {
         return false;
     }
@@ -261,12 +272,53 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
         return false;
     }
     const quant_acc_t inv_sqrt_d_head = attn_phaseb_inv_sqrt_d_head(d_head);
+    const uint32_t phase_entry_probe_valid_words = (uint32_t)phase_entry_probe_words_valid.to_uint();
+    const bool phase_entry_probe_enabled =
+        (phase_entry_probe_q_words != 0) &&
+        (phase_entry_probe_k_words != 0) &&
+        (phase_entry_probe_valid_words > 0u);
 
     ATTN_P11AE_HEAD_LOOP: for (uint32_t h = 0u; h < n_heads; ++h) {
         const uint32_t head_col_base = h * d_head;
         const uint32_t score_head_base = score_base + h * token_count;
         const u16_t head_group_id = attn_phaseb_head_group_id_from_head_idx(h);
         (void)attn_phaseb_rule_id_from_head_group(head_group_id);
+
+        // Local-only W4-M1 probe:
+        // caller/Top can provide one narrow phase-entry descriptor for ownership visibility.
+        if (phase_entry_probe_enabled && h == 0u) {
+            const uint32_t expected_q_probe_base = q_row_base;
+            const uint32_t expected_k_probe_base = k_base;
+            if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)1u; }
+            const bool owner_ok =
+                ((uint32_t)phase_entry_probe_q_base_word.to_uint() == expected_q_probe_base) &&
+                ((uint32_t)phase_entry_probe_k_base_word.to_uint() == expected_k_probe_base);
+            if (phase_entry_probe_owner_ok != 0) {
+                *phase_entry_probe_owner_ok = (u32_t)(owner_ok ? 1u : 0u);
+            }
+            if (!owner_ok) {
+                return false;
+            }
+            if (phase_entry_probe_valid_words > tile_words || phase_entry_probe_valid_words > d_head) {
+                return false;
+            }
+            bool probe_compare_ok = true;
+            ATTN_P11AE_PHASE_ENTRY_PROBE_COL_LOOP: for (uint32_t i = 0u; i < phase_entry_probe_valid_words; ++i) {
+                const uint32_t probe_q_word = (uint32_t)phase_entry_probe_q_words[i].to_uint();
+                const uint32_t probe_k_word = (uint32_t)phase_entry_probe_k_words[i].to_uint();
+                const uint32_t sram_q_word = (uint32_t)sram[expected_q_probe_base + i].to_uint();
+                const uint32_t sram_k_word = (uint32_t)sram[expected_k_probe_base + i].to_uint();
+                if (probe_q_word != sram_q_word || probe_k_word != sram_k_word) {
+                    probe_compare_ok = false;
+                }
+            }
+            if (phase_entry_probe_compare_ok != 0) {
+                *phase_entry_probe_compare_ok = (u32_t)(probe_compare_ok ? 1u : 0u);
+            }
+            if (!probe_compare_ok) {
+                return false;
+            }
+        }
 
         ATTN_P11AE_KEY_TOKEN_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
             const uint32_t k_row_base = k_base + j * d_model + head_col_base;
