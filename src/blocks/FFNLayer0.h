@@ -29,6 +29,13 @@ static inline quant_w_t ffn_weight_from_sram(const u32_t* sram, uint32_t param_b
     return quant_w_t(quant_act_from_bits(sram[ffn_param_addr_word(param_base_word, param_id, elem_idx)]));
 }
 
+static inline void ffn_count_legacy_fallback_touch(u32_t* fallback_touch_counter) {
+    if (fallback_touch_counter != 0) {
+        const uint32_t v = (uint32_t)fallback_touch_counter->to_uint();
+        *fallback_touch_counter = (u32_t)(v + 1u);
+    }
+}
+
 struct FfnTopManagedTileMeta {
     u16_t phase_id;
     u16_t subphase_id;
@@ -112,7 +119,10 @@ static inline void FFNLayer0CoreWindow(
     const u32_t* topfed_w2_weight_words = 0,
     u32_t topfed_w2_weight_words_valid = 0,
     const u32_t* topfed_w2_bias_words = 0,
-    u32_t topfed_w2_bias_words_valid = 0
+    u32_t topfed_w2_bias_words_valid = 0,
+    u32_t fallback_policy_flags = (u32_t)FFN_POLICY_NONE,
+    u32_t* fallback_policy_reject_flag = 0,
+    u32_t* fallback_legacy_touch_counter = 0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -122,6 +132,12 @@ static inline void FFNLayer0CoreWindow(
     if (d_ffn == 0u) { d_ffn = (uint32_t)FFN_D_FFN; }
     if (token_count == 0u || d_model == 0u || d_ffn == 0u) {
         return;
+    }
+    if (fallback_policy_reject_flag != 0) {
+        *fallback_policy_reject_flag = (u32_t)0u;
+    }
+    if (fallback_legacy_touch_counter != 0) {
+        *fallback_legacy_touch_counter = (u32_t)0u;
     }
 
     const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
@@ -136,33 +152,35 @@ static inline void FFNLayer0CoreWindow(
     const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
     const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
     uint32_t topfed_w1_valid = (uint32_t)topfed_w1_weight_words_valid.to_uint();
-    if (topfed_w1_valid == 0u) {
-        topfed_w1_valid = d_ffn * d_model;
-    }
     if (topfed_w1_valid > (uint32_t)FFN_W1_WEIGHT_WORDS) {
         topfed_w1_valid = (uint32_t)FFN_W1_WEIGHT_WORDS;
     }
-    uint32_t topfed_w2_input_valid = (uint32_t)topfed_w2_input_words_valid.to_uint();
-    if (topfed_w2_input_valid == 0u) {
-        topfed_w2_input_valid = token_count * d_ffn;
-    }
+    const uint32_t topfed_w2_input_raw_valid = (uint32_t)topfed_w2_input_words_valid.to_uint();
+    const uint32_t topfed_w2_weight_raw_valid = (uint32_t)topfed_w2_weight_words_valid.to_uint();
+    const uint32_t topfed_w2_bias_raw_valid = (uint32_t)topfed_w2_bias_words_valid.to_uint();
+    uint32_t topfed_w2_input_valid = topfed_w2_input_raw_valid;
     if (topfed_w2_input_valid > (uint32_t)FFN_W2_INPUT_WORDS) {
         topfed_w2_input_valid = (uint32_t)FFN_W2_INPUT_WORDS;
     }
-    uint32_t topfed_w2_weight_valid = (uint32_t)topfed_w2_weight_words_valid.to_uint();
-    if (topfed_w2_weight_valid == 0u) {
-        topfed_w2_weight_valid = d_model * d_ffn;
-    }
+    uint32_t topfed_w2_weight_valid = topfed_w2_weight_raw_valid;
     if (topfed_w2_weight_valid > (uint32_t)FFN_W2_WEIGHT_WORDS) {
         topfed_w2_weight_valid = (uint32_t)FFN_W2_WEIGHT_WORDS;
     }
-    uint32_t topfed_w2_bias_valid = (uint32_t)topfed_w2_bias_words_valid.to_uint();
-    if (topfed_w2_bias_valid == 0u) {
-        topfed_w2_bias_valid = d_model;
-    }
+    uint32_t topfed_w2_bias_valid = topfed_w2_bias_raw_valid;
     if (topfed_w2_bias_valid > (uint32_t)FFN_W2_BIAS_WORDS) {
         topfed_w2_bias_valid = (uint32_t)FFN_W2_BIAS_WORDS;
     }
+    const uint32_t expected_w2_input_words = token_count * d_ffn;
+    const uint32_t expected_w2_weight_words = d_model * d_ffn;
+    const uint32_t expected_w2_bias_words = d_model;
+    const bool w2_input_descriptor_ready =
+        (topfed_w2_input_words != 0) && (topfed_w2_input_raw_valid >= expected_w2_input_words);
+    const bool w2_weight_descriptor_ready =
+        (topfed_w2_weight_words != 0) && (topfed_w2_weight_raw_valid >= expected_w2_weight_words);
+    const bool w2_bias_descriptor_ready =
+        (topfed_w2_bias_words != 0) && (topfed_w2_bias_raw_valid >= expected_w2_bias_words);
+    const bool require_w2_topfed =
+        (((uint32_t)fallback_policy_flags.to_uint() & (uint32_t)FFN_POLICY_REQUIRE_W2_TOPFED) != 0u);
 
     const uint32_t tile_words = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
     const uint32_t d_model_tile_count = attn_top_managed_tile_count(d_model, tile_words);
@@ -205,12 +223,14 @@ static inline void FFNLayer0CoreWindow(
                         if (topfed_x_words != 0 && x_idx < (uint32_t)FFN_X_WORDS) {
                             x_tile[i] = topfed_x_words[x_idx];
                         } else {
+                            ffn_count_legacy_fallback_touch(fallback_legacy_touch_counter);
                             x_tile[i] = sram[x_row + tile_offset + i];
                         }
                         // Caller-fed FFN W1 weight path: consume preloaded tiles when provided.
                         if (topfed_w1_weight_words != 0 && w1_idx < topfed_w1_valid) {
                             w_tile[i] = topfed_w1_weight_words[w1_idx];
                         } else {
+                            ffn_count_legacy_fallback_touch(fallback_legacy_touch_counter);
                             w_tile[i] = sram[ffn_param_addr_word(param_base, w1_weight_id, w1_idx)];
                         }
                     }
@@ -257,6 +277,13 @@ static inline void FFNLayer0CoreWindow(
     }
 
     if constexpr (STAGE_MODE == FFN_STAGE_W2 || STAGE_MODE == FFN_STAGE_FULL) {
+        // Tightened fallback policy: caller can require fully ready W2 descriptors.
+        if (require_w2_topfed && !(w2_input_descriptor_ready && w2_weight_descriptor_ready && w2_bias_descriptor_ready)) {
+            if (fallback_policy_reject_flag != 0) {
+                *fallback_policy_reject_flag = (u32_t)1u;
+            }
+            return;
+        }
         FFN_TOP_MANAGED_W2_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
             const uint32_t a_row = relu_base + t * d_ffn;
             const uint32_t y_row = w2_base + t * d_model;
@@ -265,6 +292,8 @@ static inline void FFNLayer0CoreWindow(
                 // Caller-fed W2 bias payload path: use preloaded bias words when provided.
                 if (topfed_w2_bias_words != 0 && i < topfed_w2_bias_valid) {
                     acc = ffn_bias_from_word(topfed_w2_bias_words[i]);
+                } else {
+                    ffn_count_legacy_fallback_touch(fallback_legacy_touch_counter);
                 }
                 const uint32_t w_row = i * d_ffn;
                 FFN_TOP_MANAGED_W2_TILE_LOOP: for (uint32_t dt = 0u; dt < d_ffn_tile_count; ++dt) {
@@ -294,12 +323,14 @@ static inline void FFNLayer0CoreWindow(
                         if (topfed_w2_input_words != 0 && a_idx < topfed_w2_input_valid) {
                             a_tile[k] = topfed_w2_input_words[a_idx];
                         } else {
+                            ffn_count_legacy_fallback_touch(fallback_legacy_touch_counter);
                             a_tile[k] = sram[a_row + tile_offset + k];
                         }
                         // Caller-fed W2 weight payload path: consume preloaded W2 weights.
                         if (topfed_w2_weight_words != 0 && w2_idx < topfed_w2_weight_valid) {
                             w_tile[k] = topfed_w2_weight_words[w2_idx];
                         } else {
+                            ffn_count_legacy_fallback_touch(fallback_legacy_touch_counter);
                             w_tile[k] = sram[ffn_param_addr_word(param_base, w2_weight_id, w2_idx)];
                         }
                     }
@@ -399,7 +430,10 @@ static inline void FFNLayer0(
     const u32_t* topfed_w2_weight_words = 0,
     u32_t topfed_w2_weight_words_valid = 0,
     const u32_t* topfed_w2_bias_words = 0,
-    u32_t topfed_w2_bias_words_valid = 0
+    u32_t topfed_w2_bias_words_valid = 0,
+    u32_t fallback_policy_flags = (u32_t)FFN_POLICY_NONE,
+    u32_t* fallback_policy_reject_flag = 0,
+    u32_t* fallback_legacy_touch_counter = 0
 ) {
     // Mainline migration note:
     // Default FFN entry now runs through the Top-managed tile/window core.
@@ -419,7 +453,10 @@ static inline void FFNLayer0(
         topfed_w2_weight_words,
         topfed_w2_weight_words_valid,
         topfed_w2_bias_words,
-        topfed_w2_bias_words_valid
+        topfed_w2_bias_words_valid,
+        fallback_policy_flags,
+        fallback_policy_reject_flag,
+        fallback_legacy_touch_counter
     );
 }
 
@@ -441,7 +478,10 @@ static inline void FFNLayer0TopManagedWindowBridge(
     const u32_t* topfed_w2_weight_words = 0,
     u32_t topfed_w2_weight_words_valid = 0,
     const u32_t* topfed_w2_bias_words = 0,
-    u32_t topfed_w2_bias_words_valid = 0
+    u32_t topfed_w2_bias_words_valid = 0,
+    u32_t fallback_policy_flags = (u32_t)FFN_POLICY_NONE,
+    u32_t* fallback_policy_reject_flag = 0,
+    u32_t* fallback_legacy_touch_counter = 0
 ) {
     FFNLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
@@ -458,7 +498,10 @@ static inline void FFNLayer0TopManagedWindowBridge(
         topfed_w2_weight_words,
         topfed_w2_weight_words_valid,
         topfed_w2_bias_words,
-        topfed_w2_bias_words_valid
+        topfed_w2_bias_words_valid,
+        fallback_policy_flags,
+        fallback_policy_reject_flag,
+        fallback_legacy_touch_counter
     );
 }
 

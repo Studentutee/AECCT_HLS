@@ -29,6 +29,11 @@ namespace aecct {
         FFN_STAGE_FULL = 4u
     };
 
+    enum FfnFallbackPolicyFlags : unsigned {
+        FFN_POLICY_NONE = 0u,
+        FFN_POLICY_REQUIRE_W2_TOPFED = 1u
+    };
+
     struct FfnCfg {
         u32_t token_count;
         u32_t d_model;

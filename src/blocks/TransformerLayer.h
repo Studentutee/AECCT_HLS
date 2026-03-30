@@ -235,7 +235,8 @@ static inline void TransformerLayerTopManagedAttnBridge(
         topfed_ffn_w2_words,
         (u32_t)w2_weight_words,
         topfed_ffn_w2_bias_words,
-        (u32_t)w2_bias_words
+        (u32_t)w2_bias_words,
+        (u32_t)FFN_POLICY_REQUIRE_W2_TOPFED
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();
@@ -440,7 +441,8 @@ static inline void TransformerLayer(
         topfed_ffn_w2_words,
         (u32_t)w2_weight_words,
         topfed_ffn_w2_bias_words,
-        (u32_t)w2_bias_words
+        (u32_t)w2_bias_words,
+        (u32_t)FFN_POLICY_REQUIRE_W2_TOPFED
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();

@@ -254,3 +254,37 @@
 - `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_COMPLETION_20260330.md`
 - `build/p11g5/ffn_closure_campaign/run.log`
 - `build/evidence/g5_ffn_closure_campaign_20260330/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (G5 FFN Fallback Policy Latest)
+1. Open `src/blocks/FFNLayer0.h` (2 min)
+   - Confirm strict policy anchors:
+     - `FFN_POLICY_REQUIRE_W2_TOPFED`
+     - `fallback_policy_reject_flag`
+     - `fallback_legacy_touch_counter`
+     - descriptor-ready gating before W2 loop.
+2. Open `src/blocks/TransformerLayer.h` (1 min)
+   - Confirm W2 stage call passes `(u32_t)FFN_POLICY_REQUIRE_W2_TOPFED`.
+3. Open `build/p11g5/ffn_fallback_policy/run.log` (1 min)
+   - Confirm:
+     - `G5FFN_FALLBACK_POLICY_TOPFED_PRIMARY PASS`
+     - `G5FFN_FALLBACK_POLICY_CONTROLLED_FALLBACK PASS`
+     - `G5FFN_FALLBACK_POLICY_NO_STALE_STATE PASS`
+     - `G5FFN_FALLBACK_POLICY_EXPECTED_COMPARE PASS`
+4. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: G5 FFN fallback policy strict W2 top-fed gating anchors OK`.
+5. Open `build/p11g5/ffn_closure_campaign/run.log`, `build/p11g5/wave3_ffn_payload_migration/run.log`, `build/p11g5/wave35_ffn_w1_weight_migration/run.log` (2 min)
+   - Confirm regressions remain PASS.
+6. Open `build/p11ah/full_loop/run.log` and `build/p11aj/p11aj/run.log` (1 min)
+   - Confirm mainline/provenance PASS.
+7. Open `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_FALLBACK_POLICY_20260330.md` (1 min)
+8. Open `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_FALLBACK_EVIDENCE_INDEX_20260330.md` (1 min)
+9. Open `build/evidence/g5_ffn_fallback_policy_20260330/evidence_manifest.txt` (1 min)
+
+## Latest artifact additions (G5 FFN fallback policy)
+- `scripts/local/run_p11g5_ffn_fallback_policy.ps1`
+- `tb/tb_g5_ffn_fallback_policy_p11g5fp.cpp`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_FALLBACK_POLICY_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_FALLBACK_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_FALLBACK_COMPLETION_20260330.md`
+- `build/p11g5/ffn_fallback_policy/run.log`
+- `build/evidence/g5_ffn_fallback_policy_20260330/evidence_manifest.txt`
