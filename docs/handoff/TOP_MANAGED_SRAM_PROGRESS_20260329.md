@@ -184,3 +184,33 @@
 ### Deferred boundary after G4-F mincut
 - This round harmonizes commit-time diagnostics helper and mapping anchors only.
 - Protocol-level infer-specific length mismatch code remains deferred to avoid external contract change in this bounded round.
+
+## Night-Batch Extension: G4-G Accepted-Commit Metadata Record Harmonization
+- Added bounded Top-local accepted-commit metadata record convergence for CFG/PARAM/INFER:
+  - `AcceptedCommitMetadataRecord`
+  - `record_accepted_commit_metadata(...)`
+  - `ingest_commit_diag_and_record(...)`
+- Commit-success path convergence:
+  - CFG commit success writes accepted record after diagnostics + cfg legality pass.
+  - PARAM commit success writes accepted record via shared diag-and-record helper.
+  - INFER commit success writes accepted record via shared diag-and-record helper with phase metadata.
+- Reject path preserves previous accepted record (no partial overwrite from failed attempt).
+
+### G4-G local-only evidence (this batch)
+- `build/p11g4g/accept_commit_record/run.log`: PASS
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G4-G accepted-commit metadata record harmonization anchors OK`
+- `build/p11ah/g4g_accept_commit/run.log`: PASS
+- `build/p11aj/g4g_accept_commit/run.log`: PASS
+- `build/evidence/g4g_accept_commit_20260330/evidence_manifest.txt`: present
+
+### G4-G artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G4G_ACCEPT_COMMIT_MINCUT_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4G_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4G_COMPLETION_20260330.md`
+- `scripts/local/run_p11g4g_accept_commit_record.ps1`
+- `tb/tb_g4g_accept_commit_record_p11g4g.cpp`
+
+### Deferred boundary after G4-G mincut
+- G4-G is bounded to Top-local accepted-commit record harmonization only.
+- External protocol-level committed-record export remains deferred.

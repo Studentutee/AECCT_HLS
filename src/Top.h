@@ -157,6 +157,19 @@ namespace aecct {
         bool active;
     };
 
+    // Accepted commit metadata record (local-only Top diagnostics/provenance state).
+    // This does not alter external protocol and is only updated on successful commit acceptance.
+    struct AcceptedCommitMetadataRecord {
+        u32_t owner_opcode;
+        u32_t base_word;
+        u32_t len_words_expected;
+        u32_t len_words_valid;
+        u32_t rx_state;
+        u32_t phase_id;
+        bool phase_valid;
+        bool valid;
+    };
+
     static inline void infer_refresh_preproc_ranges(
         InferIngestContract& c,
         uint32_t x_out_words
@@ -262,6 +275,65 @@ namespace aecct {
         return (uint8_t)ERR_OK;
     }
 
+    static inline AcceptedCommitMetadataRecord make_invalid_accepted_commit_metadata_record() {
+        AcceptedCommitMetadataRecord r;
+        r.owner_opcode = 0;
+        r.base_word = 0;
+        r.len_words_expected = 0;
+        r.len_words_valid = 0;
+        r.rx_state = (u32_t)RX_NONE;
+        r.phase_id = 0;
+        r.phase_valid = false;
+        r.valid = false;
+        return r;
+    }
+
+    static inline void clear_accepted_commit_metadata_record(
+        AcceptedCommitMetadataRecord& r
+    ) {
+        r = make_invalid_accepted_commit_metadata_record();
+    }
+
+    static inline void record_accepted_commit_metadata(
+        AcceptedCommitMetadataRecord& r,
+        const IngestMetadataSurface& m,
+        ReceiverState rx,
+        u32_t phase_id,
+        bool phase_valid
+    ) {
+        r.owner_opcode = m.owner_opcode;
+        r.base_word = m.base_word;
+        r.len_words_expected = m.len_words_expected;
+        r.len_words_valid = m.len_words_valid;
+        r.rx_state = (u32_t)rx;
+        r.phase_id = phase_id;
+        r.phase_valid = phase_valid;
+        r.valid = true;
+    }
+
+    static inline uint8_t ingest_commit_diag_and_record(
+        AcceptedCommitMetadataRecord& record,
+        const IngestMetadataSurface& m,
+        ReceiverState rx,
+        uint32_t fallback_words,
+        uint8_t len_mismatch_err,
+        bool require_span_check,
+        u32_t phase_id,
+        bool phase_valid
+    ) {
+        const uint8_t err = ingest_commit_diag_error(
+            m,
+            rx,
+            fallback_words,
+            len_mismatch_err,
+            require_span_check
+        );
+        if (err == (uint8_t)ERR_OK) {
+            record_accepted_commit_metadata(record, m, rx, phase_id, phase_valid);
+        }
+        return err;
+    }
+
     // Persistent top-level internal registers.
     // These registers are the single source of truth for Top-owned runtime state.
     struct TopRegs {
@@ -278,6 +350,7 @@ namespace aecct {
         u32_t infer_logits_base_word;
         u32_t infer_xpred_base_word;
         InferIngestContract infer_ingest_contract;
+        AcceptedCommitMetadataRecord accepted_commit_record;
         // Local mirror for INFER payload debug/probe only; not a shared-SRAM owner contract.
         u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
         bool p11ac_mainline_path_taken;
@@ -336,6 +409,7 @@ namespace aecct {
             infer_logits_base_word = (u32_t)FINAL_LOGITS_BASE_WORD;
             infer_xpred_base_word = (u32_t)FINAL_XPRED_BASE_WORD;
             clear_infer_ingest_contract(infer_ingest_contract);
+            clear_accepted_commit_metadata_record(accepted_commit_record);
             for (unsigned i = 0; i < INFER_IN_WORDS_EXPECTED; ++i) {
                 infer_input_shadow[i] = 0;
             }
@@ -427,6 +501,14 @@ namespace aecct {
     static inline unsigned top_peek_input_count() { return (unsigned)top_regs().input_count.to_uint(); }
     static inline u32_t top_peek_w_base_word() { return top_regs().w_base_word; }
     static inline bool top_peek_halt_active() { return top_regs().halt_active; }
+    static inline bool top_peek_accepted_commit_record_valid() { return top_regs().accepted_commit_record.valid; }
+    static inline u32_t top_peek_accepted_commit_owner_opcode() { return top_regs().accepted_commit_record.owner_opcode; }
+    static inline u32_t top_peek_accepted_commit_base_word() { return top_regs().accepted_commit_record.base_word; }
+    static inline u32_t top_peek_accepted_commit_len_words_expected() { return top_regs().accepted_commit_record.len_words_expected; }
+    static inline u32_t top_peek_accepted_commit_len_words_valid() { return top_regs().accepted_commit_record.len_words_valid; }
+    static inline u32_t top_peek_accepted_commit_rx_state() { return top_regs().accepted_commit_record.rx_state; }
+    static inline bool top_peek_accepted_commit_phase_valid() { return top_regs().accepted_commit_record.phase_valid; }
+    static inline u32_t top_peek_accepted_commit_phase_id() { return top_regs().accepted_commit_record.phase_id; }
 
     static inline IngestMetadataSurface cfg_metadata_surface(const TopRegs& regs) {
         return make_ingest_metadata_surface(
@@ -847,12 +929,15 @@ namespace aecct {
         unsigned idx = (unsigned)regs.param_count.to_uint();
         if (idx >= expected_words) {
             regs.state = ST_IDLE;
-            const uint8_t commit_diag = ingest_commit_diag_error(
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
                 meta,
                 RX_PARAM,
                 (uint32_t)PARAM_WORDS_EXPECTED,
                 (uint8_t)ERR_PARAM_LEN_MISMATCH,
-                true
+                true,
+                (u32_t)0u,
+                false
             );
             if (commit_diag == (uint8_t)ERR_OK) {
                 ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
@@ -884,12 +969,15 @@ namespace aecct {
             // LOAD_W transaction complete.
             regs.state = ST_IDLE;
             const IngestMetadataSurface done_meta = param_metadata_surface(regs);
-            const uint8_t commit_diag = ingest_commit_diag_error(
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
                 done_meta,
                 RX_PARAM,
                 (uint32_t)PARAM_WORDS_EXPECTED,
                 (uint8_t)ERR_PARAM_LEN_MISMATCH,
-                true
+                true,
+                (u32_t)0u,
+                false
             );
             if (commit_diag == (uint8_t)ERR_OK) {
                 ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
@@ -1652,11 +1740,14 @@ namespace aecct {
         unsigned idx = (unsigned)regs.input_count.to_uint();
         if (idx >= expected_words) {
             regs.state = ST_IDLE;
-            const uint8_t commit_diag = ingest_commit_diag_error(
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
                 meta,
                 RX_INFER,
                 (uint32_t)INFER_IN_WORDS_EXPECTED,
                 (uint8_t)ERR_BAD_STATE,
+                true,
+                regs.infer_ingest_contract.phase_id,
                 true
             );
             if (commit_diag != (uint8_t)ERR_OK) {
@@ -1681,11 +1772,14 @@ namespace aecct {
 
         if ((unsigned)regs.input_count.to_uint() == expected_words) {
             const IngestMetadataSurface done_meta = infer_metadata_surface(regs);
-            const uint8_t commit_diag = ingest_commit_diag_error(
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
                 done_meta,
                 RX_INFER,
                 (uint32_t)INFER_IN_WORDS_EXPECTED,
                 (uint8_t)ERR_BAD_STATE,
+                true,
+                regs.infer_ingest_contract.phase_id,
                 true
             );
             if (commit_diag != (uint8_t)ERR_OK) {
@@ -1873,6 +1967,13 @@ namespace aecct {
                     }
                     else {
                         cfg_apply_to_regs(regs);
+                        record_accepted_commit_metadata(
+                            regs.accepted_commit_record,
+                            cfg_meta,
+                            RX_CFG,
+                            (u32_t)0u,
+                            false
+                        );
                         regs.state = ST_IDLE;
                         ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_CFG_COMMIT));
                     }

@@ -6,8 +6,36 @@
 - Include the latest G4 ingest/base-shadow mincut verification in this review pass.
 - Include the bounded G4-E cross-command metadata harmonization mincut verification.
 - Include the bounded G4-F commit-time diagnostics harmonization verification.
+- Include the bounded G4-G accepted-commit metadata record harmonization verification.
 
 ## Suggested 10-Minute Review Order
+1. Open `src/Top.h` G4-G accepted-record diff (2 min)
+   - Confirm `AcceptedCommitMetadataRecord` exists.
+   - Confirm `record_accepted_commit_metadata(...)` and `ingest_commit_diag_and_record(...)` exist.
+   - Confirm CFG/PARAM/INFER commit-success paths update the accepted record.
+2. Open `build/p11g4g/accept_commit_record/run.log` (1 min)
+   - Confirm:
+     - `G4G_ACCEPT_RECORD_CFG_DETERMINISTIC PASS`
+     - `G4G_ACCEPT_RECORD_PARAM_DETERMINISTIC PASS`
+     - `G4G_REJECT_NO_STALE_STATE PASS`
+     - `G4G_ACCEPT_RECORD_INFER_PHASE_VALID PASS`
+     - `PASS: run_p11g4g_accept_commit_record`
+3. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: G4-G accepted-commit metadata record harmonization anchors OK`.
+4. Open `build/p11ah/g4g_accept_commit/run.log` and `build/p11aj/g4g_accept_commit/run.log` (2 min)
+   - Confirm mainline/provenance chain remains PASS after G4-G patch.
+5. Open `docs/handoff/TOP_MANAGED_SRAM_G4G_ACCEPT_COMMIT_MINCUT_20260330.md` (1 min)
+   - Confirm bounded scope and residual-risk boundary.
+6. Open `docs/handoff/TOP_MANAGED_SRAM_G4G_EVIDENCE_INDEX_20260330.md` (1 min)
+   - Confirm claim-to-evidence mapping and manifest path.
+7. Open `docs/handoff/TOP_MANAGED_SRAM_G4G_COMPLETION_20260330.md` (1 min)
+   - Confirm exact files/commands/evidence are aligned.
+8. Open `build/evidence/g4g_accept_commit_20260330/evidence_manifest.txt` (1 min)
+   - Confirm bundle contains all logs referenced by completion and evidence index.
+9. Re-check `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md` and `TOP_MANAGED_SRAM_MINCUTS_20260329.md` (1 min)
+   - Confirm G4-D/G4-E/G4-F/G4-G boundary wording is consistent and non-overclaim.
+
+## Previous 10-Minute Review Order (G4-F Reference)
 1. Open `src/Top.h` G4-F commit-time helper diff (2 min)
    - Confirm `ingest_meta_len_exact(...)` and `ingest_commit_diag_error(...)` exist.
    - Confirm CFG/PARAM/INFER commit-time paths call `ingest_commit_diag_error(...)`.
@@ -102,9 +130,11 @@
 - `scripts/local/run_p11g4_infer_ingest_preflight_negative.ps1`
 - `scripts/local/run_p11g4e_cross_command_metadata_negative.ps1`
 - `scripts/local/run_p11g4f_commit_diagnostics_negative.ps1`
+- `scripts/local/run_p11g4g_accept_commit_record.ps1`
 - `tb/tb_infer_ingest_preflight_negative_p11g4.cpp`
 - `tb/tb_g4e_cross_command_metadata_negative_p11g4e.cpp`
 - `tb/tb_g4f_commit_diagnostics_negative_p11g4f.cpp`
+- `tb/tb_g4g_accept_commit_record_p11g4g.cpp`
 - `docs/handoff/TOP_MANAGED_SRAM_ARCH_GAP_INVENTORY_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
@@ -114,6 +144,9 @@
 - `docs/handoff/TOP_MANAGED_SRAM_G4F_COMMIT_DIAGNOSTICS_MINCUT_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4F_EVIDENCE_INDEX_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4F_COMPLETION_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4G_ACCEPT_COMMIT_MINCUT_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4G_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4G_COMPLETION_20260330.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_EVIDENCE_INDEX_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_COMPLETION_20260329.md`
 - `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
@@ -122,12 +155,14 @@
 - `build/p11g4/infer_ingest_preflight_negative/run.log`
 - `build/p11g4e/cross_command_metadata_negative/run.log`
 - `build/p11g4f/commit_diagnostics_negative/run.log`
+- `build/p11g4g/accept_commit_record/run.log`
 - `build/p11ah/top_managed_sram_push/run.log`
 - `build/p11aj/top_managed_sram_push/run.log`
 - `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`
 - `build/evidence/g4_hardening_20260329/evidence_manifest.txt`
 - `build/evidence/g4e_metadata_mincut_20260329/evidence_manifest.txt`
 - `build/evidence/g4f_commit_diag_20260330/evidence_manifest.txt`
+- `build/evidence/g4g_accept_commit_20260330/evidence_manifest.txt`
 
 ## Copy-Ready GPT Review Prompt
 - `Please review src/Top.h and src/blocks/TransformerLayer.h for Top-managed SRAM ownership convergence. Focus on: (1) whether Top now builds and owns preproc/layernorm/final-head contracts in active infer path, (2) whether Transformer sublayer1 norm params are preloaded by Top with safe fallback, and (3) whether local evidence (p11ah/p11aj + boundary guard) supports acceptance without overclaim. Keep posture local-only and do not claim Catapult/SCVerify closure.`

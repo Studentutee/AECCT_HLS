@@ -224,3 +224,63 @@
 
 7. Next recommended step
 - Review whether a future bounded protocol revision should introduce infer-specific length mismatch code, then map it through the same helper path without broad rewrite.
+
+## Task C6: G4-G Accepted-Commit Metadata Record Harmonization
+1. Summary
+- Added a bounded Top-local accepted-commit metadata record to unify CFG/PARAM/INFER commit-success metadata bookkeeping.
+- Introduced shared helpers:
+  - `record_accepted_commit_metadata(...)`
+  - `ingest_commit_diag_and_record(...)`
+- Ensured reject path does not overwrite previously accepted record.
+
+2. Exact files changed
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g4g_accept_commit_record.ps1`
+- `tb/tb_g4g_accept_commit_record_p11g4g.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g4g_accept_commit_record.ps1 -BuildDir build/p11g4g/accept_commit_record`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g4f_commit_diagnostics_negative.ps1 -BuildDir build/p11g4f/commit_diagnostics_negative`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g4e_cross_command_metadata_negative.ps1 -BuildDir build/p11g4e/cross_command_metadata_negative`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g4_infer_ingest_preflight_negative.ps1 -BuildDir build/p11g4/infer_ingest_preflight_negative`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1 -BuildDir build/p11ah/g4g_accept_commit`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1 -BuildDir build/p11aj/g4g_accept_commit`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11g4g/accept_commit_record/run.log`:
+  - `G4G_ACCEPT_RECORD_CFG_DETERMINISTIC PASS`
+  - `G4G_ACCEPT_RECORD_PARAM_DETERMINISTIC PASS`
+  - `G4G_REJECT_NO_STALE_STATE PASS`
+  - `G4G_ACCEPT_RECORD_INFER_PHASE_VALID PASS`
+  - `PASS: run_p11g4g_accept_commit_record`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: G4-G accepted-commit metadata record harmonization anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+- `build/p11ah/g4g_accept_commit/run.log`:
+  - `FULL_LOOP_MAINLINE_PATH_TAKEN PASS`
+  - `FULL_LOOP_FALLBACK_NOT_TAKEN PASS`
+  - `PASS: run_p11ah_full_loop_local_e2e`
+- `build/p11aj/g4g_accept_commit/run.log`:
+  - `PROVENANCE_STAGE_AC PASS`
+  - `PROVENANCE_STAGE_AD PASS`
+  - `PROVENANCE_STAGE_AE PASS`
+  - `PROVENANCE_STAGE_AF PASS`
+  - `PASS: run_p11aj_top_managed_sram_provenance`
+
+5. Governance posture
+- local-only bounded harmonization.
+- not Catapult closure; not SCVerify closure.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- G4-G does not introduce new external diagnostics interfaces; committed-record export is still internal/local-only.
+- Command-specific post-commit behavior remains intentionally command-specific.
+
+7. Next recommended step
+- If needed, plan a bounded follow-up to expose accepted-commit record snapshots through a dedicated debug-only path without changing formal external contract.
