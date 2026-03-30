@@ -544,3 +544,58 @@
 
 7. Next recommended step
 - Run bounded W1 fallback policy tightening using the same strict-mode + reject/no-stale observability pattern.
+
+## Task C12: G5 FFN W1 Fallback Policy Tightening (Bounded)
+1. Summary
+- Added explicit strict fallback policy gate for FFN W1 stage (`FFN_POLICY_REQUIRE_W1_TOPFED`).
+- In strict mode, W1 requires ready top-fed descriptors for both x payload and W1 weight payload; otherwise deterministic reject and no output write.
+- Added explicit caller-provided x descriptor-valid override (`topfed_x_words_valid_override`) to prevent silent partial descriptor fallback.
+
+2. Exact files changed
+- `include/FfnDescBringup.h`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `tb/tb_g5_ffn_w1_fallback_policy_p11g5w1fp.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11g5/ffn_w1_fallback_policy/run.log`:
+  - `G5FFN_W1_FALLBACK_POLICY_TOPFED_PRIMARY PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_CONTROLLED_FALLBACK PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_REJECT_ON_MISSING_DESCRIPTOR PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_NO_STALE_STATE PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_NO_SPURIOUS_TOUCH PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_EXPECTED_COMPARE PASS`
+  - `PASS: run_p11g5_ffn_w1_fallback_policy`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: G5 FFN W1 fallback policy strict top-fed gating anchors OK`
+  - `guard: G5 FFN fallback policy strict W2 top-fed gating anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+
+5. Governance posture
+- local-only bounded tightening.
+- not Catapult closure; not SCVerify closure.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- W1 compatibility fallback remains in non-strict mode.
+- W1 bias and deeper full-fallback elimination are deferred.
+- Wave4 attention/phase migration remains deferred.
+
+7. Next recommended step
+- Decide whether to run a bounded W1 bias descriptor tightening pass or transition to Wave4 feasibility+blocker capture.

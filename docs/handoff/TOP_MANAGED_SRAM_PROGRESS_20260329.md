@@ -384,3 +384,42 @@
 - Full fallback removal remains deferred.
 - W1 fallback strict policy tightening remains deferred.
 - Wave4 attention/phase migration remains deferred.
+
+## Night-Batch Extension: G5 FFN W1 Fallback Policy Tightening (Bounded)
+- Added strict W1 top-fed descriptor policy gate for FFN W1 stage.
+- Active caller path now enables `FFN_POLICY_REQUIRE_W1_TOPFED` and dispatches explicit `topfed_x_words_valid_override`.
+- In strict mode, W1 rejects when x or W1 weight descriptor is not ready; no fallback consume and no output write on reject.
+
+### G5 FFN W1 fallback policy local-only evidence
+- `build/p11g5/ffn_w1_fallback_policy/run.log`: PASS
+  - `G5FFN_W1_FALLBACK_POLICY_TOPFED_PRIMARY PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_CONTROLLED_FALLBACK PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_REJECT_ON_MISSING_DESCRIPTOR PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_NO_STALE_STATE PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_NO_SPURIOUS_TOUCH PASS`
+  - `G5FFN_W1_FALLBACK_POLICY_EXPECTED_COMPARE PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G5 FFN W1 fallback policy strict top-fed gating anchors OK`
+- `build/p11g5/ffn_fallback_policy/run.log`: PASS
+- `build/p11g5/ffn_closure_campaign/run.log`: PASS
+- `build/p11g5/wave3_ffn_payload_migration/run.log`: PASS
+- `build/p11g5/wave35_ffn_w1_weight_migration/run.log`: PASS
+- `build/p11ah/full_loop/run.log`: PASS
+- `build/p11aj/p11aj/run.log`: PASS
+- `build/evidence/g5_ffn_w1_fallback_policy_20260330/evidence_manifest.txt`: present
+
+### G5 FFN W1 fallback policy artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_W1_FALLBACK_POLICY_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_W1_FALLBACK_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_W1_FALLBACK_COMPLETION_20260330.md`
+- `include/FfnDescBringup.h`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `tb/tb_g5_ffn_w1_fallback_policy_p11g5w1fp.cpp`
+
+### Deferred boundary after W1 fallback-policy pass
+- W1 fallback is tightened but not fully removed.
+- W1 bias fallback and deeper FFN full-closure tightening remain deferred.
+- Wave4 attention/phase migration remains deferred.

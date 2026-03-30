@@ -168,7 +168,17 @@ static inline void TransformerLayerTopManagedAttnBridge(
         layer_id,
         topfed_ffn_x_words,
         topfed_ffn_w1_words,
-        (u32_t)w1_weight_words
+        (u32_t)w1_weight_words,
+        0,
+        (u32_t)0u,
+        0,
+        (u32_t)0u,
+        0,
+        (u32_t)0u,
+        (u32_t)FFN_POLICY_REQUIRE_W1_TOPFED,
+        0,
+        0,
+        (u32_t)ffn_x_words
     );
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_RELU>(
         sram_window,
@@ -374,7 +384,17 @@ static inline void TransformerLayer(
         layer_id,
         topfed_ffn_x_words,
         topfed_ffn_w1_words,
-        (u32_t)w1_weight_words
+        (u32_t)w1_weight_words,
+        0,
+        (u32_t)0u,
+        0,
+        (u32_t)0u,
+        0,
+        (u32_t)0u,
+        (u32_t)FFN_POLICY_REQUIRE_W1_TOPFED,
+        0,
+        0,
+        (u32_t)ffn_x_words
     );
     FFNLayer0<FFN_STAGE_RELU>(
         sram,
