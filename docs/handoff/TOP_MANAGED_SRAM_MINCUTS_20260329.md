@@ -441,3 +441,56 @@
 
 7. Next recommended step
 - Choose one bounded next cut: W1 bias descriptor or W2 weight descriptor, then mirror this round's targeted-validation pattern.
+
+## Task C10: G5 FFN Closure Campaign (Subwave A/B/C/D)
+1. Summary
+- Completed bounded FFN closure campaign push with multi-subwave convergence in one run.
+- Subwave A: W2 input activation path now supports caller-fed/top-fed descriptor consume.
+- Subwave B: W2 weight tile path now supports caller-fed/top-fed descriptor consume.
+- Subwave C: W2 bias path now supports caller-fed/top-fed descriptor consume.
+- Subwave D: validated fallback boundary (top-fed path dominates when provided; fallback retained only for compatibility).
+
+2. Exact files changed
+- `include/FfnDescBringup.h`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `tb/tb_g5_ffn_closure_campaign_p11g5fc.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1 -BuildDir build/p11ah/g5_ffn_closure_campaign`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1 -BuildDir build/p11aj/g5_ffn_closure_campaign`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11g5/ffn_closure_campaign/run.log`:
+  - `G5FFN_SUBWAVE_A_W2_INPUT_TOPFED_PATH PASS`
+  - `G5FFN_SUBWAVE_B_W2_WEIGHT_TOPFED_PATH PASS`
+  - `G5FFN_SUBWAVE_C_W2_BIAS_TOPFED_PATH PASS`
+  - `G5FFN_SUBWAVE_D_FALLBACK_BOUNDARY PASS`
+  - `PASS: run_p11g5_ffn_closure_campaign`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: G5 FFN closure campaign W2 top-fed input/weight/bias anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+- `build/p11ah/g5_ffn_closure_campaign/run.log`: `PASS: run_p11ah_full_loop_local_e2e`
+- `build/p11aj/g5_ffn_closure_campaign/run.log`: `PASS: run_p11aj_top_managed_sram_provenance`
+
+5. Governance posture
+- local-only bounded campaign.
+- not Catapult closure; not SCVerify closure.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- FFN compatibility fallbacks still exist (not full removal).
+- Full FFN closure and Wave4 migration remain deferred.
+
+7. Next recommended step
+- Execute a bounded FFN fallback-tightening pass with explicit policy (when top-fed descriptors are present, enforce no-fallback mode in targeted configurations).

@@ -158,7 +158,8 @@ static inline void TransformerLayerTopManagedAttnBridge(
         topfed_ffn_w1_words[i] = sram_window[w1_weight_base + i];
     }
 
-    FFNLayer0TopManagedWindowBridge<FFN_STAGE_FULL>(
+    // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
+    FFNLayer0TopManagedWindowBridge<FFN_STAGE_W1>(
         sram_window,
         ffn_cfg,
         sc.attn_out_base_word,
@@ -168,6 +169,73 @@ static inline void TransformerLayerTopManagedAttnBridge(
         topfed_ffn_x_words,
         topfed_ffn_w1_words,
         (u32_t)w1_weight_words
+    );
+    FFNLayer0TopManagedWindowBridge<FFN_STAGE_RELU>(
+        sram_window,
+        ffn_cfg,
+        sc.attn_out_base_word,
+        sc.ffn,
+        pb.param_base_word,
+        layer_id
+    );
+
+    uint32_t ffn_d_ffn = (uint32_t)ffn_cfg.d_ffn.to_uint();
+    if (ffn_d_ffn == 0u) { ffn_d_ffn = (uint32_t)FFN_D_FFN; }
+    const uint32_t relu_base = (uint32_t)sc.ffn.relu_out_base_word.to_uint();
+    u32_t topfed_ffn_w2_input_words[FFN_W2_INPUT_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_INPUT_WORDS; ++i) {
+        topfed_ffn_w2_input_words[i] = 0;
+    }
+    uint32_t w2_input_words = ffn_token_count * ffn_d_ffn;
+    if (w2_input_words > (uint32_t)FFN_W2_INPUT_WORDS) {
+        w2_input_words = (uint32_t)FFN_W2_INPUT_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_input_words; ++i) {
+        topfed_ffn_w2_input_words[i] = sram_window[relu_base + i];
+    }
+    const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
+    const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
+    const uint32_t w2_weight_base = param_base + kParamMeta[w2_weight_id].offset_w;
+    const uint32_t w2_bias_base = param_base + kParamMeta[w2_bias_id].offset_w;
+    u32_t topfed_ffn_w2_words[FFN_W2_WEIGHT_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_WEIGHT_WORDS; ++i) {
+        topfed_ffn_w2_words[i] = 0;
+    }
+    uint32_t w2_weight_words = ffn_d_model * ffn_d_ffn;
+    if (w2_weight_words > (uint32_t)FFN_W2_WEIGHT_WORDS) {
+        w2_weight_words = (uint32_t)FFN_W2_WEIGHT_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_weight_words; ++i) {
+        topfed_ffn_w2_words[i] = sram_window[w2_weight_base + i];
+    }
+    u32_t topfed_ffn_w2_bias_words[FFN_W2_BIAS_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_BIAS_WORDS; ++i) {
+        topfed_ffn_w2_bias_words[i] = 0;
+    }
+    uint32_t w2_bias_words = ffn_d_model;
+    if (w2_bias_words > (uint32_t)FFN_W2_BIAS_WORDS) {
+        w2_bias_words = (uint32_t)FFN_W2_BIAS_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_bias_words; ++i) {
+        topfed_ffn_w2_bias_words[i] = sram_window[w2_bias_base + i];
+    }
+
+    FFNLayer0TopManagedWindowBridge<FFN_STAGE_W2>(
+        sram_window,
+        ffn_cfg,
+        sc.attn_out_base_word,
+        sc.ffn,
+        pb.param_base_word,
+        layer_id,
+        0,
+        0,
+        (u32_t)0u,
+        topfed_ffn_w2_input_words,
+        (u32_t)w2_input_words,
+        topfed_ffn_w2_words,
+        (u32_t)w2_weight_words,
+        topfed_ffn_w2_bias_words,
+        (u32_t)w2_bias_words
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();
@@ -295,7 +363,8 @@ static inline void TransformerLayer(
         topfed_ffn_w1_words[i] = sram[w1_weight_base + i];
     }
 
-    FFNLayer0<FFN_STAGE_FULL>(
+    // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
+    FFNLayer0<FFN_STAGE_W1>(
         sram,
         ffn_cfg,
         sc.attn_out_base_word,
@@ -305,6 +374,73 @@ static inline void TransformerLayer(
         topfed_ffn_x_words,
         topfed_ffn_w1_words,
         (u32_t)w1_weight_words
+    );
+    FFNLayer0<FFN_STAGE_RELU>(
+        sram,
+        ffn_cfg,
+        sc.attn_out_base_word,
+        sc.ffn,
+        pb.param_base_word,
+        layer_id
+    );
+
+    uint32_t ffn_d_ffn = (uint32_t)ffn_cfg.d_ffn.to_uint();
+    if (ffn_d_ffn == 0u) { ffn_d_ffn = (uint32_t)FFN_D_FFN; }
+    const uint32_t relu_base = (uint32_t)sc.ffn.relu_out_base_word.to_uint();
+    u32_t topfed_ffn_w2_input_words[FFN_W2_INPUT_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_INPUT_WORDS; ++i) {
+        topfed_ffn_w2_input_words[i] = 0;
+    }
+    uint32_t w2_input_words = ffn_token_count * ffn_d_ffn;
+    if (w2_input_words > (uint32_t)FFN_W2_INPUT_WORDS) {
+        w2_input_words = (uint32_t)FFN_W2_INPUT_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_input_words; ++i) {
+        topfed_ffn_w2_input_words[i] = sram[relu_base + i];
+    }
+    const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
+    const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
+    const uint32_t w2_weight_base = param_base + kParamMeta[w2_weight_id].offset_w;
+    const uint32_t w2_bias_base = param_base + kParamMeta[w2_bias_id].offset_w;
+    u32_t topfed_ffn_w2_words[FFN_W2_WEIGHT_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_WEIGHT_WORDS; ++i) {
+        topfed_ffn_w2_words[i] = 0;
+    }
+    uint32_t w2_weight_words = ffn_d_model * ffn_d_ffn;
+    if (w2_weight_words > (uint32_t)FFN_W2_WEIGHT_WORDS) {
+        w2_weight_words = (uint32_t)FFN_W2_WEIGHT_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_weight_words; ++i) {
+        topfed_ffn_w2_words[i] = sram[w2_weight_base + i];
+    }
+    u32_t topfed_ffn_w2_bias_words[FFN_W2_BIAS_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_BIAS_WORDS; ++i) {
+        topfed_ffn_w2_bias_words[i] = 0;
+    }
+    uint32_t w2_bias_words = ffn_d_model;
+    if (w2_bias_words > (uint32_t)FFN_W2_BIAS_WORDS) {
+        w2_bias_words = (uint32_t)FFN_W2_BIAS_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_bias_words; ++i) {
+        topfed_ffn_w2_bias_words[i] = sram[w2_bias_base + i];
+    }
+
+    FFNLayer0<FFN_STAGE_W2>(
+        sram,
+        ffn_cfg,
+        sc.attn_out_base_word,
+        sc.ffn,
+        pb.param_base_word,
+        layer_id,
+        0,
+        0,
+        (u32_t)0u,
+        topfed_ffn_w2_input_words,
+        (u32_t)w2_input_words,
+        topfed_ffn_w2_words,
+        (u32_t)w2_weight_words,
+        topfed_ffn_w2_bias_words,
+        (u32_t)w2_bias_words
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();

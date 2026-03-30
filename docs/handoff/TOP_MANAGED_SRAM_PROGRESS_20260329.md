@@ -310,3 +310,41 @@
 - This round migrates FFN W1 weight tile consume anchor only.
 - W2 weights, bias path, and broader FFN payload descriptorization remain deferred.
 - Wave4 attention/phase migration remains deferred.
+
+## Night-Batch Extension: G5 FFN Closure Campaign (Subwave A/B/C/D)
+- Completed bounded FFN closure push focused on W2 core direct-SRAM paths.
+- Implemented caller-fed/top-fed descriptors for:
+  - W2 input activation payload,
+  - W2 weight tile payload,
+  - W2 bias payload.
+- Preserved compatibility fallback as non-closure boundary.
+
+### G5 FFN closure local-only evidence
+- `build/p11g5/ffn_closure_campaign/run.log`: PASS
+  - `G5FFN_SUBWAVE_A_W2_INPUT_TOPFED_PATH PASS`
+  - `G5FFN_SUBWAVE_B_W2_WEIGHT_TOPFED_PATH PASS`
+  - `G5FFN_SUBWAVE_C_W2_BIAS_TOPFED_PATH PASS`
+  - `G5FFN_SUBWAVE_D_FALLBACK_BOUNDARY PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G5 FFN closure campaign W2 top-fed input/weight/bias anchors OK`
+- `build/p11g5/wave3_ffn_payload_migration/run.log`: PASS
+- `build/p11g5/wave35_ffn_w1_weight_migration/run.log`: PASS
+- `build/p11ah/g5_ffn_closure_campaign/run.log`: PASS
+- `build/p11aj/g5_ffn_closure_campaign/run.log`: PASS
+- `build/evidence/g5_ffn_closure_campaign_20260330/evidence_manifest.txt`: present
+
+### G5 FFN closure artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_CAMPAIGN_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_COMPLETION_20260330.md`
+- `include/FfnDescBringup.h`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `tb/tb_g5_ffn_closure_campaign_p11g5fc.cpp`
+
+### Deferred boundary after G5 FFN closure campaign
+- This round is bounded to FFN W2 input/weight/bias caller-fed descriptorization.
+- Full fallback elimination and full FFN closure remain deferred.
+- Wave4 attention/phase migration remains deferred.

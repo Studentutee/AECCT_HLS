@@ -20,6 +20,11 @@ static inline quant_acc_t ffn_bias_from_sram(const u32_t* sram, uint32_t param_b
     return f.template convert_to_ac_fixed<32, 12, true, AC_RND, AC_SAT>(false);
 }
 
+static inline quant_acc_t ffn_bias_from_word(u32_t bits) {
+    fp32_t f = quant_bits_to_fp32(bits);
+    return f.template convert_to_ac_fixed<32, 12, true, AC_RND, AC_SAT>(false);
+}
+
 static inline quant_w_t ffn_weight_from_sram(const u32_t* sram, uint32_t param_base_word, uint32_t param_id, uint32_t elem_idx) {
     return quant_w_t(quant_act_from_bits(sram[ffn_param_addr_word(param_base_word, param_id, elem_idx)]));
 }
@@ -101,7 +106,13 @@ static inline void FFNLayer0CoreWindow(
     u32_t layer_id = (u32_t)0,
     const u32_t* topfed_x_words = 0,
     const u32_t* topfed_w1_weight_words = 0,
-    u32_t topfed_w1_weight_words_valid = 0
+    u32_t topfed_w1_weight_words_valid = 0,
+    const u32_t* topfed_w2_input_words = 0,
+    u32_t topfed_w2_input_words_valid = 0,
+    const u32_t* topfed_w2_weight_words = 0,
+    u32_t topfed_w2_weight_words_valid = 0,
+    const u32_t* topfed_w2_bias_words = 0,
+    u32_t topfed_w2_bias_words_valid = 0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -130,6 +141,27 @@ static inline void FFNLayer0CoreWindow(
     }
     if (topfed_w1_valid > (uint32_t)FFN_W1_WEIGHT_WORDS) {
         topfed_w1_valid = (uint32_t)FFN_W1_WEIGHT_WORDS;
+    }
+    uint32_t topfed_w2_input_valid = (uint32_t)topfed_w2_input_words_valid.to_uint();
+    if (topfed_w2_input_valid == 0u) {
+        topfed_w2_input_valid = token_count * d_ffn;
+    }
+    if (topfed_w2_input_valid > (uint32_t)FFN_W2_INPUT_WORDS) {
+        topfed_w2_input_valid = (uint32_t)FFN_W2_INPUT_WORDS;
+    }
+    uint32_t topfed_w2_weight_valid = (uint32_t)topfed_w2_weight_words_valid.to_uint();
+    if (topfed_w2_weight_valid == 0u) {
+        topfed_w2_weight_valid = d_model * d_ffn;
+    }
+    if (topfed_w2_weight_valid > (uint32_t)FFN_W2_WEIGHT_WORDS) {
+        topfed_w2_weight_valid = (uint32_t)FFN_W2_WEIGHT_WORDS;
+    }
+    uint32_t topfed_w2_bias_valid = (uint32_t)topfed_w2_bias_words_valid.to_uint();
+    if (topfed_w2_bias_valid == 0u) {
+        topfed_w2_bias_valid = d_model;
+    }
+    if (topfed_w2_bias_valid > (uint32_t)FFN_W2_BIAS_WORDS) {
+        topfed_w2_bias_valid = (uint32_t)FFN_W2_BIAS_WORDS;
     }
 
     const uint32_t tile_words = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
@@ -230,6 +262,10 @@ static inline void FFNLayer0CoreWindow(
             const uint32_t y_row = w2_base + t * d_model;
             FFN_TOP_MANAGED_W2_OUT_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
                 quant_acc_t acc = ffn_bias_from_sram(sram, param_base, w2_bias_id, i);
+                // Caller-fed W2 bias payload path: use preloaded bias words when provided.
+                if (topfed_w2_bias_words != 0 && i < topfed_w2_bias_valid) {
+                    acc = ffn_bias_from_word(topfed_w2_bias_words[i]);
+                }
                 const uint32_t w_row = i * d_ffn;
                 FFN_TOP_MANAGED_W2_TILE_LOOP: for (uint32_t dt = 0u; dt < d_ffn_tile_count; ++dt) {
                     const uint32_t tile_offset = dt * tile_words;
@@ -252,8 +288,20 @@ static inline void FFNLayer0CoreWindow(
                     u32_t a_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
                     u32_t w_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
                     FFN_TOP_MANAGED_W2_TILE_LOAD_LOOP: for (uint32_t k = 0u; k < valid; ++k) {
-                        a_tile[k] = sram[a_row + tile_offset + k];
-                        w_tile[k] = sram[ffn_param_addr_word(param_base, w2_weight_id, w_row + tile_offset + k)];
+                        const uint32_t a_idx = t * d_ffn + tile_offset + k;
+                        const uint32_t w2_idx = w_row + tile_offset + k;
+                        // Caller-fed W2 input payload path: consume preloaded ReLU output tiles.
+                        if (topfed_w2_input_words != 0 && a_idx < topfed_w2_input_valid) {
+                            a_tile[k] = topfed_w2_input_words[a_idx];
+                        } else {
+                            a_tile[k] = sram[a_row + tile_offset + k];
+                        }
+                        // Caller-fed W2 weight payload path: consume preloaded W2 weights.
+                        if (topfed_w2_weight_words != 0 && w2_idx < topfed_w2_weight_valid) {
+                            w_tile[k] = topfed_w2_weight_words[w2_idx];
+                        } else {
+                            w_tile[k] = sram[ffn_param_addr_word(param_base, w2_weight_id, w2_idx)];
+                        }
                     }
                     acc = ffn_block_mac_tile(meta, a_tile, w_tile, acc);
                 }
@@ -345,7 +393,13 @@ static inline void FFNLayer0(
     u32_t layer_id = (u32_t)0,
     const u32_t* topfed_x_words = 0,
     const u32_t* topfed_w1_weight_words = 0,
-    u32_t topfed_w1_weight_words_valid = 0
+    u32_t topfed_w1_weight_words_valid = 0,
+    const u32_t* topfed_w2_input_words = 0,
+    u32_t topfed_w2_input_words_valid = 0,
+    const u32_t* topfed_w2_weight_words = 0,
+    u32_t topfed_w2_weight_words_valid = 0,
+    const u32_t* topfed_w2_bias_words = 0,
+    u32_t topfed_w2_bias_words_valid = 0
 ) {
     // Mainline migration note:
     // Default FFN entry now runs through the Top-managed tile/window core.
@@ -359,7 +413,13 @@ static inline void FFNLayer0(
         layer_id,
         topfed_x_words,
         topfed_w1_weight_words,
-        topfed_w1_weight_words_valid
+        topfed_w1_weight_words_valid,
+        topfed_w2_input_words,
+        topfed_w2_input_words_valid,
+        topfed_w2_weight_words,
+        topfed_w2_weight_words_valid,
+        topfed_w2_bias_words,
+        topfed_w2_bias_words_valid
     );
 }
 
@@ -375,7 +435,13 @@ static inline void FFNLayer0TopManagedWindowBridge(
     u32_t layer_id = (u32_t)0,
     const u32_t* topfed_x_words = 0,
     const u32_t* topfed_w1_weight_words = 0,
-    u32_t topfed_w1_weight_words_valid = 0
+    u32_t topfed_w1_weight_words_valid = 0,
+    const u32_t* topfed_w2_input_words = 0,
+    u32_t topfed_w2_input_words_valid = 0,
+    const u32_t* topfed_w2_weight_words = 0,
+    u32_t topfed_w2_weight_words_valid = 0,
+    const u32_t* topfed_w2_bias_words = 0,
+    u32_t topfed_w2_bias_words_valid = 0
 ) {
     FFNLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
@@ -386,7 +452,13 @@ static inline void FFNLayer0TopManagedWindowBridge(
         layer_id,
         topfed_x_words,
         topfed_w1_weight_words,
-        topfed_w1_weight_words_valid
+        topfed_w1_weight_words_valid,
+        topfed_w2_input_words,
+        topfed_w2_input_words_valid,
+        topfed_w2_weight_words,
+        topfed_w2_weight_words_valid,
+        topfed_w2_bias_words,
+        topfed_w2_bias_words_valid
     );
 }
 

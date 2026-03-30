@@ -221,3 +221,36 @@
 
 ## Copy-Ready GPT Review Prompt
 - `Please review src/Top.h and src/blocks/TransformerLayer.h for Top-managed SRAM ownership convergence. Focus on: (1) whether Top now builds and owns preproc/layernorm/final-head contracts in active infer path, (2) whether Transformer sublayer1 norm params are preloaded by Top with safe fallback, and (3) whether local evidence (p11ah/p11aj + boundary guard) supports acceptance without overclaim. Keep posture local-only and do not claim Catapult/SCVerify closure.`
+
+## Suggested 10-Minute Review Order (G5 FFN Closure Campaign Latest)
+1. Open `src/blocks/FFNLayer0.h` and `src/blocks/TransformerLayer.h` (2 min)
+   - Confirm W2 input/weight/bias top-fed consume anchors and stage-split FFN dispatch.
+2. Open `build/p11g5/ffn_closure_campaign/run.log` (1 min)
+   - Confirm:
+     - `G5FFN_SUBWAVE_A_W2_INPUT_TOPFED_PATH PASS`
+     - `G5FFN_SUBWAVE_B_W2_WEIGHT_TOPFED_PATH PASS`
+     - `G5FFN_SUBWAVE_C_W2_BIAS_TOPFED_PATH PASS`
+     - `G5FFN_SUBWAVE_D_FALLBACK_BOUNDARY PASS`
+3. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: G5 FFN closure campaign W2 top-fed input/weight/bias anchors OK`.
+4. Open `build/p11g5/wave3_ffn_payload_migration/run.log` and `build/p11g5/wave35_ffn_w1_weight_migration/run.log` (1 min)
+   - Confirm wave3/wave3.5 regression remains PASS.
+5. Open `build/p11ah/g5_ffn_closure_campaign/run.log` and `build/p11aj/g5_ffn_closure_campaign/run.log` (2 min)
+   - Confirm mainline/provenance chain remains PASS.
+6. Open `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_CAMPAIGN_20260330.md` (1 min)
+   - Confirm bounded scope and deferred boundaries.
+7. Open `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_EVIDENCE_INDEX_20260330.md` (1 min)
+   - Confirm claim-to-evidence mapping.
+8. Open `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_COMPLETION_20260330.md` (1 min)
+   - Confirm exact files/commands/evidence alignment.
+9. Open `build/evidence/g5_ffn_closure_campaign_20260330/evidence_manifest.txt` (1 min)
+   - Confirm bundle completeness and local-only posture.
+
+## Latest artifact additions (G5 FFN closure campaign)
+- `scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `tb/tb_g5_ffn_closure_campaign_p11g5fc.cpp`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_CAMPAIGN_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_CLOSURE_COMPLETION_20260330.md`
+- `build/p11g5/ffn_closure_campaign/run.log`
+- `build/evidence/g5_ffn_closure_campaign_20260330/evidence_manifest.txt`
