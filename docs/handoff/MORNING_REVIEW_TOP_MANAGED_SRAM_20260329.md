@@ -326,3 +326,48 @@
 - `docs/handoff/TOP_MANAGED_SRAM_G5_FFN_W1_FALLBACK_COMPLETION_20260330.md`
 - `build/p11g5/ffn_w1_fallback_policy/run.log`
 - `build/evidence/g5_ffn_w1_fallback_policy_20260330/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (G6 Multi-Track Latest)
+1. Open `src/blocks/FFNLayer0.h` (2 min)
+   - Confirm W1 bias top-fed consume anchor and fallback touch accounting.
+   - Confirm reject-stage observability anchors:
+     - `FFN_REJECT_STAGE_NONE`
+     - `FFN_REJECT_STAGE_W1`
+     - `FFN_REJECT_STAGE_W2`
+2. Open `src/blocks/TransformerLayer.h` (1 min)
+   - Confirm W1 bias preload loops and W1 stage dispatch now pass top-fed W1 bias descriptor.
+3. Open `build/p11g6/ffn_w1_bias_descriptor/run.log` (1 min)
+   - Confirm:
+     - `G6FFN_SUBWAVE_A_W1_BIAS_TOPFED_PATH PASS`
+     - `G6FFN_SUBWAVE_A_W1_BIAS_NO_SPURIOUS_TOUCH PASS`
+     - `G6FFN_SUBWAVE_A_W1_BIAS_EXPECTED_COMPARE PASS`
+4. Open `build/p11g6/ffn_fallback_observability/run.log` (1 min)
+   - Confirm:
+     - `G6FFN_SUBWAVE_B_REJECT_STAGE_W1 PASS`
+     - `G6FFN_SUBWAVE_B_REJECT_STAGE_W2 PASS`
+     - `G6FFN_SUBWAVE_B_NO_STALE_ON_REJECT PASS`
+     - `G6FFN_SUBWAVE_B_NONSTRICT_FALLBACK_OBS PASS`
+5. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: G6 FFN W1 top-fed bias descriptor + reject-stage observability anchors OK`.
+6. Open regression logs (2 min)
+   - `build/p11g5/ffn_w1_fallback_policy/run.log`
+   - `build/p11g5/ffn_fallback_policy/run.log`
+   - `build/p11g5/ffn_closure_campaign/run.log`
+   - `build/p11g5/wave3_ffn_payload_migration/run.log`
+   - `build/p11g5/wave35_ffn_w1_weight_migration/run.log`
+7. Open `build/p11ah/full_loop/run.log` and `build/p11aj/p11aj/run.log` (1 min)
+8. Open `docs/handoff/TOP_MANAGED_SRAM_G6_FFN_NEAR_CLOSURE_20260330.md` and `docs/handoff/TOP_MANAGED_SRAM_G6_WAVE4_FEASIBILITY_20260330.md` (1 min)
+9. Open `build/evidence/g6_multi_track_20260330/evidence_manifest.txt` (1 min)
+
+## Latest artifact additions (G6 multi-track)
+- `scripts/local/run_p11g6_ffn_w1_bias_descriptor.ps1`
+- `scripts/local/run_p11g6_ffn_fallback_observability.ps1`
+- `tb/tb_g6_ffn_w1_bias_descriptor_p11g6a.cpp`
+- `tb/tb_g6_ffn_fallback_observability_p11g6b.cpp`
+- `docs/handoff/TOP_MANAGED_SRAM_G6_FFN_NEAR_CLOSURE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G6_FFN_NEAR_CLOSURE_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G6_WAVE4_FEASIBILITY_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G6_COMPLETION_20260330.md`
+- `build/p11g6/ffn_w1_bias_descriptor/run.log`
+- `build/p11g6/ffn_fallback_observability/run.log`
+- `build/evidence/g6_multi_track_20260330/evidence_manifest.txt`

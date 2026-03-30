@@ -140,8 +140,10 @@ static inline void TransformerLayerTopManagedAttnBridge(
         topfed_ffn_x_words[i] = sram_window[ffn_x_base + i];
     }
     const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
+    const uint32_t w1_bias_id = use_layer1 ? 12u : 4u;
     const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
     const uint32_t param_base = (uint32_t)pb.param_base_word.to_uint();
+    const uint32_t w1_bias_base = param_base + kParamMeta[w1_bias_id].offset_w;
     const uint32_t w1_weight_base = param_base + kParamMeta[w1_weight_id].offset_w;
     u32_t topfed_ffn_w1_words[FFN_W1_WEIGHT_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W1_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_WEIGHT_WORDS; ++i) {
@@ -156,6 +158,20 @@ static inline void TransformerLayerTopManagedAttnBridge(
     }
     TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
         topfed_ffn_w1_words[i] = sram_window[w1_weight_base + i];
+    }
+    u32_t topfed_ffn_w1_bias_words[FFN_W1_BIAS_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
+        topfed_ffn_w1_bias_words[i] = 0;
+    }
+    uint32_t w1_bias_words = (uint32_t)ffn_cfg.d_ffn.to_uint();
+    if (w1_bias_words == 0u) {
+        w1_bias_words = (uint32_t)FFN_W1_BIAS_WORDS;
+    }
+    if (w1_bias_words > (uint32_t)FFN_W1_BIAS_WORDS) {
+        w1_bias_words = (uint32_t)FFN_W1_BIAS_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
+        topfed_ffn_w1_bias_words[i] = sram_window[w1_bias_base + i];
     }
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
@@ -178,7 +194,9 @@ static inline void TransformerLayerTopManagedAttnBridge(
         (u32_t)FFN_POLICY_REQUIRE_W1_TOPFED,
         0,
         0,
-        (u32_t)ffn_x_words
+        (u32_t)ffn_x_words,
+        topfed_ffn_w1_bias_words,
+        (u32_t)w1_bias_words
     );
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_RELU>(
         sram_window,
@@ -356,8 +374,10 @@ static inline void TransformerLayer(
         topfed_ffn_x_words[i] = sram[ffn_x_base + i];
     }
     const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
+    const uint32_t w1_bias_id = use_layer1 ? 12u : 4u;
     const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
     const uint32_t param_base = (uint32_t)pb.param_base_word.to_uint();
+    const uint32_t w1_bias_base = param_base + kParamMeta[w1_bias_id].offset_w;
     const uint32_t w1_weight_base = param_base + kParamMeta[w1_weight_id].offset_w;
     u32_t topfed_ffn_w1_words[FFN_W1_WEIGHT_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W1_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_WEIGHT_WORDS; ++i) {
@@ -372,6 +392,20 @@ static inline void TransformerLayer(
     }
     TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
         topfed_ffn_w1_words[i] = sram[w1_weight_base + i];
+    }
+    u32_t topfed_ffn_w1_bias_words[FFN_W1_BIAS_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
+        topfed_ffn_w1_bias_words[i] = 0;
+    }
+    uint32_t w1_bias_words = (uint32_t)ffn_cfg.d_ffn.to_uint();
+    if (w1_bias_words == 0u) {
+        w1_bias_words = (uint32_t)FFN_W1_BIAS_WORDS;
+    }
+    if (w1_bias_words > (uint32_t)FFN_W1_BIAS_WORDS) {
+        w1_bias_words = (uint32_t)FFN_W1_BIAS_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
+        topfed_ffn_w1_bias_words[i] = sram[w1_bias_base + i];
     }
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
@@ -394,7 +428,9 @@ static inline void TransformerLayer(
         (u32_t)FFN_POLICY_REQUIRE_W1_TOPFED,
         0,
         0,
-        (u32_t)ffn_x_words
+        (u32_t)ffn_x_words,
+        topfed_ffn_w1_bias_words,
+        (u32_t)w1_bias_words
     );
     FFNLayer0<FFN_STAGE_RELU>(
         sram,

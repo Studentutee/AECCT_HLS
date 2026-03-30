@@ -423,3 +423,52 @@
 - W1 fallback is tightened but not fully removed.
 - W1 bias fallback and deeper FFN full-closure tightening remain deferred.
 - Wave4 attention/phase migration remains deferred.
+
+## Night-Batch Extension: G6 Single-Run Multi-Track Campaign
+- Track A (FFN near-closure): completed two bounded subwaves in one run.
+  - Subwave A: W1 bias caller-fed/top-fed descriptor consume anchor.
+  - Subwave B: W1/W2 strict reject-stage observability harmonization.
+- Track B (Wave4): completed feasibility inventory/ranking/blocker capture.
+  - No Wave4 micro-cut executed this round due coupling/risk budget.
+- Track C: completion/evidence/docs consolidation delivered.
+
+### G6 local-only evidence
+- `build/p11g6/ffn_w1_bias_descriptor/run.log`: PASS
+  - `G6FFN_SUBWAVE_A_W1_BIAS_TOPFED_PATH PASS`
+  - `G6FFN_SUBWAVE_A_W1_BIAS_NO_SPURIOUS_TOUCH PASS`
+  - `G6FFN_SUBWAVE_A_W1_BIAS_EXPECTED_COMPARE PASS`
+- `build/p11g6/ffn_fallback_observability/run.log`: PASS
+  - `G6FFN_SUBWAVE_B_REJECT_STAGE_W1 PASS`
+  - `G6FFN_SUBWAVE_B_REJECT_STAGE_W2 PASS`
+  - `G6FFN_SUBWAVE_B_NO_STALE_ON_REJECT PASS`
+  - `G6FFN_SUBWAVE_B_NONSTRICT_FALLBACK_OBS PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G6 FFN W1 top-fed bias descriptor + reject-stage observability anchors OK`
+- Required regressions retained PASS:
+  - `build/p11g5/ffn_w1_fallback_policy/run.log`
+  - `build/p11g5/ffn_fallback_policy/run.log`
+  - `build/p11g5/ffn_closure_campaign/run.log`
+  - `build/p11g5/wave3_ffn_payload_migration/run.log`
+  - `build/p11g5/wave35_ffn_w1_weight_migration/run.log`
+  - `build/p11ah/full_loop/run.log`
+  - `build/p11aj/p11aj/run.log`
+- Bundle: `build/evidence/g6_multi_track_20260330/evidence_manifest.txt`
+
+### G6 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G6_FFN_NEAR_CLOSURE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G6_FFN_NEAR_CLOSURE_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G6_WAVE4_FEASIBILITY_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G6_COMPLETION_20260330.md`
+- `include/FfnDescBringup.h`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g6_ffn_w1_bias_descriptor.ps1`
+- `scripts/local/run_p11g6_ffn_fallback_observability.ps1`
+- `tb/tb_g6_ffn_w1_bias_descriptor_p11g6a.cpp`
+- `tb/tb_g6_ffn_fallback_observability_p11g6b.cpp`
+
+### Deferred boundary after G6
+- FFN strict/no-fallback full closure is still deferred.
+- FFN writeback boundary streamization remains deferred.
+- Wave4 implementation remains feasibility-only in this round.

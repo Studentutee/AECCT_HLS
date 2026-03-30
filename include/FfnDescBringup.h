@@ -16,6 +16,7 @@ namespace aecct {
 
     static const unsigned FFN_X_WORDS = (unsigned)(FFN_TOKEN_COUNT * FFN_D_MODEL);
     static const unsigned FFN_W2_INPUT_WORDS = (unsigned)(FFN_TOKEN_COUNT * FFN_D_FFN);
+    static const unsigned FFN_W1_BIAS_WORDS = (unsigned)FFN_D_FFN;
     static const unsigned FFN_W1_WEIGHT_WORDS = (unsigned)(FFN_D_FFN * FFN_D_MODEL);
     static const unsigned FFN_W2_WEIGHT_WORDS = (unsigned)(FFN_D_MODEL * FFN_D_FFN);
     static const unsigned FFN_W2_BIAS_WORDS = (unsigned)FFN_D_MODEL;
@@ -33,6 +34,12 @@ namespace aecct {
         FFN_POLICY_NONE = 0u,
         FFN_POLICY_REQUIRE_W2_TOPFED = 1u,
         FFN_POLICY_REQUIRE_W1_TOPFED = 2u
+    };
+
+    enum FfnFallbackRejectStage : unsigned {
+        FFN_REJECT_STAGE_NONE = 0u,
+        FFN_REJECT_STAGE_W1 = 1u,
+        FFN_REJECT_STAGE_W2 = 2u
     };
 
     struct FfnCfg {

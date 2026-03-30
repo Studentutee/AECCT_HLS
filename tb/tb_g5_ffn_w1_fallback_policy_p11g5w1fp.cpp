@@ -84,11 +84,15 @@ CCS_MAIN(int argc, char** argv) {
 
     static aecct::u32_t topfed_x_words[aecct::FFN_X_WORDS];
     static aecct::u32_t topfed_w1_words[aecct::FFN_W1_WEIGHT_WORDS];
+    static aecct::u32_t topfed_w1_bias[aecct::FFN_W1_BIAS_WORDS];
     for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_X_WORDS; ++i) {
         topfed_x_words[i] = 0;
     }
     for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_WEIGHT_WORDS; ++i) {
         topfed_w1_words[i] = 0;
+    }
+    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_BIAS_WORDS; ++i) {
+        topfed_w1_bias[i] = 0;
     }
 
     // top-fed x token rows:
@@ -112,6 +116,8 @@ CCS_MAIN(int argc, char** argv) {
     topfed_w1_words[5] = aecct::bits_from_fp32(aecct::fp32_t(2.0f));
     topfed_w1_words[6] = aecct::bits_from_fp32(aecct::fp32_t(2.0f));
     topfed_w1_words[7] = aecct::bits_from_fp32(aecct::fp32_t(2.0f));
+    topfed_w1_bias[0] = aecct::bits_from_fp32(aecct::fp32_t(0.0f));
+    topfed_w1_bias[1] = aecct::bits_from_fp32(aecct::fp32_t(0.0f));
 
     const uint32_t w1_bias_id = 4u;
     const uint32_t w1_weight_id = 36u;
@@ -169,7 +175,9 @@ CCS_MAIN(int argc, char** argv) {
         (aecct::u32_t)aecct::FFN_POLICY_REQUIRE_W1_TOPFED,
         &reject_flag,
         &fallback_touch_counter,
-        (aecct::u32_t)x_words
+        (aecct::u32_t)x_words,
+        topfed_w1_bias,
+        (aecct::u32_t)d_ffn
     );
     if (!expect_u32((uint32_t)reject_flag.to_uint(), 0u, "caseA reject flag") ||
         !expect_u32((uint32_t)fallback_touch_counter.to_uint(), 0u, "caseA fallback touch counter")) {
@@ -250,7 +258,9 @@ CCS_MAIN(int argc, char** argv) {
         (aecct::u32_t)aecct::FFN_POLICY_REQUIRE_W1_TOPFED,
         &reject_flag,
         &fallback_touch_counter,
-        (aecct::u32_t)x_words
+        (aecct::u32_t)x_words,
+        topfed_w1_bias,
+        (aecct::u32_t)d_ffn
     );
     if (!expect_u32((uint32_t)reject_flag.to_uint(), 1u, "caseC reject flag") ||
         !expect_u32((uint32_t)fallback_touch_counter.to_uint(), 0u, "caseC no fallback touch after reject")) {
