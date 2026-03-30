@@ -81,7 +81,8 @@ static inline void PreprocEmbedSPECoreWindow(
     const PreprocCfg& cfg,
     u32_t in_base_word,
     u32_t x_out_base_word,
-    const PreprocBlockContract& contract
+    const PreprocBlockContract& contract,
+    const u32_t* topfed_in_words = 0
 ) {
     uint32_t infer_in_words = (uint32_t)cfg.infer_in_words.to_uint();
     uint32_t x_out_words = (uint32_t)cfg.x_out_words.to_uint();
@@ -149,7 +150,9 @@ static inline void PreprocEmbedSPECoreWindow(
                     continue;
                 }
                 if (linear_idx < infer_in_words) {
-                    sram[x_base + linear_idx] = sram[in_base + linear_idx];
+                    const u32_t in_bits =
+                        (topfed_in_words != 0) ? topfed_in_words[linear_idx] : sram[in_base + linear_idx];
+                    sram[x_base + linear_idx] = in_bits;
                 } else {
                     sram[x_base + linear_idx] = (u32_t)0u;
                 }

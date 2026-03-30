@@ -214,3 +214,37 @@
 ### Deferred boundary after G4-G mincut
 - G4-G is bounded to Top-local accepted-commit record harmonization only.
 - External protocol-level committed-record export remains deferred.
+
+## Night-Batch Extension: G5 Remaining Direct-SRAM Payload Migration (Wave Campaign)
+- Campaign goal: push remaining payload ownership/dispatch closer to Top-managed model without broad rewrite.
+- Completed bounded waves in this batch:
+  - Wave 1: `LayerNormBlock` + `FinalHead` top-fed payload input path.
+  - Wave 2: `PreprocEmbedSPE` top-fed infer-input payload path.
+- Guard extended to enforce new G5 anchors in Top/block call paths.
+
+### G5 local-only evidence (this batch)
+- `build/p11g5/wave1_payload_migration/run.log`: PASS
+- `build/p11g5/wave2_preproc_payload_migration/run.log`: PASS
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G5 wave1/wave2 top-fed payload migration anchors OK`
+- `build/p11ah/g5_payload_campaign/run.log`: PASS
+- `build/p11aj/g5_payload_campaign/run.log`: PASS
+- `build/evidence/g5_payload_campaign_20260330/evidence_manifest.txt`: present
+
+### G5 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G5_DIRECT_PAYLOAD_INVENTORY_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE_COMPLETION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_EVIDENCE_INDEX_20260330.md`
+- `src/Top.h`
+- `src/blocks/LayerNormBlock.h`
+- `src/blocks/FinalHead.h`
+- `src/blocks/PreprocEmbedSPE.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_wave1_payload_migration.ps1`
+- `scripts/local/run_p11g5_wave2_preproc_payload_migration.ps1`
+- `tb/tb_g5_wave1_payload_migration_p11g5w1.cpp`
+- `tb/tb_g5_wave2_preproc_payload_migration_p11g5w2.cpp`
+
+### Deferred boundary after G5 wave round
+- Wave 3 (`FFNLayer0`) and Wave 4 (`AttnLayer0`/`TransformerLayer`/phase blocks) remain open due coupling and change-budget limits.
+- This round does not claim full direct-SRAM payload elimination across all blocks.

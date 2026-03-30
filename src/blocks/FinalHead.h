@@ -107,7 +107,8 @@ static inline bool FinalHeadCorePassABTopManaged(
     const HeadParamBase& hp,
     const FinalHeadContract& contract,
     data_ch_t* data_out,
-    u32_t outmode_word
+    u32_t outmode_word,
+    const u32_t* topfed_final_scalar_words = 0
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     if (d_model == 0u) { d_model = (uint32_t)D_MODEL; }
@@ -147,9 +148,15 @@ static inline bool FinalHeadCorePassABTopManaged(
 
     // Pass A: produce token-wise scalar and write FINAL_SCALAR_BUF.
     FINAL_HEAD_PASSA_TOKEN_LOOP: for (uint32_t t = token_begin; t < token_end; ++t) {
-        const uint32_t x_word = x_end_base + t * d_model;
-        const fp32_t st = fp32_from_bits(sram[x_word]);
-        sram[final_scalar_base + t] = bits_from_fp32(st);
+        u32_t st_bits = 0;
+        if (topfed_final_scalar_words != 0) {
+            // Top-fed scalar payload path: Top provides token scalars, FinalHead consumes.
+            st_bits = topfed_final_scalar_words[t];
+        } else {
+            const uint32_t x_word = x_end_base + t * d_model;
+            st_bits = sram[x_word];
+        }
+        sram[final_scalar_base + t] = st_bits;
     }
 
     const uint32_t outmode = (uint32_t)outmode_word.to_uint();
@@ -199,7 +206,11 @@ static inline bool FinalHeadCorePassABTopManaged(
 
             fp32_t acc = fp32_from_bits(sram[out_fc_b_base + c]);
             FINAL_HEAD_PASSB_TOKEN_REDUCE_LOOP: for (uint32_t t = token_begin; t < token_end; ++t) {
-                const fp32_t st = fp32_from_bits(sram[final_scalar_base + t]);
+                const u32_t st_bits =
+                    (topfed_final_scalar_words != 0) ?
+                    topfed_final_scalar_words[t] :
+                    sram[final_scalar_base + t];
+                const fp32_t st = fp32_from_bits(st_bits);
                 const fp32_t w = fp32_from_bits(sram[out_fc_w_base + c * token_count + t]);
                 acc += (w * st);
             }

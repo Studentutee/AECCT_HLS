@@ -88,7 +88,9 @@ static inline void LayerNormBlockCoreWindow(
     const LayerNormCfg& cfg,
     u32_t x_in_base_word,
     u32_t x_out_base_word,
-    const LayerNormBlockContract& contract
+    const LayerNormBlockContract& contract,
+    const u32_t* topfed_gamma_words = 0,
+    const u32_t* topfed_beta_words = 0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -265,8 +267,12 @@ static inline void LayerNormBlockCoreWindow(
             LAYERNORM_TOP_MANAGED_PASS2_TILE_STORE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                 const uint32_t c = tile_offset + i;
                 const fp32_t x = fp32_from_bits(sram[row_in_base + c]);
-                const fp32_t g = fp32_from_bits(sram[gamma_base + c]);
-                const fp32_t b = fp32_from_bits(sram[beta_base + c]);
+                const u32_t g_bits =
+                    (topfed_gamma_words != 0) ? topfed_gamma_words[c] : sram[gamma_base + c];
+                const u32_t b_bits =
+                    (topfed_beta_words != 0) ? topfed_beta_words[c] : sram[beta_base + c];
+                const fp32_t g = fp32_from_bits(g_bits);
+                const fp32_t b = fp32_from_bits(b_bits);
                 const fp32_t y = ((x - mean) * inv_std) * g + b;
                 sram[row_out_base + c] = bits_from_fp32(y);
             }

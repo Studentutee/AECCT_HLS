@@ -1010,13 +1010,27 @@ namespace aecct {
         contract.token_range = regs.infer_ingest_contract.token_range;
         contract.tile_range = regs.infer_ingest_contract.tile_range;
 
+        u32_t topfed_in_payload[PREPROC_IN_WORDS_EXPECTED];
+        PREPROC_TOPFED_INPUT_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)PREPROC_IN_WORDS_EXPECTED; ++i) {
+            topfed_in_payload[i] = 0;
+        }
+        const uint32_t in_base = (uint32_t)in_base_word.to_uint();
+        uint32_t preload_words = infer_in_words;
+        if (preload_words > (uint32_t)PREPROC_IN_WORDS_EXPECTED) {
+            preload_words = (uint32_t)PREPROC_IN_WORDS_EXPECTED;
+        }
+        PREPROC_TOPFED_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < preload_words; ++i) {
+            topfed_in_payload[i] = sram[in_base + i];
+        }
+
         // Top-owned dispatch: Top builds the contract and block consumes this window.
         PreprocEmbedSPECoreWindow<u32_t*>(
             sram,
             cfg,
             in_base_word,
             (u32_t)X_OUT_BASE_WORD,
-            contract
+            contract,
+            topfed_in_payload
         );
         contract.done = true;
     }
@@ -1045,13 +1059,32 @@ namespace aecct {
         contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
         contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
 
+        u32_t topfed_gamma_words[LN_D_MODEL];
+        u32_t topfed_beta_words[LN_D_MODEL];
+        TOPFED_LN_AFFINE_INIT_LOOP: for (uint32_t c = 0u; c < (uint32_t)LN_D_MODEL; ++c) {
+            topfed_gamma_words[c] = 0;
+            topfed_beta_words[c] = 0;
+        }
+        const uint32_t gamma_base = (uint32_t)contract.gamma_base_word.to_uint();
+        const uint32_t beta_base = (uint32_t)contract.beta_base_word.to_uint();
+        uint32_t affine_words = d_model;
+        if (affine_words > (uint32_t)LN_D_MODEL) {
+            affine_words = (uint32_t)LN_D_MODEL;
+        }
+        TOPFED_LN_AFFINE_PRELOAD_LOOP: for (uint32_t c = 0u; c < affine_words; ++c) {
+            topfed_gamma_words[c] = sram[gamma_base + c];
+            topfed_beta_words[c] = sram[beta_base + c];
+        }
+
         // Top-owned dispatch: Top builds the contract and block consumes this window.
         LayerNormBlockCoreWindow<u32_t*>(
             sram,
             cfg,
             (u32_t)LN_X_IN_BASE_WORD,
             (u32_t)LN_X_OUT_BASE_WORD,
-            contract
+            contract,
+            topfed_gamma_words,
+            topfed_beta_words
         );
         contract.done = true;
     }
@@ -1662,6 +1695,7 @@ namespace aecct {
 
         HeadParamBase hp = make_head_param_base(regs.w_base_word);
         const u32_t outmode = regs.outmode;
+        const CfgRegs layer_cfg = build_layer_cfg(regs);
         FinalHeadContract& contract = regs.final_head_contract;
         clear_final_head_contract(contract);
         contract.start = true;
@@ -1676,9 +1710,24 @@ namespace aecct {
         );
         contract.tile_range = make_tile_range((u32_t)0u, (u32_t)class_tile_count);
 
+        u32_t topfed_final_scalar_words[N_NODES];
+        TOPFED_FINAL_SCALAR_INIT_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+            topfed_final_scalar_words[t] = 0;
+        }
+        uint32_t token_begin = (uint32_t)contract.token_range.begin.to_uint();
+        uint32_t token_end = (uint32_t)contract.token_range.end.to_uint();
+        if (token_begin > (uint32_t)N_NODES) { token_begin = (uint32_t)N_NODES; }
+        if (token_end > (uint32_t)N_NODES) { token_end = (uint32_t)N_NODES; }
+        uint32_t d_model = (uint32_t)layer_cfg.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)D_MODEL; }
+        const uint32_t x_base = (uint32_t)regs.infer_final_x_base_word.to_uint();
+        TOPFED_FINAL_SCALAR_PRELOAD_LOOP: for (uint32_t t = token_begin; t < token_end; ++t) {
+            topfed_final_scalar_words[t] = sram[x_base + t * d_model];
+        }
+
         (void)FinalHeadCorePassABTopManaged<u32_t*>(
             sram,
-            build_layer_cfg(regs),
+            layer_cfg,
             regs.infer_final_x_base_word,
             infer_label_words_view(regs, sram),
             regs.infer_logits_base_word,
@@ -1686,7 +1735,8 @@ namespace aecct {
             hp,
             contract,
             &data_out,
-            outmode
+            outmode,
+            topfed_final_scalar_words
         );
         contract.done = true;
         const uint32_t mode = (uint32_t)outmode.to_uint();

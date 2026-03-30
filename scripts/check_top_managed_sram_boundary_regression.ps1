@@ -120,6 +120,7 @@ Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+uint8_t\s+ingest_c
 Require-Regex -Text $topText -Pattern '(?ms)infer_refresh_preproc_ranges\s*\(\s*InferIngestContract&\s+c\s*,\s*uint32_t\s+x_out_words\s*\)' -Reason "infer_refresh_preproc_ranges helper missing"
 Require-Regex -Text $topText -Pattern '(?ms)clear_infer_ingest_contract\s*\(\s*regs\.infer_ingest_contract\s*\)\s*;' -Reason "infer_session_clear must reset infer ingest contract"
 Require-Regex -Text $topText -Pattern '(?ms)run_preproc_block[\s\S]*?regs\.infer_ingest_contract\.len_words_valid[\s\S]*?regs\.infer_ingest_contract\.in_base_word[\s\S]*?contract\.phase_id\s*=\s*regs\.infer_ingest_contract\.phase_id[\s\S]*?contract\.token_range\s*=\s*regs\.infer_ingest_contract\.token_range[\s\S]*?contract\.tile_range\s*=\s*regs\.infer_ingest_contract\.tile_range' -Reason "run_preproc_block must consume infer ingest contract len/base/phase/range"
+Require-Regex -Text $topText -Pattern '(?ms)run_preproc_block[\s\S]*?u32_t\s+topfed_in_payload\s*\[\s*PREPROC_IN_WORDS_EXPECTED\s*\][\s\S]*?PREPROC_TOPFED_INPUT_PRELOAD_LOOP[\s\S]*?PreprocEmbedSPECoreWindow<\s*u32_t\*\s*>\s*\([\s\S]*?topfed_in_payload\s*\)' -Reason "run_preproc_block must preload and pass top-fed infer payload window"
 Require-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]*?infer_label_words_view\s*\(\s*regs\s*,\s*sram\s*\)' -Reason "run_infer_pipeline must source FinalHead labels from Top-managed SRAM ingest view"
 Require-Regex -Text $topText -Pattern '(?ms)infer_ingest_one_word[\s\S]*?infer_metadata_surface\s*\(\s*regs\s*\)[\s\S]*?ingest_meta_expected_words\s*\(\s*meta\s*,\s*\(uint32_t\)INFER_IN_WORDS_EXPECTED\s*\)[\s\S]*?infer_store_one_word\s*\(\s*regs\s*,\s*sram\s*,\s*idx\s*,\s*w\s*\)' -Reason "infer_ingest_one_word must dispatch via infer metadata surface helpers"
 Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+bool\s+infer_contract_span_in_sram\s*\(\s*const\s+InferIngestContract&\s+c\s*\)' -Reason "infer_contract_span_in_sram helper missing"
@@ -150,6 +151,7 @@ Require-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]*?run_prepro
 Require-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]*?run_layernorm_block\s*\(\s*regs\s*,\s*sram\s*\)\s*;' -Reason "run_infer_pipeline must dispatch Top-owned layernorm contract path"
 Require-Regex -Text $topText -Pattern '(?ms)FinalHeadContract&\s+contract\s*=\s*regs\.final_head_contract\s*;' -Reason "Top final-head contract ownership anchor missing"
 Require-Regex -Text $topText -Pattern '(?ms)FinalHeadCorePassABTopManaged<\s*u32_t\*\s*>\s*\([\s\S]*?contract' -Reason "Top final-head path must dispatch FinalHeadCorePassABTopManaged with Top-owned contract"
+Require-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]*?u32_t\s+topfed_final_scalar_words\s*\[\s*N_NODES\s*\][\s\S]*?TOPFED_FINAL_SCALAR_PRELOAD_LOOP[\s\S]*?FinalHeadCorePassABTopManaged<\s*u32_t\*\s*>\s*\([\s\S]*?topfed_final_scalar_words\s*\)' -Reason "run_infer_pipeline must preload and pass top-fed FinalHead scalar payload"
 Forbid-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]{0,2200}\bFinalHead\s*\(' -Reason "run_infer_pipeline regressed to wrapper-owned FinalHead path"
 
 # Top preloads sublayer1 norm params before TransformerLayer dispatch.
@@ -165,12 +167,31 @@ Require-Regex -Text $layerText -Pattern '(?ms)TransformerLayer\s*\([\s\S]*?bool\
 Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloaded_by_top\s*\)\s*\{[\s\S]*?load_layer_sublayer1_norm_params\s*\(\s*sram_window' -Reason "TransformerLayerTopManagedAttnBridge fallback load guard missing"
 Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloaded_by_top\s*\)\s*\{[\s\S]*?load_layer_sublayer1_norm_params\s*\(\s*sram\s*,' -Reason "TransformerLayer fallback load guard missing"
 
+$preprocPath = Join-Path $repo "src/blocks/PreprocEmbedSPE.h"
+$layernormPath = Join-Path $repo "src/blocks/LayerNormBlock.h"
+$finalheadPath = Join-Path $repo "src/blocks/FinalHead.h"
+Require-True -Condition (Test-Path $preprocPath) -Reason "required file missing: src/blocks/PreprocEmbedSPE.h"
+Require-True -Condition (Test-Path $layernormPath) -Reason "required file missing: src/blocks/LayerNormBlock.h"
+Require-True -Condition (Test-Path $finalheadPath) -Reason "required file missing: src/blocks/FinalHead.h"
+$preprocText = Get-Content -Path $preprocPath -Raw
+$layernormBlockText = Get-Content -Path $layernormPath -Raw
+$finalheadText = Get-Content -Path $finalheadPath -Raw
+
+Require-Regex -Text $preprocText -Pattern '(?ms)PreprocEmbedSPECoreWindow\s*\([\s\S]*?const\s+PreprocBlockContract&\s+contract\s*,\s*const\s+u32_t\*\s+topfed_in_words\s*=\s*0' -Reason "PreprocEmbedSPECoreWindow top-fed payload argument missing"
+Require-Regex -Text $preprocText -Pattern '(?ms)topfed_in_words\s*!=\s*0\)\s*\?\s*topfed_in_words\[linear_idx\]\s*:\s*sram\[in_base\s*\+\s*linear_idx\]' -Reason "PreprocEmbedSPECoreWindow must consume top-fed input payload when provided"
+Require-Regex -Text $layernormBlockText -Pattern '(?ms)LayerNormBlockCoreWindow\s*\([\s\S]*?const\s+LayerNormBlockContract&\s+contract\s*,\s*const\s+u32_t\*\s+topfed_gamma_words\s*=\s*0\s*,\s*const\s+u32_t\*\s+topfed_beta_words\s*=\s*0' -Reason "LayerNormBlockCoreWindow top-fed affine payload arguments missing"
+Require-Regex -Text $layernormBlockText -Pattern '(?ms)topfed_gamma_words\s*!=\s*0\)\s*\?\s*topfed_gamma_words\[c\]\s*:\s*sram\[gamma_base\s*\+\s*c\]' -Reason "LayerNormBlockCoreWindow must consume top-fed gamma payload when provided"
+Require-Regex -Text $layernormBlockText -Pattern '(?ms)topfed_beta_words\s*!=\s*0\)\s*\?\s*topfed_beta_words\[c\]\s*:\s*sram\[beta_base\s*\+\s*c\]' -Reason "LayerNormBlockCoreWindow must consume top-fed beta payload when provided"
+Require-Regex -Text $finalheadText -Pattern '(?ms)FinalHeadCorePassABTopManaged\s*\([\s\S]*?u32_t\s+outmode_word\s*,\s*const\s+u32_t\*\s+topfed_final_scalar_words\s*=\s*0' -Reason "FinalHeadCorePassABTopManaged top-fed scalar argument missing"
+Require-Regex -Text $finalheadText -Pattern '(?ms)topfed_final_scalar_words\s*!=\s*0\)\s*\?\s*topfed_final_scalar_words\[t\]\s*:\s*sram\[final_scalar_base\s*\+\s*t\]' -Reason "FinalHead pass-B must consume top-fed scalar payload when provided"
+
 Write-Log "guard: Top-owned preproc/layernorm/final-head contract dispatch anchors OK"
 Write-Log "guard: G4 infer ingest contractized base/len dispatch anchors OK"
 Write-Log "guard: OP_INFER preflight reject path maps invalid span to ERR_MEM_RANGE"
 Write-Log "guard: G4-E cross-command ingest metadata surface helpers anchored"
 Write-Log "guard: G4-F commit-time diagnostics helper + error mapping anchors OK"
 Write-Log "guard: G4-G accepted-commit metadata record harmonization anchors OK"
+Write-Log "guard: G5 wave1/wave2 top-fed payload migration anchors OK"
 Write-Log "guard: Top preloaded sublayer1 norm params before layer dispatch anchors OK"
 Write-Log "guard: TransformerLayer guarded preload fallback anchors OK"
 Write-Log "PASS: check_top_managed_sram_boundary_regression"
