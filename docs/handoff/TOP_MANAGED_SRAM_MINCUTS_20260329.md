@@ -389,3 +389,55 @@
 
 7. Next recommended step
 - Continue bounded FFN follow-up by adding Top/caller-fed weight tile descriptors for one stage (W1 first), with targeted no-bypass validation.
+
+## Task C9: G5-Wave3.5 FFN W1 Weight Tile Caller-Fed Descriptor
+1. Summary
+- Completed bounded migration for FFN W1 weight tile consume path.
+- `TransformerLayer` and bridge path preload `topfed_ffn_w1_words`.
+- `FFNLayer0` W1 tile loop consumes `topfed_w1_weight_words` with `topfed_w1_weight_words_valid`.
+- Kept fallback to legacy SRAM weight reads for compatibility.
+
+2. Exact files changed
+- `include/FfnDescBringup.h`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `tb/tb_g5_wave35_ffn_w1_weight_migration_p11g5w35.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1 -BuildDir build/p11ah/g5_wave35_ffn_w1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1 -BuildDir build/p11aj/g5_wave35_ffn_w1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11g5/wave35_ffn_w1_weight_migration/run.log`:
+  - `G5W35_FFN_W1_TOPFED_WEIGHT_PATH PASS`
+  - `G5W35_FFN_W1_NO_SPURIOUS_SRAM_TOUCH PASS`
+  - `G5W35_FFN_W1_EXPECTED_COMPARE PASS`
+  - `PASS: run_p11g5_wave35_ffn_w1_weight_migration`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: G5 wave3.5 FFN W1 top-fed weight payload migration anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+- `build/p11g5/wave3_ffn_payload_migration/run.log`: `PASS: run_p11g5_wave3_ffn_payload_migration`
+- `build/p11ah/g5_wave35_ffn_w1/run.log`: `PASS: run_p11ah_full_loop_local_e2e`
+- `build/p11aj/g5_wave35_ffn_w1/run.log`: `PASS: run_p11aj_top_managed_sram_provenance`
+
+5. Governance posture
+- local-only bounded migration.
+- not Catapult closure; not SCVerify closure.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- W2 weight and bias consume paths remain SRAM-based.
+- ReLU/W2 broader payload migration remains deferred.
+- No claim of full FFN closure.
+
+7. Next recommended step
+- Choose one bounded next cut: W1 bias descriptor or W2 weight descriptor, then mirror this round's targeted-validation pattern.

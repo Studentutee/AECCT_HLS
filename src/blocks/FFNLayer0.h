@@ -99,7 +99,9 @@ static inline void FFNLayer0CoreWindow(
     const FfnScratch& sc,
     u32_t param_base_word,
     u32_t layer_id = (u32_t)0,
-    const u32_t* topfed_x_words = 0
+    const u32_t* topfed_x_words = 0,
+    const u32_t* topfed_w1_weight_words = 0,
+    u32_t topfed_w1_weight_words_valid = 0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -122,6 +124,13 @@ static inline void FFNLayer0CoreWindow(
     const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
     const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
     const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
+    uint32_t topfed_w1_valid = (uint32_t)topfed_w1_weight_words_valid.to_uint();
+    if (topfed_w1_valid == 0u) {
+        topfed_w1_valid = d_ffn * d_model;
+    }
+    if (topfed_w1_valid > (uint32_t)FFN_W1_WEIGHT_WORDS) {
+        topfed_w1_valid = (uint32_t)FFN_W1_WEIGHT_WORDS;
+    }
 
     const uint32_t tile_words = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
     const uint32_t d_model_tile_count = attn_top_managed_tile_count(d_model, tile_words);
@@ -159,13 +168,19 @@ static inline void FFNLayer0CoreWindow(
                     u32_t w_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
                     FFN_TOP_MANAGED_W1_TILE_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                         const uint32_t x_idx = t * d_model + tile_offset + i;
+                        const uint32_t w1_idx = w_row + tile_offset + i;
                         // Top-fed FFN input payload path: caller can preload and dispatch x words.
                         if (topfed_x_words != 0 && x_idx < (uint32_t)FFN_X_WORDS) {
                             x_tile[i] = topfed_x_words[x_idx];
                         } else {
                             x_tile[i] = sram[x_row + tile_offset + i];
                         }
-                        w_tile[i] = sram[ffn_param_addr_word(param_base, w1_weight_id, w_row + tile_offset + i)];
+                        // Caller-fed FFN W1 weight path: consume preloaded tiles when provided.
+                        if (topfed_w1_weight_words != 0 && w1_idx < topfed_w1_valid) {
+                            w_tile[i] = topfed_w1_weight_words[w1_idx];
+                        } else {
+                            w_tile[i] = sram[ffn_param_addr_word(param_base, w1_weight_id, w1_idx)];
+                        }
                     }
                     acc = ffn_block_mac_tile(meta, x_tile, w_tile, acc);
                 }
@@ -328,7 +343,9 @@ static inline void FFNLayer0(
     const FfnScratch& sc,
     u32_t param_base_word,
     u32_t layer_id = (u32_t)0,
-    const u32_t* topfed_x_words = 0
+    const u32_t* topfed_x_words = 0,
+    const u32_t* topfed_w1_weight_words = 0,
+    u32_t topfed_w1_weight_words_valid = 0
 ) {
     // Mainline migration note:
     // Default FFN entry now runs through the Top-managed tile/window core.
@@ -340,7 +357,9 @@ static inline void FFNLayer0(
         sc,
         param_base_word,
         layer_id,
-        topfed_x_words
+        topfed_x_words,
+        topfed_w1_weight_words,
+        topfed_w1_weight_words_valid
     );
 }
 
@@ -354,7 +373,9 @@ static inline void FFNLayer0TopManagedWindowBridge(
     const FfnScratch& sc,
     u32_t param_base_word,
     u32_t layer_id = (u32_t)0,
-    const u32_t* topfed_x_words = 0
+    const u32_t* topfed_x_words = 0,
+    const u32_t* topfed_w1_weight_words = 0,
+    u32_t topfed_w1_weight_words_valid = 0
 ) {
     FFNLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
@@ -363,7 +384,9 @@ static inline void FFNLayer0TopManagedWindowBridge(
         sc,
         param_base_word,
         layer_id,
-        topfed_x_words
+        topfed_x_words,
+        topfed_w1_weight_words,
+        topfed_w1_weight_words_valid
     );
 }
 

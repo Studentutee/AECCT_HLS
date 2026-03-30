@@ -15,6 +15,7 @@ namespace aecct {
     static const unsigned FFN_D_FFN = (unsigned)D_FFN;
 
     static const unsigned FFN_X_WORDS = (unsigned)(FFN_TOKEN_COUNT * FFN_D_MODEL);
+    static const unsigned FFN_W1_WEIGHT_WORDS = (unsigned)(FFN_D_FFN * FFN_D_MODEL);
     static const unsigned FFN_W1_OUT_WORDS = (unsigned)(FFN_TOKEN_COUNT * FFN_D_FFN);
     static const unsigned FFN_W2_OUT_WORDS = (unsigned)(FFN_TOKEN_COUNT * FFN_D_MODEL);
 

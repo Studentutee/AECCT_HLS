@@ -139,6 +139,24 @@ static inline void TransformerLayerTopManagedAttnBridge(
     TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
         topfed_ffn_x_words[i] = sram_window[ffn_x_base + i];
     }
+    const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
+    const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
+    const uint32_t param_base = (uint32_t)pb.param_base_word.to_uint();
+    const uint32_t w1_weight_base = param_base + kParamMeta[w1_weight_id].offset_w;
+    u32_t topfed_ffn_w1_words[FFN_W1_WEIGHT_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_WEIGHT_WORDS; ++i) {
+        topfed_ffn_w1_words[i] = 0;
+    }
+    uint32_t w1_weight_words = ffn_d_model * (uint32_t)ffn_cfg.d_ffn.to_uint();
+    if (w1_weight_words == 0u) {
+        w1_weight_words = (uint32_t)FFN_W1_WEIGHT_WORDS;
+    }
+    if (w1_weight_words > (uint32_t)FFN_W1_WEIGHT_WORDS) {
+        w1_weight_words = (uint32_t)FFN_W1_WEIGHT_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
+        topfed_ffn_w1_words[i] = sram_window[w1_weight_base + i];
+    }
 
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_FULL>(
         sram_window,
@@ -147,7 +165,9 @@ static inline void TransformerLayerTopManagedAttnBridge(
         sc.ffn,
         pb.param_base_word,
         layer_id,
-        topfed_ffn_x_words
+        topfed_ffn_x_words,
+        topfed_ffn_w1_words,
+        (u32_t)w1_weight_words
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();
@@ -256,6 +276,24 @@ static inline void TransformerLayer(
     TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
         topfed_ffn_x_words[i] = sram[ffn_x_base + i];
     }
+    const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
+    const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
+    const uint32_t param_base = (uint32_t)pb.param_base_word.to_uint();
+    const uint32_t w1_weight_base = param_base + kParamMeta[w1_weight_id].offset_w;
+    u32_t topfed_ffn_w1_words[FFN_W1_WEIGHT_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_WEIGHT_WORDS; ++i) {
+        topfed_ffn_w1_words[i] = 0;
+    }
+    uint32_t w1_weight_words = ffn_d_model * (uint32_t)ffn_cfg.d_ffn.to_uint();
+    if (w1_weight_words == 0u) {
+        w1_weight_words = (uint32_t)FFN_W1_WEIGHT_WORDS;
+    }
+    if (w1_weight_words > (uint32_t)FFN_W1_WEIGHT_WORDS) {
+        w1_weight_words = (uint32_t)FFN_W1_WEIGHT_WORDS;
+    }
+    TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
+        topfed_ffn_w1_words[i] = sram[w1_weight_base + i];
+    }
 
     FFNLayer0<FFN_STAGE_FULL>(
         sram,
@@ -264,7 +302,9 @@ static inline void TransformerLayer(
         sc.ffn,
         pb.param_base_word,
         layer_id,
-        topfed_ffn_x_words
+        topfed_ffn_x_words,
+        topfed_ffn_w1_words,
+        (u32_t)w1_weight_words
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();

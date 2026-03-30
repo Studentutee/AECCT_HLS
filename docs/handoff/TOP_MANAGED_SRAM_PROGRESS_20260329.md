@@ -278,3 +278,35 @@
 - This round migrates FFN W1 input payload consume anchor only.
 - FFN W1/W2 weight+bias consume and ReLU/W2 payload paths remain SRAM-based and deferred.
 - Wave4 attention/transformer/phase payload migration remains deferred.
+
+## Night-Batch Extension: G5-Wave3.5 FFN W1 Weight Tile Migration (Bounded)
+- Scope-limited to FFN W1 weight consume path.
+- Completed bounded cut:
+  - caller (`TransformerLayer` and bridge path) preloads `topfed_ffn_w1_words`,
+  - `FFNLayer0` W1 tile loop consumes `topfed_w1_weight_words` with valid window.
+- Preserved Wave3 `topfed_x_words` path and compatibility fallback.
+
+### G5-Wave3.5 local-only evidence
+- `build/p11g5/wave35_ffn_w1_weight_migration/run.log`: PASS
+- `build/p11g5/wave3_ffn_payload_migration/run.log`: PASS
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G5 wave3.5 FFN W1 top-fed weight payload migration anchors OK`
+- `build/p11ah/g5_wave35_ffn_w1/run.log`: PASS
+- `build/p11aj/g5_wave35_ffn_w1/run.log`: PASS
+- `build/evidence/g5_wave35_ffn_w1_20260330/evidence_manifest.txt`: present
+
+### G5-Wave3.5 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE35_FFN_W1_WEIGHT_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE35_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE35_COMPLETION_20260330.md`
+- `include/FfnDescBringup.h`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `tb/tb_g5_wave35_ffn_w1_weight_migration_p11g5w35.cpp`
+
+### Deferred boundary after G5-Wave3.5
+- This round migrates FFN W1 weight tile consume anchor only.
+- W2 weights, bias path, and broader FFN payload descriptorization remain deferred.
+- Wave4 attention/phase migration remains deferred.
