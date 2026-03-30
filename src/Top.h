@@ -234,6 +234,34 @@ namespace aecct {
         return false;
     }
 
+    static inline bool ingest_meta_len_exact(
+        const IngestMetadataSurface& m,
+        uint32_t fallback_words
+    ) {
+        const uint32_t expected = ingest_meta_expected_words(m, fallback_words);
+        const uint32_t valid = (uint32_t)m.len_words_valid.to_uint();
+        return valid == expected;
+    }
+
+    static inline uint8_t ingest_commit_diag_error(
+        const IngestMetadataSurface& m,
+        ReceiverState rx,
+        uint32_t fallback_words,
+        uint8_t len_mismatch_err,
+        bool require_span_check
+    ) {
+        if (!ingest_meta_owner_matches_rx(m, rx)) {
+            return (uint8_t)ERR_BAD_STATE;
+        }
+        if (require_span_check && !ingest_meta_span_in_sram(m, fallback_words)) {
+            return (uint8_t)ERR_MEM_RANGE;
+        }
+        if (!ingest_meta_len_exact(m, fallback_words)) {
+            return len_mismatch_err;
+        }
+        return (uint8_t)ERR_OK;
+    }
+
     // Persistent top-level internal registers.
     // These registers are the single source of truth for Top-owned runtime state.
     struct TopRegs {
@@ -819,7 +847,19 @@ namespace aecct {
         unsigned idx = (unsigned)regs.param_count.to_uint();
         if (idx >= expected_words) {
             regs.state = ST_IDLE;
-            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+            const uint8_t commit_diag = ingest_commit_diag_error(
+                meta,
+                RX_PARAM,
+                (uint32_t)PARAM_WORDS_EXPECTED,
+                (uint8_t)ERR_PARAM_LEN_MISMATCH,
+                true
+            );
+            if (commit_diag == (uint8_t)ERR_OK) {
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+            }
+            else {
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+            }
             return;
         }
 
@@ -843,7 +883,20 @@ namespace aecct {
         if ((unsigned)regs.param_count.to_uint() == expected_words) {
             // LOAD_W transaction complete.
             regs.state = ST_IDLE;
-            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+            const IngestMetadataSurface done_meta = param_metadata_surface(regs);
+            const uint8_t commit_diag = ingest_commit_diag_error(
+                done_meta,
+                RX_PARAM,
+                (uint32_t)PARAM_WORDS_EXPECTED,
+                (uint8_t)ERR_PARAM_LEN_MISMATCH,
+                true
+            );
+            if (commit_diag == (uint8_t)ERR_OK) {
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+            }
+            else {
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+            }
         }
     }
 
@@ -1598,12 +1651,24 @@ namespace aecct {
 
         unsigned idx = (unsigned)regs.input_count.to_uint();
         if (idx >= expected_words) {
+            regs.state = ST_IDLE;
+            const uint8_t commit_diag = ingest_commit_diag_error(
+                meta,
+                RX_INFER,
+                (uint32_t)INFER_IN_WORDS_EXPECTED,
+                (uint8_t)ERR_BAD_STATE,
+                true
+            );
+            if (commit_diag != (uint8_t)ERR_OK) {
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+                return;
+            }
+
             regs.infer_ingest_contract.done = true;
             const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
             if (!finalhead_streamed) {
                 infer_emit_outmode_payload(regs, data_out, sram);
             }
-            regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
             return;
         }
@@ -1615,6 +1680,20 @@ namespace aecct {
         regs.input_count = regs.input_count + 1;
 
         if ((unsigned)regs.input_count.to_uint() == expected_words) {
+            const IngestMetadataSurface done_meta = infer_metadata_surface(regs);
+            const uint8_t commit_diag = ingest_commit_diag_error(
+                done_meta,
+                RX_INFER,
+                (uint32_t)INFER_IN_WORDS_EXPECTED,
+                (uint8_t)ERR_BAD_STATE,
+                true
+            );
+            if (commit_diag != (uint8_t)ERR_OK) {
+                regs.state = ST_IDLE;
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+                return;
+            }
+
             regs.infer_ingest_contract.done = true;
             const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
             if (!finalhead_streamed) {
@@ -1774,9 +1853,17 @@ namespace aecct {
             }
             else if (regs.state == ST_CFG_RX) {
                 if (op == (uint8_t)OP_CFG_COMMIT) {
-                    if (!regs.cfg_ready) {
-                        // CFG_COMMIT before full CFG payload is a length mismatch error.
-                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_LEN_MISMATCH));
+                    const IngestMetadataSurface cfg_meta = cfg_metadata_surface(regs);
+                    const uint8_t commit_diag = ingest_commit_diag_error(
+                        cfg_meta,
+                        RX_CFG,
+                        (uint32_t)CFG_WORDS_EXPECTED,
+                        (uint8_t)ERR_CFG_LEN_MISMATCH,
+                        false
+                    );
+                    if (commit_diag != (uint8_t)ERR_OK) {
+                        // CFG_COMMIT requires exact expected ingest length before legality checks.
+                        ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
                     }
                     else if (!cfg_validate_minimal(regs)) {
                         // Illegal CFG resets session state back to IDLE and clears CFG words.

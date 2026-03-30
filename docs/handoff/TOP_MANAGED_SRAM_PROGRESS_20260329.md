@@ -154,3 +154,33 @@
 
 ### Deferred boundary after G4-E mincut
 - Full cross-command ingest metadata semantic unification (beyond helper/preflight surface) remains deferred.
+
+## Night-Batch Extension: G4-F Commit-Time Diagnostics Harmonization
+- Delivered a bounded Top-only commit-time diagnostics harmonization mincut for CFG/PARAM/INFER.
+- Added shared helper anchors in `src/Top.h`:
+  - `ingest_meta_len_exact(...)`
+  - `ingest_commit_diag_error(...)`
+- Commit-time callsite convergence:
+  - CFG commit path now uses shared helper and preserves `ERR_CFG_LEN_MISMATCH`.
+  - PARAM ingest-completion commit path now uses shared helper with `ERR_PARAM_LEN_MISMATCH`.
+  - INFER ingest-completion commit path now uses shared helper while preserving existing protocol mapping constraints.
+- Added G4-F targeted mismatch negative validation and kept mainline/provenance regression PASS.
+
+### G4-F local-only evidence (this batch)
+- `build/p11g4f/commit_diagnostics_negative/run.log`: PASS
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G4-F commit-time diagnostics helper + error mapping anchors OK`
+- `build/p11ah/g4f_commit_diag/run.log`: PASS
+- `build/p11aj/g4f_commit_diag/run.log`: PASS
+- `build/evidence/g4f_commit_diag_20260330/evidence_manifest.txt`: present
+
+### G4-F artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G4F_COMMIT_DIAGNOSTICS_MINCUT_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4F_EVIDENCE_INDEX_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G4F_COMPLETION_20260329.md`
+- `scripts/local/run_p11g4f_commit_diagnostics_negative.ps1`
+- `tb/tb_g4f_commit_diagnostics_negative_p11g4f.cpp`
+
+### Deferred boundary after G4-F mincut
+- This round harmonizes commit-time diagnostics helper and mapping anchors only.
+- Protocol-level infer-specific length mismatch code remains deferred to avoid external contract change in this bounded round.
