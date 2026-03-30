@@ -805,3 +805,90 @@
 
 7. Next recommended step
 - Start a dedicated W4-M3 single-entry run focused on Phase-A Q x-row probe only, with ownership/no-spurious/mismatch-reject TB.
+
+## Task C17: W4-M3 Single Phase-Entry Caller-Fed x-row Probe (Phase-A Q)
+1. Summary
+- Landed one bounded Wave4 micro-cut on Phase-A Q phase entry.
+- Added optional caller-fed x-row probe passthrough on Top helper and phase-entry consume visibility/ownership/compare checks in Phase-A Q mainline.
+- Inner Q compute/writeback loops intentionally untouched.
+
+2. Exact files changed
+- `src/blocks/AttnPhaseATopManagedQ.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11w4m3_phasea_q_phase_entry_probe.ps1`
+- `tb/tb_w4m3_phasea_q_phase_entry_probe.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m3_phasea_q_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m2_softmaxout_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_w1_bias_descriptor.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_fallback_observability.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11w4m3/phasea_q_phase_entry_probe/run.log`:
+  - `W4M3_PHASEAQ_CALLER_FED_XROW_VISIBLE PASS`
+  - `W4M3_PHASEAQ_OWNERSHIP_CHECK PASS`
+  - `W4M3_PHASEAQ_NO_SPURIOUS_TOUCH PASS`
+  - `W4M3_PHASEAQ_EXPECTED_COMPARE PASS`
+  - `W4M3_PHASEAQ_PROBE_MISMATCH_REJECT PASS`
+  - `PASS: run_p11w4m3_phasea_q_phase_entry_probe`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: W4-M3 Phase-A Q phase-entry caller-fed x-row probe anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+
+5. Governance posture
+- local-only bounded micro-cut.
+- not Catapult closure; not SCVerify closure.
+- no external formal contract change.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- Phase-A Q payload path is not fully migrated.
+- Phase-A Q inner compute/writeback loops remain SRAM-centric in this bounded scope.
+- This task is a phase-entry probe bridge only.
+
+7. Next recommended step
+- Execute bounded Phase-A KV x-row probe with the same ownership/no-spurious/mismatch-reject pattern.
+
+## Task C18: W4-M3 KV Feasibility / Blocker Refinement (No Code Patch)
+1. Summary
+- Completed W4-M3 KV feasibility/ranking/blocker refinement in secondary track.
+- Optional KV micro-cut intentionally not attempted in this run to preserve bounded focus on Phase-A Q landing.
+
+2. Exact files changed
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_FEASIBILITY_20260330.md`
+
+3. Exact commands run
+- `rg -n "attn_phasea_top_managed_kv_mainline|ATTN_P11AC_MAINLINE_XROW_LOAD_LOOP|fallback_taken" src/blocks/AttnPhaseATopManagedKv.h`
+- `rg -n "run_p11ac_layer0_top_managed_kv|run_p11ad_layer0_top_managed_q" src/Top.h`
+
+4. Actual execution evidence / log excerpt
+- See feasibility artifacts:
+  - `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_FEASIBILITY_20260330.md`
+  - `build/agent_state/w4m3_phasea_q_probe_20260330/w4m3_kv_reality_check.md`
+  - `build/agent_state/w4m3_phasea_q_probe_20260330/w4m3_kv_candidate_ranking.md`
+  - `build/agent_state/w4m3_phasea_q_probe_20260330/w4m3_kv_blocker_map.md`
+
+5. Governance posture
+- local-only feasibility and blocker capture.
+- not Catapult closure; not SCVerify closure.
+
+6. Residual risks
+- KV entry remains SRAM-centric and coupled to dual K/V compute flow.
+- Dedicated KV targeted TB/runner support is still missing.
+
+7. Next recommended step
+- Start a dedicated W4-M3 KV single-entry run with one focused probe and one focused reject/no-spurious TB.

@@ -97,15 +97,18 @@ function Forbid-Regex {
 
 $topPath = Join-Path $repo "src/Top.h"
 $layerPath = Join-Path $repo "src/blocks/TransformerLayer.h"
+$phaseAQPath = Join-Path $repo "src/blocks/AttnPhaseATopManagedQ.h"
 $qkScorePath = Join-Path $repo "src/blocks/AttnPhaseBTopManagedQkScore.h"
 $softmaxOutPath = Join-Path $repo "src/blocks/AttnPhaseBTopManagedSoftmaxOut.h"
 Require-True -Condition (Test-Path $topPath) -Reason "required file missing: src/Top.h"
 Require-True -Condition (Test-Path $layerPath) -Reason "required file missing: src/blocks/TransformerLayer.h"
+Require-True -Condition (Test-Path $phaseAQPath) -Reason "required file missing: src/blocks/AttnPhaseATopManagedQ.h"
 Require-True -Condition (Test-Path $qkScorePath) -Reason "required file missing: src/blocks/AttnPhaseBTopManagedQkScore.h"
 Require-True -Condition (Test-Path $softmaxOutPath) -Reason "required file missing: src/blocks/AttnPhaseBTopManagedSoftmaxOut.h"
 
 $topText = Get-Content -Path $topPath -Raw
 $layerText = Get-Content -Path $layerPath -Raw
+$phaseAQText = Get-Content -Path $phaseAQPath -Raw
 $qkScoreText = Get-Content -Path $qkScorePath -Raw
 $softmaxOutText = Get-Content -Path $softmaxOutPath -Raw
 
@@ -172,6 +175,13 @@ Require-Regex -Text $layerText -Pattern '(?ms)TransformerLayerTopManagedAttnBrid
 Require-Regex -Text $layerText -Pattern '(?ms)TransformerLayer\s*\([\s\S]*?bool\s+sublayer1_norm_preloaded_by_top\s*=\s*false' -Reason "TransformerLayer preload flag missing"
 Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloaded_by_top\s*\)\s*\{[\s\S]*?load_layer_sublayer1_norm_params\s*\(\s*sram_window' -Reason "TransformerLayerTopManagedAttnBridge fallback load guard missing"
 Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloaded_by_top\s*\)\s*\{[\s\S]*?load_layer_sublayer1_norm_params\s*\(\s*sram\s*,' -Reason "TransformerLayer fallback load guard missing"
+Require-Regex -Text $topText -Pattern '(?ms)run_p11ad_layer0_top_managed_q\s*\([\s\S]*?phase_entry_probe_x_base_word[\s\S]*?phase_entry_probe_x_words[\s\S]*?phase_entry_probe_x_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "Top run_p11ad helper missing W4-M3 phase-entry probe arguments"
+Require-Regex -Text $topText -Pattern '(?ms)run_p11ad_layer0_top_managed_q[\s\S]*?attn_phasea_top_managed_q_mainline\s*\([\s\S]*?phase_entry_probe_x_base_word[\s\S]*?phase_entry_probe_x_words[\s\S]*?phase_entry_probe_x_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "Top run_p11ad helper must pass through W4-M3 phase-entry probe arguments"
+Require-Regex -Text $phaseAQText -Pattern '(?ms)attn_phasea_top_managed_q_mainline\s*\([\s\S]*?phase_entry_probe_x_base_word[\s\S]*?phase_entry_probe_x_words[\s\S]*?phase_entry_probe_x_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "Phase-A Q mainline missing W4-M3 phase-entry probe signature"
+Require-Regex -Text $phaseAQText -Pattern '(?ms)phase_entry_probe_enabled' -Reason "Phase-A Q mainline missing probe-enable gating anchor"
+Require-Regex -Text $phaseAQText -Pattern '(?ms)ATTN_P11AD_PHASE_ENTRY_PROBE_COL_LOOP' -Reason "Phase-A Q mainline missing phase-entry probe loop label"
+Require-Regex -Text $phaseAQText -Pattern '(?ms)phase_entry_probe_owner_ok' -Reason "Phase-A Q mainline missing probe ownership observability anchor"
+Require-Regex -Text $phaseAQText -Pattern '(?ms)phase_entry_probe_compare_ok' -Reason "Phase-A Q mainline missing probe compare observability anchor"
 Require-Regex -Text $topText -Pattern '(?ms)run_p11ae_layer0_top_managed_qk_score\s*\([\s\S]*?phase_entry_probe_q_base_word[\s\S]*?phase_entry_probe_k_base_word[\s\S]*?phase_entry_probe_q_words[\s\S]*?phase_entry_probe_k_words[\s\S]*?phase_entry_probe_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "Top run_p11ae helper missing W4-M1 phase-entry probe arguments"
 Require-Regex -Text $topText -Pattern '(?ms)run_p11ae_layer0_top_managed_qk_score[\s\S]*?attn_phaseb_top_managed_qk_score_mainline\s*\([\s\S]*?phase_entry_probe_q_base_word[\s\S]*?phase_entry_probe_k_base_word[\s\S]*?phase_entry_probe_q_words[\s\S]*?phase_entry_probe_k_words[\s\S]*?phase_entry_probe_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "Top run_p11ae helper must pass through W4-M1 phase-entry probe arguments"
 Require-Regex -Text $qkScoreText -Pattern '(?ms)attn_phaseb_top_managed_qk_score_mainline\s*\([\s\S]*?phase_entry_probe_q_base_word[\s\S]*?phase_entry_probe_k_base_word[\s\S]*?phase_entry_probe_q_words[\s\S]*?phase_entry_probe_k_words[\s\S]*?phase_entry_probe_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "QK-score mainline missing W4-M1 phase-entry probe signature"
@@ -258,6 +268,7 @@ Write-Log "guard: G5 FFN fallback policy strict W2 top-fed gating anchors OK"
 Write-Log "guard: G6 FFN W1 top-fed bias descriptor + reject-stage observability anchors OK"
 Write-Log "guard: W4-M1 QK-score phase-entry caller-fed descriptor probe anchors OK"
 Write-Log "guard: W4-M2 SoftmaxOut phase-entry caller-fed V-tile probe anchors OK"
+Write-Log "guard: W4-M3 Phase-A Q phase-entry caller-fed x-row probe anchors OK"
 Write-Log "guard: Top preloaded sublayer1 norm params before layer dispatch anchors OK"
 Write-Log "guard: TransformerLayer guarded preload fallback anchors OK"
 Write-Log "PASS: check_top_managed_sram_boundary_regression"
