@@ -30,9 +30,22 @@ struct RefE4M3PathStats {
   std::string first_nonfinite_block;
 };
 
+struct RefInt8FixedExpStats {
+  std::uint64_t roundtrip_count = 0;
+  std::uint64_t clamp_count = 0;
+  std::uint64_t zone1_count = 0;
+  std::uint64_t zone2_count = 0;
+  std::uint64_t zone3_count = 0;
+  std::uint64_t zone4_count = 0;
+  std::uint64_t footprint_g2_count = 0;
+  std::uint64_t footprint_g5_embed_count = 0;
+  std::string first_clamp_block;
+};
+
 struct RefFullQuantStats {
   RefIntLinearStats int_linear;
   RefE4M3PathStats e4m3;
+  RefInt8FixedExpStats int8_fixedexp;
 };
 
 inline RefFullQuantStats g_ref_full_quant_stats{};
@@ -70,6 +83,18 @@ static inline void add_ref_full_quant_stats(const RefFullQuantStats& delta) {
   s.e4m3.inf_out_count += delta.e4m3.inf_out_count;
   if (s.e4m3.first_nonfinite_block.empty()) {
     s.e4m3.first_nonfinite_block = delta.e4m3.first_nonfinite_block;
+  }
+
+  s.int8_fixedexp.roundtrip_count += delta.int8_fixedexp.roundtrip_count;
+  s.int8_fixedexp.clamp_count += delta.int8_fixedexp.clamp_count;
+  s.int8_fixedexp.zone1_count += delta.int8_fixedexp.zone1_count;
+  s.int8_fixedexp.zone2_count += delta.int8_fixedexp.zone2_count;
+  s.int8_fixedexp.zone3_count += delta.int8_fixedexp.zone3_count;
+  s.int8_fixedexp.zone4_count += delta.int8_fixedexp.zone4_count;
+  s.int8_fixedexp.footprint_g2_count += delta.int8_fixedexp.footprint_g2_count;
+  s.int8_fixedexp.footprint_g5_embed_count += delta.int8_fixedexp.footprint_g5_embed_count;
+  if (s.int8_fixedexp.first_clamp_block.empty()) {
+    s.int8_fixedexp.first_clamp_block = delta.int8_fixedexp.first_clamp_block;
   }
 }
 

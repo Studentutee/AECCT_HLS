@@ -91,6 +91,42 @@ static inline bool use_generic_e4m3_g2_g5_submode(const RefRunConfig& cfg) {
          cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF;
 }
 
+static inline bool use_int8_fixedexp_embed_g2_mode(const RefRunConfig& cfg) {
+  return cfg.precision_mode == RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2 ||
+         cfg.precision_mode == RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2;
+}
+
+struct RefInt8FixedExpModeCfg {
+  bool enabled = false;
+  int zone_count = 0;
+  int zone_exponents[4] = {0, 0, 0, 0};
+};
+
+static inline RefInt8FixedExpModeCfg get_int8_fixedexp_mode_cfg(RefPrecisionMode mode) {
+  RefInt8FixedExpModeCfg cfg{};
+  if (mode == RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2) {
+    cfg.enabled = true;
+    cfg.zone_count = 3;
+    // Zone-3 proposal:
+    // Z1 embed/preproc family, Z2 residual/main-representation family, Z3 softmax/context family.
+    cfg.zone_exponents[0] = -5;
+    cfg.zone_exponents[1] = -4;
+    cfg.zone_exponents[2] = -7;
+    return cfg;
+  }
+  if (mode == RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2) {
+    cfg.enabled = true;
+    cfg.zone_count = 4;
+    // Zone-4 proposal keeps an extra zone for output/special scalar family.
+    cfg.zone_exponents[0] = -5;
+    cfg.zone_exponents[1] = -4;
+    cfg.zone_exponents[2] = -7;
+    cfg.zone_exponents[3] = -2;
+    return cfg;
+  }
+  return cfg;
+}
+
 static inline RefG5SubIsland g2_g5_submode_target(RefPrecisionMode mode) {
   switch (mode) {
     case RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY:
@@ -171,6 +207,7 @@ static inline bool use_island_s0(const RefRunConfig& cfg) {
          use_generic_e4m3_except_g5(cfg) ||
          use_generic_e4m3_g5_pairwise(cfg) ||
          use_generic_e4m3_g2_g5_submode(cfg) ||
+         use_int8_fixedexp_embed_g2_mode(cfg) ||
          use_frag_group_bisect(cfg) ||
          (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage));
 }
@@ -189,6 +226,93 @@ static inline void bump_first_nonfinite_block(RefFullQuantStats* stats, const ch
   if (stats != nullptr && stats->e4m3.first_nonfinite_block.empty()) {
     stats->e4m3.first_nonfinite_block = block_name;
   }
+}
+
+static inline void bump_first_int8_clamp_block(RefFullQuantStats* stats, const char* block_name) {
+  if (stats != nullptr && stats->int8_fixedexp.first_clamp_block.empty()) {
+    stats->int8_fixedexp.first_clamp_block = block_name;
+  }
+}
+
+static inline bool select_int8_fixedexp_zone(
+  const RefRunConfig& cfg,
+  RefFragGroup group,
+  RefG5SubIsland g5_site,
+  int* out_zone_id,
+  int* out_exp
+) {
+  if (!use_int8_fixedexp_embed_g2_mode(cfg)) {
+    return false;
+  }
+  const RefInt8FixedExpModeCfg mode_cfg = get_int8_fixedexp_mode_cfg(cfg.precision_mode);
+  if (!mode_cfg.enabled || mode_cfg.zone_count <= 0) {
+    return false;
+  }
+
+  if (group == RefFragGroup::G2_RESIDUAL) {
+    if (out_zone_id != nullptr) *out_zone_id = 2;
+    if (out_exp != nullptr) *out_exp = mode_cfg.zone_exponents[1];
+    return true;
+  }
+
+  if (group == RefFragGroup::G5_PREPROC_EMBED && g5_site == RefG5SubIsland::EMBED_ONLY) {
+    if (out_zone_id != nullptr) *out_zone_id = 1;
+    if (out_exp != nullptr) *out_exp = mode_cfg.zone_exponents[0];
+    return true;
+  }
+
+  return false;
+}
+
+static inline fp32_ref_t apply_roundtrip_int8_fixedexp(
+  fp32_ref_t x,
+  int zone_id,
+  int shared_exp,
+  RefFragGroup group,
+  RefG5SubIsland g5_site,
+  RefFullQuantStats* stats,
+  const char* block_name
+) {
+  if (stats != nullptr) {
+    stats->int8_fixedexp.roundtrip_count++;
+    switch (zone_id) {
+      case 1: stats->int8_fixedexp.zone1_count++; break;
+      case 2: stats->int8_fixedexp.zone2_count++; break;
+      case 3: stats->int8_fixedexp.zone3_count++; break;
+      case 4: stats->int8_fixedexp.zone4_count++; break;
+      default: break;
+    }
+    if (group == RefFragGroup::G2_RESIDUAL) {
+      stats->int8_fixedexp.footprint_g2_count++;
+    }
+    if (group == RefFragGroup::G5_PREPROC_EMBED && g5_site == RefG5SubIsland::EMBED_ONLY) {
+      stats->int8_fixedexp.footprint_g5_embed_count++;
+    }
+  }
+
+  const float xin = x.to_float();
+  if (std::isnan(xin) || std::isinf(xin)) {
+    return x;
+  }
+
+  const float inv_step = std::ldexp(1.0f, -shared_exp);
+  int32_t qi = static_cast<int32_t>(std::nearbyint(xin * inv_step));
+  if (qi > 127) {
+    qi = 127;
+    if (stats != nullptr) {
+      stats->int8_fixedexp.clamp_count++;
+      bump_first_int8_clamp_block(stats, block_name);
+    }
+  } else if (qi < -127) {
+    qi = -127;
+    if (stats != nullptr) {
+      stats->int8_fixedexp.clamp_count++;
+      bump_first_int8_clamp_block(stats, block_name);
+    }
+  }
+
+  const float y = std::ldexp(static_cast<float>(qi), shared_exp);
+  return fp32_ref_t(y);
 }
 
 static inline fp32_ref_t apply_roundtrip_and_update_stats(
@@ -238,6 +362,19 @@ static inline fp32_ref_t stress_roundtrip_e4m3(
   RefFullQuantStats* stats,
   const char* block_name
 ) {
+  int zone_id = 0;
+  int shared_exp = 0;
+  if (select_int8_fixedexp_zone(cfg, group, RefG5SubIsland::NONE, &zone_id, &shared_exp)) {
+    return apply_roundtrip_int8_fixedexp(
+      x,
+      zone_id,
+      shared_exp,
+      group,
+      RefG5SubIsland::NONE,
+      stats,
+      block_name
+    );
+  }
   if (!should_apply_e4m3_group_roundtrip(cfg, group)) {
     return x;
   }
@@ -261,6 +398,19 @@ static inline fp32_ref_t stress_roundtrip_e4m3_g5_sub(
   RefFullQuantStats* stats,
   const char* block_name
 ) {
+  int zone_id = 0;
+  int shared_exp = 0;
+  if (select_int8_fixedexp_zone(cfg, RefFragGroup::G5_PREPROC_EMBED, site, &zone_id, &shared_exp)) {
+    return apply_roundtrip_int8_fixedexp(
+      x,
+      zone_id,
+      shared_exp,
+      RefFragGroup::G5_PREPROC_EMBED,
+      site,
+      stats,
+      block_name
+    );
+  }
   if (!should_apply_g5_sub_roundtrip(cfg, site)) {
     return x;
   }
