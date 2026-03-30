@@ -76,6 +76,36 @@ static inline bool use_generic_e4m3_g5_pairwise(const RefRunConfig& cfg) {
          cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G5_G2;
 }
 
+enum class RefG5SubIsland : unsigned char {
+  NONE = 0,
+  EMBED_ONLY = 1,
+  SPE_ONLY = 2,
+  PREPROC_ASSEMBLY = 3,
+  PRELAYER_HANDOFF = 4
+};
+
+static inline bool use_generic_e4m3_g2_g5_submode(const RefRunConfig& cfg) {
+  return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY ||
+         cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY ||
+         cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY ||
+         cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF;
+}
+
+static inline RefG5SubIsland g2_g5_submode_target(RefPrecisionMode mode) {
+  switch (mode) {
+    case RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY:
+      return RefG5SubIsland::EMBED_ONLY;
+    case RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY:
+      return RefG5SubIsland::SPE_ONLY;
+    case RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY:
+      return RefG5SubIsland::PREPROC_ASSEMBLY;
+    case RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF:
+      return RefG5SubIsland::PRELAYER_HANDOFF;
+    default:
+      return RefG5SubIsland::NONE;
+  }
+}
+
 static inline bool g5_pairwise_mode_includes_group(RefPrecisionMode mode, RefFragGroup g) {
   switch (mode) {
     case RefPrecisionMode::GENERIC_E4M3_G5_G4:
@@ -127,6 +157,9 @@ static inline bool should_apply_e4m3_group_roundtrip(
   if (use_generic_e4m3_g5_pairwise(cfg)) {
     return g5_pairwise_mode_includes_group(cfg.precision_mode, g);
   }
+  if (use_generic_e4m3_g2_g5_submode(cfg)) {
+    return g == RefFragGroup::G2_RESIDUAL;
+  }
   if (!use_frag_group_bisect(cfg)) {
     return false;
   }
@@ -137,6 +170,7 @@ static inline bool use_island_s0(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
          use_generic_e4m3_except_g5(cfg) ||
          use_generic_e4m3_g5_pairwise(cfg) ||
+         use_generic_e4m3_g2_g5_submode(cfg) ||
          use_frag_group_bisect(cfg) ||
          (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage));
 }
@@ -157,17 +191,12 @@ static inline void bump_first_nonfinite_block(RefFullQuantStats* stats, const ch
   }
 }
 
-static inline fp32_ref_t stress_roundtrip_e4m3(
+static inline fp32_ref_t apply_roundtrip_and_update_stats(
   fp32_ref_t x,
-  const RefRunConfig& cfg,
   RefFragGroup group,
   RefFullQuantStats* stats,
   const char* block_name
 ) {
-  if (!should_apply_e4m3_group_roundtrip(cfg, group)) {
-    return x;
-  }
-
   if (stats != nullptr) {
     stats->e4m3.roundtrip_count++;
     switch (group) {
@@ -197,6 +226,66 @@ static inline fp32_ref_t stress_roundtrip_e4m3(
     } else if (std::isinf(yout)) {
       stats->e4m3.inf_out_count++;
       bump_first_nonfinite_block(stats, block_name);
+    }
+  }
+  return y;
+}
+
+static inline fp32_ref_t stress_roundtrip_e4m3(
+  fp32_ref_t x,
+  const RefRunConfig& cfg,
+  RefFragGroup group,
+  RefFullQuantStats* stats,
+  const char* block_name
+) {
+  if (!should_apply_e4m3_group_roundtrip(cfg, group)) {
+    return x;
+  }
+  return apply_roundtrip_and_update_stats(x, group, stats, block_name);
+}
+
+static inline bool should_apply_g5_sub_roundtrip(
+  const RefRunConfig& cfg,
+  RefG5SubIsland site
+) {
+  if (use_generic_e4m3_g2_g5_submode(cfg)) {
+    return g2_g5_submode_target(cfg.precision_mode) == site;
+  }
+  return should_apply_e4m3_group_roundtrip(cfg, RefFragGroup::G5_PREPROC_EMBED);
+}
+
+static inline fp32_ref_t stress_roundtrip_e4m3_g5_sub(
+  fp32_ref_t x,
+  const RefRunConfig& cfg,
+  RefG5SubIsland site,
+  RefFullQuantStats* stats,
+  const char* block_name
+) {
+  if (!should_apply_g5_sub_roundtrip(cfg, site)) {
+    return x;
+  }
+  fp32_ref_t y = apply_roundtrip_and_update_stats(
+    x,
+    RefFragGroup::G5_PREPROC_EMBED,
+    stats,
+    block_name
+  );
+  if (stats != nullptr) {
+    switch (site) {
+      case RefG5SubIsland::EMBED_ONLY:
+        stats->e4m3.roundtrip_g5_embed_count++;
+        break;
+      case RefG5SubIsland::SPE_ONLY:
+        stats->e4m3.roundtrip_g5_spe_count++;
+        break;
+      case RefG5SubIsland::PREPROC_ASSEMBLY:
+        stats->e4m3.roundtrip_g5_preproc_assembly_count++;
+        break;
+      case RefG5SubIsland::PRELAYER_HANDOFF:
+        stats->e4m3.roundtrip_g5_prelayer_handoff_count++;
+        break;
+      default:
+        break;
     }
   }
   return y;
@@ -1092,28 +1181,46 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     }
 
     static fp32_ref_t preproc_x[TOKENS_T][D_MODEL];
+    static fp32_ref_t prelayer_x[TOKENS_T][D_MODEL];
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int k = 0; k < 24; ++k) {
-        preproc_x[t][k] = stress_roundtrip_e4m3(
+        preproc_x[t][k] = stress_roundtrip_e4m3_g5_sub(
           node_feature[t] * fp32_ref_t(static_cast<float>(w_src_embed[t * 24 + k])),
           run_cfg_,
-          RefFragGroup::G5_PREPROC_EMBED,
+          RefG5SubIsland::EMBED_ONLY,
           &local_stats,
           "preproc_src_embed"
         );
       }
       for (int k = 0; k < 8; ++k) {
-        preproc_x[t][24 + k] = stress_roundtrip_e4m3(
+        preproc_x[t][24 + k] = stress_roundtrip_e4m3_g5_sub(
           fp32_ref_t(static_cast<float>(w_lpe_token[t * 8 + k])),
           run_cfg_,
-          RefFragGroup::G5_PREPROC_EMBED,
+          RefG5SubIsland::SPE_ONLY,
           &local_stats,
           "preproc_lpe"
+        );
+      }
+      for (int d = 0; d < D_MODEL; ++d) {
+        preproc_x[t][d] = stress_roundtrip_e4m3_g5_sub(
+          preproc_x[t][d],
+          run_cfg_,
+          RefG5SubIsland::PREPROC_ASSEMBLY,
+          &local_stats,
+          "preproc_feature_assembly"
+        );
+        prelayer_x[t][d] = stress_roundtrip_e4m3_g5_sub(
+          preproc_x[t][d],
+          run_cfg_,
+          RefG5SubIsland::PRELAYER_HANDOFF,
+          &local_stats,
+          "prelayer_handoff"
         );
       }
     }
 
     dump_2d<TOKENS_T, D_MODEL>(dump, "preproc_x", preproc_x);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "prelayer_x", prelayer_x);
 
     static fp32_ref_t layer0_q[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_k[TOKENS_T][D_MODEL];
@@ -1132,7 +1239,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     run_layer(0,
               run_cfg_,
               &local_stats,
-              preproc_x,
+              prelayer_x,
               one_ring,
               second_ring,
               layer0_q,

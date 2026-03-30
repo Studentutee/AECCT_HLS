@@ -181,7 +181,7 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
-  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2\n");
+  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff\n");
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
@@ -297,6 +297,22 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
   }
   if (std::strcmp(text, "generic_e4m3_g5_g2") == 0) {
     mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g2_embed_only") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g2_spe_only") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g2_preproc_assembly") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY;
+    return true;
+  }
+  if (std::strcmp(text, "generic_e4m3_g2_prelayer_handoff") == 0) {
+    mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF;
     return true;
   }
   return false;
@@ -532,7 +548,11 @@ static inline bool precision_mode_anchors_to_finalhead_s0(aecct_ref::RefPrecisio
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G4 ||
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G1 ||
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G3 ||
-         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2;
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2 ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY ||
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF;
 }
 
 static inline bool precision_mode_requires_frag_group(aecct_ref::RefPrecisionMode mode) {
@@ -560,6 +580,18 @@ static std::string precision_mode_output_suffix(
   }
   if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2) {
     return "_g5_g2";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY) {
+    return "_g2_embed_only";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY) {
+    return "_g2_spe_only";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY) {
+    return "_g2_preproc_assembly";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF) {
+    return "_g2_prelayer_handoff";
   }
   return std::string();
 }
@@ -1000,6 +1032,11 @@ static bool write_eval_single_summary_txt(
         << full_stats->e4m3.roundtrip_g3_count << "/"
         << full_stats->e4m3.roundtrip_g4_count << "/"
         << full_stats->e4m3.roundtrip_g5_count << "\n";
+    ofs << "e4m3 roundtrip g5 sub (embed/spe/assembly/prelayer) : "
+        << full_stats->e4m3.roundtrip_g5_embed_count << "/"
+        << full_stats->e4m3.roundtrip_g5_spe_count << "/"
+        << full_stats->e4m3.roundtrip_g5_preproc_assembly_count << "/"
+        << full_stats->e4m3.roundtrip_g5_prelayer_handoff_count << "\n";
     ofs << "e4m3 nan in/out            : " << full_stats->e4m3.nan_in_count
         << "/" << full_stats->e4m3.nan_out_count << "\n";
     ofs << "e4m3 inf in/out            : " << full_stats->e4m3.inf_in_count
@@ -1074,6 +1111,11 @@ static bool write_eval_compare_summary_txt(
         << experiment_full_stats->e4m3.roundtrip_g3_count << "/"
         << experiment_full_stats->e4m3.roundtrip_g4_count << "/"
         << experiment_full_stats->e4m3.roundtrip_g5_count << "\n";
+    ofs << "e4m3 roundtrip g5 sub (embed/spe/assembly/prelayer) : "
+        << experiment_full_stats->e4m3.roundtrip_g5_embed_count << "/"
+        << experiment_full_stats->e4m3.roundtrip_g5_spe_count << "/"
+        << experiment_full_stats->e4m3.roundtrip_g5_preproc_assembly_count << "/"
+        << experiment_full_stats->e4m3.roundtrip_g5_prelayer_handoff_count << "\n";
     ofs << "e4m3 nan in/out            : " << experiment_full_stats->e4m3.nan_in_count
         << "/" << experiment_full_stats->e4m3.nan_out_count << "\n";
     ofs << "e4m3 inf in/out            : " << experiment_full_stats->e4m3.inf_in_count
@@ -1319,6 +1361,11 @@ static bool write_batch_summary_txt(
         << experiment_full_stats->e4m3.roundtrip_g3_count << " / "
         << experiment_full_stats->e4m3.roundtrip_g4_count << " / "
         << experiment_full_stats->e4m3.roundtrip_g5_count << "\n";
+    ofs << "e4m3 roundtrip g5 sub (embed/spe/assembly/prelayer) : "
+        << experiment_full_stats->e4m3.roundtrip_g5_embed_count << " / "
+        << experiment_full_stats->e4m3.roundtrip_g5_spe_count << " / "
+        << experiment_full_stats->e4m3.roundtrip_g5_preproc_assembly_count << " / "
+        << experiment_full_stats->e4m3.roundtrip_g5_prelayer_handoff_count << "\n";
     ofs << "e4m3 nan in/out               : " << experiment_full_stats->e4m3.nan_in_count
         << " / " << experiment_full_stats->e4m3.nan_out_count << "\n";
     ofs << "e4m3 inf in/out               : " << experiment_full_stats->e4m3.inf_in_count
@@ -1436,6 +1483,11 @@ static void print_full_stress_console_summary(const aecct_ref::RefFullQuantStats
     static_cast<unsigned long long>(stats.e4m3.roundtrip_g3_count),
     static_cast<unsigned long long>(stats.e4m3.roundtrip_g4_count),
     static_cast<unsigned long long>(stats.e4m3.roundtrip_g5_count));
+  std::printf("e4m3 roundtrip g5 sub (embed/spe/assembly/prelayer) : %llu / %llu / %llu / %llu\n",
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g5_embed_count),
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g5_spe_count),
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g5_preproc_assembly_count),
+    static_cast<unsigned long long>(stats.e4m3.roundtrip_g5_prelayer_handoff_count));
   std::printf("e4m3 nan in/out            : %llu / %llu\n",
     static_cast<unsigned long long>(stats.e4m3.nan_in_count),
     static_cast<unsigned long long>(stats.e4m3.nan_out_count));

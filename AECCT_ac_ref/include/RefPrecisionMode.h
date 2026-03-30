@@ -11,7 +11,11 @@ enum class RefPrecisionMode : unsigned char {
   GENERIC_E4M3_G5_G4 = 5,
   GENERIC_E4M3_G5_G1 = 6,
   GENERIC_E4M3_G5_G3 = 7,
-  GENERIC_E4M3_G5_G2 = 8
+  GENERIC_E4M3_G5_G2 = 8,
+  GENERIC_E4M3_G2_EMBED_ONLY = 9,
+  GENERIC_E4M3_G2_SPE_ONLY = 10,
+  GENERIC_E4M3_G2_PREPROC_ASSEMBLY = 11,
+  GENERIC_E4M3_G2_PRELAYER_HANDOFF = 12
 };
 
 static inline const char* to_string(RefPrecisionMode mode) {
@@ -34,6 +38,14 @@ static inline const char* to_string(RefPrecisionMode mode) {
       return "GENERIC_E4M3_G5_G3";
     case RefPrecisionMode::GENERIC_E4M3_G5_G2:
       return "GENERIC_E4M3_G5_G2";
+    case RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY:
+      return "GENERIC_E4M3_G2_EMBED_ONLY";
+    case RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY:
+      return "GENERIC_E4M3_G2_SPE_ONLY";
+    case RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY:
+      return "GENERIC_E4M3_G2_PREPROC_ASSEMBLY";
+    case RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF:
+      return "GENERIC_E4M3_G2_PRELAYER_HANDOFF";
     default:
       return "UNKNOWN_PRECISION_MODE";
   }
