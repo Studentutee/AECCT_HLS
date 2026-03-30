@@ -19,6 +19,10 @@ struct RefE4M3PathStats {
   std::uint64_t roundtrip_g3_count = 0;
   std::uint64_t roundtrip_g4_count = 0;
   std::uint64_t roundtrip_g5_count = 0;
+  std::uint64_t roundtrip_g5_embed_count = 0;
+  std::uint64_t roundtrip_g5_spe_count = 0;
+  std::uint64_t roundtrip_g5_preproc_assembly_count = 0;
+  std::uint64_t roundtrip_g5_prelayer_handoff_count = 0;
   std::uint64_t nan_in_count = 0;
   std::uint64_t nan_out_count = 0;
   std::uint64_t inf_in_count = 0;
@@ -56,6 +60,10 @@ static inline void add_ref_full_quant_stats(const RefFullQuantStats& delta) {
   s.e4m3.roundtrip_g3_count += delta.e4m3.roundtrip_g3_count;
   s.e4m3.roundtrip_g4_count += delta.e4m3.roundtrip_g4_count;
   s.e4m3.roundtrip_g5_count += delta.e4m3.roundtrip_g5_count;
+  s.e4m3.roundtrip_g5_embed_count += delta.e4m3.roundtrip_g5_embed_count;
+  s.e4m3.roundtrip_g5_spe_count += delta.e4m3.roundtrip_g5_spe_count;
+  s.e4m3.roundtrip_g5_preproc_assembly_count += delta.e4m3.roundtrip_g5_preproc_assembly_count;
+  s.e4m3.roundtrip_g5_prelayer_handoff_count += delta.e4m3.roundtrip_g5_prelayer_handoff_count;
   s.e4m3.nan_in_count += delta.e4m3.nan_in_count;
   s.e4m3.nan_out_count += delta.e4m3.nan_out_count;
   s.e4m3.inf_in_count += delta.e4m3.inf_in_count;
