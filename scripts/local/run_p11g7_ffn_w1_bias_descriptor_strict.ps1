@@ -1,5 +1,5 @@
 param(
-    [string]$BuildDir = "build\\p11w4m3\\kv_phase_entry_probe"
+    [string]$BuildDir = "build\\p11g7\\ffn_w1_bias_descriptor_strict"
 )
 
 Set-StrictMode -Version Latest
@@ -62,34 +62,35 @@ Push-Location $repoRoot
 try {
     New-Item -ItemType Directory -Force -Path $BuildDir > $null
 
-    $exePath = Join-Path $BuildDir 'tb_w4m3_kv_phase_entry_probe.exe'
+    $exePath = Join-Path $BuildDir 'tb_g5_ffn_w1_fallback_policy_p11g5w1fp.exe'
     $buildLog = Join-Path $BuildDir 'build.log'
     $runLog = Join-Path $BuildDir 'run.log'
     $verdictPath = Join-Path $BuildDir 'verdict.txt'
     $manifestPath = Join-Path $BuildDir 'file_manifest.txt'
 
-    Invoke-ClBuild -Source 'tb\tb_w4m3_kv_phase_entry_probe.cpp' -ExeOut $exePath -LogOut $buildLog
+    Invoke-ClBuild -Source 'tb\tb_g5_ffn_w1_fallback_policy_p11g5w1fp.cpp' -ExeOut $exePath -LogOut $buildLog
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
     $requiredPassLines = @(
-        'W4M3_KV_CALLER_FED_XROW_VISIBLE PASS',
-        'W4M3_KV_OWNERSHIP_CHECK PASS',
-        'W4M3_KV_NO_SPURIOUS_TOUCH PASS',
-        'W4M3_KV_EXPECTED_COMPARE PASS',
-        'W4M3_KV_PROBE_DESCRIPTOR_REJECT PASS',
-        'W4M3_KV_PROBE_MISMATCH_REJECT PASS',
-        'PASS: tb_w4m3_kv_phase_entry_probe'
+        'G5FFN_W1_FALLBACK_POLICY_TOPFED_PRIMARY PASS',
+        'G5FFN_W1_FALLBACK_POLICY_CONTROLLED_FALLBACK PASS',
+        'G5FFN_W1_FALLBACK_POLICY_REJECT_ON_MISSING_DESCRIPTOR PASS',
+        'G5FFN_W1_FALLBACK_POLICY_NO_STALE_STATE PASS',
+        'G5FFN_W1_FALLBACK_POLICY_NO_SPURIOUS_TOUCH PASS',
+        'G5FFN_W1_FALLBACK_POLICY_EXPECTED_COMPARE PASS',
+        'G7FFN_W1_BIAS_DESCRIPTOR_REJECT PASS',
+        'PASS: tb_g5_ffn_w1_fallback_policy_p11g5w1fp'
     )
     foreach ($line in $requiredPassLines) {
         Require-PassString -LogPath $runLog -Needle $line
     }
 
-    Add-Content -Path $runLog -Value 'PASS: run_p11w4m3_kv_phase_entry_probe' -Encoding UTF8
+    Add-Content -Path $runLog -Value 'PASS: run_p11g7_ffn_w1_bias_descriptor_strict' -Encoding UTF8
 
     @(
-        'task: P00-W4-M3-KV-PHASE-ENTRY-PROBE',
+        'task: P00-G7-FFN-W1-BIAS-DESCRIPTOR-STRICT',
         'status: PASS',
-        'banner: PASS: run_p11w4m3_kv_phase_entry_probe',
+        'banner: PASS: run_p11g7_ffn_w1_bias_descriptor_strict',
         'scope: local-only',
         'closure: not Catapult closure; not SCVerify closure'
     ) | Set-Content -Path $verdictPath -Encoding UTF8
@@ -101,14 +102,14 @@ try {
         ("tb_exe={0}" -f $exePath)
     ) | Set-Content -Path $manifestPath -Encoding UTF8
 
-    Write-Host 'PASS: run_p11w4m3_kv_phase_entry_probe'
+    Write-Host 'PASS: run_p11g7_ffn_w1_bias_descriptor_strict'
     exit 0
 }
 catch {
     Write-Error $_
     if ($verdictPath) {
         @(
-            'task: P00-W4-M3-KV-PHASE-ENTRY-PROBE',
+            'task: P00-G7-FFN-W1-BIAS-DESCRIPTOR-STRICT',
             'status: FAIL',
             ("message: {0}" -f $_.Exception.Message)
         ) | Set-Content -Path $verdictPath -Encoding UTF8
@@ -124,3 +125,4 @@ catch {
 finally {
     Pop-Location
 }
+

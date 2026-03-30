@@ -184,6 +184,41 @@ private:
         }
 
         {
+            std::vector<aecct::u32_t> sram_neg_short = sram_init_;
+            bool fallback_taken = true;
+            aecct::u32_t probe_visible = 0;
+            aecct::u32_t probe_owner_ok = 0;
+            aecct::u32_t probe_compare_ok = 0;
+            const bool kv_mainline_taken = aecct::run_p11ac_layer0_top_managed_kv(
+                sram_neg_short.data(),
+                cfg_,
+                (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD,
+                sc_,
+                pb_,
+                fallback_taken,
+                (aecct::u32_t)x_probe_base,
+                x_probe_words.data(),
+                (aecct::u32_t)(probe_words - 1u),
+                &probe_visible,
+                &probe_owner_ok,
+                &probe_compare_ok);
+            if (kv_mainline_taken || !fallback_taken) {
+                std::printf("[w4m3-kv][FAIL] short-descriptor probe did not reject as expected\n");
+                return false;
+            }
+            if ((uint32_t)probe_visible.to_uint() != 1u) {
+                std::printf("[w4m3-kv][FAIL] short-descriptor visibility flag mismatch\n");
+                return false;
+            }
+            for (uint32_t i = 0u; i < (uint32_t)sram_neg_short.size(); ++i) {
+                if ((uint32_t)sram_neg_short[i].to_uint() != (uint32_t)sram_init_[i].to_uint()) {
+                    std::printf("[w4m3-kv][FAIL] short-descriptor reject wrote stale state addr=%u\n", (unsigned)i);
+                    return false;
+                }
+            }
+        }
+
+        {
             std::vector<aecct::u32_t> sram_neg_owner = sram_init_;
             bool fallback_taken = true;
             aecct::u32_t probe_visible = 0;
@@ -257,6 +292,7 @@ private:
             }
         }
 
+        std::printf("W4M3_KV_PROBE_DESCRIPTOR_REJECT PASS\n");
         std::printf("W4M3_KV_PROBE_MISMATCH_REJECT PASS\n");
         return true;
     }
@@ -273,4 +309,3 @@ CCS_MAIN(int argc, char** argv) {
 }
 
 #endif // __SYNTHESIS__
-

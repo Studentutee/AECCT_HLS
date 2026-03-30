@@ -957,3 +957,15 @@
 
 7. Next recommended step
 - Keep Wave4 progression bounded: choose one additional entrypoint with dedicated owner mismatch/no-spurious/mismatch-reject TB, without expanding into compute/writeback rewrites.
+
+## G7 addendum (direct-SRAM eradication bounded waves)
+- Wave A (completed): FFN residual fallback tightening
+  - strict W1 now requires top-fed bias descriptor-ready in addition to x/weight.
+  - targeted runner: `scripts/local/run_p11g7_ffn_w1_bias_descriptor_strict.ps1`
+- Wave B (completed): W4-M3 KV probe hardening
+  - phase-entry probe now requires full-row descriptor-ready words.
+  - targeted runner: `scripts/local/run_p11w4m3_kv_phase_entry_probe.ps1`
+- Wave C (completed): SramView remove-readiness matrix
+  - output: `docs/handoff/TOP_MANAGED_SRAM_G7_REMOVE_READINESS_20260330.md`
+- Wave D (completed): residual blocker isolation and next-cut map
+  - output: `docs/handoff/TOP_MANAGED_SRAM_G7_DIRECT_SRAM_CAMPAIGN_20260330.md`

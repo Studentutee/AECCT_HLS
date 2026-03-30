@@ -597,8 +597,8 @@ static inline bool attn_phasea_top_managed_kv_mainline(
             }
             const uint32_t probe_base = (uint32_t)phase_entry_probe_x_base_word.to_uint();
             const uint32_t probe_valid = (uint32_t)phase_entry_probe_x_words_valid.to_uint();
-            if (probe_valid == 0u ||
-                probe_valid > d_model ||
+            // Descriptor-ready gating for bounded probe mode: require full x-row visibility.
+            if (probe_valid != d_model ||
                 probe_valid > (uint32_t)kTernaryLiveL0WkCols) {
                 return false;
             }
@@ -610,7 +610,7 @@ static inline bool attn_phasea_top_managed_kv_mainline(
                 return false;
             }
             bool probe_compare_ok = true;
-            ATTN_P11AC_PHASE_ENTRY_PROBE_COL_LOOP: for (uint32_t i = 0u; i < probe_valid; ++i) {
+            ATTN_P11AC_PHASE_ENTRY_PROBE_COL_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
                 if ((uint32_t)sram[row_x_base + i].to_uint() !=
                     (uint32_t)phase_entry_probe_x_words[i].to_uint()) {
                     probe_compare_ok = false;

@@ -667,3 +667,24 @@
 - This round does not migrate full Phase-A KV payload compute path.
 - KV inner compute/writeback loops remain SRAM-centric by design in bounded scope.
 - Wave4 broader payload migration remains deferred.
+
+## Night-Batch Extension: G7 Remaining Direct-SRAM Eradication Campaign (Bounded)
+- Completed two bounded waves with code-level progress:
+  - Wave A: FFN W1 strict policy now requires top-fed `x + weight + bias` descriptor-ready.
+  - Wave B: W4-M3 KV probe now enforces full-row descriptor-ready (`probe_valid == d_model`) and rejects short descriptors.
+- Delivered global hotspot/risk inventory and SramView remove-readiness matrix.
+- Local-only evidence bundle:
+  - `build/evidence/g7_direct_sram_campaign_20260330/evidence_manifest.txt`
+
+### G7 artifacts
+- `docs/handoff/TOP_MANAGED_SRAM_G7_DIRECT_SRAM_CAMPAIGN_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G7_DIRECT_SRAM_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G7_REMOVE_READINESS_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G7_COMPLETION_20260330.md`
+- `scripts/local/run_p11g7_ffn_w1_bias_descriptor_strict.ps1`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/AttnPhaseATopManagedKv.h`
+
+### Deferred boundary after G7
+- Attn/Phase inner compute and writeback loops remain SRAM-centric by design in this bounded pass.
+- This round does not claim full Wave4 payload migration.

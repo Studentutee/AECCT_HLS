@@ -202,10 +202,13 @@ static inline void FFNLayer0CoreWindow(
     const uint32_t expected_w2_bias_words = d_model;
     const uint32_t expected_w1_x_words = token_count * d_model;
     const uint32_t expected_w1_weight_words = d_ffn * d_model;
+    const uint32_t expected_w1_bias_words = d_ffn;
     const bool w1_input_descriptor_ready =
         (topfed_x_words != 0) && (topfed_x_raw_valid >= expected_w1_x_words);
     const bool w1_weight_descriptor_ready =
         (topfed_w1_weight_words != 0) && (topfed_w1_raw_valid >= expected_w1_weight_words);
+    const bool w1_bias_descriptor_ready =
+        (topfed_w1_bias_words != 0) && (topfed_w1_bias_raw_valid >= expected_w1_bias_words);
     const bool w2_input_descriptor_ready =
         (topfed_w2_input_words != 0) && (topfed_w2_input_raw_valid >= expected_w2_input_words);
     const bool w2_weight_descriptor_ready =
@@ -226,7 +229,8 @@ static inline void FFNLayer0CoreWindow(
 
     if constexpr (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
         // Tightened fallback policy: caller can require fully ready W1 descriptors.
-        if (require_w1_topfed && !(w1_input_descriptor_ready && w1_weight_descriptor_ready)) {
+        if (require_w1_topfed &&
+            !(w1_input_descriptor_ready && w1_weight_descriptor_ready && w1_bias_descriptor_ready)) {
             if (fallback_policy_reject_flag != 0) {
                 *fallback_policy_reject_flag = (u32_t)1u;
             }

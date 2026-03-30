@@ -274,6 +274,49 @@ CCS_MAIN(int argc, char** argv) {
     std::printf("G5FFN_W1_FALLBACK_POLICY_REJECT_ON_MISSING_DESCRIPTOR PASS\n");
     std::printf("G5FFN_W1_FALLBACK_POLICY_NO_STALE_STATE PASS\n");
 
+    // Case D: strict mode and missing W1 bias descriptor-ready -> reject + no stale state.
+    for (uint32_t idx = 0u; idx < token_count * d_ffn; ++idx) {
+        sram[w1_base + idx] = stale_sentinel;
+    }
+    reject_flag = (aecct::u32_t)0u;
+    fallback_touch_counter = (aecct::u32_t)0u;
+    aecct::u32_t reject_stage = (aecct::u32_t)aecct::FFN_REJECT_STAGE_NONE;
+    aecct::FFNLayer0<aecct::FFN_STAGE_W1>(
+        sram_ptr,
+        cfg,
+        (aecct::u32_t)x_base,
+        sc,
+        (aecct::u32_t)param_base,
+        (aecct::u32_t)0u,
+        topfed_x_words,
+        topfed_w1_words,
+        (aecct::u32_t)w1_weight_words,
+        0,
+        (aecct::u32_t)0u,
+        0,
+        (aecct::u32_t)0u,
+        0,
+        (aecct::u32_t)0u,
+        (aecct::u32_t)aecct::FFN_POLICY_REQUIRE_W1_TOPFED,
+        &reject_flag,
+        &fallback_touch_counter,
+        (aecct::u32_t)x_words,
+        topfed_w1_bias,
+        (aecct::u32_t)(d_ffn - 1u),
+        &reject_stage
+    );
+    if (!expect_u32((uint32_t)reject_flag.to_uint(), 1u, "caseD reject flag") ||
+        !expect_u32((uint32_t)reject_stage.to_uint(), (uint32_t)aecct::FFN_REJECT_STAGE_W1, "caseD reject stage") ||
+        !expect_u32((uint32_t)fallback_touch_counter.to_uint(), 0u, "caseD no fallback touch after reject")) {
+        CCS_RETURN(1);
+    }
+    for (uint32_t idx = 0u; idx < token_count * d_ffn; ++idx) {
+        if (!expect_u32((uint32_t)sram[w1_base + idx].to_uint(), (uint32_t)stale_sentinel.to_uint(), "caseD no stale output")) {
+            CCS_RETURN(1);
+        }
+    }
+    std::printf("G7FFN_W1_BIAS_DESCRIPTOR_REJECT PASS\n");
+
     // No spurious touch on legacy source regions.
     for (uint32_t idx = 0u; idx < x_words; ++idx) {
         if (!expect_u32((uint32_t)sram[x_base + idx].to_uint(), (uint32_t)legacy_x_snapshot[idx].to_uint(), "legacy x touched")) {

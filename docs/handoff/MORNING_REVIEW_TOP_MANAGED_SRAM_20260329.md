@@ -535,3 +535,19 @@
 - `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEA_KV_CAMPAIGN_COMPLETION_20260330.md`
 - `build/p11w4m3/kv_phase_entry_probe/run.log`
 - `build/evidence/w4m3_kv_probe_campaign_20260330/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (G7 Latest)
+1. Open `src/blocks/FFNLayer0.h`
+- confirm strict W1 gate now requires `w1_bias_descriptor_ready`.
+2. Open `tb/tb_g5_ffn_w1_fallback_policy_p11g5w1fp.cpp` and `build/p11g7/ffn_w1_bias_descriptor_strict/run.log`
+- confirm `G7FFN_W1_BIAS_DESCRIPTOR_REJECT PASS`.
+3. Open `src/blocks/AttnPhaseATopManagedKv.h`
+- confirm KV probe descriptor-ready full-row gating (`probe_valid == d_model`).
+4. Open `tb/tb_w4m3_kv_phase_entry_probe.cpp` and `build/p11w4m3/kv_phase_entry_probe/run.log`
+- confirm `W4M3_KV_PROBE_DESCRIPTOR_REJECT PASS`.
+5. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`
+- confirm G7 guard lines for FFN strict bias descriptor and KV descriptor-ready gating.
+6. Open `docs/handoff/TOP_MANAGED_SRAM_G7_DIRECT_SRAM_CAMPAIGN_20260330.md`
+7. Open `docs/handoff/TOP_MANAGED_SRAM_G7_REMOVE_READINESS_20260330.md`
+8. Open `docs/handoff/TOP_MANAGED_SRAM_G7_DIRECT_SRAM_EVIDENCE_INDEX_20260330.md`
+9. Open `build/evidence/g7_direct_sram_campaign_20260330/evidence_manifest.txt`
