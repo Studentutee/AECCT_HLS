@@ -494,3 +494,44 @@
 - `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEA_CAMPAIGN_COMPLETION_20260330.md`
 - `build/p11w4m3/phasea_q_phase_entry_probe/run.log`
 - `build/evidence/w4_phasea_q_probe_campaign_20260330/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (W4-M3 KV Probe Latest)
+1. Open `src/blocks/AttnPhaseATopManagedKv.h` (2 min)
+   - Confirm phase-entry probe anchors:
+     - `phase_entry_probe_enabled`
+     - `ATTN_P11AC_PHASE_ENTRY_PROBE_COL_LOOP`
+     - ownership/compare observability outputs.
+2. Open `src/Top.h` (1 min)
+   - Confirm `run_p11ac_layer0_top_managed_kv(...)` includes probe passthrough args.
+3. Open `build/p11w4m3/kv_phase_entry_probe/run.log` (1 min)
+   - Confirm:
+     - `W4M3_KV_CALLER_FED_XROW_VISIBLE PASS`
+     - `W4M3_KV_OWNERSHIP_CHECK PASS`
+     - `W4M3_KV_NO_SPURIOUS_TOUCH PASS`
+     - `W4M3_KV_EXPECTED_COMPARE PASS`
+     - `W4M3_KV_PROBE_MISMATCH_REJECT PASS`
+4. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: W4-M3 Phase-A KV phase-entry caller-fed x-row probe anchors OK`.
+5. Open retained regression logs (2 min)
+   - `build/p11w4m3/phasea_q_phase_entry_probe/run.log`
+   - `build/p11w4m2/softmaxout_phase_entry_probe/run.log`
+   - `build/p11g6/ffn_w1_bias_descriptor/run.log`
+   - `build/p11g6/ffn_fallback_observability/run.log`
+   - `build/p11g5/ffn_w1_fallback_policy/run.log`
+6. Open `build/p11ah/full_loop/run.log` and `build/p11aj/p11aj/run.log` (1 min)
+7. Open `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_PROBE_20260330.md` and `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_COMPLETION_20260330.md` (1 min)
+8. Open `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEA_KV_CAMPAIGN_COMPLETION_20260330.md` (1 min)
+9. Open `build/evidence/w4m3_kv_probe_campaign_20260330/evidence_manifest.txt` (1 min)
+
+## Latest artifact additions (W4-M3 KV campaign)
+- `scripts/local/run_p11w4m3_kv_phase_entry_probe.ps1`
+- `tb/tb_w4m3_kv_phase_entry_probe.cpp`
+- `src/blocks/AttnPhaseATopManagedKv.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_PROBE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_COMPLETION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEA_KV_CAMPAIGN_COMPLETION_20260330.md`
+- `build/p11w4m3/kv_phase_entry_probe/run.log`
+- `build/evidence/w4m3_kv_probe_campaign_20260330/evidence_manifest.txt`

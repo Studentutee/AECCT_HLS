@@ -620,3 +620,50 @@
 - This round does not migrate full Phase-A Q payload compute path.
 - Q inner compute/writeback loops remain SRAM-centric by design in bounded scope.
 - KV remains feasibility/blocker capture only in this run.
+
+## Night-Batch Extension: W4-M3 KV Dedicated Phase-Entry Caller-Fed Probe (Bounded)
+- Completed W4-M3 dedicated bounded pass on Phase-A KV phase entry.
+- Added optional caller-fed x-row probe passthrough at:
+  - `run_p11ac_layer0_top_managed_kv(...)`
+  - `attn_phasea_top_managed_kv_mainline(...)`
+- Probe validates phase-entry visibility + ownership + descriptor compare/reject without touching inner K/V compute and writeback loops.
+
+### W4-M3 KV local-only evidence
+- `build/p11w4m3/kv_phase_entry_probe/run.log`: PASS
+  - `W4M3_KV_CALLER_FED_XROW_VISIBLE PASS`
+  - `W4M3_KV_OWNERSHIP_CHECK PASS`
+  - `W4M3_KV_NO_SPURIOUS_TOUCH PASS`
+  - `W4M3_KV_EXPECTED_COMPARE PASS`
+  - `W4M3_KV_PROBE_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: W4-M3 Phase-A KV phase-entry caller-fed x-row probe anchors OK`
+- Required regression chain retained PASS:
+  - `build/p11w4m3/phasea_q_phase_entry_probe/run.log`
+  - `build/p11w4m2/softmaxout_phase_entry_probe/run.log`
+  - `build/p11g6/ffn_w1_bias_descriptor/run.log`
+  - `build/p11g6/ffn_fallback_observability/run.log`
+  - `build/p11g5/ffn_w1_fallback_policy/run.log`
+  - `build/p11g5/ffn_fallback_policy/run.log`
+  - `build/p11g5/ffn_closure_campaign/run.log`
+  - `build/p11g5/wave3_ffn_payload_migration/run.log`
+  - `build/p11g5/wave35_ffn_w1_weight_migration/run.log`
+  - `build/p11ah/full_loop/run.log`
+  - `build/p11aj/p11aj/run.log`
+- Bundle:
+  - `build/evidence/w4m3_kv_probe_campaign_20260330/evidence_manifest.txt`
+
+### W4-M3 KV artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_PROBE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_KV_COMPLETION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEA_KV_CAMPAIGN_COMPLETION_20260330.md`
+- `src/blocks/AttnPhaseATopManagedKv.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11w4m3_kv_phase_entry_probe.ps1`
+- `tb/tb_w4m3_kv_phase_entry_probe.cpp`
+
+### Deferred boundary after W4-M3 KV
+- This round does not migrate full Phase-A KV payload compute path.
+- KV inner compute/writeback loops remain SRAM-centric by design in bounded scope.
+- Wave4 broader payload migration remains deferred.

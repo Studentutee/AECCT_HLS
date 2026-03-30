@@ -486,9 +486,24 @@ static inline bool attn_phasea_top_managed_kv_mainline(
     u32_t x_in_base_word,
     const AttnCfg& cfg,
     const AttnScratch& sc,
-    bool& fallback_taken
+    bool& fallback_taken,
+    u32_t phase_entry_probe_x_base_word = (u32_t)0u,
+    const u32_t* phase_entry_probe_x_words = 0,
+    u32_t phase_entry_probe_x_words_valid = (u32_t)0u,
+    u32_t* phase_entry_probe_visible = 0,
+    u32_t* phase_entry_probe_owner_ok = 0,
+    u32_t* phase_entry_probe_compare_ok = 0
 ) {
     fallback_taken = true;
+    if (phase_entry_probe_visible != 0) {
+        *phase_entry_probe_visible = (u32_t)0u;
+    }
+    if (phase_entry_probe_owner_ok != 0) {
+        *phase_entry_probe_owner_ok = (u32_t)0u;
+    }
+    if (phase_entry_probe_compare_ok != 0) {
+        *phase_entry_probe_compare_ok = (u32_t)0u;
+    }
     if (!attn_phasea_kv_sram_view_ok(sram)) {
         return false;
     }
@@ -564,6 +579,10 @@ static inline bool attn_phasea_top_managed_kv_mainline(
         d_model > (uint32_t)kTernaryLiveL0WvCols) {
         return false;
     }
+    const bool phase_entry_probe_enabled =
+        (phase_entry_probe_x_words != 0) &&
+        ((uint32_t)phase_entry_probe_x_words_valid.to_uint() != 0u);
+    bool phase_entry_probe_checked = false;
 
     for (uint32_t t = 0u; t < token_count; ++t) {
         const uint32_t row_x_base = x_base + t * d_model;
@@ -571,6 +590,41 @@ static inline bool attn_phasea_top_managed_kv_mainline(
         const uint32_t row_v_base = v_base + t * d_model;
         const uint32_t row_k_act_q_base = k_act_q_base + t * d_model;
         const uint32_t row_v_act_q_base = v_act_q_base + t * d_model;
+
+        if (phase_entry_probe_enabled && !phase_entry_probe_checked) {
+            if (phase_entry_probe_visible != 0) {
+                *phase_entry_probe_visible = (u32_t)1u;
+            }
+            const uint32_t probe_base = (uint32_t)phase_entry_probe_x_base_word.to_uint();
+            const uint32_t probe_valid = (uint32_t)phase_entry_probe_x_words_valid.to_uint();
+            if (probe_valid == 0u ||
+                probe_valid > d_model ||
+                probe_valid > (uint32_t)kTernaryLiveL0WkCols) {
+                return false;
+            }
+            const bool probe_owner_ok = (probe_base == row_x_base);
+            if (phase_entry_probe_owner_ok != 0) {
+                *phase_entry_probe_owner_ok = (u32_t)(probe_owner_ok ? 1u : 0u);
+            }
+            if (!probe_owner_ok) {
+                return false;
+            }
+            bool probe_compare_ok = true;
+            ATTN_P11AC_PHASE_ENTRY_PROBE_COL_LOOP: for (uint32_t i = 0u; i < probe_valid; ++i) {
+                if ((uint32_t)sram[row_x_base + i].to_uint() !=
+                    (uint32_t)phase_entry_probe_x_words[i].to_uint()) {
+                    probe_compare_ok = false;
+                    break;
+                }
+            }
+            if (phase_entry_probe_compare_ok != 0) {
+                *phase_entry_probe_compare_ok = (u32_t)(probe_compare_ok ? 1u : 0u);
+            }
+            if (!probe_compare_ok) {
+                return false;
+            }
+            phase_entry_probe_checked = true;
+        }
 
         u32_t x_row[kTernaryLiveL0WkCols];
         ATTN_P11AC_MAINLINE_XROW_CLEAR_LOOP: for (uint32_t i = 0u; i < (uint32_t)kTernaryLiveL0WkCols; ++i) {

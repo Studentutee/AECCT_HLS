@@ -1124,7 +1124,13 @@ namespace aecct {
         u32_t x_in_base_word,
         const LayerScratch& sc,
         const LayerParamBase& pb,
-        bool& fallback_taken
+        bool& fallback_taken,
+        u32_t phase_entry_probe_x_base_word = (u32_t)0u,
+        const u32_t* phase_entry_probe_x_words = 0,
+        u32_t phase_entry_probe_x_words_valid = (u32_t)0u,
+        u32_t* phase_entry_probe_visible = 0,
+        u32_t* phase_entry_probe_owner_ok = 0,
+        u32_t* phase_entry_probe_compare_ok = 0
     ) {
         AttnCfg attn_cfg;
         attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
@@ -1147,7 +1153,13 @@ namespace aecct {
             x_in_base_word,
             attn_cfg,
             sc.attn,
-            fallback_taken
+            fallback_taken,
+            phase_entry_probe_x_base_word,
+            phase_entry_probe_x_words,
+            phase_entry_probe_x_words_valid,
+            phase_entry_probe_visible,
+            phase_entry_probe_owner_ok,
+            phase_entry_probe_compare_ok
         );
     }
 
