@@ -716,3 +716,92 @@
 
 7. Next recommended step
 - Run W4-M2 bounded probe on softmax-out phase-entry (single V-tile descriptor probe + no-spurious/ownership TB).
+
+## Task C15: W4-M2 Single Phase-Entry Caller-Fed V-tile Probe (SoftmaxOut)
+1. Summary
+- Landed one bounded Wave4 micro-cut on SoftmaxOut phase entry.
+- Added optional caller-fed V-tile probe passthrough on Top helper and phase-entry consume visibility/ownership/compare checks in SoftmaxOut mainline.
+- Inner online-softmax/reduction/writeback loops intentionally untouched.
+
+2. Exact files changed
+- `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11w4m2_softmaxout_phase_entry_probe.ps1`
+- `tb/tb_w4m2_softmaxout_phase_entry_probe.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m2_softmaxout_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_w1_bias_descriptor.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_fallback_observability.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11af_impl_softmax_out.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11w4m2/softmaxout_phase_entry_probe/run.log`:
+  - `W4M2_SOFTMAXOUT_CALLER_FED_VTILE_VISIBLE PASS`
+  - `W4M2_SOFTMAXOUT_OWNERSHIP_CHECK PASS`
+  - `W4M2_SOFTMAXOUT_NO_SPURIOUS_TOUCH PASS`
+  - `W4M2_SOFTMAXOUT_EXPECTED_COMPARE PASS`
+  - `W4M2_SOFTMAXOUT_PROBE_MISMATCH_REJECT PASS`
+  - `PASS: run_p11w4m2_softmaxout_phase_entry_probe`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: W4-M2 SoftmaxOut phase-entry caller-fed V-tile probe anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+
+5. Governance posture
+- local-only bounded micro-cut.
+- not Catapult closure; not SCVerify closure.
+- no external formal contract change.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- SoftmaxOut payload path is not fully migrated.
+- SoftmaxOut inner compute/writeback loops remain SRAM-centric in this bounded scope.
+- This task is a phase-entry probe bridge only.
+
+7. Next recommended step
+- Execute W4-M3 bounded Phase-A Q x-row caller-fed descriptor probe, reusing W4-M1/W4-M2 targeted validation pattern.
+
+## Task C16: W4-M3 Feasibility / Blocker Refinement (No Code Patch)
+1. Summary
+- Completed W4-M3 feasibility/ranking/blocker refinement after W4-M2 landing.
+- Chosen next entry preference:
+  - Phase-A Q x-row caller-fed descriptor probe (`AttnPhaseATopManagedQ`).
+- Optional W4-M3 micro-cut was intentionally not attempted to avoid over-expanding current bounded run.
+
+2. Exact files changed
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_FEASIBILITY_20260330.md`
+
+3. Exact commands run
+- `rg -n "row_x_base|x_row|AttnPhaseATopManagedQ|AttnPhaseATopManagedKv|AttnLayer0" src/blocks`
+- `rg -n "run_p11ae_layer0_top_managed_qk_score|run_p11af_layer0_top_managed_softmax_out" src/Top.h src/blocks`
+
+4. Actual execution evidence / log excerpt
+- See feasibility artifacts:
+  - `docs/handoff/TOP_MANAGED_SRAM_W4M3_FEASIBILITY_20260330.md`
+  - `build/agent_state/w4m2_softmaxout_probe_20260330/w4m3_reality_check.md`
+  - `build/agent_state/w4m2_softmaxout_probe_20260330/w4m3_candidate_ranking.md`
+  - `build/agent_state/w4m2_softmaxout_probe_20260330/w4m3_blocker_map.md`
+
+5. Governance posture
+- local-only feasibility and blocker capture.
+- not Catapult closure; not SCVerify closure.
+
+6. Residual risks
+- Phase-A Q/KV entry remains SRAM-centric and coupled to downstream loops.
+- Dedicated W4-M3 targeted TB/runner support is still missing.
+
+7. Next recommended step
+- Start a dedicated W4-M3 single-entry run focused on Phase-A Q x-row probe only, with ownership/no-spurious/mismatch-reject TB.

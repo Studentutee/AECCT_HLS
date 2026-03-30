@@ -516,3 +516,60 @@
 - This round does not migrate full Wave4 payload compute path.
 - QK-score inner loops remain SRAM-centric by design in bounded scope.
 - Wave4 broader migration remains deferred.
+
+## Night-Batch Extension: W4-M2 SoftmaxOut Phase-Entry Caller-Fed V-tile Probe (Bounded)
+- Completed one additional Wave4 bounded micro-cut on SoftmaxOut phase entry.
+- Added optional caller-fed V-tile probe passthrough at:
+  - `run_p11af_layer0_top_managed_softmax_out(...)`
+  - `attn_phaseb_top_managed_softmax_out_mainline(...)`
+- Probe validates phase-entry visibility + ownership + descriptor compare/reject without touching inner online-softmax/reduction/writeback loops.
+
+### W4-M2 local-only evidence
+- `build/p11w4m2/softmaxout_phase_entry_probe/run.log`: PASS
+  - `W4M2_SOFTMAXOUT_CALLER_FED_VTILE_VISIBLE PASS`
+  - `W4M2_SOFTMAXOUT_OWNERSHIP_CHECK PASS`
+  - `W4M2_SOFTMAXOUT_NO_SPURIOUS_TOUCH PASS`
+  - `W4M2_SOFTMAXOUT_EXPECTED_COMPARE PASS`
+  - `W4M2_SOFTMAXOUT_PROBE_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: W4-M2 SoftmaxOut phase-entry caller-fed V-tile probe anchors OK`
+- Required regression chain retained PASS:
+  - `build/p11g6/ffn_w1_bias_descriptor/run.log`
+  - `build/p11g6/ffn_fallback_observability/run.log`
+  - `build/p11g5/ffn_w1_fallback_policy/run.log`
+  - `build/p11g5/ffn_fallback_policy/run.log`
+  - `build/p11g5/ffn_closure_campaign/run.log`
+  - `build/p11g5/wave3_ffn_payload_migration/run.log`
+  - `build/p11g5/wave35_ffn_w1_weight_migration/run.log`
+  - `build/p11ah/full_loop/run.log`
+  - `build/p11aj/p11aj/run.log`
+- Bundle:
+  - `build/evidence/w4_phase_entry_probe_campaign_20260330/evidence_manifest.txt`
+
+### W4-M2 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_W4M2_SOFTMAXOUT_PROBE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M2_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M2_COMPLETION_20260330.md`
+- `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11w4m2_softmaxout_phase_entry_probe.ps1`
+- `tb/tb_w4m2_softmaxout_phase_entry_probe.cpp`
+
+### Deferred boundary after W4-M2
+- This round does not migrate full SoftmaxOut payload compute path.
+- SoftmaxOut inner online accumulation and output writeback remain SRAM-centric by design in bounded scope.
+- Wave4 broader migration remains deferred.
+
+## Night-Batch Extension: W4-M3 Feasibility / Blocker Refinement
+- Completed feasibility-only refinement for next Wave4 single-entry probe.
+- Preferred next entry:
+  - Phase-A Q x-row caller-fed descriptor probe (`AttnPhaseATopManagedQ`).
+- Optional W4-M3 micro-cut was not attempted this round to keep W4-M2 bounded focus and rerun stability.
+
+### W4-M3 outputs
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_FEASIBILITY_20260330.md`
+- local-only state:
+  - `build/agent_state/w4m2_softmaxout_probe_20260330/w4m3_reality_check.md`
+  - `build/agent_state/w4m2_softmaxout_probe_20260330/w4m3_candidate_ranking.md`
+  - `build/agent_state/w4m2_softmaxout_probe_20260330/w4m3_blocker_map.md`

@@ -318,9 +318,18 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     const AttnScratch& sc,
     u32_t token_idx,
     u32_t attn_out_base_word,
-    bool& fallback_taken
+    bool& fallback_taken,
+    u32_t phase_entry_probe_v_base_word = (u32_t)0u,
+    const u32_t* phase_entry_probe_v_words = 0,
+    u32_t phase_entry_probe_v_words_valid = (u32_t)0u,
+    u32_t* phase_entry_probe_visible = 0,
+    u32_t* phase_entry_probe_owner_ok = 0,
+    u32_t* phase_entry_probe_compare_ok = 0
 ) {
     fallback_taken = true;
+    if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
+    if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
+    if (phase_entry_probe_compare_ok != 0) { *phase_entry_probe_compare_ok = (u32_t)0u; }
     if (!attn_phaseb_softmax_sram_view_ok(sram)) {
         return false;
     }
@@ -357,6 +366,10 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     if (d_head > (uint32_t)ATTN_D_MODEL) {
         return false;
     }
+    const uint32_t phase_entry_probe_valid_words = (uint32_t)phase_entry_probe_v_words_valid.to_uint();
+    const bool phase_entry_probe_enabled =
+        (phase_entry_probe_v_words != 0) &&
+        (phase_entry_probe_valid_words > 0u);
 
     const uint32_t pre_row_base = pre_base + token * d_model;
     const uint32_t post_row_base = post_base + token * d_model;
@@ -367,6 +380,38 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
         const uint32_t score_head_base = score_base + h * token_count;
         const u16_t head_group_id = attn_phaseb_head_group_id_from_head_idx(h);
         (void)attn_phaseb_rule_id_from_head_group(head_group_id);
+
+        // Local-only W4-M2 probe:
+        // caller/Top can provide one V-tile descriptor probe at SoftmaxOut phase entry.
+        if (phase_entry_probe_enabled && h == 0u) {
+            const uint32_t expected_v_probe_base = v_base;
+            if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)1u; }
+            const bool owner_ok =
+                ((uint32_t)phase_entry_probe_v_base_word.to_uint() == expected_v_probe_base);
+            if (phase_entry_probe_owner_ok != 0) {
+                *phase_entry_probe_owner_ok = (u32_t)(owner_ok ? 1u : 0u);
+            }
+            if (!owner_ok) {
+                return false;
+            }
+            if (phase_entry_probe_valid_words > tile_words || phase_entry_probe_valid_words > d_head) {
+                return false;
+            }
+            bool probe_compare_ok = true;
+            ATTN_P11AF_PHASE_ENTRY_PROBE_COL_LOOP: for (uint32_t i = 0u; i < phase_entry_probe_valid_words; ++i) {
+                const uint32_t probe_v_word = (uint32_t)phase_entry_probe_v_words[i].to_uint();
+                const uint32_t sram_v_word = (uint32_t)sram[expected_v_probe_base + i].to_uint();
+                if (probe_v_word != sram_v_word) {
+                    probe_compare_ok = false;
+                }
+            }
+            if (phase_entry_probe_compare_ok != 0) {
+                *phase_entry_probe_compare_ok = (u32_t)(probe_compare_ok ? 1u : 0u);
+            }
+            if (!probe_compare_ok) {
+                return false;
+            }
+        }
 
         softmax_score_t running_max = softmax_score_t(0);
         softmax_sum_t running_l = softmax_sum_t(0);

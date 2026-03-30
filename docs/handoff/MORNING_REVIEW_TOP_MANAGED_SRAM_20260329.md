@@ -410,3 +410,45 @@
 - `docs/handoff/TOP_MANAGED_SRAM_W4M1_COMPLETION_20260330.md`
 - `build/p11w4m1/qkscore_phase_entry_probe/run.log`
 - `build/evidence/w4m1_qkscore_probe_20260330/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (W4-M2 SoftmaxOut Probe Latest)
+1. Open `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h` (2 min)
+   - Confirm phase-entry probe anchors:
+     - `phase_entry_probe_enabled`
+     - `ATTN_P11AF_PHASE_ENTRY_PROBE_COL_LOOP`
+     - ownership/compare observability outputs.
+2. Open `src/Top.h` (1 min)
+   - Confirm `run_p11af_layer0_top_managed_softmax_out(...)` includes probe passthrough args.
+3. Open `build/p11w4m2/softmaxout_phase_entry_probe/run.log` (1 min)
+   - Confirm:
+     - `W4M2_SOFTMAXOUT_CALLER_FED_VTILE_VISIBLE PASS`
+     - `W4M2_SOFTMAXOUT_OWNERSHIP_CHECK PASS`
+     - `W4M2_SOFTMAXOUT_NO_SPURIOUS_TOUCH PASS`
+     - `W4M2_SOFTMAXOUT_EXPECTED_COMPARE PASS`
+     - `W4M2_SOFTMAXOUT_PROBE_MISMATCH_REJECT PASS`
+4. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: W4-M2 SoftmaxOut phase-entry caller-fed V-tile probe anchors OK`.
+5. Open retained regression logs (2 min)
+   - `build/p11g6/ffn_w1_bias_descriptor/run.log`
+   - `build/p11g6/ffn_fallback_observability/run.log`
+   - `build/p11g5/ffn_w1_fallback_policy/run.log`
+   - `build/p11g5/ffn_fallback_policy/run.log`
+   - `build/p11g5/ffn_closure_campaign/run.log`
+6. Open `build/p11ah/full_loop/run.log` and `build/p11aj/p11aj/run.log` (1 min)
+7. Open `docs/handoff/TOP_MANAGED_SRAM_W4M2_SOFTMAXOUT_PROBE_20260330.md` and `docs/handoff/TOP_MANAGED_SRAM_W4M2_COMPLETION_20260330.md` (1 min)
+8. Open `docs/handoff/TOP_MANAGED_SRAM_W4M3_FEASIBILITY_20260330.md` (1 min)
+9. Open `build/evidence/w4_phase_entry_probe_campaign_20260330/evidence_manifest.txt` (1 min)
+
+## Latest artifact additions (W4-M2 campaign)
+- `scripts/local/run_p11w4m2_softmaxout_phase_entry_probe.ps1`
+- `tb/tb_w4m2_softmaxout_phase_entry_probe.cpp`
+- `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M2_SOFTMAXOUT_PROBE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M2_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M2_COMPLETION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4M3_FEASIBILITY_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_CAMPAIGN_COMPLETION_20260330.md`
+- `build/p11w4m2/softmaxout_phase_entry_probe/run.log`
+- `build/evidence/w4_phase_entry_probe_campaign_20260330/evidence_manifest.txt`

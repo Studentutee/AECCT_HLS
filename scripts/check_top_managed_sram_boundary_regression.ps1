@@ -98,13 +98,16 @@ function Forbid-Regex {
 $topPath = Join-Path $repo "src/Top.h"
 $layerPath = Join-Path $repo "src/blocks/TransformerLayer.h"
 $qkScorePath = Join-Path $repo "src/blocks/AttnPhaseBTopManagedQkScore.h"
+$softmaxOutPath = Join-Path $repo "src/blocks/AttnPhaseBTopManagedSoftmaxOut.h"
 Require-True -Condition (Test-Path $topPath) -Reason "required file missing: src/Top.h"
 Require-True -Condition (Test-Path $layerPath) -Reason "required file missing: src/blocks/TransformerLayer.h"
 Require-True -Condition (Test-Path $qkScorePath) -Reason "required file missing: src/blocks/AttnPhaseBTopManagedQkScore.h"
+Require-True -Condition (Test-Path $softmaxOutPath) -Reason "required file missing: src/blocks/AttnPhaseBTopManagedSoftmaxOut.h"
 
 $topText = Get-Content -Path $topPath -Raw
 $layerText = Get-Content -Path $layerPath -Raw
 $qkScoreText = Get-Content -Path $qkScorePath -Raw
+$softmaxOutText = Get-Content -Path $softmaxOutPath -Raw
 
 # G4 ingest/base-shadow ownership anchors: infer ingest should be explicit Top contract dispatch.
 Require-Regex -Text $topText -Pattern '(?ms)struct\s+InferIngestContract\s*\{[\s\S]*?in_base_word\s*;[\s\S]*?len_words_expected\s*;[\s\S]*?len_words_valid\s*;[\s\S]*?token_range\s*;[\s\S]*?tile_range\s*;[\s\S]*?phase_id\s*;' -Reason "InferIngestContract fields missing"
@@ -176,6 +179,13 @@ Require-Regex -Text $qkScoreText -Pattern '(?ms)phase_entry_probe_enabled' -Reas
 Require-Regex -Text $qkScoreText -Pattern '(?ms)ATTN_P11AE_PHASE_ENTRY_PROBE_COL_LOOP' -Reason "QK-score mainline missing phase-entry probe loop label"
 Require-Regex -Text $qkScoreText -Pattern '(?ms)phase_entry_probe_owner_ok' -Reason "QK-score mainline missing probe ownership observability anchor"
 Require-Regex -Text $qkScoreText -Pattern '(?ms)phase_entry_probe_compare_ok' -Reason "QK-score mainline missing probe compare observability anchor"
+Require-Regex -Text $topText -Pattern '(?ms)run_p11af_layer0_top_managed_softmax_out\s*\([\s\S]*?phase_entry_probe_v_base_word[\s\S]*?phase_entry_probe_v_words[\s\S]*?phase_entry_probe_v_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "Top run_p11af helper missing W4-M2 phase-entry probe arguments"
+Require-Regex -Text $topText -Pattern '(?ms)run_p11af_layer0_top_managed_softmax_out[\s\S]*?attn_phaseb_top_managed_softmax_out_mainline\s*\([\s\S]*?phase_entry_probe_v_base_word[\s\S]*?phase_entry_probe_v_words[\s\S]*?phase_entry_probe_v_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "Top run_p11af helper must pass through W4-M2 phase-entry probe arguments"
+Require-Regex -Text $softmaxOutText -Pattern '(?ms)attn_phaseb_top_managed_softmax_out_mainline\s*\([\s\S]*?phase_entry_probe_v_base_word[\s\S]*?phase_entry_probe_v_words[\s\S]*?phase_entry_probe_v_words_valid[\s\S]*?phase_entry_probe_visible[\s\S]*?phase_entry_probe_owner_ok[\s\S]*?phase_entry_probe_compare_ok' -Reason "SoftmaxOut mainline missing W4-M2 phase-entry probe signature"
+Require-Regex -Text $softmaxOutText -Pattern '(?ms)phase_entry_probe_enabled' -Reason "SoftmaxOut mainline missing probe-enable gating anchor"
+Require-Regex -Text $softmaxOutText -Pattern '(?ms)ATTN_P11AF_PHASE_ENTRY_PROBE_COL_LOOP' -Reason "SoftmaxOut mainline missing phase-entry probe loop label"
+Require-Regex -Text $softmaxOutText -Pattern '(?ms)phase_entry_probe_owner_ok' -Reason "SoftmaxOut mainline missing probe ownership observability anchor"
+Require-Regex -Text $softmaxOutText -Pattern '(?ms)phase_entry_probe_compare_ok' -Reason "SoftmaxOut mainline missing probe compare observability anchor"
 
 $preprocPath = Join-Path $repo "src/blocks/PreprocEmbedSPE.h"
 $layernormPath = Join-Path $repo "src/blocks/LayerNormBlock.h"
@@ -247,6 +257,7 @@ Write-Log "guard: G5 FFN W1 fallback policy strict top-fed gating anchors OK"
 Write-Log "guard: G5 FFN fallback policy strict W2 top-fed gating anchors OK"
 Write-Log "guard: G6 FFN W1 top-fed bias descriptor + reject-stage observability anchors OK"
 Write-Log "guard: W4-M1 QK-score phase-entry caller-fed descriptor probe anchors OK"
+Write-Log "guard: W4-M2 SoftmaxOut phase-entry caller-fed V-tile probe anchors OK"
 Write-Log "guard: Top preloaded sublayer1 norm params before layer dispatch anchors OK"
 Write-Log "guard: TransformerLayer guarded preload fallback anchors OK"
 Write-Log "PASS: check_top_managed_sram_boundary_regression"
