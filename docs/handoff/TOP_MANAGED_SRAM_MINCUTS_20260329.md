@@ -340,3 +340,52 @@
 
 7. Next recommended step
 - Execute bounded Wave 3 on `FFNLayer0` using Top-fed W1/W2 tile descriptor preload and targeted no-bypass validation.
+
+## Task C8: G5-Wave3 FFNLayer0 Payload Migration (Bounded)
+1. Summary
+- Completed bounded FFN migration cut on W1 input payload consume path.
+- Added caller-fed topfed window handoff:
+  - `TransformerLayer` preloads `topfed_ffn_x_words`,
+  - `FFNLayer0` consumes `topfed_x_words` in W1 tile loop when provided.
+- Kept fallback for compatibility; no external formal contract change.
+
+2. Exact files changed
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `tb/tb_g5_wave3_ffn_payload_migration_p11g5w3.cpp`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1 -BuildDir build/p11ah/g5_wave3_ffn`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1 -BuildDir build/p11aj/g5_wave3_ffn`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11g5/wave3_ffn_payload_migration/run.log`:
+  - `G5W3_FFN_TOPFED_PAYLOAD_PATH PASS`
+  - `G5W3_FFN_NO_SPURIOUS_SRAM_TOUCH PASS`
+  - `G5W3_FFN_EXPECTED_COMPARE PASS`
+  - `PASS: run_p11g5_wave3_ffn_payload_migration`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: G5 wave3 FFN top-fed payload migration anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+- `build/p11ah/g5_wave3_ffn/run.log`: `PASS: run_p11ah_full_loop_local_e2e`
+- `build/p11aj/g5_wave3_ffn/run.log`: `PASS: run_p11aj_top_managed_sram_provenance`
+
+5. Governance posture
+- local-only bounded migration.
+- not Catapult closure; not SCVerify closure.
+- remote simulator/site-local PLI line untouched.
+
+6. Residual risks
+- FFN W1/W2 weight+bias and later-stage payload consume remain SRAM-based.
+- This is not full FFN direct-SRAM elimination.
+
+7. Next recommended step
+- Continue bounded FFN follow-up by adding Top/caller-fed weight tile descriptors for one stage (W1 first), with targeted no-bypass validation.

@@ -248,3 +248,33 @@
 ### Deferred boundary after G5 wave round
 - Wave 3 (`FFNLayer0`) and Wave 4 (`AttnLayer0`/`TransformerLayer`/phase blocks) remain open due coupling and change-budget limits.
 - This round does not claim full direct-SRAM payload elimination across all blocks.
+
+## Night-Batch Extension: G5-Wave3 FFNLayer0 Payload Migration (Bounded)
+- Scope-limited to `FFNLayer0` only.
+- Completed bounded primary cut:
+  - caller (`TransformerLayer`) preloads FFN input payload window (`topfed_ffn_x_words`),
+  - `FFNLayer0` W1 tile load consumes `topfed_x_words` when provided.
+- Preserved compatibility fallback to legacy SRAM x read when topfed pointer is absent.
+
+### G5-Wave3 local-only evidence
+- `build/p11g5/wave3_ffn_payload_migration/run.log`: PASS
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: G5 wave3 FFN top-fed payload migration anchors OK`
+- `build/p11ah/g5_wave3_ffn/run.log`: PASS
+- `build/p11aj/g5_wave3_ffn/run.log`: PASS
+- `build/evidence/g5_wave3_ffn_20260330/evidence_manifest.txt`: present
+
+### G5-Wave3 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_FFN_PAYLOAD_MIGRATION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_COMPLETION_20260330.md`
+- `src/blocks/FFNLayer0.h`
+- `src/blocks/TransformerLayer.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `tb/tb_g5_wave3_ffn_payload_migration_p11g5w3.cpp`
+
+### Deferred boundary after G5-Wave3
+- This round migrates FFN W1 input payload consume anchor only.
+- FFN W1/W2 weight+bias consume and ReLU/W2 payload paths remain SRAM-based and deferred.
+- Wave4 attention/transformer/phase payload migration remains deferred.

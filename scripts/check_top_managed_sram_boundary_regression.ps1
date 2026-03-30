@@ -170,12 +170,15 @@ Require-Regex -Text $layerText -Pattern '(?ms)if\s*\(\s*!sublayer1_norm_preloade
 $preprocPath = Join-Path $repo "src/blocks/PreprocEmbedSPE.h"
 $layernormPath = Join-Path $repo "src/blocks/LayerNormBlock.h"
 $finalheadPath = Join-Path $repo "src/blocks/FinalHead.h"
+$ffnPath = Join-Path $repo "src/blocks/FFNLayer0.h"
 Require-True -Condition (Test-Path $preprocPath) -Reason "required file missing: src/blocks/PreprocEmbedSPE.h"
 Require-True -Condition (Test-Path $layernormPath) -Reason "required file missing: src/blocks/LayerNormBlock.h"
 Require-True -Condition (Test-Path $finalheadPath) -Reason "required file missing: src/blocks/FinalHead.h"
+Require-True -Condition (Test-Path $ffnPath) -Reason "required file missing: src/blocks/FFNLayer0.h"
 $preprocText = Get-Content -Path $preprocPath -Raw
 $layernormBlockText = Get-Content -Path $layernormPath -Raw
 $finalheadText = Get-Content -Path $finalheadPath -Raw
+$ffnText = Get-Content -Path $ffnPath -Raw
 
 Require-Regex -Text $preprocText -Pattern '(?ms)PreprocEmbedSPECoreWindow\s*\([\s\S]*?const\s+PreprocBlockContract&\s+contract\s*,\s*const\s+u32_t\*\s+topfed_in_words\s*=\s*0' -Reason "PreprocEmbedSPECoreWindow top-fed payload argument missing"
 Require-Regex -Text $preprocText -Pattern '(?ms)topfed_in_words\s*!=\s*0\)\s*\?\s*topfed_in_words\[linear_idx\]\s*:\s*sram\[in_base\s*\+\s*linear_idx\]' -Reason "PreprocEmbedSPECoreWindow must consume top-fed input payload when provided"
@@ -184,6 +187,10 @@ Require-Regex -Text $layernormBlockText -Pattern '(?ms)topfed_gamma_words\s*!=\s
 Require-Regex -Text $layernormBlockText -Pattern '(?ms)topfed_beta_words\s*!=\s*0\)\s*\?\s*topfed_beta_words\[c\]\s*:\s*sram\[beta_base\s*\+\s*c\]' -Reason "LayerNormBlockCoreWindow must consume top-fed beta payload when provided"
 Require-Regex -Text $finalheadText -Pattern '(?ms)FinalHeadCorePassABTopManaged\s*\([\s\S]*?u32_t\s+outmode_word\s*,\s*const\s+u32_t\*\s+topfed_final_scalar_words\s*=\s*0' -Reason "FinalHeadCorePassABTopManaged top-fed scalar argument missing"
 Require-Regex -Text $finalheadText -Pattern '(?ms)topfed_final_scalar_words\s*!=\s*0\)\s*\?\s*topfed_final_scalar_words\[t\]\s*:\s*sram\[final_scalar_base\s*\+\s*t\]' -Reason "FinalHead pass-B must consume top-fed scalar payload when provided"
+Require-Regex -Text $ffnText -Pattern '(?ms)FFNLayer0CoreWindow\s*\([\s\S]*?u32_t\s+layer_id\s*=\s*\(u32_t\)0\s*,\s*const\s+u32_t\*\s+topfed_x_words\s*=\s*0' -Reason "FFNLayer0CoreWindow top-fed x payload argument missing"
+Require-Regex -Text $ffnText -Pattern '(?ms)if\s*\(\s*topfed_x_words\s*!=\s*0\s*&&\s*x_idx\s*<\s*\(uint32_t\)FFN_X_WORDS\s*\)\s*\{\s*x_tile\[i\]\s*=\s*topfed_x_words\[x_idx\]' -Reason "FFNLayer0CoreWindow must consume top-fed x payload when provided"
+Require-Regex -Text $layerText -Pattern '(?ms)TransformerLayerTopManagedAttnBridge[\s\S]*?u32_t\s+topfed_ffn_x_words\s*\[\s*FFN_X_WORDS\s*\][\s\S]*?TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_BRIDGE_LOOP[\s\S]*?FFNLayer0TopManagedWindowBridge<\s*FFN_STAGE_FULL\s*>\s*\([\s\S]*?topfed_ffn_x_words\s*\)' -Reason "TransformerLayerTopManagedAttnBridge must preload and dispatch FFN top-fed x payload"
+Require-Regex -Text $layerText -Pattern '(?ms)TransformerLayer\s*\([\s\S]*?u32_t\s+topfed_ffn_x_words\s*\[\s*FFN_X_WORDS\s*\][\s\S]*?TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_LOOP[\s\S]*?FFNLayer0<\s*FFN_STAGE_FULL\s*>\s*\([\s\S]*?topfed_ffn_x_words\s*\)' -Reason "TransformerLayer must preload and dispatch FFN top-fed x payload"
 
 Write-Log "guard: Top-owned preproc/layernorm/final-head contract dispatch anchors OK"
 Write-Log "guard: G4 infer ingest contractized base/len dispatch anchors OK"
@@ -192,6 +199,7 @@ Write-Log "guard: G4-E cross-command ingest metadata surface helpers anchored"
 Write-Log "guard: G4-F commit-time diagnostics helper + error mapping anchors OK"
 Write-Log "guard: G4-G accepted-commit metadata record harmonization anchors OK"
 Write-Log "guard: G5 wave1/wave2 top-fed payload migration anchors OK"
+Write-Log "guard: G5 wave3 FFN top-fed payload migration anchors OK"
 Write-Log "guard: Top preloaded sublayer1 norm params before layer dispatch anchors OK"
 Write-Log "guard: TransformerLayer guarded preload fallback anchors OK"
 Write-Log "PASS: check_top_managed_sram_boundary_regression"

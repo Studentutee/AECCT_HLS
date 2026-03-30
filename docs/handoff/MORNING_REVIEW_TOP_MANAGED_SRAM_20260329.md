@@ -3,37 +3,35 @@
 ## Quick Goal
 - Verify the overnight architecture-forward cuts that move SRAM ownership semantics toward Top-managed dispatch.
 - Confirm no overclaim: local-only evidence; not Catapult closure; not SCVerify closure.
-- Include the latest G5 direct-payload migration wave verification (Wave 1 + Wave 2).
+- Include the latest G5-Wave3 FFN payload migration verification.
 - Include the latest G4 ingest/base-shadow mincut verification in this review pass.
 - Include the bounded G4-E cross-command metadata harmonization mincut verification.
 - Include the bounded G4-F commit-time diagnostics harmonization verification.
 - Include the bounded G4-G accepted-commit metadata record harmonization verification.
 
-## Suggested 10-Minute Review Order (G5 Latest)
-1. Open `src/Top.h` G5 payload preload diff (2 min)
-   - Confirm `run_preproc_block(...)` preloads `topfed_in_payload`.
-   - Confirm `run_layernorm_block(...)` preloads `topfed_gamma_words/topfed_beta_words`.
-   - Confirm `run_infer_pipeline(...)` preloads `topfed_final_scalar_words`.
-2. Open `src/blocks/PreprocEmbedSPE.h`, `LayerNormBlock.h`, `FinalHead.h` (2 min)
-   - Confirm optional top-fed payload arguments exist in core windows.
-   - Confirm consume logic prefers top-fed payload when pointer is provided.
-3. Open `build/p11g5/wave1_payload_migration/run.log` (1 min)
+## Suggested 10-Minute Review Order (G5-Wave3 Latest)
+1. Open `src/blocks/TransformerLayer.h` and `src/blocks/FFNLayer0.h` (2 min)
+   - Confirm `TransformerLayer` preloads `topfed_ffn_x_words[FFN_X_WORDS]`.
+   - Confirm `FFNLayer0` W1 tile load consumes `topfed_x_words` when provided.
+2. Open `build/p11g5/wave3_ffn_payload_migration/run.log` (1 min)
    - Confirm:
-     - `G5W1_LN_TOPFED_AFFINE_NO_SPURIOUS_SRAM_TOUCH PASS`
-     - `G5W1_FINALHEAD_TOPFED_SCALAR_PATH PASS`
-4. Open `build/p11g5/wave2_preproc_payload_migration/run.log` (1 min)
-   - Confirm:
-     - `G5W2_PREPROC_TOPFED_INPUT_PATH PASS`
-5. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
-   - Confirm `guard: G5 wave1/wave2 top-fed payload migration anchors OK`.
-6. Open `build/p11ah/g5_payload_campaign/run.log` and `build/p11aj/g5_payload_campaign/run.log` (1 min)
-   - Confirm mainline/provenance chain remains PASS after G5 wave patch.
-7. Open `docs/handoff/TOP_MANAGED_SRAM_G5_DIRECT_PAYLOAD_INVENTORY_20260330.md` (1 min)
-   - Confirm ranking and deferred Wave 3/4 rationale.
-8. Open `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE_COMPLETION_20260330.md` (1 min)
+     - `G5W3_FFN_TOPFED_PAYLOAD_PATH PASS`
+     - `G5W3_FFN_NO_SPURIOUS_SRAM_TOUCH PASS`
+     - `G5W3_FFN_EXPECTED_COMPARE PASS`
+3. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+   - Confirm `guard: G5 wave3 FFN top-fed payload migration anchors OK`.
+4. Open `build/p11ah/g5_wave3_ffn/run.log` and `build/p11aj/g5_wave3_ffn/run.log` (2 min)
+   - Confirm mainline/provenance chain remains PASS after Wave3 patch.
+5. Open `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_FFN_PAYLOAD_MIGRATION_20260330.md` (1 min)
+   - Confirm bounded scope and fallback boundary.
+6. Open `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_EVIDENCE_INDEX_20260330.md` (1 min)
+   - Confirm claim-to-evidence mapping.
+7. Open `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_COMPLETION_20260330.md` (1 min)
    - Confirm exact files/commands/evidence alignment.
-9. Open `docs/handoff/TOP_MANAGED_SRAM_G5_EVIDENCE_INDEX_20260330.md` and `build/evidence/g5_payload_campaign_20260330/evidence_manifest.txt` (1 min)
-   - Confirm claim-to-evidence mapping completeness.
+8. Open `build/evidence/g5_wave3_ffn_20260330/evidence_manifest.txt` (1 min)
+   - Confirm bundle completeness.
+9. Re-check `TOP_MANAGED_SRAM_PROGRESS_20260329.md` and `TOP_MANAGED_SRAM_MINCUTS_20260329.md` (1 min)
+   - Confirm Wave3 done, Wave4 still deferred without overclaim.
 
 ## Previous 10-Minute Review Order (G4-G Reference)
 1. Open `src/Top.h` G4-G accepted-record diff (2 min)
@@ -160,12 +158,14 @@
 - `scripts/local/run_p11g4g_accept_commit_record.ps1`
 - `scripts/local/run_p11g5_wave1_payload_migration.ps1`
 - `scripts/local/run_p11g5_wave2_preproc_payload_migration.ps1`
+- `scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
 - `tb/tb_infer_ingest_preflight_negative_p11g4.cpp`
 - `tb/tb_g4e_cross_command_metadata_negative_p11g4e.cpp`
 - `tb/tb_g4f_commit_diagnostics_negative_p11g4f.cpp`
 - `tb/tb_g4g_accept_commit_record_p11g4g.cpp`
 - `tb/tb_g5_wave1_payload_migration_p11g5w1.cpp`
 - `tb/tb_g5_wave2_preproc_payload_migration_p11g5w2.cpp`
+- `tb/tb_g5_wave3_ffn_payload_migration_p11g5w3.cpp`
 - `docs/handoff/TOP_MANAGED_SRAM_ARCH_GAP_INVENTORY_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
@@ -181,6 +181,9 @@
 - `docs/handoff/TOP_MANAGED_SRAM_G5_DIRECT_PAYLOAD_INVENTORY_20260330.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE_COMPLETION_20260330.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G5_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_FFN_PAYLOAD_MIGRATION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_G5_WAVE3_COMPLETION_20260330.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_EVIDENCE_INDEX_20260329.md`
 - `docs/handoff/TOP_MANAGED_SRAM_G4_HARDENING_COMPLETION_20260329.md`
 - `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
@@ -192,16 +195,20 @@
 - `build/p11g4g/accept_commit_record/run.log`
 - `build/p11g5/wave1_payload_migration/run.log`
 - `build/p11g5/wave2_preproc_payload_migration/run.log`
+- `build/p11g5/wave3_ffn_payload_migration/run.log`
 - `build/p11ah/top_managed_sram_push/run.log`
 - `build/p11aj/top_managed_sram_push/run.log`
 - `build/p11ah/g5_payload_campaign/run.log`
 - `build/p11aj/g5_payload_campaign/run.log`
+- `build/p11ah/g5_wave3_ffn/run.log`
+- `build/p11aj/g5_wave3_ffn/run.log`
 - `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`
 - `build/evidence/g4_hardening_20260329/evidence_manifest.txt`
 - `build/evidence/g4e_metadata_mincut_20260329/evidence_manifest.txt`
 - `build/evidence/g4f_commit_diag_20260330/evidence_manifest.txt`
 - `build/evidence/g4g_accept_commit_20260330/evidence_manifest.txt`
 - `build/evidence/g5_payload_campaign_20260330/evidence_manifest.txt`
+- `build/evidence/g5_wave3_ffn_20260330/evidence_manifest.txt`
 
 ## Copy-Ready GPT Review Prompt
 - `Please review src/Top.h and src/blocks/TransformerLayer.h for Top-managed SRAM ownership convergence. Focus on: (1) whether Top now builds and owns preproc/layernorm/final-head contracts in active infer path, (2) whether Transformer sublayer1 norm params are preloaded by Top with safe fallback, and (3) whether local evidence (p11ah/p11aj + boundary guard) supports acceptance without overclaim. Keep posture local-only and do not claim Catapult/SCVerify closure.`

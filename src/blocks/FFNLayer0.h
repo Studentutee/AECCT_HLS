@@ -98,7 +98,8 @@ static inline void FFNLayer0CoreWindow(
     u32_t x_in_base_word,
     const FfnScratch& sc,
     u32_t param_base_word,
-    u32_t layer_id = (u32_t)0
+    u32_t layer_id = (u32_t)0,
+    const u32_t* topfed_x_words = 0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -157,7 +158,13 @@ static inline void FFNLayer0CoreWindow(
                     u32_t x_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
                     u32_t w_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
                     FFN_TOP_MANAGED_W1_TILE_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
-                        x_tile[i] = sram[x_row + tile_offset + i];
+                        const uint32_t x_idx = t * d_model + tile_offset + i;
+                        // Top-fed FFN input payload path: caller can preload and dispatch x words.
+                        if (topfed_x_words != 0 && x_idx < (uint32_t)FFN_X_WORDS) {
+                            x_tile[i] = topfed_x_words[x_idx];
+                        } else {
+                            x_tile[i] = sram[x_row + tile_offset + i];
+                        }
                         w_tile[i] = sram[ffn_param_addr_word(param_base, w1_weight_id, w_row + tile_offset + i)];
                     }
                     acc = ffn_block_mac_tile(meta, x_tile, w_tile, acc);
@@ -320,7 +327,8 @@ static inline void FFNLayer0(
     u32_t x_in_base_word,
     const FfnScratch& sc,
     u32_t param_base_word,
-    u32_t layer_id = (u32_t)0
+    u32_t layer_id = (u32_t)0,
+    const u32_t* topfed_x_words = 0
 ) {
     // Mainline migration note:
     // Default FFN entry now runs through the Top-managed tile/window core.
@@ -331,7 +339,8 @@ static inline void FFNLayer0(
         x_in_base_word,
         sc,
         param_base_word,
-        layer_id
+        layer_id,
+        topfed_x_words
     );
 }
 
@@ -344,7 +353,8 @@ static inline void FFNLayer0TopManagedWindowBridge(
     u32_t x_in_base_word,
     const FfnScratch& sc,
     u32_t param_base_word,
-    u32_t layer_id = (u32_t)0
+    u32_t layer_id = (u32_t)0,
+    const u32_t* topfed_x_words = 0
 ) {
     FFNLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
@@ -352,7 +362,8 @@ static inline void FFNLayer0TopManagedWindowBridge(
         x_in_base_word,
         sc,
         param_base_word,
-        layer_id
+        layer_id,
+        topfed_x_words
     );
 }
 

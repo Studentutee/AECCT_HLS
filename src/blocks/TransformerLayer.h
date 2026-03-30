@@ -123,13 +123,31 @@ static inline void TransformerLayerTopManagedAttnBridge(
     ffn_cfg.d_model = (u32_t)d_model;
     ffn_cfg.d_ffn = (u32_t)d_ffn;
 
+    u32_t topfed_ffn_x_words[FFN_X_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_X_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_X_WORDS; ++i) {
+        topfed_ffn_x_words[i] = 0;
+    }
+    uint32_t ffn_token_count = (uint32_t)ffn_cfg.token_count.to_uint();
+    uint32_t ffn_d_model = (uint32_t)ffn_cfg.d_model.to_uint();
+    if (ffn_token_count == 0u) { ffn_token_count = (uint32_t)FFN_TOKEN_COUNT; }
+    if (ffn_d_model == 0u) { ffn_d_model = (uint32_t)FFN_D_MODEL; }
+    uint32_t ffn_x_words = ffn_token_count * ffn_d_model;
+    if (ffn_x_words > (uint32_t)FFN_X_WORDS) {
+        ffn_x_words = (uint32_t)FFN_X_WORDS;
+    }
+    const uint32_t ffn_x_base = (uint32_t)sc.attn_out_base_word.to_uint();
+    TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
+        topfed_ffn_x_words[i] = sram_window[ffn_x_base + i];
+    }
+
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_FULL>(
         sram_window,
         ffn_cfg,
         sc.attn_out_base_word,
         sc.ffn,
         pb.param_base_word,
-        layer_id
+        layer_id,
+        topfed_ffn_x_words
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();
@@ -222,13 +240,31 @@ static inline void TransformerLayer(
     ffn_cfg.d_model = (u32_t)d_model;
     ffn_cfg.d_ffn = (u32_t)d_ffn;
 
+    u32_t topfed_ffn_x_words[FFN_X_WORDS];
+    TRANSFORMER_LAYER_FFN_TOPFED_X_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_X_WORDS; ++i) {
+        topfed_ffn_x_words[i] = 0;
+    }
+    uint32_t ffn_token_count = (uint32_t)ffn_cfg.token_count.to_uint();
+    uint32_t ffn_d_model = (uint32_t)ffn_cfg.d_model.to_uint();
+    if (ffn_token_count == 0u) { ffn_token_count = (uint32_t)FFN_TOKEN_COUNT; }
+    if (ffn_d_model == 0u) { ffn_d_model = (uint32_t)FFN_D_MODEL; }
+    uint32_t ffn_x_words = ffn_token_count * ffn_d_model;
+    if (ffn_x_words > (uint32_t)FFN_X_WORDS) {
+        ffn_x_words = (uint32_t)FFN_X_WORDS;
+    }
+    const uint32_t ffn_x_base = (uint32_t)sc.attn_out_base_word.to_uint();
+    TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
+        topfed_ffn_x_words[i] = sram[ffn_x_base + i];
+    }
+
     FFNLayer0<FFN_STAGE_FULL>(
         sram,
         ffn_cfg,
         sc.attn_out_base_word,
         sc.ffn,
         pb.param_base_word,
-        layer_id
+        layer_id,
+        topfed_ffn_x_words
     );
 
     uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();
