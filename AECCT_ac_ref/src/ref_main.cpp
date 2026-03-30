@@ -181,7 +181,7 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
-  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff\n");
+  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2\n");
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
@@ -313,6 +313,14 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
   }
   if (std::strcmp(text, "generic_e4m3_g2_prelayer_handoff") == 0) {
     mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF;
+    return true;
+  }
+  if (std::strcmp(text, "int8_fixedexp_zone3_embed_g2") == 0) {
+    mode = aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2;
+    return true;
+  }
+  if (std::strcmp(text, "int8_fixedexp_zone4_embed_g2") == 0) {
+    mode = aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2;
     return true;
   }
   return false;
@@ -552,7 +560,9 @@ static inline bool precision_mode_anchors_to_finalhead_s0(aecct_ref::RefPrecisio
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY ||
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY ||
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY ||
-         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF;
+         mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF ||
+         mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2 ||
+         mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2;
 }
 
 static inline bool precision_mode_requires_frag_group(aecct_ref::RefPrecisionMode mode) {
@@ -592,6 +602,12 @@ static std::string precision_mode_output_suffix(
   }
   if (mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF) {
     return "_g2_prelayer_handoff";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2) {
+    return "_int8fx_z3_embed_g2";
+  }
+  if (mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2) {
+    return "_int8fx_z4_embed_g2";
   }
   return std::string();
 }
@@ -1021,7 +1037,7 @@ static bool write_eval_single_summary_txt(
   ofs << "x_pred/target match ratio  : " << stats.x_pred_match_ratio << "\n";
   if (full_stats != nullptr) {
     ofs << "\n";
-    ofs << "=== Full E4M3 Stress Counters (experiment) ===\n";
+    ofs << "=== Quant Stress Counters (experiment) ===\n";
     ofs << "int8 clamp count           : " << full_stats->int_linear.int8_clamp_count << "\n";
     ofs << "int16 overflow count       : " << full_stats->int_linear.int16_overflow_count << "\n";
     ofs << "dequant restore count      : " << full_stats->int_linear.dequant_restore_count << "\n";
@@ -1048,6 +1064,20 @@ static bool write_eval_single_summary_txt(
     ofs << "first int16 overflow block : "
         << (full_stats->int_linear.first_int16_overflow_block.empty()
             ? "none" : full_stats->int_linear.first_int16_overflow_block)
+        << "\n";
+    ofs << "int8 fixedexp roundtrip    : " << full_stats->int8_fixedexp.roundtrip_count << "\n";
+    ofs << "int8 fixedexp clamp count  : " << full_stats->int8_fixedexp.clamp_count << "\n";
+    ofs << "int8 fixedexp zone z1/z2/z3/z4 : "
+        << full_stats->int8_fixedexp.zone1_count << "/"
+        << full_stats->int8_fixedexp.zone2_count << "/"
+        << full_stats->int8_fixedexp.zone3_count << "/"
+        << full_stats->int8_fixedexp.zone4_count << "\n";
+    ofs << "int8 fixedexp footprint g2/g5_embed : "
+        << full_stats->int8_fixedexp.footprint_g2_count << "/"
+        << full_stats->int8_fixedexp.footprint_g5_embed_count << "\n";
+    ofs << "int8 fixedexp first clamp block : "
+        << (full_stats->int8_fixedexp.first_clamp_block.empty()
+            ? "none" : full_stats->int8_fixedexp.first_clamp_block)
         << "\n";
   }
   ofs << "\n";
@@ -1100,7 +1130,7 @@ static bool write_eval_compare_summary_txt(
   ofs << "experiment x_pred match ratio: " << experiment_stats.x_pred_match_ratio << "\n";
   if (experiment_full_stats != nullptr) {
     ofs << "\n";
-    ofs << "=== Full E4M3 Stress Counters (experiment) ===\n";
+    ofs << "=== Quant Stress Counters (experiment) ===\n";
     ofs << "int8 clamp count           : " << experiment_full_stats->int_linear.int8_clamp_count << "\n";
     ofs << "int16 overflow count       : " << experiment_full_stats->int_linear.int16_overflow_count << "\n";
     ofs << "dequant restore count      : " << experiment_full_stats->int_linear.dequant_restore_count << "\n";
@@ -1127,6 +1157,20 @@ static bool write_eval_compare_summary_txt(
     ofs << "first int16 overflow block : "
         << (experiment_full_stats->int_linear.first_int16_overflow_block.empty()
             ? "none" : experiment_full_stats->int_linear.first_int16_overflow_block)
+        << "\n";
+    ofs << "int8 fixedexp roundtrip    : " << experiment_full_stats->int8_fixedexp.roundtrip_count << "\n";
+    ofs << "int8 fixedexp clamp count  : " << experiment_full_stats->int8_fixedexp.clamp_count << "\n";
+    ofs << "int8 fixedexp zone z1/z2/z3/z4 : "
+        << experiment_full_stats->int8_fixedexp.zone1_count << "/"
+        << experiment_full_stats->int8_fixedexp.zone2_count << "/"
+        << experiment_full_stats->int8_fixedexp.zone3_count << "/"
+        << experiment_full_stats->int8_fixedexp.zone4_count << "\n";
+    ofs << "int8 fixedexp footprint g2/g5_embed : "
+        << experiment_full_stats->int8_fixedexp.footprint_g2_count << "/"
+        << experiment_full_stats->int8_fixedexp.footprint_g5_embed_count << "\n";
+    ofs << "int8 fixedexp first clamp block : "
+        << (experiment_full_stats->int8_fixedexp.first_clamp_block.empty()
+            ? "none" : experiment_full_stats->int8_fixedexp.first_clamp_block)
         << "\n";
   }
   ofs << "\n";
@@ -1350,7 +1394,7 @@ static bool write_batch_summary_txt(
       << batch.experiment_nonfinite_total.inf_count << "\n";
   if (experiment_full_stats != nullptr) {
     ofs << "\n";
-    ofs << "=== Full E4M3 Stress Counters (experiment) ===\n";
+    ofs << "=== Quant Stress Counters (experiment) ===\n";
     ofs << "int8 clamp count              : " << experiment_full_stats->int_linear.int8_clamp_count << "\n";
     ofs << "int16 overflow count          : " << experiment_full_stats->int_linear.int16_overflow_count << "\n";
     ofs << "dequant restore count         : " << experiment_full_stats->int_linear.dequant_restore_count << "\n";
@@ -1377,6 +1421,20 @@ static bool write_batch_summary_txt(
     ofs << "first int16 overflow block    : "
         << (experiment_full_stats->int_linear.first_int16_overflow_block.empty()
             ? "none" : experiment_full_stats->int_linear.first_int16_overflow_block)
+        << "\n";
+    ofs << "int8 fixedexp roundtrip       : " << experiment_full_stats->int8_fixedexp.roundtrip_count << "\n";
+    ofs << "int8 fixedexp clamp count     : " << experiment_full_stats->int8_fixedexp.clamp_count << "\n";
+    ofs << "int8 fixedexp zone z1/z2/z3/z4 : "
+        << experiment_full_stats->int8_fixedexp.zone1_count << " / "
+        << experiment_full_stats->int8_fixedexp.zone2_count << " / "
+        << experiment_full_stats->int8_fixedexp.zone3_count << " / "
+        << experiment_full_stats->int8_fixedexp.zone4_count << "\n";
+    ofs << "int8 fixedexp footprint g2/g5_embed : "
+        << experiment_full_stats->int8_fixedexp.footprint_g2_count << " / "
+        << experiment_full_stats->int8_fixedexp.footprint_g5_embed_count << "\n";
+    ofs << "int8 fixedexp first clamp block : "
+        << (experiment_full_stats->int8_fixedexp.first_clamp_block.empty()
+            ? "none" : experiment_full_stats->int8_fixedexp.first_clamp_block)
         << "\n";
   }
   ofs << "\n";
@@ -1468,7 +1526,7 @@ static void print_eval_compare_console_summary(
 }
 
 static void print_full_stress_console_summary(const aecct_ref::RefFullQuantStats& stats) {
-  std::printf("=== Full E4M3 Stress Counters (experiment) ===\n");
+  std::printf("=== Quant Stress Counters (experiment) ===\n");
   std::printf("int8 clamp count           : %llu\n",
     static_cast<unsigned long long>(stats.int_linear.int8_clamp_count));
   std::printf("int16 overflow count       : %llu\n",
@@ -1499,6 +1557,21 @@ static void print_full_stress_console_summary(const aecct_ref::RefFullQuantStats
   std::printf("first int16 overflow block : %s\n",
     stats.int_linear.first_int16_overflow_block.empty()
       ? "none" : stats.int_linear.first_int16_overflow_block.c_str());
+  std::printf("int8 fixedexp roundtrip    : %llu\n",
+    static_cast<unsigned long long>(stats.int8_fixedexp.roundtrip_count));
+  std::printf("int8 fixedexp clamp count  : %llu\n",
+    static_cast<unsigned long long>(stats.int8_fixedexp.clamp_count));
+  std::printf("int8 fixedexp zone z1/z2/z3/z4 : %llu / %llu / %llu / %llu\n",
+    static_cast<unsigned long long>(stats.int8_fixedexp.zone1_count),
+    static_cast<unsigned long long>(stats.int8_fixedexp.zone2_count),
+    static_cast<unsigned long long>(stats.int8_fixedexp.zone3_count),
+    static_cast<unsigned long long>(stats.int8_fixedexp.zone4_count));
+  std::printf("int8 fixedexp footprint g2/g5_embed : %llu / %llu\n",
+    static_cast<unsigned long long>(stats.int8_fixedexp.footprint_g2_count),
+    static_cast<unsigned long long>(stats.int8_fixedexp.footprint_g5_embed_count));
+  std::printf("int8 fixedexp first clamp block : %s\n",
+    stats.int8_fixedexp.first_clamp_block.empty()
+      ? "none" : stats.int8_fixedexp.first_clamp_block.c_str());
 }
 
 struct StageCompareEvalSnapshot {

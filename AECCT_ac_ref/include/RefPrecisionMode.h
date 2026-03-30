@@ -15,7 +15,9 @@ enum class RefPrecisionMode : unsigned char {
   GENERIC_E4M3_G2_EMBED_ONLY = 9,
   GENERIC_E4M3_G2_SPE_ONLY = 10,
   GENERIC_E4M3_G2_PREPROC_ASSEMBLY = 11,
-  GENERIC_E4M3_G2_PRELAYER_HANDOFF = 12
+  GENERIC_E4M3_G2_PRELAYER_HANDOFF = 12,
+  INT8_FIXEDEXP_ZONE3_EMBED_G2 = 13,
+  INT8_FIXEDEXP_ZONE4_EMBED_G2 = 14
 };
 
 static inline const char* to_string(RefPrecisionMode mode) {
@@ -46,6 +48,10 @@ static inline const char* to_string(RefPrecisionMode mode) {
       return "GENERIC_E4M3_G2_PREPROC_ASSEMBLY";
     case RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF:
       return "GENERIC_E4M3_G2_PRELAYER_HANDOFF";
+    case RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2:
+      return "INT8_FIXEDEXP_ZONE3_EMBED_G2";
+    case RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2:
+      return "INT8_FIXEDEXP_ZONE4_EMBED_G2";
     default:
       return "UNKNOWN_PRECISION_MODE";
   }
