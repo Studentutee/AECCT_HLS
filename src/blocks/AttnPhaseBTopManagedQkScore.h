@@ -255,7 +255,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     u32_t* score_tile_bridge_family_compare_ok = 0,
     u32_t* score_tile_bridge_family_case_mask = 0
 ) {
-    static const uint32_t kScoreTileBridgeFamilyMaxCases = 3u;
+    static const uint32_t kScoreTileBridgeFamilyMaxCases = 4u;
     static const uint32_t kScoreTileBridgeFamilyStrideWords =
         (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
     fallback_taken = true;
@@ -328,9 +328,6 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     uint32_t score_tile_bridge_family_consumed_count_u32 = 0u;
     uint32_t score_tile_bridge_family_case_mask_u32 = 0u;
     bool score_tile_bridge_seen = false;
-    if (score_tile_bridge_enabled && score_tile_bridge_family_enabled) {
-        return false;
-    }
     if (score_tile_bridge_enabled) {
         if (score_tile_bridge_valid_words > token_count) {
             return false;
@@ -376,6 +373,16 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
             }
             if (head_idx >= n_heads) {
                 return false;
+            }
+            if (score_tile_bridge_enabled &&
+                head_idx == score_tile_bridge_head_idx_u32) {
+                const uint32_t single_begin = score_tile_bridge_key_begin_u32;
+                const uint32_t single_end =
+                    single_begin + score_tile_bridge_valid_words;
+                const uint32_t family_end = key_begin + valid;
+                if (!(family_end <= single_begin || key_begin >= single_end)) {
+                    return false;
+                }
             }
 
             ATTN_P11AE_SCORE_TILE_FAMILY_OVERLAP_LOOP: for (uint32_t p = 0u; p < c; ++p) {
