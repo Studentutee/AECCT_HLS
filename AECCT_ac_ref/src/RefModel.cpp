@@ -37,6 +37,49 @@ static constexpr int LN_TILE_D = 8;
 static const fp32_ref_t kActQMin = fp32_ref_t(-127.0f);
 static const fp32_ref_t kActQMax = fp32_ref_t(127.0f);
 
+enum class RefLnSiteTag : int {
+  L0_SUB0 = 0,
+  L0_SUB1 = 1,
+  MID_NORM = 2,
+  L1_SUB0 = 3,
+  L1_SUB1 = 4,
+  END_NORM = 5
+};
+
+struct RefLnDebugEntry {
+  int sample_index = 0;
+  int site = 0;
+  int token = 0;
+  float mean = 0.0f;
+  float var_raw = 0.0f;
+  float var_final = 0.0f;
+  float x_eps = 0.0f;
+  float inv_std_used = 0.0f;
+  float inv_std_true = 0.0f;
+  float inv_std_seed = 0.0f;
+  float inv_std_nr1 = 0.0f;
+  int var_negative_before_clamp = 0;
+  int clamp_triggered = 0;
+  int eps_dominates_var = 0;
+  int sanitize_input_count = 0;
+  float y_out[D_MODEL]{};
+};
+
+static bool g_ref_ln_debug_enabled = false;
+static std::vector<RefLnDebugEntry> g_ref_ln_debug_entries;
+
+static inline const char* ref_ln_site_tag_to_string(RefLnSiteTag site) {
+  switch (site) {
+    case RefLnSiteTag::L0_SUB0: return "L0_SUB0_LN";
+    case RefLnSiteTag::L0_SUB1: return "L0_SUB1_LN";
+    case RefLnSiteTag::MID_NORM: return "MID_NORM";
+    case RefLnSiteTag::L1_SUB0: return "L1_SUB0_LN";
+    case RefLnSiteTag::L1_SUB1: return "L1_SUB1_LN";
+    case RefLnSiteTag::END_NORM: return "END_NORM";
+    default: return "UNKNOWN_LN_SITE";
+  }
+}
+
 struct DumpContext {
   bool enabled;
   std::string root;
@@ -644,8 +687,14 @@ static void dump_3d(const DumpContext& dump,
 }
 
 // LN_APPROX_BEGIN
-static inline float ln_sanitize_input(float x) {
-  return std::isfinite(x) ? x : 0.0f;
+static inline float ln_sanitize_input(float x, int* sanitize_count) {
+  if (std::isfinite(x)) {
+    return x;
+  }
+  if (sanitize_count != nullptr) {
+    *sanitize_count += 1;
+  }
+  return 0.0f;
 }
 
 static inline float ln_sanitize_output(float x) {
@@ -655,42 +704,81 @@ static inline float ln_sanitize_output(float x) {
 static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
                                          const double w[D_MODEL],
                                          const double b[D_MODEL],
+                                         int sample_index,
+                                         RefLnSiteTag site,
+                                         int token_index,
                                          fp32_ref_t y[D_MODEL]) {
   float sum = 0.0f;
+  int sanitize_input_count = 0;
   for (int i = 0; i < D_MODEL; ++i) {
-    sum += x[i].to_float();
+    const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
+    sum += xv;
   }
   const float mean = sum * LN_INV_D_F32;
 
   float var_acc = 0.0f;
   for (int i = 0; i < D_MODEL; ++i) {
-    const float d = x[i].to_float() - mean;
+    const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
+    const float d = xv - mean;
     var_acc += d * d;
   }
-  const float var = var_acc * LN_INV_D_F32;
+  const float var_raw = var_acc * LN_INV_D_F32;
+  const float x_eps = var_raw + LN_EPS_F32;
+  const float x_eps_safe = std::isfinite(x_eps) && (x_eps > 0.0f) ? x_eps : LN_EPS_F32;
+  const float inv_std_true = 1.0f / std::sqrt(x_eps_safe);
+  const float inv_std_seed = ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
+  const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(fp32_ref_t(x_eps_safe)).to_float();
 
   const float inv_std =
-    ref_inv_sqrt_approx(fp32_ref_t(var + LN_EPS_F32)).to_float();
+    ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
   for (int i = 0; i < D_MODEL; ++i) {
-    const float xn = (x[i].to_float() - mean) * inv_std;
+    const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
+    const float xn = (xv - mean) * inv_std;
     const float yi = xn * static_cast<float>(w[i]) + static_cast<float>(b[i]);
     y[i] = fp32_ref_t(yi);
+  }
+
+  if (g_ref_ln_debug_enabled) {
+    RefLnDebugEntry e{};
+    e.sample_index = sample_index;
+    e.site = static_cast<int>(site);
+    e.token = token_index;
+    e.mean = mean;
+    e.var_raw = var_raw;
+    e.var_final = var_raw;
+    e.x_eps = x_eps_safe;
+    e.inv_std_used = inv_std;
+    e.inv_std_true = inv_std_true;
+    e.inv_std_seed = inv_std_seed;
+    e.inv_std_nr1 = inv_std_nr1;
+    e.var_negative_before_clamp = (var_raw < 0.0f) ? 1 : 0;
+    e.clamp_triggered = 0;
+    e.eps_dominates_var = (var_raw <= LN_EPS_F32) ? 1 : 0;
+    e.sanitize_input_count = sanitize_input_count;
+    for (int i = 0; i < D_MODEL; ++i) {
+      e.y_out[i] = y[i].to_float();
+    }
+    g_ref_ln_debug_entries.push_back(e);
   }
 }
 
 static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
                                                   const double w[D_MODEL],
                                                   const double b[D_MODEL],
+                                                  int sample_index,
+                                                  RefLnSiteTag site,
+                                                  int token_index,
                                                   fp32_ref_t y[D_MODEL]) {
   float sum = 0.0f;
   float sumsq = 0.0f;
+  int sanitize_input_count = 0;
 
   // LOOP LN_PASS1_TILE
   for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
     // LOOP LN_PASS1_ELEM
     for (int lane = 0; lane < LN_TILE_D; ++lane) {
       const int d = tile_base + lane;
-      const float xv = ln_sanitize_input(x[d].to_float());
+      const float xv = ln_sanitize_input(x[d].to_float(), &sanitize_input_count);
       sum += xv;
       sumsq += xv * xv;
     }
@@ -698,11 +786,12 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
 
   const float mean = sum * LN_INV_D_F32;
   const float ex2 = sumsq * LN_INV_D_F32;
-  float var = ex2 - (mean * mean);
-  if (!std::isfinite(var) || var < LN_VAR_FLOOR_F32) {
-    var = LN_VAR_FLOOR_F32;
+  const float var_raw = ex2 - (mean * mean);
+  float var_final = var_raw;
+  if (!std::isfinite(var_final) || var_final < LN_VAR_FLOOR_F32) {
+    var_final = LN_VAR_FLOOR_F32;
   }
-  float var_eps = var + LN_EPS_F32;
+  float var_eps = var_final + LN_EPS_F32;
   if (!std::isfinite(var_eps) || var_eps < LN_EPS_F32) {
     var_eps = LN_EPS_F32;
   }
@@ -718,11 +807,37 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
     // LOOP LN_PASS2_ELEM
     for (int lane = 0; lane < LN_TILE_D; ++lane) {
       const int d = tile_base + lane;
-      const float xv = ln_sanitize_input(x[d].to_float());
+      const float xv = ln_sanitize_input(x[d].to_float(), &sanitize_input_count);
       const float xn = (xv - mean) * inv_std;
       const float yi = (xn * static_cast<float>(w[d])) + static_cast<float>(b[d]);
       y[d] = fp32_ref_t(ln_sanitize_output(yi));
     }
+  }
+
+  if (g_ref_ln_debug_enabled) {
+    const float inv_std_true = 1.0f / std::sqrt(var_eps);
+    const float inv_std_seed = ref_inv_sqrt_approx(fp32_ref_t(var_eps)).to_float();
+    const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(fp32_ref_t(var_eps)).to_float();
+    RefLnDebugEntry e{};
+    e.sample_index = sample_index;
+    e.site = static_cast<int>(site);
+    e.token = token_index;
+    e.mean = mean;
+    e.var_raw = var_raw;
+    e.var_final = var_final;
+    e.x_eps = var_eps;
+    e.inv_std_used = inv_std;
+    e.inv_std_true = inv_std_true;
+    e.inv_std_seed = inv_std_seed;
+    e.inv_std_nr1 = inv_std_nr1;
+    e.var_negative_before_clamp = (var_raw < 0.0f) ? 1 : 0;
+    e.clamp_triggered = (!std::isfinite(var_raw) || var_raw < LN_VAR_FLOOR_F32) ? 1 : 0;
+    e.eps_dominates_var = (var_final <= LN_EPS_F32) ? 1 : 0;
+    e.sanitize_input_count = sanitize_input_count;
+    for (int i = 0; i < D_MODEL; ++i) {
+      e.y_out[i] = y[i].to_float();
+    }
+    g_ref_ln_debug_entries.push_back(e);
   }
 }
 // LN_APPROX_END
@@ -731,12 +846,14 @@ static void apply_layernorm_tokens(const fp32_ref_t x_in[TOKENS_T][D_MODEL],
                                    const double w[D_MODEL],
                                    const double b[D_MODEL],
                                    RefLayerNormMode ln_mode,
+                                   int sample_index,
+                                   RefLnSiteTag site,
                                    fp32_ref_t x_out[TOKENS_T][D_MODEL]) {
   for (int t = 0; t < TOKENS_T; ++t) {
     if (ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
-      layernorm_32_sum_sumsq_approx(x_in[t], w, b, x_out[t]);
+      layernorm_32_sum_sumsq_approx(x_in[t], w, b, sample_index, site, t, x_out[t]);
     } else {
-      layernorm_32_baseline(x_in[t], w, b, x_out[t]);
+      layernorm_32_baseline(x_in[t], w, b, sample_index, site, t, x_out[t]);
     }
   }
 }
@@ -1124,6 +1241,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
 // SOFTMAX_APPROX_END
 
 static void run_layer(const int layer_idx,
+                      const int sample_index,
                       const RefRunConfig& run_cfg,
                       RefFullQuantStats* stats,
                       const fp32_ref_t x_in[TOKENS_T][D_MODEL],
@@ -1292,7 +1410,8 @@ static void run_layer(const int layer_idx,
         "residual_attn");
     }
   }
-  apply_layernorm_tokens(ln_in, ln0_w, ln0_b, run_cfg.ln_mode, ln_out);
+  const RefLnSiteTag ln0_site = (layer_idx == 0) ? RefLnSiteTag::L0_SUB0 : RefLnSiteTag::L1_SUB0;
+  apply_layernorm_tokens(ln_in, ln0_w, ln0_b, run_cfg.ln_mode, sample_index, ln0_site, ln_out);
   if (use_full_e4m3_nonlinear_stress(run_cfg) ||
       should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -1365,7 +1484,8 @@ static void run_layer(const int layer_idx,
         "residual_ffn");
     }
   }
-  apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, run_cfg.ln_mode, ffn_ln_out);
+  const RefLnSiteTag ln1_site = (layer_idx == 0) ? RefLnSiteTag::L0_SUB1 : RefLnSiteTag::L1_SUB1;
+  apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, run_cfg.ln_mode, sample_index, ln1_site, ffn_ln_out);
   if (use_full_e4m3_nonlinear_stress(run_cfg) ||
       should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -1511,6 +1631,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
 
     run_layer(0,
+              b,
               run_cfg_,
               &local_stats,
               prelayer_x,
@@ -1549,6 +1670,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
                            w_decoder_norm2_weight,
                            w_decoder_norm2_bias,
                            run_cfg_.ln_mode,
+                           b,
+                           RefLnSiteTag::MID_NORM,
                            mid_norm);
     if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
         should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
@@ -1579,6 +1702,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer1_ffn_ln_out[TOKENS_T][D_MODEL];
 
     run_layer(1,
+              b,
               run_cfg_,
               &local_stats,
               mid_norm,
@@ -1618,6 +1742,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
                            w_decoder_norm_weight,
                            w_decoder_norm_bias,
                            run_cfg_.ln_mode,
+                           b,
+                           RefLnSiteTag::END_NORM,
                            end_norm);
     if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
         should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
@@ -1755,6 +1881,75 @@ void RefModel::infer_step0(const RefModelIO& io) const {
   }
 
   add_ref_full_quant_stats(local_stats);
+}
+
+void set_ref_ln_debug_enabled(bool enabled) {
+  g_ref_ln_debug_enabled = enabled;
+  if (!enabled) {
+    g_ref_ln_debug_entries.clear();
+  }
+}
+
+void reset_ref_ln_debug_trace() {
+  g_ref_ln_debug_entries.clear();
+}
+
+int get_ref_ln_debug_entry_count() {
+  return static_cast<int>(g_ref_ln_debug_entries.size());
+}
+
+const char* ref_ln_debug_site_name(int site_id) {
+  return ref_ln_site_tag_to_string(static_cast<RefLnSiteTag>(site_id));
+}
+
+bool get_ref_ln_debug_entry(
+  int index,
+  int* out_sample_index,
+  int* out_site,
+  int* out_token,
+  float* out_mean,
+  float* out_var_raw,
+  float* out_var_final,
+  float* out_x_eps,
+  float* out_inv_std_used,
+  float* out_inv_std_true,
+  float* out_inv_std_seed,
+  float* out_inv_std_nr1,
+  int* out_var_negative_before_clamp,
+  int* out_clamp_triggered,
+  int* out_eps_dominates_var,
+  int* out_sanitize_input_count,
+  float* out_y,
+  int out_y_len
+) {
+  if (index < 0 || index >= static_cast<int>(g_ref_ln_debug_entries.size())) {
+    return false;
+  }
+  const RefLnDebugEntry& e = g_ref_ln_debug_entries[static_cast<std::size_t>(index)];
+  if (out_sample_index != nullptr) *out_sample_index = e.sample_index;
+  if (out_site != nullptr) *out_site = e.site;
+  if (out_token != nullptr) *out_token = e.token;
+  if (out_mean != nullptr) *out_mean = e.mean;
+  if (out_var_raw != nullptr) *out_var_raw = e.var_raw;
+  if (out_var_final != nullptr) *out_var_final = e.var_final;
+  if (out_x_eps != nullptr) *out_x_eps = e.x_eps;
+  if (out_inv_std_used != nullptr) *out_inv_std_used = e.inv_std_used;
+  if (out_inv_std_true != nullptr) *out_inv_std_true = e.inv_std_true;
+  if (out_inv_std_seed != nullptr) *out_inv_std_seed = e.inv_std_seed;
+  if (out_inv_std_nr1 != nullptr) *out_inv_std_nr1 = e.inv_std_nr1;
+  if (out_var_negative_before_clamp != nullptr) {
+    *out_var_negative_before_clamp = e.var_negative_before_clamp;
+  }
+  if (out_clamp_triggered != nullptr) *out_clamp_triggered = e.clamp_triggered;
+  if (out_eps_dominates_var != nullptr) *out_eps_dominates_var = e.eps_dominates_var;
+  if (out_sanitize_input_count != nullptr) *out_sanitize_input_count = e.sanitize_input_count;
+  if (out_y != nullptr && out_y_len > 0) {
+    const int copy_len = (out_y_len < D_MODEL) ? out_y_len : D_MODEL;
+    for (int i = 0; i < copy_len; ++i) {
+      out_y[i] = e.y_out[i];
+    }
+  }
+  return true;
 }
 
 } // namespace aecct_ref

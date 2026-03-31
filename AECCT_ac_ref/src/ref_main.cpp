@@ -10,6 +10,7 @@
 #include <limits>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "../include/RefExperimentMetrics.h"
@@ -22,6 +23,35 @@
 #include "output_logits_step0.h"
 #include "output_x_pred_step0.h"
 #include "weights.h"
+
+namespace aecct_ref {
+
+void set_ref_ln_debug_enabled(bool enabled);
+void reset_ref_ln_debug_trace();
+int get_ref_ln_debug_entry_count();
+const char* ref_ln_debug_site_name(int site_id);
+bool get_ref_ln_debug_entry(
+  int index,
+  int* out_sample_index,
+  int* out_site,
+  int* out_token,
+  float* out_mean,
+  float* out_var_raw,
+  float* out_var_final,
+  float* out_x_eps,
+  float* out_inv_std_used,
+  float* out_inv_std_true,
+  float* out_inv_std_seed,
+  float* out_inv_std_nr1,
+  int* out_var_negative_before_clamp,
+  int* out_clamp_triggered,
+  int* out_eps_dominates_var,
+  int* out_sanitize_input_count,
+  float* out_y,
+  int out_y_len
+);
+
+} // namespace aecct_ref
 
 namespace {
 
@@ -48,6 +78,7 @@ struct CliOptions {
   int pattern_count;
   int topk;
   bool summary_only;
+  bool ln_debug;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
   aecct_ref::RefLayerNormMode ln_mode;
@@ -151,6 +182,55 @@ struct EvalAggregateStats {
   double x_pred_match_ratio;
 };
 
+static constexpr int LN_DEBUG_D_MODEL = 32;
+
+struct LnDebugEntryRow {
+  int sample_index = 0;
+  int site = 0;
+  int token = 0;
+  float mean = 0.0f;
+  float var_raw = 0.0f;
+  float var_final = 0.0f;
+  float x_eps = 0.0f;
+  float inv_std_used = 0.0f;
+  float inv_std_true = 0.0f;
+  float inv_std_seed = 0.0f;
+  float inv_std_nr1 = 0.0f;
+  int var_negative_before_clamp = 0;
+  int clamp_triggered = 0;
+  int eps_dominates_var = 0;
+  int sanitize_input_count = 0;
+  float y[LN_DEBUG_D_MODEL]{};
+};
+
+struct LnDebugTokenDiag {
+  int pattern = -1;
+  int site = -1;
+  int token = -1;
+  float mean_base = 0.0f;
+  float mean_exp = 0.0f;
+  float var_base = 0.0f;
+  float var_exp = 0.0f;
+  float var_abs_diff = 0.0f;
+  float x_eps = 0.0f;
+  float inv_std_base_true = 0.0f;
+  float inv_std_exp_true = 0.0f;
+  float inv_std_exp_nr1 = 0.0f;
+  float inv_std_seed = 0.0f;
+  float inv_std_cross_abs_diff = 0.0f;
+  float inv_std_cross_rel_diff = 0.0f;
+  float seed_abs_err = 0.0f;
+  float seed_rel_err = 0.0f;
+  float nr_abs_err = 0.0f;
+  float nr_rel_err = 0.0f;
+  float y_max_abs_diff = 0.0f;
+  float y_mean_abs_diff = 0.0f;
+  int var_negative_before_clamp = 0;
+  int clamp_triggered = 0;
+  int eps_dominates_var = 0;
+  int sanitize_input_count = 0;
+};
+
 static inline std::chrono::steady_clock::time_point now_tp() {
   return std::chrono::steady_clock::now();
 }
@@ -187,6 +267,7 @@ static void print_usage() {
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
+  std::printf("  --ln-debug\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
   std::printf("  --ln-mode ln_baseline|ln_sum_sumsq_approx\n");
@@ -401,6 +482,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.pattern_count = -1;
   opts.topk = 5;
   opts.summary_only = false;
+  opts.ln_debug = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
   opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
@@ -473,6 +555,10 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
     }
     if (std::strcmp(arg, "--summary-only") == 0 || std::strcmp(arg, "--quiet") == 0) {
       opts.summary_only = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--ln-debug") == 0) {
+      opts.ln_debug = true;
       continue;
     }
     if (std::strcmp(arg, "--frag-group") == 0) {
@@ -909,6 +995,260 @@ static std::string format_topk_entries(const std::vector<aecct_ref::RefExperimen
     oss << entries[i].index << ":" << entries[i].value << ":" << entries[i].abs_value;
   }
   return oss.str();
+}
+
+static inline std::uint64_t make_ln_debug_key(int sample_index, int site, int token) {
+  return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(sample_index)) << 32) |
+         (static_cast<std::uint64_t>(static_cast<std::uint16_t>(site)) << 16) |
+         static_cast<std::uint64_t>(static_cast<std::uint16_t>(token));
+}
+
+static bool collect_ln_debug_entries(std::vector<LnDebugEntryRow>& out) {
+  out.clear();
+  const int count = aecct_ref::get_ref_ln_debug_entry_count();
+  if (count <= 0) {
+    return true;
+  }
+  out.reserve(static_cast<std::size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    LnDebugEntryRow e{};
+    if (!aecct_ref::get_ref_ln_debug_entry(
+          i,
+          &e.sample_index,
+          &e.site,
+          &e.token,
+          &e.mean,
+          &e.var_raw,
+          &e.var_final,
+          &e.x_eps,
+          &e.inv_std_used,
+          &e.inv_std_true,
+          &e.inv_std_seed,
+          &e.inv_std_nr1,
+          &e.var_negative_before_clamp,
+          &e.clamp_triggered,
+          &e.eps_dominates_var,
+          &e.sanitize_input_count,
+          e.y,
+          LN_DEBUG_D_MODEL)) {
+      return false;
+    }
+    out.push_back(e);
+  }
+  return true;
+}
+
+static void dump_ln_debug_report(
+  int pattern_begin,
+  int pattern_count,
+  const std::vector<LnDebugEntryRow>& baseline_entries,
+  const std::vector<LnDebugEntryRow>& experiment_entries,
+  const std::string& out_path
+) {
+  std::unordered_map<std::uint64_t, std::size_t> exp_index;
+  exp_index.reserve(experiment_entries.size());
+  for (std::size_t i = 0; i < experiment_entries.size(); ++i) {
+    exp_index[make_ln_debug_key(
+      experiment_entries[i].sample_index,
+      experiment_entries[i].site,
+      experiment_entries[i].token)] = i;
+  }
+
+  std::vector<LnDebugTokenDiag> token_diags;
+  token_diags.reserve(baseline_entries.size());
+
+  double seed_abs_err_sum = 0.0;
+  double nr_abs_err_sum = 0.0;
+  double inv_std_abs_diff_sum = 0.0;
+  double var_abs_diff_sum = 0.0;
+  double seed_rel_err_sum = 0.0;
+  double nr_rel_err_sum = 0.0;
+  double inv_std_rel_diff_sum = 0.0;
+  std::size_t matched = 0U;
+  std::size_t var_neg_count = 0U;
+  std::size_t clamp_count = 0U;
+  std::size_t eps_dom_count = 0U;
+  std::size_t sanitize_count = 0U;
+  std::size_t small_var_count = 0U;
+  double var_raw_min = std::numeric_limits<double>::infinity();
+  double var_raw_max = -std::numeric_limits<double>::infinity();
+  double var_final_min = std::numeric_limits<double>::infinity();
+  double var_final_max = -std::numeric_limits<double>::infinity();
+
+  for (std::size_t i = 0; i < baseline_entries.size(); ++i) {
+    const LnDebugEntryRow& b = baseline_entries[i];
+    const auto it = exp_index.find(make_ln_debug_key(b.sample_index, b.site, b.token));
+    if (it == exp_index.end()) {
+      continue;
+    }
+    const LnDebugEntryRow& e = experiment_entries[it->second];
+
+    LnDebugTokenDiag d{};
+    d.pattern = pattern_begin + b.sample_index;
+    d.site = b.site;
+    d.token = b.token;
+    d.mean_base = b.mean;
+    d.mean_exp = e.mean;
+    d.var_base = b.var_final;
+    d.var_exp = e.var_final;
+    d.var_abs_diff = static_cast<float>(std::fabs(static_cast<double>(e.var_final) - static_cast<double>(b.var_final)));
+    d.x_eps = e.x_eps;
+    d.inv_std_base_true = b.inv_std_true;
+    d.inv_std_exp_true = e.inv_std_true;
+    d.inv_std_exp_nr1 = e.inv_std_nr1;
+    d.inv_std_seed = e.inv_std_seed;
+    d.inv_std_cross_abs_diff = static_cast<float>(std::fabs(static_cast<double>(d.inv_std_exp_nr1) - static_cast<double>(d.inv_std_base_true)));
+    const double inv_cross_ref = std::max(std::fabs(static_cast<double>(d.inv_std_base_true)), 1.0e-12);
+    d.inv_std_cross_rel_diff = static_cast<float>(d.inv_std_cross_abs_diff / inv_cross_ref);
+    const double inv_local_ref = std::max(std::fabs(static_cast<double>(d.inv_std_exp_true)), 1.0e-12);
+    d.seed_abs_err = static_cast<float>(std::fabs(static_cast<double>(d.inv_std_seed) - static_cast<double>(d.inv_std_exp_true)));
+    d.seed_rel_err = static_cast<float>(d.seed_abs_err / inv_local_ref);
+    d.nr_abs_err = static_cast<float>(std::fabs(static_cast<double>(d.inv_std_exp_nr1) - static_cast<double>(d.inv_std_exp_true)));
+    d.nr_rel_err = static_cast<float>(d.nr_abs_err / inv_local_ref);
+    d.var_negative_before_clamp = e.var_negative_before_clamp;
+    d.clamp_triggered = e.clamp_triggered;
+    d.eps_dominates_var = e.eps_dominates_var;
+    d.sanitize_input_count = e.sanitize_input_count;
+
+    double y_abs_sum = 0.0;
+    double y_abs_max = 0.0;
+    for (int k = 0; k < LN_DEBUG_D_MODEL; ++k) {
+      const double ad = std::fabs(static_cast<double>(e.y[k]) - static_cast<double>(b.y[k]));
+      y_abs_sum += ad;
+      if (ad > y_abs_max) {
+        y_abs_max = ad;
+      }
+    }
+    d.y_max_abs_diff = static_cast<float>(y_abs_max);
+    d.y_mean_abs_diff = static_cast<float>(y_abs_sum / static_cast<double>(LN_DEBUG_D_MODEL));
+    token_diags.push_back(d);
+    matched++;
+
+    seed_abs_err_sum += d.seed_abs_err;
+    nr_abs_err_sum += d.nr_abs_err;
+    inv_std_abs_diff_sum += d.inv_std_cross_abs_diff;
+    var_abs_diff_sum += d.var_abs_diff;
+    seed_rel_err_sum += d.seed_rel_err;
+    nr_rel_err_sum += d.nr_rel_err;
+    inv_std_rel_diff_sum += d.inv_std_cross_rel_diff;
+
+    if (d.var_negative_before_clamp != 0) var_neg_count++;
+    if (d.clamp_triggered != 0) clamp_count++;
+    if (d.eps_dominates_var != 0) eps_dom_count++;
+    sanitize_count += static_cast<std::size_t>((d.sanitize_input_count > 0) ? d.sanitize_input_count : 0);
+    if (e.var_final < 1.0e-4f) {
+      small_var_count++;
+    }
+    if (e.var_raw < var_raw_min) var_raw_min = e.var_raw;
+    if (e.var_raw > var_raw_max) var_raw_max = e.var_raw;
+    if (e.var_final < var_final_min) var_final_min = e.var_final;
+    if (e.var_final > var_final_max) var_final_max = e.var_final;
+  }
+
+  std::vector<LnDebugTokenDiag> pattern_worst(static_cast<std::size_t>(pattern_count));
+  std::vector<int> pattern_has(static_cast<std::size_t>(pattern_count), 0);
+  LnDebugTokenDiag global_worst{};
+  bool has_global = false;
+  for (std::size_t i = 0; i < token_diags.size(); ++i) {
+    const LnDebugTokenDiag& d = token_diags[i];
+    const int off = d.pattern - pattern_begin;
+    if (off < 0 || off >= pattern_count) {
+      continue;
+    }
+    if (pattern_has[static_cast<std::size_t>(off)] == 0 ||
+        d.y_max_abs_diff > pattern_worst[static_cast<std::size_t>(off)].y_max_abs_diff) {
+      pattern_worst[static_cast<std::size_t>(off)] = d;
+      pattern_has[static_cast<std::size_t>(off)] = 1;
+    }
+    if (!has_global || d.y_max_abs_diff > global_worst.y_max_abs_diff) {
+      global_worst = d;
+      has_global = true;
+    }
+  }
+
+  std::ostringstream oss;
+  oss.setf(std::ios::scientific);
+  oss << std::setprecision(9);
+  oss << "=== LN Debug Diagnosis ===\n";
+  oss << "baseline_entries: " << baseline_entries.size() << "\n";
+  oss << "experiment_entries: " << experiment_entries.size() << "\n";
+  oss << "matched_entries: " << matched << "\n";
+  if (matched > 0U) {
+    const double inv = 1.0 / static_cast<double>(matched);
+    oss << "mean_seed_abs_err: " << (seed_abs_err_sum * inv) << "\n";
+    oss << "mean_nr_abs_err  : " << (nr_abs_err_sum * inv) << "\n";
+    oss << "mean_seed_rel_err: " << (seed_rel_err_sum * inv) << "\n";
+    oss << "mean_nr_rel_err  : " << (nr_rel_err_sum * inv) << "\n";
+    oss << "mean_invstd_cross_abs_diff(base_true vs exp_nr1): " << (inv_std_abs_diff_sum * inv) << "\n";
+    oss << "mean_invstd_cross_rel_diff(base_true vs exp_nr1): " << (inv_std_rel_diff_sum * inv) << "\n";
+    oss << "mean_var_abs_diff(base vs exp): " << (var_abs_diff_sum * inv) << "\n";
+    oss << "var_negative_before_clamp_count(exp): " << var_neg_count << "\n";
+    oss << "clamp_trigger_count(exp): " << clamp_count << "\n";
+    oss << "eps_dominates_var_count(exp): " << eps_dom_count << "\n";
+    oss << "small_var_count(exp, var<1e-4): " << small_var_count << "\n";
+    oss << "sanitize_input_total(exp): " << sanitize_count << "\n";
+    oss << "var_raw_range(exp): [" << var_raw_min << ", " << var_raw_max << "]\n";
+    oss << "var_final_range(exp): [" << var_final_min << ", " << var_final_max << "]\n";
+  }
+  oss << "\n";
+
+  for (int p = 0; p < pattern_count; ++p) {
+    if (pattern_has[static_cast<std::size_t>(p)] == 0) {
+      continue;
+    }
+    const LnDebugTokenDiag& d = pattern_worst[static_cast<std::size_t>(p)];
+    oss << "[Pattern " << d.pattern << "]\n";
+    oss << "[Token " << d.token << "] [Site " << aecct_ref::ref_ln_debug_site_name(d.site) << "]\n";
+    oss << "mean_base / mean_exp: " << d.mean_base << " / " << d.mean_exp << "\n";
+    oss << "var_base  / var_exp : " << d.var_base << " / " << d.var_exp << "\n";
+    oss << "var_abs_diff         : " << d.var_abs_diff << "\n";
+    oss << "x(var+eps)           : " << d.x_eps << "\n";
+    oss << "inv_std_base_true    : " << d.inv_std_base_true << "\n";
+    oss << "inv_std_exp_true     : " << d.inv_std_exp_true << "\n";
+    oss << "inv_std_exp_nr1      : " << d.inv_std_exp_nr1 << "\n";
+    oss << "inv_std_cross_abs_diff(base_true vs exp_nr1): " << d.inv_std_cross_abs_diff << "\n";
+    oss << "inv_std_cross_rel_diff(base_true vs exp_nr1): " << d.inv_std_cross_rel_diff << "\n";
+    oss << "y0(seed)             : " << d.inv_std_seed << "\n";
+    oss << "y1(NR1)              : " << d.inv_std_exp_nr1 << "\n";
+    oss << "y_true(1/sqrt(x_exp)): " << d.inv_std_exp_true << "\n";
+    oss << "seed_abs_err / rel   : " << d.seed_abs_err << " / " << d.seed_rel_err << "\n";
+    oss << "nr_abs_err / rel     : " << d.nr_abs_err << " / " << d.nr_rel_err << "\n";
+    oss << "LN y max_abs_diff    : " << d.y_max_abs_diff << "\n";
+    oss << "LN y mean_abs_diff   : " << d.y_mean_abs_diff << "\n";
+    oss << "var_negative/clamp/eps_dom/sanitize_count(exp): "
+        << d.var_negative_before_clamp << " / "
+        << d.clamp_triggered << " / "
+        << d.eps_dominates_var << " / "
+        << d.sanitize_input_count << "\n\n";
+  }
+
+  if (has_global) {
+    oss << "[Global worst token across batch]\n";
+    oss << "pattern/token/site: " << global_worst.pattern << " / "
+        << global_worst.token << " / "
+        << aecct_ref::ref_ln_debug_site_name(global_worst.site) << "\n";
+    oss << "LN y max_abs_diff : " << global_worst.y_max_abs_diff << "\n";
+    oss << "LN y mean_abs_diff: " << global_worst.y_mean_abs_diff << "\n";
+    oss << "inv_std base_true / exp_true / exp_nr1: " << global_worst.inv_std_base_true
+        << " / " << global_worst.inv_std_exp_true
+        << " / " << global_worst.inv_std_exp_nr1 << "\n";
+    oss << "seed_abs_err / nr_abs_err: " << global_worst.seed_abs_err
+        << " / " << global_worst.nr_abs_err << "\n";
+  }
+
+  const std::string report = oss.str();
+  std::printf("%s", report.c_str());
+
+  if (!out_path.empty()) {
+    std::filesystem::path p(out_path);
+    if (p.has_parent_path()) {
+      std::filesystem::create_directories(p.parent_path());
+    }
+    std::ofstream ofs(out_path.c_str(), std::ios::out | std::ios::trunc);
+    if (ofs.good()) {
+      ofs << report;
+    }
+  }
 }
 
 static bool write_compare_csv(const std::string& path, const std::vector<PerPatternCompareRow>& rows) {
@@ -2005,6 +2345,7 @@ int main(int argc, char** argv) {
   std::printf("  pattern_range  : begin=%d count=%d\n", range.begin, range.count);
   std::printf("  topk           : %d\n", opts.topk);
   std::printf("  summary_only   : %d\n", opts.summary_only ? 1 : 0);
+  std::printf("  ln_debug       : %d\n", opts.ln_debug ? 1 : 0);
 
   perf.startup_init_s = elapsed_sec(t_program_start, now_tp());
 
@@ -2243,7 +2584,8 @@ int main(int argc, char** argv) {
     const bool experiment_use_reconstruct =
       need_experiment_outputs &&
       (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD) &&
-      (opts.experiment_ln_mode == opts.ln_mode);
+      (opts.experiment_ln_mode == opts.ln_mode) &&
+      !opts.ln_debug;
     if (experiment_use_reconstruct) {
       baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
     }
@@ -2506,15 +2848,22 @@ int main(int argc, char** argv) {
   std::vector<double> baseline_finalhead_s_t;
   std::vector<double> experiment_logits_batch;
   std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
+  std::vector<LnDebugEntryRow> baseline_ln_debug_entries;
+  std::vector<LnDebugEntryRow> experiment_ln_debug_entries;
   aecct_ref::RefFullQuantStats experiment_full_stats{};
 
   const bool experiment_use_reconstruct =
     (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD) &&
-    (opts.experiment_ln_mode == opts.ln_mode);
+    (opts.experiment_ln_mode == opts.ln_mode) &&
+    !opts.ln_debug;
   if (experiment_use_reconstruct) {
     baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
   }
 
+  aecct_ref::set_ref_ln_debug_enabled(opts.ln_debug);
+  if (opts.ln_debug) {
+    aecct_ref::reset_ref_ln_debug_trace();
+  }
   const auto t_baseline_start = now_tp();
   run_ref_batch(
     baseline_model,
@@ -2525,6 +2874,12 @@ int main(int argc, char** argv) {
     experiment_use_reconstruct ? baseline_finalhead_s_t.data() : nullptr
   );
   perf.baseline_model_s = elapsed_sec(t_baseline_start, now_tp());
+  if (opts.ln_debug) {
+    if (!collect_ln_debug_entries(baseline_ln_debug_entries)) {
+      std::printf("[warn] Failed to collect baseline LN debug entries.\n");
+    }
+    aecct_ref::reset_ref_ln_debug_trace();
+  }
 
   const auto t_experiment_start = now_tp();
   aecct_ref::reset_ref_full_quant_stats();
@@ -2561,6 +2916,12 @@ int main(int argc, char** argv) {
   }
   experiment_full_stats = aecct_ref::get_ref_full_quant_stats();
   perf.experiment_path_s = elapsed_sec(t_experiment_start, now_tp());
+  if (opts.ln_debug) {
+    if (!collect_ln_debug_entries(experiment_ln_debug_entries)) {
+      std::printf("[warn] Failed to collect experiment LN debug entries.\n");
+    }
+  }
+  aecct_ref::set_ref_ln_debug_enabled(false);
 
   const auto t_compare_start = now_tp();
   for (int off = 0; off < range.count; ++off) {
@@ -2632,6 +2993,17 @@ int main(int argc, char** argv) {
     std::printf("[warn] Failed to write reviewer summary txt: %s\n", txt_path.c_str());
   }
   const std::string timing_path = derive_timing_txt_path(csv_path);
+  if (opts.ln_debug) {
+    const std::string ln_debug_path = csv_path + ".ln_debug.txt";
+    dump_ln_debug_report(
+      range.begin,
+      range.count,
+      baseline_ln_debug_entries,
+      experiment_ln_debug_entries,
+      ln_debug_path
+    );
+    std::printf("LN debug report txt     : %s\n", ln_debug_path.c_str());
+  }
   perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
   perf.total_s = elapsed_sec(t_program_start, now_tp());
   if (write_timing_txt(timing_path, perf)) {
