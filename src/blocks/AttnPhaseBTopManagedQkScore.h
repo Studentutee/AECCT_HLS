@@ -241,7 +241,8 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     u32_t* score_tile_bridge_visible = 0,
     u32_t* score_tile_bridge_owner_ok = 0,
     u32_t* score_tile_bridge_consumed = 0,
-    u32_t* score_tile_bridge_compare_ok = 0
+    u32_t* score_tile_bridge_compare_ok = 0,
+    u32_t score_tile_bridge_head_idx = (u32_t)0u
 ) {
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
@@ -294,6 +295,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
         (score_tile_bridge_words != 0) &&
         (score_tile_bridge_valid_words > 0u);
     const uint32_t score_tile_bridge_key_begin_u32 = (uint32_t)score_tile_bridge_key_begin.to_uint();
+    const uint32_t score_tile_bridge_head_idx_u32 = (uint32_t)score_tile_bridge_head_idx.to_uint();
     bool score_tile_bridge_seen = false;
     if (score_tile_bridge_enabled) {
         if (score_tile_bridge_valid_words > token_count) {
@@ -306,6 +308,9 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
             return false;
         }
         if ((score_tile_bridge_key_begin_u32 + score_tile_bridge_valid_words) > token_count) {
+            return false;
+        }
+        if (score_tile_bridge_head_idx_u32 >= n_heads) {
             return false;
         }
     }
@@ -377,7 +382,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
             const uint32_t scaled_bits = (uint32_t)quant_bits_from_acc(scaled).to_uint();
             const bool score_tile_bridge_selected =
                 score_tile_bridge_enabled &&
-                (h == 0u) &&
+                (h == score_tile_bridge_head_idx_u32) &&
                 (j >= score_tile_bridge_key_begin_u32) &&
                 (j < (score_tile_bridge_key_begin_u32 + score_tile_bridge_valid_words));
             if (score_tile_bridge_selected) {

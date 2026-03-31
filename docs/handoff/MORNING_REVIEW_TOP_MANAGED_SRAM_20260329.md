@@ -644,3 +644,54 @@
 - `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_CAMPAIGN_COMPLETION_20260331.md`
 - `build/p11w4b2/qkscore_tile_bridge/run.log`
 - `build/evidence/w4b2_qkscore_tile_bridge_20260331/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (W4-B3 QkScore Selectable-Head Bridge Latest)
+1. Open `src/blocks/AttnPhaseBTopManagedQkScore.h` (2 min)
+- confirm selectable-head bridge fields/gates:
+  - `score_tile_bridge_head_idx`
+  - `score_tile_bridge_head_idx_u32`
+  - bounded select still at `ATTN_P11AE_KEY_TOKEN_LOOP`.
+2. Open `src/Top.h` (1 min)
+- confirm `run_p11ae_layer0_top_managed_qk_score(...)` passthrough includes W4-B3 head selector arg.
+3. Open `build/p11w4b3/qkscore_bridge/run.log` (1 min)
+- confirm:
+  - `W4B3_QKSCORE_BRIDGE_VISIBLE PASS`
+  - `W4B3_QKSCORE_OWNERSHIP_CHECK PASS`
+  - `W4B3_QKSCORE_NON_HEAD1_PATH PASS`
+  - `W4B3_QKSCORE_NO_SPURIOUS_TOUCH PASS`
+  - `W4B3_QKSCORE_EXPECTED_COMPARE PASS`
+  - `W4B3_QKSCORE_BRIDGE_MISMATCH_REJECT PASS`
+4. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+- confirm `guard: W4-B3 QkScore selectable-head bounded score-tile bridge anchors OK`.
+5. Open retained Wave4 runners (1 min)
+- `build/p11w4b2/qkscore_tile_bridge/run.log`
+- `build/p11w4b1/phaseb_tile_bridge/run.log`
+- `build/p11w4m3/kv_phase_entry_probe/run.log`
+- `build/p11w4m3/phasea_q_phase_entry_probe/run.log`
+- `build/p11w4m2/softmaxout_phase_entry_probe/run.log`
+- `build/p11w4m1/qkscore_phase_entry_probe/run.log`
+6. Open retained FFN/mainline/provenance runners (2 min)
+- `build/p11g7/ffn_w1_bias_descriptor_strict/run.log`
+- `build/p11g6/ffn_w1_bias_descriptor/run.log`
+- `build/p11g6/ffn_fallback_observability/run.log`
+- `build/p11ah/full_loop/run.log`
+- `build/p11aj/p11aj/run.log`
+7. Open docs (1 min)
+- `docs/handoff/TOP_MANAGED_SRAM_W4B3_QKSCORE_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B3_COMPLETION_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_BRIDGE_CAMPAIGN_COMPLETION_20260331.md`
+8. Open evidence manifest (1 min)
+- `build/evidence/w4b3_qkscore_bridge_20260331/evidence_manifest.txt`
+
+## Latest artifact additions (W4-B3 campaign)
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `tb/tb_w4b3_qkscore_bridge.cpp`
+- `scripts/local/run_p11w4b3_qkscore_bridge.ps1`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B3_QKSCORE_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B3_EVIDENCE_INDEX_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B3_COMPLETION_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_BRIDGE_CAMPAIGN_COMPLETION_20260331.md`
+- `build/p11w4b3/qkscore_bridge/run.log`
+- `build/evidence/w4b3_qkscore_bridge_20260331/evidence_manifest.txt`

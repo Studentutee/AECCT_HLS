@@ -1231,7 +1231,8 @@ namespace aecct {
         u32_t* score_tile_bridge_visible = 0,
         u32_t* score_tile_bridge_owner_ok = 0,
         u32_t* score_tile_bridge_consumed = 0,
-        u32_t* score_tile_bridge_compare_ok = 0
+        u32_t* score_tile_bridge_compare_ok = 0,
+        u32_t score_tile_bridge_head_idx = (u32_t)0u
     ) {
         AttnCfg attn_cfg;
         attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
@@ -1269,7 +1270,8 @@ namespace aecct {
             score_tile_bridge_visible,
             score_tile_bridge_owner_ok,
             score_tile_bridge_consumed,
-            score_tile_bridge_compare_ok
+            score_tile_bridge_compare_ok,
+            score_tile_bridge_head_idx
         );
     }
 
