@@ -67,6 +67,22 @@ bool get_ref_ln_debug_entry(
   int out_y_len
 );
 
+void set_ref_ln_upstream_debug_enabled(bool enabled);
+void reset_ref_ln_upstream_debug_trace();
+int get_ref_ln_upstream_debug_entry_count();
+const char* ref_ln_upstream_boundary_name(int boundary_id);
+bool get_ref_ln_upstream_debug_entry(
+  int index,
+  int* out_entry_seq,
+  int* out_sample_index,
+  int* out_layer_idx,
+  int* out_boundary,
+  int* out_boundary_call_index,
+  int* out_token,
+  float* out_x,
+  int out_x_len
+);
+
 } // namespace aecct_ref
 
 namespace {
@@ -97,6 +113,7 @@ struct CliOptions {
   bool ln_debug;
   bool ln_var_debug;
   bool ln_input_debug;
+  bool ln_upstream_debug;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
   aecct_ref::RefLayerNormMode ln_mode;
@@ -234,6 +251,30 @@ struct LnDebugEntryRow {
   int sanitize_input_count = 0;
   float x[LN_DEBUG_D_MODEL]{};
   float y[LN_DEBUG_D_MODEL]{};
+};
+
+struct LnUpstreamEntryRow {
+  int entry_seq = 0;
+  int sample_index = 0;
+  int layer_idx = 0;
+  int boundary = 0;
+  int boundary_call_index = 0;
+  int token = 0;
+  float x[LN_DEBUG_D_MODEL]{};
+};
+
+struct LnUpstreamBoundaryDiag {
+  int pattern = -1;
+  int token = -1;
+  int boundary = -1;
+  int entry_seq_base = -1;
+  int entry_seq_exp = -1;
+  int call_index_base = -1;
+  int call_index_exp = -1;
+  float max_abs_diff = 0.0f;
+  float mean_abs_diff = 0.0f;
+  float mse = 0.0f;
+  float l2 = 0.0f;
 };
 
 enum class LnVarFirstDivergenceStage : int {
@@ -378,6 +419,7 @@ static void print_usage() {
   std::printf("  --ln-debug\n");
   std::printf("  --ln-var-debug\n");
   std::printf("  --ln-input-debug\n");
+  std::printf("  --ln-upstream-debug\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
   std::printf("  --ln-mode ln_baseline|ln_sum_sumsq_approx\n");
@@ -595,6 +637,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.ln_debug = false;
   opts.ln_var_debug = false;
   opts.ln_input_debug = false;
+  opts.ln_upstream_debug = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
   opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
@@ -679,6 +722,10 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
     }
     if (std::strcmp(arg, "--ln-input-debug") == 0) {
       opts.ln_input_debug = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--ln-upstream-debug") == 0) {
+      opts.ln_upstream_debug = true;
       continue;
     }
     if (std::strcmp(arg, "--frag-group") == 0) {
@@ -1166,6 +1213,32 @@ static bool collect_ln_debug_entries(std::vector<LnDebugEntryRow>& out) {
           e.x,
           LN_DEBUG_D_MODEL,
           e.y,
+          LN_DEBUG_D_MODEL)) {
+      return false;
+    }
+    out.push_back(e);
+  }
+  return true;
+}
+
+static bool collect_ln_upstream_debug_entries(std::vector<LnUpstreamEntryRow>& out) {
+  out.clear();
+  const int count = aecct_ref::get_ref_ln_upstream_debug_entry_count();
+  if (count <= 0) {
+    return true;
+  }
+  out.reserve(static_cast<std::size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    LnUpstreamEntryRow e{};
+    if (!aecct_ref::get_ref_ln_upstream_debug_entry(
+          i,
+          &e.entry_seq,
+          &e.sample_index,
+          &e.layer_idx,
+          &e.boundary,
+          &e.boundary_call_index,
+          &e.token,
+          e.x,
           LN_DEBUG_D_MODEL)) {
       return false;
     }
@@ -2029,6 +2102,283 @@ static void dump_ln_input_debug_report(
   for (std::size_t i = 0; i < std::min<std::size_t>(3U, sorted_by_var.size()); ++i) {
     oss << "[Rank " << (i + 1U) << "]\n";
     append_ln_input_token_details(oss, sorted_by_var[i]);
+  }
+
+  const std::string report = oss.str();
+  std::printf("%s", report.c_str());
+  if (!out_path.empty()) {
+    std::filesystem::path p(out_path);
+    if (p.has_parent_path()) {
+      std::filesystem::create_directories(p.parent_path());
+    }
+    std::ofstream ofs(out_path.c_str(), std::ios::out | std::ios::trunc);
+    if (ofs.good()) {
+      ofs << report;
+    }
+  }
+}
+
+static inline std::uint64_t make_ln_upstream_key(int sample_index, int layer_idx, int boundary, int token) {
+  return (static_cast<std::uint64_t>(static_cast<std::uint16_t>(sample_index)) << 48) |
+         (static_cast<std::uint64_t>(static_cast<std::uint16_t>(layer_idx)) << 32) |
+         (static_cast<std::uint64_t>(static_cast<std::uint16_t>(boundary)) << 16) |
+         static_cast<std::uint64_t>(static_cast<std::uint16_t>(token));
+}
+
+static void append_ln_upstream_diag_line(std::ostringstream& oss, const LnUpstreamBoundaryDiag& d) {
+  oss << "[Pattern " << d.pattern << "] [Token " << d.token << "] [Boundary "
+      << aecct_ref::ref_ln_upstream_boundary_name(d.boundary) << "]\n";
+  oss << "pairing_meta: entry_seq(base/exp)=" << d.entry_seq_base << " / " << d.entry_seq_exp
+      << " call_index(base/exp)=" << d.call_index_base << " / " << d.call_index_exp << "\n";
+  oss << "diff: max_abs=" << d.max_abs_diff
+      << " mean_abs=" << d.mean_abs_diff
+      << " mse=" << d.mse
+      << " l2=" << d.l2 << "\n\n";
+}
+
+static void dump_ln_upstream_debug_report(
+  int pattern_begin,
+  int pattern_count,
+  const std::vector<LnUpstreamEntryRow>& baseline_entries,
+  const std::vector<LnUpstreamEntryRow>& experiment_entries,
+  const std::string& out_path
+) {
+  std::unordered_map<std::uint64_t, std::size_t> exp_index;
+  exp_index.reserve(experiment_entries.size());
+  std::unordered_map<std::uint64_t, int> base_key_count;
+  std::unordered_map<std::uint64_t, int> exp_key_count;
+  base_key_count.reserve(baseline_entries.size());
+  exp_key_count.reserve(experiment_entries.size());
+  for (std::size_t i = 0; i < baseline_entries.size(); ++i) {
+    const std::uint64_t key = make_ln_upstream_key(
+      baseline_entries[i].sample_index,
+      baseline_entries[i].layer_idx,
+      baseline_entries[i].boundary,
+      baseline_entries[i].token);
+    base_key_count[key] += 1;
+  }
+  for (std::size_t i = 0; i < experiment_entries.size(); ++i) {
+    const std::uint64_t key = make_ln_upstream_key(
+      experiment_entries[i].sample_index,
+      experiment_entries[i].layer_idx,
+      experiment_entries[i].boundary,
+      experiment_entries[i].token);
+    exp_key_count[key] += 1;
+    exp_index[key] = i;
+  }
+
+  std::vector<LnUpstreamBoundaryDiag> diags;
+  diags.reserve(baseline_entries.size());
+  std::size_t matched = 0U;
+  std::size_t call_index_mismatch_count = 0U;
+  std::size_t nonzero_diff_count = 0U;
+  double mean_max_abs_sum = 0.0;
+  double mean_mean_abs_sum = 0.0;
+  double mean_mse_sum = 0.0;
+
+  for (std::size_t i = 0; i < baseline_entries.size(); ++i) {
+    const LnUpstreamEntryRow& b = baseline_entries[i];
+    const std::uint64_t key = make_ln_upstream_key(b.sample_index, b.layer_idx, b.boundary, b.token);
+    const auto it = exp_index.find(key);
+    if (it == exp_index.end()) {
+      continue;
+    }
+    const LnUpstreamEntryRow& e = experiment_entries[it->second];
+    LnUpstreamBoundaryDiag d{};
+    d.pattern = pattern_begin + b.sample_index;
+    d.token = b.token;
+    d.boundary = b.boundary;
+    d.entry_seq_base = b.entry_seq;
+    d.entry_seq_exp = e.entry_seq;
+    d.call_index_base = b.boundary_call_index;
+    d.call_index_exp = e.boundary_call_index;
+    double abs_sum = 0.0;
+    double sq_sum = 0.0;
+    double abs_max = 0.0;
+    for (int k = 0; k < LN_DEBUG_D_MODEL; ++k) {
+      const double ad = std::fabs(static_cast<double>(b.x[k]) - static_cast<double>(e.x[k]));
+      abs_sum += ad;
+      sq_sum += ad * ad;
+      if (ad > abs_max) {
+        abs_max = ad;
+      }
+    }
+    d.max_abs_diff = static_cast<float>(abs_max);
+    d.mean_abs_diff = static_cast<float>(abs_sum / static_cast<double>(LN_DEBUG_D_MODEL));
+    d.mse = static_cast<float>(sq_sum / static_cast<double>(LN_DEBUG_D_MODEL));
+    d.l2 = static_cast<float>(std::sqrt(sq_sum));
+    diags.push_back(d);
+    matched++;
+
+    if (d.call_index_base != d.call_index_exp) {
+      call_index_mismatch_count++;
+    }
+    if (d.max_abs_diff > 0.0f) {
+      nonzero_diff_count++;
+    }
+    mean_max_abs_sum += d.max_abs_diff;
+    mean_mean_abs_sum += d.mean_abs_diff;
+    mean_mse_sum += d.mse;
+  }
+
+  std::size_t base_duplicate_keys = 0U;
+  for (auto it = base_key_count.begin(); it != base_key_count.end(); ++it) {
+    if (it->second > 1) {
+      base_duplicate_keys++;
+    }
+  }
+  std::size_t exp_duplicate_keys = 0U;
+  for (auto it = exp_key_count.begin(); it != exp_key_count.end(); ++it) {
+    if (it->second > 1) {
+      exp_duplicate_keys++;
+    }
+  }
+
+  const int kBoundaryCount = 4;
+  const int boundary_order[kBoundaryCount] = {0, 1, 2, 3};
+  int earliest_hist[kBoundaryCount + 1] = {0, 0, 0, 0, 0}; // +1 no-div
+  struct TokenBoundaryMetrics {
+    float max_abs[kBoundaryCount] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int has[kBoundaryCount] = {0, 0, 0, 0};
+  };
+  std::unordered_map<std::uint64_t, TokenBoundaryMetrics> token_boundary;
+  token_boundary.reserve(static_cast<std::size_t>(pattern_count * 75));
+  for (std::size_t i = 0; i < diags.size(); ++i) {
+    const LnUpstreamBoundaryDiag& d = diags[i];
+    const int off = d.pattern - pattern_begin;
+    if (off < 0 || off >= pattern_count) {
+      continue;
+    }
+    if (d.boundary < 0 || d.boundary >= kBoundaryCount) {
+      continue;
+    }
+    const std::uint64_t tk = (static_cast<std::uint64_t>(static_cast<std::uint16_t>(off)) << 16) |
+                             static_cast<std::uint64_t>(static_cast<std::uint16_t>(d.token));
+    TokenBoundaryMetrics& m = token_boundary[tk];
+    m.max_abs[d.boundary] = d.max_abs_diff;
+    m.has[d.boundary] = 1;
+  }
+  const float tol = 1.0e-8f;
+  for (int off = 0; off < pattern_count; ++off) {
+    for (int token = 0; token < 75; ++token) {
+      const std::uint64_t tk = (static_cast<std::uint64_t>(static_cast<std::uint16_t>(off)) << 16) |
+                               static_cast<std::uint64_t>(static_cast<std::uint16_t>(token));
+      const auto it = token_boundary.find(tk);
+      if (it == token_boundary.end()) {
+        continue;
+      }
+      const TokenBoundaryMetrics& m = it->second;
+      int earliest = -1;
+      for (int bi = 0; bi < kBoundaryCount; ++bi) {
+        const int b = boundary_order[bi];
+        if (m.has[b] != 0 && m.max_abs[b] > tol) {
+          earliest = b;
+          break;
+        }
+      }
+      if (earliest >= 0 && earliest < kBoundaryCount) {
+        earliest_hist[earliest] += 1;
+      } else {
+        earliest_hist[kBoundaryCount] += 1;
+      }
+    }
+  }
+
+  std::vector<LnUpstreamBoundaryDiag> sorted_by_diff = diags;
+  std::sort(sorted_by_diff.begin(), sorted_by_diff.end(),
+    [](const LnUpstreamBoundaryDiag& a, const LnUpstreamBoundaryDiag& b) {
+      return a.max_abs_diff > b.max_abs_diff;
+    });
+
+  std::vector<LnUpstreamBoundaryDiag> producer_boundary_diags;
+  producer_boundary_diags.reserve(diags.size());
+  for (std::size_t i = 0; i < diags.size(); ++i) {
+    if (diags[i].boundary == 3) {
+      producer_boundary_diags.push_back(diags[i]);
+    }
+  }
+  std::sort(producer_boundary_diags.begin(), producer_boundary_diags.end(),
+    [](const LnUpstreamBoundaryDiag& a, const LnUpstreamBoundaryDiag& b) {
+      return a.max_abs_diff > b.max_abs_diff;
+    });
+
+  std::vector<LnUpstreamBoundaryDiag> assembly_sum_diags;
+  std::vector<LnUpstreamBoundaryDiag> assembly_out_diags;
+  for (std::size_t i = 0; i < diags.size(); ++i) {
+    if (diags[i].boundary == 2) {
+      assembly_sum_diags.push_back(diags[i]);
+    } else if (diags[i].boundary == 3) {
+      assembly_out_diags.push_back(diags[i]);
+    }
+  }
+  std::unordered_map<std::uint64_t, std::size_t> assembly_sum_idx;
+  assembly_sum_idx.reserve(assembly_sum_diags.size());
+  for (std::size_t i = 0; i < assembly_sum_diags.size(); ++i) {
+    const std::uint64_t key = make_ln_upstream_key(
+      assembly_sum_diags[i].pattern - pattern_begin, 0, 2, assembly_sum_diags[i].token);
+    assembly_sum_idx[key] = i;
+  }
+  double assembly_out_minus_sum_mean = 0.0;
+  std::size_t assembly_out_more_count = 0U;
+  std::size_t assembly_pair_count = 0U;
+  for (std::size_t i = 0; i < assembly_out_diags.size(); ++i) {
+    const std::uint64_t key = make_ln_upstream_key(
+      assembly_out_diags[i].pattern - pattern_begin, 0, 2, assembly_out_diags[i].token);
+    const auto it = assembly_sum_idx.find(key);
+    if (it == assembly_sum_idx.end()) {
+      continue;
+    }
+    const float delta = assembly_out_diags[i].max_abs_diff - assembly_sum_diags[it->second].max_abs_diff;
+    assembly_out_minus_sum_mean += delta;
+    if (delta > 1.0e-8f) {
+      assembly_out_more_count++;
+    }
+    assembly_pair_count++;
+  }
+
+  std::ostringstream oss;
+  oss.setf(std::ios::scientific);
+  oss << std::setprecision(9);
+  oss << "=== LN Upstream Divergence Diagnosis (L0_SUB1 path) ===\n";
+  oss << "pairing_key_used: (pattern, layer_idx, boundary, token)\n";
+  oss << "baseline_entries: " << baseline_entries.size() << "\n";
+  oss << "experiment_entries: " << experiment_entries.size() << "\n";
+  oss << "matched_entries: " << matched << "\n";
+  oss << "pairing_audit_key_duplicates(base/exp): " << base_duplicate_keys << " / "
+      << exp_duplicate_keys << "\n";
+  oss << "call_index_mismatch_count: " << call_index_mismatch_count << "\n";
+  if (matched > 0U) {
+    const double inv = 1.0 / static_cast<double>(matched);
+    oss << "nonzero_diff_count: " << nonzero_diff_count << "\n";
+    oss << "mean_max_abs_diff: " << (mean_max_abs_sum * inv) << "\n";
+    oss << "mean_mean_abs_diff: " << (mean_mean_abs_sum * inv) << "\n";
+    oss << "mean_mse: " << (mean_mse_sum * inv) << "\n";
+  }
+  if (assembly_pair_count > 0U) {
+    const double inv = 1.0 / static_cast<double>(assembly_pair_count);
+    oss << "assembly_out_minus_sum_mean(max_abs): " << (assembly_out_minus_sum_mean * inv) << "\n";
+    oss << "assembly_out_more_count: " << assembly_out_more_count << "\n";
+  }
+  oss << "boundary_order_map:\n";
+  for (int b = 0; b < kBoundaryCount; ++b) {
+    oss << "  [" << b << "] " << aecct_ref::ref_ln_upstream_boundary_name(b) << "\n";
+  }
+  oss << "earliest_divergence_boundary_histogram:\n";
+  for (int b = 0; b < kBoundaryCount; ++b) {
+    oss << "  " << aecct_ref::ref_ln_upstream_boundary_name(b) << ": " << earliest_hist[b] << "\n";
+  }
+  oss << "  no_divergence: " << earliest_hist[kBoundaryCount] << "\n\n";
+
+  oss << "=== Top-3 Worst Boundary Entries (global) ===\n";
+  for (std::size_t i = 0; i < std::min<std::size_t>(3U, sorted_by_diff.size()); ++i) {
+    oss << "[Rank " << (i + 1U) << "]\n";
+    append_ln_upstream_diag_line(oss, sorted_by_diff[i]);
+  }
+
+  oss << "=== Top-3 Worst Producer Boundary Entries (ffn_ln_in_residual_ffn) ===\n";
+  for (std::size_t i = 0; i < std::min<std::size_t>(3U, producer_boundary_diags.size()); ++i) {
+    oss << "[Rank " << (i + 1U) << "]\n";
+    append_ln_upstream_diag_line(oss, producer_boundary_diags[i]);
   }
 
   const std::string report = oss.str();
@@ -3142,6 +3492,7 @@ int main(int argc, char** argv) {
   std::printf("  ln_debug       : %d\n", opts.ln_debug ? 1 : 0);
   std::printf("  ln_var_debug   : %d\n", opts.ln_var_debug ? 1 : 0);
   std::printf("  ln_input_debug : %d\n", opts.ln_input_debug ? 1 : 0);
+  std::printf("  ln_upstream_debug: %d\n", opts.ln_upstream_debug ? 1 : 0);
 
   perf.startup_init_s = elapsed_sec(t_program_start, now_tp());
 
@@ -3383,7 +3734,8 @@ int main(int argc, char** argv) {
       (opts.experiment_ln_mode == opts.ln_mode) &&
       !opts.ln_debug &&
       !opts.ln_var_debug &&
-      !opts.ln_input_debug;
+      !opts.ln_input_debug &&
+      !opts.ln_upstream_debug;
     if (experiment_use_reconstruct) {
       baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
     }
@@ -3648,6 +4000,8 @@ int main(int argc, char** argv) {
   std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
   std::vector<LnDebugEntryRow> baseline_ln_debug_entries;
   std::vector<LnDebugEntryRow> experiment_ln_debug_entries;
+  std::vector<LnUpstreamEntryRow> baseline_ln_upstream_entries;
+  std::vector<LnUpstreamEntryRow> experiment_ln_upstream_entries;
   aecct_ref::RefFullQuantStats experiment_full_stats{};
 
   const bool experiment_use_reconstruct =
@@ -3655,15 +4009,21 @@ int main(int argc, char** argv) {
     (opts.experiment_ln_mode == opts.ln_mode) &&
     !opts.ln_debug &&
     !opts.ln_var_debug &&
-    !opts.ln_input_debug;
+    !opts.ln_input_debug &&
+    !opts.ln_upstream_debug;
   if (experiment_use_reconstruct) {
     baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
   }
 
   const bool enable_ln_trace = opts.ln_debug || opts.ln_var_debug || opts.ln_input_debug;
+  const bool enable_ln_upstream_trace = opts.ln_upstream_debug;
   aecct_ref::set_ref_ln_debug_enabled(enable_ln_trace);
+  aecct_ref::set_ref_ln_upstream_debug_enabled(enable_ln_upstream_trace);
   if (enable_ln_trace) {
     aecct_ref::reset_ref_ln_debug_trace();
+  }
+  if (enable_ln_upstream_trace) {
+    aecct_ref::reset_ref_ln_upstream_debug_trace();
   }
   const auto t_baseline_start = now_tp();
   run_ref_batch(
@@ -3680,6 +4040,12 @@ int main(int argc, char** argv) {
       std::printf("[warn] Failed to collect baseline LN debug entries.\n");
     }
     aecct_ref::reset_ref_ln_debug_trace();
+  }
+  if (enable_ln_upstream_trace) {
+    if (!collect_ln_upstream_debug_entries(baseline_ln_upstream_entries)) {
+      std::printf("[warn] Failed to collect baseline LN upstream debug entries.\n");
+    }
+    aecct_ref::reset_ref_ln_upstream_debug_trace();
   }
 
   const auto t_experiment_start = now_tp();
@@ -3722,7 +4088,13 @@ int main(int argc, char** argv) {
       std::printf("[warn] Failed to collect experiment LN debug entries.\n");
     }
   }
+  if (enable_ln_upstream_trace) {
+    if (!collect_ln_upstream_debug_entries(experiment_ln_upstream_entries)) {
+      std::printf("[warn] Failed to collect experiment LN upstream debug entries.\n");
+    }
+  }
   aecct_ref::set_ref_ln_debug_enabled(false);
+  aecct_ref::set_ref_ln_upstream_debug_enabled(false);
 
   const auto t_compare_start = now_tp();
   for (int off = 0; off < range.count; ++off) {
@@ -3826,6 +4198,17 @@ int main(int argc, char** argv) {
       ln_input_debug_path
     );
     std::printf("LN input debug report txt: %s\n", ln_input_debug_path.c_str());
+  }
+  if (opts.ln_upstream_debug) {
+    const std::string ln_upstream_debug_path = csv_path + ".ln_upstream_debug.txt";
+    dump_ln_upstream_debug_report(
+      range.begin,
+      range.count,
+      baseline_ln_upstream_entries,
+      experiment_ln_upstream_entries,
+      ln_upstream_debug_path
+    );
+    std::printf("LN upstream debug report txt: %s\n", ln_upstream_debug_path.c_str());
   }
   perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
   perf.total_s = elapsed_sec(t_program_start, now_tp());

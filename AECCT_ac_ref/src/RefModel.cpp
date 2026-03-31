@@ -46,6 +46,13 @@ enum class RefLnSiteTag : int {
   END_NORM = 5
 };
 
+enum class RefLnUpstreamBoundaryTag : int {
+  L0_LN_OUT = 0,
+  L0_FFN2_OUT = 1,
+  L0_SUB1_ASSEMBLY_SUM = 2,
+  L0_SUB1_ASSEMBLY_OUT = 3
+};
+
 struct RefLnDebugEntry {
   int entry_seq = 0;
   int site_call_index = 0;
@@ -85,6 +92,21 @@ static std::vector<RefLnDebugEntry> g_ref_ln_debug_entries;
 static int g_ref_ln_debug_entry_seq = 0;
 static int g_ref_ln_debug_site_call_counters[6] = {0, 0, 0, 0, 0, 0};
 
+struct RefLnUpstreamDebugEntry {
+  int entry_seq = 0;
+  int sample_index = 0;
+  int layer_idx = 0;
+  int boundary = 0;
+  int boundary_call_index = 0;
+  int token = 0;
+  float x[D_MODEL]{};
+};
+
+static bool g_ref_ln_upstream_debug_enabled = false;
+static std::vector<RefLnUpstreamDebugEntry> g_ref_ln_upstream_debug_entries;
+static int g_ref_ln_upstream_debug_entry_seq = 0;
+static int g_ref_ln_upstream_boundary_call_counters[4] = {0, 0, 0, 0};
+
 static inline const char* ref_ln_site_tag_to_string(RefLnSiteTag site) {
   switch (site) {
     case RefLnSiteTag::L0_SUB0: return "L0_SUB0_LN";
@@ -94,6 +116,21 @@ static inline const char* ref_ln_site_tag_to_string(RefLnSiteTag site) {
     case RefLnSiteTag::L1_SUB1: return "L1_SUB1_LN";
     case RefLnSiteTag::END_NORM: return "END_NORM";
     default: return "UNKNOWN_LN_SITE";
+  }
+}
+
+static inline const char* ref_ln_upstream_boundary_to_string(RefLnUpstreamBoundaryTag b) {
+  switch (b) {
+    case RefLnUpstreamBoundaryTag::L0_LN_OUT:
+      return "ln_out";
+    case RefLnUpstreamBoundaryTag::L0_FFN2_OUT:
+      return "ffn2_out";
+    case RefLnUpstreamBoundaryTag::L0_SUB1_ASSEMBLY_SUM:
+      return "ffn2_out_plus_ln_out";
+    case RefLnUpstreamBoundaryTag::L0_SUB1_ASSEMBLY_OUT:
+      return "ffn_ln_in_residual_ffn";
+    default:
+      return "unknown_upstream_boundary";
   }
 }
 
@@ -701,6 +738,39 @@ static void dump_3d(const DumpContext& dump,
   shape.push_back(D1);
   shape.push_back(D2);
   dump_tensor(dump, name, buf.data(), buf.size(), shape);
+}
+
+static void capture_ln_upstream_boundary_75x32(
+  int sample_index,
+  int layer_idx,
+  RefLnUpstreamBoundaryTag boundary,
+  const fp32_ref_t x[TOKENS_T][D_MODEL]
+) {
+  if (!g_ref_ln_upstream_debug_enabled) {
+    return;
+  }
+  if (layer_idx != 0) {
+    return;
+  }
+  const int boundary_id = static_cast<int>(boundary);
+  if (boundary_id < 0 || boundary_id >= 4) {
+    return;
+  }
+  const int call_index = g_ref_ln_upstream_boundary_call_counters[boundary_id];
+  g_ref_ln_upstream_boundary_call_counters[boundary_id] += 1;
+  for (int t = 0; t < TOKENS_T; ++t) {
+    RefLnUpstreamDebugEntry e{};
+    e.entry_seq = g_ref_ln_upstream_debug_entry_seq++;
+    e.sample_index = sample_index;
+    e.layer_idx = layer_idx;
+    e.boundary = boundary_id;
+    e.boundary_call_index = call_index;
+    e.token = t;
+    for (int d = 0; d < D_MODEL; ++d) {
+      e.x[d] = x[t][d].to_float();
+    }
+    g_ref_ln_upstream_debug_entries.push_back(e);
+  }
 }
 
 // LN_APPROX_BEGIN
@@ -1516,6 +1586,8 @@ static void run_layer(const int layer_idx,
       }
     }
   }
+  capture_ln_upstream_boundary_75x32(
+    sample_index, layer_idx, RefLnUpstreamBoundaryTag::L0_LN_OUT, ln_out);
 
   quant_linear_75x32_to128(ln_out,
                            w_ff1,
@@ -1567,18 +1639,26 @@ static void run_layer(const int layer_idx,
       }
     }
   }
+  capture_ln_upstream_boundary_75x32(
+    sample_index, layer_idx, RefLnUpstreamBoundaryTag::L0_FFN2_OUT, ffn2_out);
 
+  fp32_ref_t ffn_ln_assembly_sum[TOKENS_T][D_MODEL];
   fp32_ref_t ffn_ln_in[TOKENS_T][D_MODEL];
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int d = 0; d < D_MODEL; ++d) {
+      ffn_ln_assembly_sum[t][d] = ffn2_out[t][d] + ln_out[t][d];
       ffn_ln_in[t][d] = stress_roundtrip_e4m3(
-        ffn2_out[t][d] + ln_out[t][d],
+        ffn_ln_assembly_sum[t][d],
         run_cfg,
         RefFragGroup::G2_RESIDUAL,
         stats,
         "residual_ffn");
     }
   }
+  capture_ln_upstream_boundary_75x32(
+    sample_index, layer_idx, RefLnUpstreamBoundaryTag::L0_SUB1_ASSEMBLY_SUM, ffn_ln_assembly_sum);
+  capture_ln_upstream_boundary_75x32(
+    sample_index, layer_idx, RefLnUpstreamBoundaryTag::L0_SUB1_ASSEMBLY_OUT, ffn_ln_in);
   const RefLnSiteTag ln1_site = (layer_idx == 0) ? RefLnSiteTag::L0_SUB1 : RefLnSiteTag::L1_SUB1;
   apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, run_cfg.ln_mode, sample_index, ln1_site, ffn_ln_out);
   if (use_full_e4m3_nonlinear_stress(run_cfg) ||
@@ -2091,6 +2171,69 @@ bool get_ref_ln_debug_entry(
     const int copy_len = (out_y_len < D_MODEL) ? out_y_len : D_MODEL;
     for (int i = 0; i < copy_len; ++i) {
       out_y[i] = e.y_out[i];
+    }
+  }
+  return true;
+}
+
+void set_ref_ln_upstream_debug_enabled(bool enabled) {
+  g_ref_ln_upstream_debug_enabled = enabled;
+  if (!enabled) {
+    g_ref_ln_upstream_debug_entries.clear();
+    g_ref_ln_upstream_debug_entry_seq = 0;
+    for (int i = 0; i < 4; ++i) {
+      g_ref_ln_upstream_boundary_call_counters[i] = 0;
+    }
+  } else {
+    g_ref_ln_upstream_debug_entry_seq = 0;
+    for (int i = 0; i < 4; ++i) {
+      g_ref_ln_upstream_boundary_call_counters[i] = 0;
+    }
+  }
+}
+
+void reset_ref_ln_upstream_debug_trace() {
+  g_ref_ln_upstream_debug_entries.clear();
+  g_ref_ln_upstream_debug_entry_seq = 0;
+  for (int i = 0; i < 4; ++i) {
+    g_ref_ln_upstream_boundary_call_counters[i] = 0;
+  }
+}
+
+int get_ref_ln_upstream_debug_entry_count() {
+  return static_cast<int>(g_ref_ln_upstream_debug_entries.size());
+}
+
+const char* ref_ln_upstream_boundary_name(int boundary_id) {
+  return ref_ln_upstream_boundary_to_string(static_cast<RefLnUpstreamBoundaryTag>(boundary_id));
+}
+
+bool get_ref_ln_upstream_debug_entry(
+  int index,
+  int* out_entry_seq,
+  int* out_sample_index,
+  int* out_layer_idx,
+  int* out_boundary,
+  int* out_boundary_call_index,
+  int* out_token,
+  float* out_x,
+  int out_x_len
+) {
+  if (index < 0 || index >= static_cast<int>(g_ref_ln_upstream_debug_entries.size())) {
+    return false;
+  }
+  const RefLnUpstreamDebugEntry& e =
+    g_ref_ln_upstream_debug_entries[static_cast<std::size_t>(index)];
+  if (out_entry_seq != nullptr) *out_entry_seq = e.entry_seq;
+  if (out_sample_index != nullptr) *out_sample_index = e.sample_index;
+  if (out_layer_idx != nullptr) *out_layer_idx = e.layer_idx;
+  if (out_boundary != nullptr) *out_boundary = e.boundary;
+  if (out_boundary_call_index != nullptr) *out_boundary_call_index = e.boundary_call_index;
+  if (out_token != nullptr) *out_token = e.token;
+  if (out_x != nullptr && out_x_len > 0) {
+    const int copy_len = (out_x_len < D_MODEL) ? out_x_len : D_MODEL;
+    for (int i = 0; i < copy_len; ++i) {
+      out_x[i] = e.x[i];
     }
   }
   return true;
