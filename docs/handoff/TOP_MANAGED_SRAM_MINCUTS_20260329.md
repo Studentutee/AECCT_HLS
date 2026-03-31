@@ -1174,3 +1174,61 @@
 
 7. Next recommended step
 - W4-B4: add one bounded secondary bridge window in a different token slice (or stricter bridge-ready gating) without touching inner compute/writeback loops.
+
+## Task C23: W4-B5 QkScore Bounded Family Bridge Generalization
+1. Summary
+- Landed bounded family generalization on `AttnPhaseBTopManagedQkScore`.
+- This cut advances beyond W4-B3 by enabling 2~3 selected head/window bridge cases in one invocation.
+- Inner compute/reduction/writeback flow is intentionally untouched.
+
+2. Exact files changed
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `tb/tb_w4b5_qkscore_family_bridge.cpp`
+- `scripts/local/run_p11w4b5_qkscore_family_bridge.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
+- `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_FAMILY_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_EVIDENCE_INDEX_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_COMPLETION_20260331.md`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_interface_lock.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_macro_hygiene.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4b5_qkscore_family_bridge.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4b3_qkscore_bridge.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4b2_qkscore_tile_bridge.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11w4b5/qkscore_family_bridge/run.log`:
+  - `W4B5_QKSCORE_FAMILY_BRIDGE_VISIBLE PASS`
+  - `W4B5_QKSCORE_FAMILY_OWNERSHIP_CHECK PASS`
+  - `W4B5_QKSCORE_FAMILY_EXPECTED_COMPARE PASS`
+  - `W4B5_QKSCORE_FAMILY_LEGACY_COMPARE PASS`
+  - `W4B5_QKSCORE_FAMILY_NO_SPURIOUS_TOUCH PASS`
+  - `W4B5_QKSCORE_FAMILY_MULTI_CASE_ANTI_FALLBACK PASS`
+  - `W4B5_QKSCORE_FAMILY_MISMATCH_REJECT PASS`
+- baseline recheck:
+  - `PASS: run_p11w4b3_qkscore_bridge`
+  - `PASS: run_p11w4b2_qkscore_tile_bridge`
+
+5. Governance posture
+- local-only bounded micro-cut
+- not Catapult closure
+- not SCVerify closure
+- Top remains sole production shared-SRAM owner
+
+6. Residual risks
+- Family bridge remains selected-range only.
+- Full Phase-B payload ownership migration remains deferred.
+- Inner compute/reduction/writeback loops remain SRAM-centric.
+
+7. Next recommended step
+- Keep bounded strategy and evaluate one narrow write-back family boundary tightening cut, without compute loop rewrite.

@@ -1232,7 +1232,18 @@ namespace aecct {
         u32_t* score_tile_bridge_owner_ok = 0,
         u32_t* score_tile_bridge_consumed = 0,
         u32_t* score_tile_bridge_compare_ok = 0,
-        u32_t score_tile_bridge_head_idx = (u32_t)0u
+        u32_t score_tile_bridge_head_idx = (u32_t)0u,
+        u32_t score_tile_bridge_family_case_count = (u32_t)0u,
+        const u32_t* score_tile_bridge_family_base_words = 0,
+        const u32_t* score_tile_bridge_family_words = 0,
+        const u32_t* score_tile_bridge_family_words_valid = 0,
+        const u32_t* score_tile_bridge_family_key_begin = 0,
+        const u32_t* score_tile_bridge_family_head_idx = 0,
+        u32_t* score_tile_bridge_family_visible_count = 0,
+        u32_t* score_tile_bridge_family_owner_ok = 0,
+        u32_t* score_tile_bridge_family_consumed_count = 0,
+        u32_t* score_tile_bridge_family_compare_ok = 0,
+        u32_t* score_tile_bridge_family_case_mask = 0
     ) {
         AttnCfg attn_cfg;
         attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
@@ -1271,7 +1282,18 @@ namespace aecct {
             score_tile_bridge_owner_ok,
             score_tile_bridge_consumed,
             score_tile_bridge_compare_ok,
-            score_tile_bridge_head_idx
+            score_tile_bridge_head_idx,
+            score_tile_bridge_family_case_count,
+            score_tile_bridge_family_base_words,
+            score_tile_bridge_family_words,
+            score_tile_bridge_family_words_valid,
+            score_tile_bridge_family_key_begin,
+            score_tile_bridge_family_head_idx,
+            score_tile_bridge_family_visible_count,
+            score_tile_bridge_family_owner_ok,
+            score_tile_bridge_family_consumed_count,
+            score_tile_bridge_family_compare_ok,
+            score_tile_bridge_family_case_mask
         );
     }
 

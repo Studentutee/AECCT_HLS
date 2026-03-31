@@ -695,3 +695,42 @@
 - `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_BRIDGE_CAMPAIGN_COMPLETION_20260331.md`
 - `build/p11w4b3/qkscore_bridge/run.log`
 - `build/evidence/w4b3_qkscore_bridge_20260331/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (W4-B5 QkScore Family Bridge Latest)
+1. Open `src/blocks/AttnPhaseBTopManagedQkScore.h` (2 min)
+- confirm family bridge descriptors/anchors:
+  - `score_tile_bridge_family_case_count`
+  - `score_tile_bridge_family_enabled`
+  - `ATTN_P11AE_SCORE_TILE_FAMILY_PRECHECK_LOOP`
+  - `ATTN_P11AE_SCORE_TILE_FAMILY_CASE_LOOP`
+2. Open `src/Top.h` (1 min)
+- confirm `run_p11ae_layer0_top_managed_qk_score(...)` family passthrough args.
+3. Open `build/p11w4b5/qkscore_family_bridge/run.log` (1 min)
+- confirm:
+  - `W4B5_QKSCORE_FAMILY_BRIDGE_VISIBLE PASS`
+  - `W4B5_QKSCORE_FAMILY_OWNERSHIP_CHECK PASS`
+  - `W4B5_QKSCORE_FAMILY_EXPECTED_COMPARE PASS`
+  - `W4B5_QKSCORE_FAMILY_LEGACY_COMPARE PASS`
+  - `W4B5_QKSCORE_FAMILY_NO_SPURIOUS_TOUCH PASS`
+  - `W4B5_QKSCORE_FAMILY_MULTI_CASE_ANTI_FALLBACK PASS`
+  - `W4B5_QKSCORE_FAMILY_MISMATCH_REJECT PASS`
+4. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+- confirm `guard: W4-B5 QkScore family bounded bridge anchors OK`.
+5. Open baseline recheck logs (1 min)
+- `build/p11w4b3/qkscore_bridge/run.log`
+- `build/p11w4b2/qkscore_tile_bridge/run.log`
+6. Open docs (2 min)
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_FAMILY_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_COMPLETION_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_EVIDENCE_INDEX_20260331.md`
+
+## Latest artifact additions (W4-B5 campaign)
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `tb/tb_w4b5_qkscore_family_bridge.cpp`
+- `scripts/local/run_p11w4b5_qkscore_family_bridge.ps1`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_FAMILY_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_EVIDENCE_INDEX_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_COMPLETION_20260331.md`
+- `build/p11w4b5/qkscore_family_bridge/run.log`

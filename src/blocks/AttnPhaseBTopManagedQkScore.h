@@ -242,8 +242,22 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     u32_t* score_tile_bridge_owner_ok = 0,
     u32_t* score_tile_bridge_consumed = 0,
     u32_t* score_tile_bridge_compare_ok = 0,
-    u32_t score_tile_bridge_head_idx = (u32_t)0u
+    u32_t score_tile_bridge_head_idx = (u32_t)0u,
+    u32_t score_tile_bridge_family_case_count = (u32_t)0u,
+    const u32_t* score_tile_bridge_family_base_words = 0,
+    const u32_t* score_tile_bridge_family_words = 0,
+    const u32_t* score_tile_bridge_family_words_valid = 0,
+    const u32_t* score_tile_bridge_family_key_begin = 0,
+    const u32_t* score_tile_bridge_family_head_idx = 0,
+    u32_t* score_tile_bridge_family_visible_count = 0,
+    u32_t* score_tile_bridge_family_owner_ok = 0,
+    u32_t* score_tile_bridge_family_consumed_count = 0,
+    u32_t* score_tile_bridge_family_compare_ok = 0,
+    u32_t* score_tile_bridge_family_case_mask = 0
 ) {
+    static const uint32_t kScoreTileBridgeFamilyMaxCases = 3u;
+    static const uint32_t kScoreTileBridgeFamilyStrideWords =
+        (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
     if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
@@ -252,6 +266,11 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     if (score_tile_bridge_owner_ok != 0) { *score_tile_bridge_owner_ok = (u32_t)0u; }
     if (score_tile_bridge_consumed != 0) { *score_tile_bridge_consumed = (u32_t)0u; }
     if (score_tile_bridge_compare_ok != 0) { *score_tile_bridge_compare_ok = (u32_t)0u; }
+    if (score_tile_bridge_family_visible_count != 0) { *score_tile_bridge_family_visible_count = (u32_t)0u; }
+    if (score_tile_bridge_family_owner_ok != 0) { *score_tile_bridge_family_owner_ok = (u32_t)1u; }
+    if (score_tile_bridge_family_consumed_count != 0) { *score_tile_bridge_family_consumed_count = (u32_t)0u; }
+    if (score_tile_bridge_family_compare_ok != 0) { *score_tile_bridge_family_compare_ok = (u32_t)1u; }
+    if (score_tile_bridge_family_case_mask != 0) { *score_tile_bridge_family_case_mask = (u32_t)0u; }
     if (!attn_phaseb_sram_view_ok(sram)) {
         return false;
     }
@@ -296,7 +315,22 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
         (score_tile_bridge_valid_words > 0u);
     const uint32_t score_tile_bridge_key_begin_u32 = (uint32_t)score_tile_bridge_key_begin.to_uint();
     const uint32_t score_tile_bridge_head_idx_u32 = (uint32_t)score_tile_bridge_head_idx.to_uint();
+    const uint32_t score_tile_bridge_family_case_count_u32 =
+        (uint32_t)score_tile_bridge_family_case_count.to_uint();
+    const bool score_tile_bridge_family_enabled =
+        (score_tile_bridge_family_case_count_u32 > 0u);
+    uint32_t score_tile_bridge_family_key_begin_u32[kScoreTileBridgeFamilyMaxCases];
+    uint32_t score_tile_bridge_family_words_valid_u32[kScoreTileBridgeFamilyMaxCases];
+    uint32_t score_tile_bridge_family_head_idx_u32[kScoreTileBridgeFamilyMaxCases];
+    uint32_t score_tile_bridge_family_base_word_u32[kScoreTileBridgeFamilyMaxCases];
+    uint32_t score_tile_bridge_family_seen_words[kScoreTileBridgeFamilyMaxCases];
+    uint32_t score_tile_bridge_family_visible_count_u32 = 0u;
+    uint32_t score_tile_bridge_family_consumed_count_u32 = 0u;
+    uint32_t score_tile_bridge_family_case_mask_u32 = 0u;
     bool score_tile_bridge_seen = false;
+    if (score_tile_bridge_enabled && score_tile_bridge_family_enabled) {
+        return false;
+    }
     if (score_tile_bridge_enabled) {
         if (score_tile_bridge_valid_words > token_count) {
             return false;
@@ -312,6 +346,57 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
         }
         if (score_tile_bridge_head_idx_u32 >= n_heads) {
             return false;
+        }
+    }
+    if (score_tile_bridge_family_enabled) {
+        if (score_tile_bridge_family_case_count_u32 > kScoreTileBridgeFamilyMaxCases) {
+            return false;
+        }
+        if (score_tile_bridge_family_base_words == 0 ||
+            score_tile_bridge_family_words == 0 ||
+            score_tile_bridge_family_words_valid == 0 ||
+            score_tile_bridge_family_key_begin == 0 ||
+            score_tile_bridge_family_head_idx == 0) {
+            return false;
+        }
+
+        ATTN_P11AE_SCORE_TILE_FAMILY_PRECHECK_LOOP: for (uint32_t c = 0u;
+             c < score_tile_bridge_family_case_count_u32; ++c) {
+            const uint32_t valid =
+                (uint32_t)score_tile_bridge_family_words_valid[c].to_uint();
+            const uint32_t key_begin =
+                (uint32_t)score_tile_bridge_family_key_begin[c].to_uint();
+            const uint32_t head_idx =
+                (uint32_t)score_tile_bridge_family_head_idx[c].to_uint();
+            if (valid == 0u || valid > token_count || valid > tile_words) {
+                return false;
+            }
+            if (key_begin >= token_count || (key_begin + valid) > token_count) {
+                return false;
+            }
+            if (head_idx >= n_heads) {
+                return false;
+            }
+
+            ATTN_P11AE_SCORE_TILE_FAMILY_OVERLAP_LOOP: for (uint32_t p = 0u; p < c; ++p) {
+                if (score_tile_bridge_family_head_idx_u32[p] != head_idx) {
+                    continue;
+                }
+                const uint32_t prev_begin = score_tile_bridge_family_key_begin_u32[p];
+                const uint32_t prev_end =
+                    prev_begin + score_tile_bridge_family_words_valid_u32[p];
+                const uint32_t this_end = key_begin + valid;
+                if (!(this_end <= prev_begin || key_begin >= prev_end)) {
+                    return false;
+                }
+            }
+
+            score_tile_bridge_family_words_valid_u32[c] = valid;
+            score_tile_bridge_family_key_begin_u32[c] = key_begin;
+            score_tile_bridge_family_head_idx_u32[c] = head_idx;
+            score_tile_bridge_family_base_word_u32[c] =
+                (uint32_t)score_tile_bridge_family_base_words[c].to_uint();
+            score_tile_bridge_family_seen_words[c] = 0u;
         }
     }
 
@@ -380,12 +465,76 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
             }
             const quant_acc_t scaled = dot * inv_sqrt_d_head;
             const uint32_t scaled_bits = (uint32_t)quant_bits_from_acc(scaled).to_uint();
+            int32_t score_tile_bridge_family_case_idx = -1;
+            if (score_tile_bridge_family_enabled) {
+                ATTN_P11AE_SCORE_TILE_FAMILY_CASE_LOOP: for (uint32_t c = 0u;
+                     c < score_tile_bridge_family_case_count_u32; ++c) {
+                    const bool family_selected =
+                        (h == score_tile_bridge_family_head_idx_u32[c]) &&
+                        (j >= score_tile_bridge_family_key_begin_u32[c]) &&
+                        (j < (score_tile_bridge_family_key_begin_u32[c] +
+                              score_tile_bridge_family_words_valid_u32[c]));
+                    if (family_selected) {
+                        if (score_tile_bridge_family_case_idx >= 0) {
+                            return false;
+                        }
+                        score_tile_bridge_family_case_idx = (int32_t)c;
+                    }
+                }
+            }
             const bool score_tile_bridge_selected =
                 score_tile_bridge_enabled &&
                 (h == score_tile_bridge_head_idx_u32) &&
                 (j >= score_tile_bridge_key_begin_u32) &&
                 (j < (score_tile_bridge_key_begin_u32 + score_tile_bridge_valid_words));
-            if (score_tile_bridge_selected) {
+            if (score_tile_bridge_family_case_idx >= 0) {
+                const uint32_t case_idx = (uint32_t)score_tile_bridge_family_case_idx;
+                if (score_tile_bridge_family_seen_words[case_idx] == 0u) {
+                    score_tile_bridge_family_visible_count_u32 += 1u;
+                    score_tile_bridge_family_case_mask_u32 |= (1u << case_idx);
+                    if (score_tile_bridge_family_visible_count != 0) {
+                        *score_tile_bridge_family_visible_count =
+                            (u32_t)score_tile_bridge_family_visible_count_u32;
+                    }
+                    if (score_tile_bridge_family_case_mask != 0) {
+                        *score_tile_bridge_family_case_mask =
+                            (u32_t)score_tile_bridge_family_case_mask_u32;
+                    }
+                }
+                const uint32_t expected_bridge_base =
+                    score_head_base + score_tile_bridge_family_key_begin_u32[case_idx];
+                const bool owner_ok =
+                    (score_tile_bridge_family_base_word_u32[case_idx] ==
+                     expected_bridge_base);
+                if (score_tile_bridge_family_owner_ok != 0) {
+                    *score_tile_bridge_family_owner_ok =
+                        (u32_t)(owner_ok ? 1u : 0u);
+                }
+                if (!owner_ok) {
+                    return false;
+                }
+                const uint32_t bridge_idx =
+                    j - score_tile_bridge_family_key_begin_u32[case_idx];
+                const uint32_t family_word_idx =
+                    case_idx * kScoreTileBridgeFamilyStrideWords + bridge_idx;
+                const uint32_t bridge_bits =
+                    (uint32_t)score_tile_bridge_family_words[family_word_idx].to_uint();
+                const bool bridge_compare_ok = (bridge_bits == scaled_bits);
+                if (score_tile_bridge_family_compare_ok != 0) {
+                    *score_tile_bridge_family_compare_ok =
+                        (u32_t)(bridge_compare_ok ? 1u : 0u);
+                }
+                if (!bridge_compare_ok) {
+                    return false;
+                }
+                sram[score_head_base + j] = score_tile_bridge_family_words[family_word_idx];
+                score_tile_bridge_family_seen_words[case_idx] += 1u;
+                score_tile_bridge_family_consumed_count_u32 += 1u;
+                if (score_tile_bridge_family_consumed_count != 0) {
+                    *score_tile_bridge_family_consumed_count =
+                        (u32_t)score_tile_bridge_family_consumed_count_u32;
+                }
+            } else if (score_tile_bridge_selected) {
                 if (score_tile_bridge_visible != 0) {
                     *score_tile_bridge_visible = (u32_t)1u;
                 }
@@ -420,6 +569,27 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
 
     if (score_tile_bridge_enabled && !score_tile_bridge_seen) {
         return false;
+    }
+    if (score_tile_bridge_family_enabled) {
+        ATTN_P11AE_SCORE_TILE_FAMILY_FINALIZE_LOOP: for (uint32_t c = 0u;
+             c < score_tile_bridge_family_case_count_u32; ++c) {
+            if (score_tile_bridge_family_seen_words[c] !=
+                score_tile_bridge_family_words_valid_u32[c]) {
+                return false;
+            }
+        }
+        if (score_tile_bridge_family_visible_count != 0) {
+            *score_tile_bridge_family_visible_count =
+                (u32_t)score_tile_bridge_family_visible_count_u32;
+        }
+        if (score_tile_bridge_family_consumed_count != 0) {
+            *score_tile_bridge_family_consumed_count =
+                (u32_t)score_tile_bridge_family_consumed_count_u32;
+        }
+        if (score_tile_bridge_family_case_mask != 0) {
+            *score_tile_bridge_family_case_mask =
+                (u32_t)score_tile_bridge_family_case_mask_u32;
+        }
     }
     fallback_taken = false;
     return true;

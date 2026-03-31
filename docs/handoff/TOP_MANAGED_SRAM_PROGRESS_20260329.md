@@ -811,3 +811,43 @@
 - This round is not full Wave4 payload migration.
 - W4-B3 extends bounded bridge selection to selectable-head scope, but still one bounded tile window.
 - QkScore inner compute/reduction/writeback loops remain SRAM-centric by bounded policy.
+
+## Night-Batch Extension: W4-B5 QkScore Bounded Family Bridge Generalization (Local-only)
+- Completed one bounded extension beyond W4-B3:
+  - from single selected head/key-range bridge to bounded selected-family bridge (2~3 cases per invocation).
+- Added family descriptor passthrough at:
+  - `run_p11ae_layer0_top_managed_qk_score(...)`
+  - `attn_phaseb_top_managed_qk_score_mainline(...)`
+- Scope remained bounded:
+  - no external formal contract change
+  - no broad rewrite
+  - no inner compute/reduction/writeback major-loop rewrite
+
+### W4-B5 local-only evidence
+- `build/p11w4b5/qkscore_family_bridge/run.log`: PASS
+  - `W4B5_QKSCORE_FAMILY_BRIDGE_VISIBLE PASS`
+  - `W4B5_QKSCORE_FAMILY_OWNERSHIP_CHECK PASS`
+  - `W4B5_QKSCORE_FAMILY_EXPECTED_COMPARE PASS`
+  - `W4B5_QKSCORE_FAMILY_LEGACY_COMPARE PASS`
+  - `W4B5_QKSCORE_FAMILY_NO_SPURIOUS_TOUCH PASS`
+  - `W4B5_QKSCORE_FAMILY_MULTI_CASE_ANTI_FALLBACK PASS`
+  - `W4B5_QKSCORE_FAMILY_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: W4-B5 QkScore family bounded bridge anchors OK`
+- Baseline safety recheck:
+  - `build/p11w4b3/qkscore_bridge/run.log`: PASS
+  - `build/p11w4b2/qkscore_tile_bridge/run.log`: PASS
+
+### W4-B5 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_FAMILY_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_EVIDENCE_INDEX_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_B5_COMPLETION_20260331.md`
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `tb/tb_w4b5_qkscore_family_bridge.cpp`
+- `scripts/local/run_p11w4b5_qkscore_family_bridge.ps1`
+
+### Deferred boundary after W4-B5
+- This round is not full Wave4 payload migration.
+- QkScore inner compute/reduction/writeback loops remain SRAM-centric by bounded policy.
