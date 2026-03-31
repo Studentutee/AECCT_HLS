@@ -547,6 +547,21 @@ static inline ref_invsqrt_fp32_t ref_inv_sqrt_approx(ref_invsqrt_fp32_t x) {
   return y0;
 }
 
+static inline ref_invsqrt_fp32_t ref_inv_sqrt_nr1_approx(ref_invsqrt_fp32_t x) {
+  ref_invsqrt_fp32_t x_safe = x;
+  if (x_safe < ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN)) x_safe = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN);
+  if (x_safe > ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX)) x_safe = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX);
+  // LUT index is formed from linearly binned x over [X_MIN, X_MAX].
+  const int idx = ref_invsqrt_idx(x_safe);
+  const ref_invsqrt_fp32_t y0 = ref_invsqrt_fp32_t(g_ref_inv_sqrt_lut[idx]);
+  // Exactly one Newton-Raphson step:
+  // y1 = y0 * (1.5 - 0.5 * x * y0 * y0)
+  const ref_invsqrt_fp32_t half = ref_invsqrt_fp32_t(0.5f);
+  const ref_invsqrt_fp32_t one_point_five = ref_invsqrt_fp32_t(1.5f);
+  const ref_invsqrt_fp32_t y1 = y0 * (one_point_five - (half * x_safe * y0 * y0));
+  return y1;
+}
+
 } // namespace aecct_ref
 
 #endif

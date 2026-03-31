@@ -50,6 +50,8 @@ struct CliOptions {
   bool summary_only;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
+  aecct_ref::RefLayerNormMode ln_mode;
+  aecct_ref::RefLayerNormMode experiment_ln_mode;
   aecct_ref::RefFinalHeadExploreStage finalhead_stage;
   aecct_ref::RefPrecisionMode experiment_precision_mode;
   aecct_ref::RefFragGroup frag_group;
@@ -187,6 +189,8 @@ static void print_usage() {
   std::printf("  --quiet (alias of --summary-only)\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
+  std::printf("  --ln-mode ln_baseline|ln_sum_sumsq_approx\n");
+  std::printf("  --ln-mode-exp ln_baseline|ln_sum_sumsq_approx\n");
   std::printf("  --help\n");
 }
 
@@ -233,6 +237,22 @@ static bool parse_algo_variant(const char* text, aecct_ref::RefAlgoVariant& vari
   }
   if (std::strcmp(text, "reserved_finalhead_alt") == 0) {
     variant = aecct_ref::RefAlgoVariant::RESERVED_FINALHEAD_ALT;
+    return true;
+  }
+  return false;
+}
+
+static bool parse_ln_mode(const char* text, aecct_ref::RefLayerNormMode& mode) {
+  if (std::strcmp(text, "ln_baseline") == 0 ||
+      std::strcmp(text, "baseline") == 0 ||
+      std::strcmp(text, "LN_BASELINE") == 0) {
+    mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
+    return true;
+  }
+  if (std::strcmp(text, "ln_sum_sumsq_approx") == 0 ||
+      std::strcmp(text, "sum_sumsq_approx") == 0 ||
+      std::strcmp(text, "LN_SUM_SUMSQ_APPROX") == 0) {
+    mode = aecct_ref::RefLayerNormMode::LN_SUM_SUMSQ_APPROX;
     return true;
   }
   return false;
@@ -383,11 +403,14 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.summary_only = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
+  opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
+  opts.experiment_ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
   opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
   opts.frag_group = aecct_ref::RefFragGroup::NONE;
 
   bool positional_pattern_used = false;
+  bool ln_mode_exp_set = false;
   for (int i = 1; i < argc; ++i) {
     const char* arg = argv[i];
     if (std::strcmp(arg, "--help") == 0 || std::strcmp(arg, "-h") == 0) {
@@ -493,6 +516,29 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
       }
       continue;
     }
+    if (std::strcmp(arg, "--ln-mode") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --ln-mode\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_ln_mode(argv[++i], opts.ln_mode)) {
+        std::printf("Unsupported LN mode: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
+      continue;
+    }
+    if (std::strcmp(arg, "--ln-mode-exp") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --ln-mode-exp\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_ln_mode(argv[++i], opts.experiment_ln_mode)) {
+        std::printf("Unsupported experimental LN mode: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
+      ln_mode_exp_set = true;
+      continue;
+    }
     if (arg[0] == '-') {
       std::printf("Unknown flag: %s\n", arg);
       return CliParseResult::ERROR;
@@ -508,6 +554,9 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   if (opts.topk <= 0) {
     std::printf("--topk must be > 0\n");
     return CliParseResult::ERROR;
+  }
+  if (!ln_mode_exp_set) {
+    opts.experiment_ln_mode = opts.ln_mode;
   }
   return CliParseResult::OK;
 }
@@ -875,6 +924,8 @@ static bool write_compare_csv(const std::string& path, const std::vector<PerPatt
 
   ofs << "pattern"
       << ",logits_mse"
+      << ",logits_rmse"
+      << ",logits_mae"
       << ",logits_max_abs_diff"
       << ",x_pred_mismatch_count"
       << ",x_pred_mismatch_ratio"
@@ -897,6 +948,8 @@ static bool write_compare_csv(const std::string& path, const std::vector<PerPatt
     const PerPatternCompareRow& r = rows[i];
     ofs << r.pattern_index
         << "," << r.cmp.logits_diff.mse
+        << "," << r.cmp.logits_diff.rmse
+        << "," << r.cmp.logits_diff.mae
         << "," << r.cmp.logits_diff.max_abs
         << "," << r.cmp.x_pred_mismatch_count
         << "," << r.cmp.x_pred_mismatch_ratio
@@ -1492,6 +1545,7 @@ static bool write_batch_summary_txt(
         << " min_margin_baseline=" << r.cmp.baseline_min_abs_margin
         << " min_margin_experiment=" << r.cmp.experiment_min_abs_margin
         << " logits_mse=" << r.cmp.logits_diff.mse
+        << " logits_mae=" << r.cmp.logits_diff.mae
         << " max_abs_diff=" << r.cmp.logits_diff.max_abs
         << " xpred_mismatch=" << r.cmp.x_pred_mismatch_count
         << " sign_flip=" << r.cmp.sign_flip_count
@@ -1673,6 +1727,7 @@ static bool run_stage_compare_eval_snapshot(
   aecct_ref::RefRunConfig baseline_cfg{};
   baseline_cfg.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
   baseline_cfg.algo_variant = opts.algo_variant;
+  baseline_cfg.ln_mode = opts.ln_mode;
   baseline_cfg.finalhead_stage = stage;
   baseline_model.set_run_config(baseline_cfg);
 
@@ -1751,10 +1806,11 @@ static bool run_stage_compare_eval_snapshot(
     out.eval_rows.push_back(eval_row);
 
     if (!summary_only) {
-      std::printf("[stage %s][pattern %d] mse=%.9e maxabs=%.9e xflip=%zu sflip=%zu min_margin=%.9e b_err=%zu e_err=%zu\n",
+      std::printf("[stage %s][pattern %d] mse=%.9e mae=%.9e maxabs=%.9e xflip=%zu sflip=%zu min_margin=%.9e b_err=%zu e_err=%zu\n",
         aecct_ref::to_string(stage),
         pattern,
         cmp_row.cmp.logits_diff.mse,
+        cmp_row.cmp.logits_diff.mae,
         cmp_row.cmp.logits_diff.max_abs,
         cmp_row.cmp.x_pred_mismatch_count,
         cmp_row.cmp.sign_flip_count,
@@ -1847,6 +1903,7 @@ static void print_stage_snapshot_summary(const char* tag, const StageCompareEval
 
 static int run_single_mode(
   aecct_ref::RefPrecisionMode precision_mode,
+  aecct_ref::RefLayerNormMode ln_mode,
   const char* tag,
   const PatternRange& range,
   int n_vars,
@@ -1856,6 +1913,7 @@ static int run_single_mode(
   aecct_ref::RefRunConfig cfg{};
   cfg.precision_mode = precision_mode;
   cfg.algo_variant = opts.algo_variant;
+  cfg.ln_mode = ln_mode;
   cfg.finalhead_stage = opts.finalhead_stage;
   cfg.frag_group = opts.frag_group;
   model.set_run_config(cfg);
@@ -1939,6 +1997,8 @@ int main(int argc, char** argv) {
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
   std::printf("  precision(base): %s\n", aecct_ref::to_string(effective_baseline_precision));
   std::printf("  precision(exp) : %s\n", aecct_ref::to_string(opts.experiment_precision_mode));
+  std::printf("  ln_mode(base)  : %s\n", aecct_ref::to_string(opts.ln_mode));
+  std::printf("  ln_mode(exp)   : %s\n", aecct_ref::to_string(opts.experiment_ln_mode));
   std::printf("  finalhead_stage: %s\n", aecct_ref::to_string(opts.finalhead_stage));
   std::printf("  frag_group     : %s\n", aecct_ref::to_string(opts.frag_group));
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
@@ -1949,10 +2009,22 @@ int main(int argc, char** argv) {
   perf.startup_init_s = elapsed_sec(t_program_start, now_tp());
 
   if (opts.run_mode == CliRunMode::BASELINE_ONLY) {
-    return run_single_mode(aecct_ref::RefPrecisionMode::BASELINE_FP32, "baseline", range, N, opts);
+    return run_single_mode(
+      aecct_ref::RefPrecisionMode::BASELINE_FP32,
+      opts.ln_mode,
+      "baseline",
+      range,
+      N,
+      opts);
   }
   if (opts.run_mode == CliRunMode::EXPERIMENT_ONLY) {
-    return run_single_mode(opts.experiment_precision_mode, "experiment", range, N, opts);
+    return run_single_mode(
+      opts.experiment_precision_mode,
+      opts.experiment_ln_mode,
+      "experiment",
+      range,
+      N,
+      opts);
   }
 
   if (opts.run_mode == CliRunMode::EXPLORE) {
@@ -2152,6 +2224,7 @@ int main(int argc, char** argv) {
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
     baseline_cfg_eval.algo_variant = opts.algo_variant;
+    baseline_cfg_eval.ln_mode = opts.ln_mode;
     baseline_cfg_eval.finalhead_stage = anchor_finalhead_s0
       ? aecct_ref::RefFinalHeadExploreStage::S0
       : opts.finalhead_stage;
@@ -2169,7 +2242,8 @@ int main(int argc, char** argv) {
       (opts.run_mode == CliRunMode::EVAL_EXPERIMENT || opts.run_mode == CliRunMode::EVAL_COMPARE);
     const bool experiment_use_reconstruct =
       need_experiment_outputs &&
-      (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD);
+      (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD) &&
+      (opts.experiment_ln_mode == opts.ln_mode);
     if (experiment_use_reconstruct) {
       baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
     }
@@ -2202,6 +2276,7 @@ int main(int argc, char** argv) {
         aecct_ref::RefRunConfig experiment_cfg_eval{};
         experiment_cfg_eval.precision_mode = opts.experiment_precision_mode;
         experiment_cfg_eval.algo_variant = opts.algo_variant;
+        experiment_cfg_eval.ln_mode = opts.experiment_ln_mode;
         experiment_cfg_eval.finalhead_stage = anchor_finalhead_s0
           ? aecct_ref::RefFinalHeadExploreStage::S0
           : opts.finalhead_stage;
@@ -2415,6 +2490,7 @@ int main(int argc, char** argv) {
     ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
     : aecct_ref::RefPrecisionMode::BASELINE_FP32;
   baseline_cfg.algo_variant = opts.algo_variant;
+  baseline_cfg.ln_mode = opts.ln_mode;
   baseline_cfg.finalhead_stage = anchor_finalhead_s0
     ? aecct_ref::RefFinalHeadExploreStage::S0
     : opts.finalhead_stage;
@@ -2433,7 +2509,8 @@ int main(int argc, char** argv) {
   aecct_ref::RefFullQuantStats experiment_full_stats{};
 
   const bool experiment_use_reconstruct =
-    (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD);
+    (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD) &&
+    (opts.experiment_ln_mode == opts.ln_mode);
   if (experiment_use_reconstruct) {
     baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
   }
@@ -2465,6 +2542,7 @@ int main(int argc, char** argv) {
     aecct_ref::RefRunConfig experiment_cfg{};
     experiment_cfg.precision_mode = opts.experiment_precision_mode;
     experiment_cfg.algo_variant = opts.algo_variant;
+    experiment_cfg.ln_mode = opts.experiment_ln_mode;
     experiment_cfg.finalhead_stage = anchor_finalhead_s0
       ? aecct_ref::RefFinalHeadExploreStage::S0
       : opts.finalhead_stage;
@@ -2506,9 +2584,10 @@ int main(int argc, char** argv) {
     update_batch_summary(batch, row);
 
     if (!opts.summary_only) {
-      std::printf("[pattern %d] mse=%.9e maxabs=%.9e xpred_flip=%zu (%.9e) sign_flip=%zu margin(b/e)=%.9e/%.9e naninf(b)=%zu/%zu naninf(e)=%zu/%zu b_mse_g=%.9e e_mse_g=%.9e xmatch(b/e)=%zu/%zu,%zu/%zu\n",
+      std::printf("[pattern %d] mse=%.9e mae=%.9e maxabs=%.9e xpred_flip=%zu (%.9e) sign_flip=%zu margin(b/e)=%.9e/%.9e naninf(b)=%zu/%zu naninf(e)=%zu/%zu b_mse_g=%.9e e_mse_g=%.9e xmatch(b/e)=%zu/%zu,%zu/%zu\n",
         row.pattern_index,
         row.cmp.logits_diff.mse,
+        row.cmp.logits_diff.mae,
         row.cmp.logits_diff.max_abs,
         row.cmp.x_pred_mismatch_count,
         row.cmp.x_pred_mismatch_ratio,
@@ -2585,12 +2664,13 @@ int main(int argc, char** argv) {
   std::printf("top vulnerable patterns (by min margin):\n");
   for (std::size_t i = 0; i < vulnerable_idx.size(); ++i) {
     const PerPatternCompareRow& r = rows[vulnerable_idx[i]];
-    std::printf("  rank%zu p=%d margin(b/e)=%.9e/%.9e mse=%.9e maxabs=%.9e xflip=%zu sflip=%zu\n",
+    std::printf("  rank%zu p=%d margin(b/e)=%.9e/%.9e mse=%.9e mae=%.9e maxabs=%.9e xflip=%zu sflip=%zu\n",
       i + 1U,
       r.pattern_index,
       r.cmp.baseline_min_abs_margin,
       r.cmp.experiment_min_abs_margin,
       r.cmp.logits_diff.mse,
+      r.cmp.logits_diff.mae,
       r.cmp.logits_diff.max_abs,
       r.cmp.x_pred_mismatch_count,
       r.cmp.sign_flip_count);

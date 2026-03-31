@@ -3,6 +3,7 @@
 
 #include "RefAlgoVariant.h"
 #include "RefFragGroupConfig.h"
+#include "RefLayerNormMode.h"
 #include "RefPrecisionMode.h"
 #include "RefStageConfig.h"
 #include "RefTypes.h"
@@ -35,6 +36,7 @@ struct RefDumpConfig {
 struct RefRunConfig {
   RefPrecisionMode precision_mode;
   RefAlgoVariant algo_variant;
+  RefLayerNormMode ln_mode = RefLayerNormMode::LN_BASELINE;
   RefFinalHeadExploreStage finalhead_stage = RefFinalHeadExploreStage::S0;
   RefFragGroup frag_group = RefFragGroup::NONE;
 };

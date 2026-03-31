@@ -31,6 +31,9 @@ static constexpr int HEADS = 8;
 static constexpr int D_HEAD = 4;
 static constexpr int FF_DIM = 128;
 static constexpr float LN_EPS_F32 = 1.0e-5f;
+static constexpr float LN_INV_D_F32 = 0.03125f; // 1/32
+static constexpr float LN_VAR_FLOOR_F32 = 0.0f;
+static constexpr int LN_TILE_D = 8;
 static const fp32_ref_t kActQMin = fp32_ref_t(-127.0f);
 static const fp32_ref_t kActQMax = fp32_ref_t(127.0f);
 
@@ -641,22 +644,30 @@ static void dump_3d(const DumpContext& dump,
 }
 
 // LN_APPROX_BEGIN
-static inline void layernorm_32(const fp32_ref_t x[D_MODEL],
-                                const double w[D_MODEL],
-                                const double b[D_MODEL],
-                                fp32_ref_t y[D_MODEL]) {
+static inline float ln_sanitize_input(float x) {
+  return std::isfinite(x) ? x : 0.0f;
+}
+
+static inline float ln_sanitize_output(float x) {
+  return std::isfinite(x) ? x : 0.0f;
+}
+
+static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
+                                         const double w[D_MODEL],
+                                         const double b[D_MODEL],
+                                         fp32_ref_t y[D_MODEL]) {
   float sum = 0.0f;
   for (int i = 0; i < D_MODEL; ++i) {
     sum += x[i].to_float();
   }
-  const float mean = sum * 0.03125f; // 1/32
+  const float mean = sum * LN_INV_D_F32;
 
   float var_acc = 0.0f;
   for (int i = 0; i < D_MODEL; ++i) {
     const float d = x[i].to_float() - mean;
     var_acc += d * d;
   }
-  const float var = var_acc * 0.03125f; // 1/32
+  const float var = var_acc * LN_INV_D_F32;
 
   const float inv_std =
     ref_inv_sqrt_approx(fp32_ref_t(var + LN_EPS_F32)).to_float();
@@ -666,14 +677,67 @@ static inline void layernorm_32(const fp32_ref_t x[D_MODEL],
     y[i] = fp32_ref_t(yi);
   }
 }
+
+static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
+                                                  const double w[D_MODEL],
+                                                  const double b[D_MODEL],
+                                                  fp32_ref_t y[D_MODEL]) {
+  float sum = 0.0f;
+  float sumsq = 0.0f;
+
+  // LOOP LN_PASS1_TILE
+  for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
+    // LOOP LN_PASS1_ELEM
+    for (int lane = 0; lane < LN_TILE_D; ++lane) {
+      const int d = tile_base + lane;
+      const float xv = ln_sanitize_input(x[d].to_float());
+      sum += xv;
+      sumsq += xv * xv;
+    }
+  }
+
+  const float mean = sum * LN_INV_D_F32;
+  const float ex2 = sumsq * LN_INV_D_F32;
+  float var = ex2 - (mean * mean);
+  if (!std::isfinite(var) || var < LN_VAR_FLOOR_F32) {
+    var = LN_VAR_FLOOR_F32;
+  }
+  float var_eps = var + LN_EPS_F32;
+  if (!std::isfinite(var_eps) || var_eps < LN_EPS_F32) {
+    var_eps = LN_EPS_F32;
+  }
+
+  float inv_std = ref_inv_sqrt_nr1_approx(fp32_ref_t(var_eps)).to_float();
+  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
+    inv_std = ref_inv_sqrt_approx(fp32_ref_t(var_eps)).to_float();
+  }
+  inv_std = ln_sanitize_output(inv_std);
+
+  // LOOP LN_PASS2_TILE
+  for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
+    // LOOP LN_PASS2_ELEM
+    for (int lane = 0; lane < LN_TILE_D; ++lane) {
+      const int d = tile_base + lane;
+      const float xv = ln_sanitize_input(x[d].to_float());
+      const float xn = (xv - mean) * inv_std;
+      const float yi = (xn * static_cast<float>(w[d])) + static_cast<float>(b[d]);
+      y[d] = fp32_ref_t(ln_sanitize_output(yi));
+    }
+  }
+}
 // LN_APPROX_END
 
 static void apply_layernorm_tokens(const fp32_ref_t x_in[TOKENS_T][D_MODEL],
                                    const double w[D_MODEL],
                                    const double b[D_MODEL],
+                                   RefLayerNormMode ln_mode,
                                    fp32_ref_t x_out[TOKENS_T][D_MODEL]) {
   for (int t = 0; t < TOKENS_T; ++t) {
-    layernorm_32(x_in[t], w, b, x_out[t]);
+    if (ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
+      layernorm_32_sum_sumsq_approx(x_in[t], w, b, x_out[t]);
+    } else {
+      layernorm_32_baseline(x_in[t], w, b, x_out[t]);
+    }
   }
 }
 
@@ -1228,7 +1292,7 @@ static void run_layer(const int layer_idx,
         "residual_attn");
     }
   }
-  apply_layernorm_tokens(ln_in, ln0_w, ln0_b, ln_out);
+  apply_layernorm_tokens(ln_in, ln0_w, ln0_b, run_cfg.ln_mode, ln_out);
   if (use_full_e4m3_nonlinear_stress(run_cfg) ||
       should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -1301,7 +1365,7 @@ static void run_layer(const int layer_idx,
         "residual_ffn");
     }
   }
-  apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, ffn_ln_out);
+  apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, run_cfg.ln_mode, ffn_ln_out);
   if (use_full_e4m3_nonlinear_stress(run_cfg) ||
       should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -1318,6 +1382,7 @@ static void run_layer(const int layer_idx,
 RefModel::RefModel() {
   run_cfg_.precision_mode = RefPrecisionMode::BASELINE_FP32;
   run_cfg_.algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
+  run_cfg_.ln_mode = RefLayerNormMode::LN_BASELINE;
   run_cfg_.finalhead_stage = RefFinalHeadExploreStage::S0;
   dump_cfg_.enabled = false;
   dump_cfg_.dump_dir = nullptr;
@@ -1483,6 +1548,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     apply_layernorm_tokens(layer0_ffn_ln_out,
                            w_decoder_norm2_weight,
                            w_decoder_norm2_bias,
+                           run_cfg_.ln_mode,
                            mid_norm);
     if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
         should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
@@ -1551,6 +1617,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     apply_layernorm_tokens(layer1_ffn_ln_out,
                            w_decoder_norm_weight,
                            w_decoder_norm_bias,
+                           run_cfg_.ln_mode,
                            end_norm);
     if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
         should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
