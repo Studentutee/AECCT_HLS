@@ -47,6 +47,8 @@ enum class RefLnSiteTag : int {
 };
 
 struct RefLnDebugEntry {
+  int entry_seq = 0;
+  int site_call_index = 0;
   int sample_index = 0;
   int site = 0;
   int token = 0;
@@ -74,11 +76,14 @@ struct RefLnDebugEntry {
   int clamp_triggered = 0;
   int eps_dominates_var = 0;
   int sanitize_input_count = 0;
+  float x_in[D_MODEL]{};
   float y_out[D_MODEL]{};
 };
 
 static bool g_ref_ln_debug_enabled = false;
 static std::vector<RefLnDebugEntry> g_ref_ln_debug_entries;
+static int g_ref_ln_debug_entry_seq = 0;
+static int g_ref_ln_debug_site_call_counters[6] = {0, 0, 0, 0, 0, 0};
 
 static inline const char* ref_ln_site_tag_to_string(RefLnSiteTag site) {
   switch (site) {
@@ -722,6 +727,7 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
                                          const double b[D_MODEL],
                                          int sample_index,
                                          RefLnSiteTag site,
+                                         int site_call_index,
                                          int token_index,
                                          fp32_ref_t y[D_MODEL]) {
   float sum = 0.0f;
@@ -773,6 +779,8 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
 
   if (g_ref_ln_debug_enabled) {
     RefLnDebugEntry e{};
+    e.entry_seq = g_ref_ln_debug_entry_seq++;
+    e.site_call_index = site_call_index;
     e.sample_index = sample_index;
     e.site = static_cast<int>(site);
     e.token = token_index;
@@ -801,6 +809,9 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
     e.eps_dominates_var = (var_raw <= LN_EPS_F32) ? 1 : 0;
     e.sanitize_input_count = sanitize_input_count;
     for (int i = 0; i < D_MODEL; ++i) {
+      e.x_in[i] = x[i].to_float();
+    }
+    for (int i = 0; i < D_MODEL; ++i) {
       e.y_out[i] = y[i].to_float();
     }
     g_ref_ln_debug_entries.push_back(e);
@@ -812,6 +823,7 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
                                                   const double b[D_MODEL],
                                                   int sample_index,
                                                   RefLnSiteTag site,
+                                                  int site_call_index,
                                                   int token_index,
                                                   fp32_ref_t y[D_MODEL]) {
   float sum = 0.0f;
@@ -877,6 +889,8 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
     const float inv_std_seed = ref_inv_sqrt_approx(fp32_ref_t(var_eps)).to_float();
     const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(fp32_ref_t(var_eps)).to_float();
     RefLnDebugEntry e{};
+    e.entry_seq = g_ref_ln_debug_entry_seq++;
+    e.site_call_index = site_call_index;
     e.sample_index = sample_index;
     e.site = static_cast<int>(site);
     e.token = token_index;
@@ -905,6 +919,9 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
     e.eps_dominates_var = (var_final <= LN_EPS_F32) ? 1 : 0;
     e.sanitize_input_count = sanitize_input_count;
     for (int i = 0; i < D_MODEL; ++i) {
+      e.x_in[i] = x[i].to_float();
+    }
+    for (int i = 0; i < D_MODEL; ++i) {
       e.y_out[i] = y[i].to_float();
     }
     g_ref_ln_debug_entries.push_back(e);
@@ -919,11 +936,19 @@ static void apply_layernorm_tokens(const fp32_ref_t x_in[TOKENS_T][D_MODEL],
                                    int sample_index,
                                    RefLnSiteTag site,
                                    fp32_ref_t x_out[TOKENS_T][D_MODEL]) {
+  int site_call_index = 0;
+  if (g_ref_ln_debug_enabled) {
+    const int site_id = static_cast<int>(site);
+    if (site_id >= 0 && site_id < 6) {
+      site_call_index = g_ref_ln_debug_site_call_counters[site_id];
+      g_ref_ln_debug_site_call_counters[site_id] += 1;
+    }
+  }
   for (int t = 0; t < TOKENS_T; ++t) {
     if (ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
-      layernorm_32_sum_sumsq_approx(x_in[t], w, b, sample_index, site, t, x_out[t]);
+      layernorm_32_sum_sumsq_approx(x_in[t], w, b, sample_index, site, site_call_index, t, x_out[t]);
     } else {
-      layernorm_32_baseline(x_in[t], w, b, sample_index, site, t, x_out[t]);
+      layernorm_32_baseline(x_in[t], w, b, sample_index, site, site_call_index, t, x_out[t]);
     }
   }
 }
@@ -1957,11 +1982,24 @@ void set_ref_ln_debug_enabled(bool enabled) {
   g_ref_ln_debug_enabled = enabled;
   if (!enabled) {
     g_ref_ln_debug_entries.clear();
+    g_ref_ln_debug_entry_seq = 0;
+    for (int i = 0; i < 6; ++i) {
+      g_ref_ln_debug_site_call_counters[i] = 0;
+    }
+  } else {
+    g_ref_ln_debug_entry_seq = 0;
+    for (int i = 0; i < 6; ++i) {
+      g_ref_ln_debug_site_call_counters[i] = 0;
+    }
   }
 }
 
 void reset_ref_ln_debug_trace() {
   g_ref_ln_debug_entries.clear();
+  g_ref_ln_debug_entry_seq = 0;
+  for (int i = 0; i < 6; ++i) {
+    g_ref_ln_debug_site_call_counters[i] = 0;
+  }
 }
 
 int get_ref_ln_debug_entry_count() {
@@ -1974,6 +2012,8 @@ const char* ref_ln_debug_site_name(int site_id) {
 
 bool get_ref_ln_debug_entry(
   int index,
+  int* out_entry_seq,
+  int* out_site_call_index,
   int* out_sample_index,
   int* out_site,
   int* out_token,
@@ -2001,6 +2041,8 @@ bool get_ref_ln_debug_entry(
   int* out_clamp_triggered,
   int* out_eps_dominates_var,
   int* out_sanitize_input_count,
+  float* out_x,
+  int out_x_len,
   float* out_y,
   int out_y_len
 ) {
@@ -2008,6 +2050,8 @@ bool get_ref_ln_debug_entry(
     return false;
   }
   const RefLnDebugEntry& e = g_ref_ln_debug_entries[static_cast<std::size_t>(index)];
+  if (out_entry_seq != nullptr) *out_entry_seq = e.entry_seq;
+  if (out_site_call_index != nullptr) *out_site_call_index = e.site_call_index;
   if (out_sample_index != nullptr) *out_sample_index = e.sample_index;
   if (out_site != nullptr) *out_site = e.site;
   if (out_token != nullptr) *out_token = e.token;
@@ -2037,6 +2081,12 @@ bool get_ref_ln_debug_entry(
   if (out_clamp_triggered != nullptr) *out_clamp_triggered = e.clamp_triggered;
   if (out_eps_dominates_var != nullptr) *out_eps_dominates_var = e.eps_dominates_var;
   if (out_sanitize_input_count != nullptr) *out_sanitize_input_count = e.sanitize_input_count;
+  if (out_x != nullptr && out_x_len > 0) {
+    const int copy_len = (out_x_len < D_MODEL) ? out_x_len : D_MODEL;
+    for (int i = 0; i < copy_len; ++i) {
+      out_x[i] = e.x_in[i];
+    }
+  }
   if (out_y != nullptr && out_y_len > 0) {
     const int copy_len = (out_y_len < D_MODEL) ? out_y_len : D_MODEL;
     for (int i = 0; i < copy_len; ++i) {
