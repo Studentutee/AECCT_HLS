@@ -324,12 +324,24 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     u32_t phase_entry_probe_v_words_valid = (u32_t)0u,
     u32_t* phase_entry_probe_visible = 0,
     u32_t* phase_entry_probe_owner_ok = 0,
-    u32_t* phase_entry_probe_compare_ok = 0
+    u32_t* phase_entry_probe_compare_ok = 0,
+    u32_t phase_tile_bridge_v_base_word = (u32_t)0u,
+    const u32_t* phase_tile_bridge_v_words = 0,
+    u32_t phase_tile_bridge_v_words_valid = (u32_t)0u,
+    u32_t phase_tile_bridge_d_tile_idx = (u32_t)0u,
+    u32_t* phase_tile_bridge_visible = 0,
+    u32_t* phase_tile_bridge_owner_ok = 0,
+    u32_t* phase_tile_bridge_consumed = 0,
+    u32_t* phase_tile_bridge_compare_ok = 0
 ) {
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
     if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
     if (phase_entry_probe_compare_ok != 0) { *phase_entry_probe_compare_ok = (u32_t)0u; }
+    if (phase_tile_bridge_visible != 0) { *phase_tile_bridge_visible = (u32_t)0u; }
+    if (phase_tile_bridge_owner_ok != 0) { *phase_tile_bridge_owner_ok = (u32_t)0u; }
+    if (phase_tile_bridge_consumed != 0) { *phase_tile_bridge_consumed = (u32_t)0u; }
+    if (phase_tile_bridge_compare_ok != 0) { *phase_tile_bridge_compare_ok = (u32_t)0u; }
     if (!attn_phaseb_softmax_sram_view_ok(sram)) {
         return false;
     }
@@ -370,6 +382,20 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     const bool phase_entry_probe_enabled =
         (phase_entry_probe_v_words != 0) &&
         (phase_entry_probe_valid_words > 0u);
+    const uint32_t phase_tile_bridge_valid_words = (uint32_t)phase_tile_bridge_v_words_valid.to_uint();
+    const bool phase_tile_bridge_enabled =
+        (phase_tile_bridge_v_words != 0) &&
+        (phase_tile_bridge_valid_words > 0u);
+    const uint32_t phase_tile_bridge_d_tile = (uint32_t)phase_tile_bridge_d_tile_idx.to_uint();
+    bool phase_tile_bridge_seen = false;
+    if (phase_tile_bridge_enabled) {
+        if (phase_tile_bridge_d_tile >= d_tile_count) {
+            return false;
+        }
+        if (phase_tile_bridge_valid_words > tile_words || phase_tile_bridge_valid_words > d_head) {
+            return false;
+        }
+    }
 
     const uint32_t pre_row_base = pre_base + token * d_model;
     const uint32_t post_row_base = post_base + token * d_model;
@@ -436,9 +462,53 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                         attn_top_managed_tile_valid_words(d_head, tile_words, dt);
                     if (valid == 0u || valid > tile_words) { return false; }
                     if ((tile_offset + valid) > d_head) { return false; }
+                    // Local-only W4-B1 bounded tile bridge:
+                    // consume one caller-fed V tile at phase-B tile-entry without rewriting core loops.
+                    const bool phase_tile_bridge_selected =
+                        phase_tile_bridge_enabled &&
+                        (h == 0u) &&
+                        (dt == phase_tile_bridge_d_tile);
+                    if (phase_tile_bridge_selected) {
+                        if (phase_tile_bridge_visible != 0) {
+                            *phase_tile_bridge_visible = (u32_t)1u;
+                        }
+                        const uint32_t expected_bridge_base = v_row_base + tile_offset;
+                        const bool owner_ok =
+                            ((uint32_t)phase_tile_bridge_v_base_word.to_uint() == expected_bridge_base);
+                        if (phase_tile_bridge_owner_ok != 0) {
+                            *phase_tile_bridge_owner_ok = (u32_t)(owner_ok ? 1u : 0u);
+                        }
+                        if (!owner_ok) {
+                            return false;
+                        }
+                        if (phase_tile_bridge_valid_words != valid) {
+                            return false;
+                        }
+                        bool bridge_compare_ok = true;
+                        ATTN_P11AF_TILE_BRIDGE_COMPARE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                            const uint32_t bridge_word = (uint32_t)phase_tile_bridge_v_words[i].to_uint();
+                            const uint32_t sram_word = (uint32_t)sram[expected_bridge_base + i].to_uint();
+                            if (bridge_word != sram_word) {
+                                bridge_compare_ok = false;
+                                break;
+                            }
+                        }
+                        if (phase_tile_bridge_compare_ok != 0) {
+                            *phase_tile_bridge_compare_ok = (u32_t)(bridge_compare_ok ? 1u : 0u);
+                        }
+                        if (!bridge_compare_ok) {
+                            return false;
+                        }
+                        phase_tile_bridge_seen = true;
+                    }
                     ATTN_P11AF_MAINLINE_INIT_ACC_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
-                        const quant_act_t vv = quant_act_from_bits(sram[v_row_base + tile_offset + i]);
+                        const quant_act_t vv = phase_tile_bridge_selected
+                            ? quant_act_from_bits(phase_tile_bridge_v_words[i])
+                            : quant_act_from_bits(sram[v_row_base + tile_offset + i]);
                         running_acc[tile_offset + i] = quant_acc_t(vv);
+                    }
+                    if (phase_tile_bridge_selected && phase_tile_bridge_consumed != 0) {
+                        *phase_tile_bridge_consumed = (u32_t)1u;
                     }
                 }
                 have_state = true;
@@ -499,6 +569,9 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
         }
     }
 
+    if (phase_tile_bridge_enabled && !phase_tile_bridge_seen) {
+        return false;
+    }
     fallback_taken = false;
     return true;
 }

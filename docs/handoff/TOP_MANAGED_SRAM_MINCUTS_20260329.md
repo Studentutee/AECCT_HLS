@@ -969,3 +969,70 @@
   - output: `docs/handoff/TOP_MANAGED_SRAM_G7_REMOVE_READINESS_20260330.md`
 - Wave D (completed): residual blocker isolation and next-cut map
   - output: `docs/handoff/TOP_MANAGED_SRAM_G7_DIRECT_SRAM_CAMPAIGN_20260330.md`
+
+## Task C20: W4-B1 Phase-B Bounded Tile Bridge
+1. Summary
+- Landed one bounded tile-level bridge on `AttnPhaseBTopManagedSoftmaxOut`.
+- This cut advances beyond phase-entry probe by consuming one caller-fed/top-fed V tile at tile-entry.
+- Inner compute/writeback flow is intentionally untouched.
+
+2. Exact files changed
+- `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `tb/tb_w4b1_phaseb_tile_bridge.cpp`
+- `scripts/local/run_p11w4b1_phaseb_tile_bridge.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
+- `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_PHASEB_TILE_BRIDGE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_COMPLETION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEB_CAMPAIGN_COMPLETION_20260330.md`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4b1_phaseb_tile_bridge.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m3_kv_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m3_phasea_q_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m2_softmaxout_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m1_qkscore_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g7_ffn_w1_bias_descriptor_strict.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_w1_bias_descriptor.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_fallback_observability.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11w4b1/phaseb_tile_bridge/run.log`:
+  - `W4B1_PHASEB_TILE_BRIDGE_VISIBLE PASS`
+  - `W4B1_PHASEB_OWNERSHIP_CHECK PASS`
+  - `W4B1_PHASEB_NO_SPURIOUS_TOUCH PASS`
+  - `W4B1_PHASEB_EXPECTED_COMPARE PASS`
+  - `W4B1_PHASEB_BRIDGE_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: W4-B1 SoftmaxOut bounded tile bridge anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+
+5. Governance posture
+- local-only bounded micro-cut
+- not Catapult closure
+- not SCVerify closure
+- Top remains sole production shared-SRAM owner
+
+6. Residual risks
+- W4-B1 bridges one bounded tile only.
+- full Phase-B payload migration is still deferred.
+- inner compute/writeback loops remain SRAM-centric.
+
+7. Next recommended step
+- W4-B2: bounded QK-score tile bridge with the same ownership/no-spurious/mismatch-reject harness.

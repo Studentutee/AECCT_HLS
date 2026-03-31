@@ -551,3 +551,49 @@
 7. Open `docs/handoff/TOP_MANAGED_SRAM_G7_REMOVE_READINESS_20260330.md`
 8. Open `docs/handoff/TOP_MANAGED_SRAM_G7_DIRECT_SRAM_EVIDENCE_INDEX_20260330.md`
 9. Open `build/evidence/g7_direct_sram_campaign_20260330/evidence_manifest.txt`
+
+## Suggested 10-Minute Review Order (W4-B1 Phase-B Tile Bridge Latest)
+1. Open `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h` (2 min)
+- confirm W4-B1 bridge fields: `phase_tile_bridge_*`
+- confirm `ATTN_P11AF_TILE_BRIDGE_COMPARE_LOOP` and bounded consume point in init tile loop.
+2. Open `src/Top.h` (1 min)
+- confirm `run_p11af_layer0_top_managed_softmax_out(...)` passthrough includes W4-B1 bridge args.
+3. Open `build/p11w4b1/phaseb_tile_bridge/run.log` (1 min)
+- confirm:
+  - `W4B1_PHASEB_TILE_BRIDGE_VISIBLE PASS`
+  - `W4B1_PHASEB_OWNERSHIP_CHECK PASS`
+  - `W4B1_PHASEB_NO_SPURIOUS_TOUCH PASS`
+  - `W4B1_PHASEB_EXPECTED_COMPARE PASS`
+  - `W4B1_PHASEB_BRIDGE_MISMATCH_REJECT PASS`
+4. Open `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log` (1 min)
+- confirm `guard: W4-B1 SoftmaxOut bounded tile bridge anchors OK`.
+5. Open retained Wave4 runners (1 min)
+- `build/p11w4m3/kv_phase_entry_probe/run.log`
+- `build/p11w4m3/phasea_q_phase_entry_probe/run.log`
+- `build/p11w4m2/softmaxout_phase_entry_probe/run.log`
+- `build/p11w4m1/qkscore_phase_entry_probe/run.log`
+6. Open retained FFN/mainline/provenance runners (2 min)
+- `build/p11g7/ffn_w1_bias_descriptor_strict/run.log`
+- `build/p11g6/ffn_w1_bias_descriptor/run.log`
+- `build/p11g6/ffn_fallback_observability/run.log`
+- `build/p11ah/full_loop/run.log`
+- `build/p11aj/p11aj/run.log`
+7. Open docs (1 min)
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_PHASEB_TILE_BRIDGE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_COMPLETION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEB_CAMPAIGN_COMPLETION_20260330.md`
+8. Open evidence manifest (1 min)
+- `build/evidence/w4b1_phaseb_tile_bridge_20260331/evidence_manifest.txt`
+
+## Latest artifact additions (W4-B1 campaign)
+- `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`
+- `src/Top.h`
+- `tb/tb_w4b1_phaseb_tile_bridge.cpp`
+- `scripts/local/run_p11w4b1_phaseb_tile_bridge.ps1`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_PHASEB_TILE_BRIDGE_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_EVIDENCE_INDEX_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B1_COMPLETION_20260330.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_PHASEB_CAMPAIGN_COMPLETION_20260330.md`
+- `build/p11w4b1/phaseb_tile_bridge/run.log`
+- `build/evidence/w4b1_phaseb_tile_bridge_20260331/evidence_manifest.txt`

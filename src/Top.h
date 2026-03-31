@@ -1269,7 +1269,15 @@ namespace aecct {
         u32_t phase_entry_probe_v_words_valid = (u32_t)0u,
         u32_t* phase_entry_probe_visible = 0,
         u32_t* phase_entry_probe_owner_ok = 0,
-        u32_t* phase_entry_probe_compare_ok = 0
+        u32_t* phase_entry_probe_compare_ok = 0,
+        u32_t phase_tile_bridge_v_base_word = (u32_t)0u,
+        const u32_t* phase_tile_bridge_v_words = 0,
+        u32_t phase_tile_bridge_v_words_valid = (u32_t)0u,
+        u32_t phase_tile_bridge_d_tile_idx = (u32_t)0u,
+        u32_t* phase_tile_bridge_visible = 0,
+        u32_t* phase_tile_bridge_owner_ok = 0,
+        u32_t* phase_tile_bridge_consumed = 0,
+        u32_t* phase_tile_bridge_compare_ok = 0
     ) {
         AttnCfg attn_cfg;
         attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
@@ -1298,7 +1306,15 @@ namespace aecct {
             phase_entry_probe_v_words_valid,
             phase_entry_probe_visible,
             phase_entry_probe_owner_ok,
-            phase_entry_probe_compare_ok
+            phase_entry_probe_compare_ok,
+            phase_tile_bridge_v_base_word,
+            phase_tile_bridge_v_words,
+            phase_tile_bridge_v_words_valid,
+            phase_tile_bridge_d_tile_idx,
+            phase_tile_bridge_visible,
+            phase_tile_bridge_owner_ok,
+            phase_tile_bridge_consumed,
+            phase_tile_bridge_compare_ok
         );
     }
 

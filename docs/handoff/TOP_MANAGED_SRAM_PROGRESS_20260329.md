@@ -688,3 +688,37 @@
 ### Deferred boundary after G7
 - Attn/Phase inner compute and writeback loops remain SRAM-centric by design in this bounded pass.
 - This round does not claim full Wave4 payload migration.
+
+## Night-Batch Extension: W4-B1 Phase-B Bounded Tile Bridge (Local-only)
+- Completed one bounded Wave4 cut beyond probe-only:
+  - `AttnPhaseBTopManagedSoftmaxOut` now supports one caller-fed/top-fed V-tile bridge at tile-entry.
+- Primary landed anchors:
+  - `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h`
+    - `phase_tile_bridge_*` descriptor/observability fields
+    - `ATTN_P11AF_TILE_BRIDGE_COMPARE_LOOP`
+  - `src/Top.h`
+    - `run_p11af_layer0_top_managed_softmax_out(...)` passthrough for W4-B1 bridge args
+  - `scripts/check_top_managed_sram_boundary_regression.ps1`
+    - W4-B1 passthrough + signature + anchor guards
+
+### W4-B1 local-only evidence
+- `build/p11w4b1/phaseb_tile_bridge/run.log`: PASS
+  - `W4B1_PHASEB_TILE_BRIDGE_VISIBLE PASS`
+  - `W4B1_PHASEB_OWNERSHIP_CHECK PASS`
+  - `W4B1_PHASEB_NO_SPURIOUS_TOUCH PASS`
+  - `W4B1_PHASEB_EXPECTED_COMPARE PASS`
+  - `W4B1_PHASEB_BRIDGE_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: W4-B1 SoftmaxOut bounded tile bridge anchors OK`
+- Full requested chain retained PASS:
+  - W4-M3 KV/Q runners
+  - W4-M2/W4-M1 runners
+  - G7/G6/G5 FFN runners
+  - P11AH/P11AJ mainline + provenance
+  - helper split guard / design purity / repo hygiene pre+post
+- Bundle:
+  - `build/evidence/w4b1_phaseb_tile_bridge_20260331/evidence_manifest.txt`
+
+### Deferred boundary after W4-B1
+- This round is not full Wave4 payload migration.
+- Inner Phase-B compute/reduction/writeback loops remain SRAM-centric by bounded policy.
