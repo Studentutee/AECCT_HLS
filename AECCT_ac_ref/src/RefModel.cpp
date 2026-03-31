@@ -50,9 +50,21 @@ struct RefLnDebugEntry {
   int sample_index = 0;
   int site = 0;
   int token = 0;
+  float sum = 0.0f;
+  float sumsq = 0.0f;
   float mean = 0.0f;
+  float ex2 = 0.0f;
+  float mean_sq = 0.0f;
   float var_raw = 0.0f;
   float var_final = 0.0f;
+  float var_from_residual = 0.0f;
+  float var_from_ex2 = 0.0f;
+  float eps_applied = 0.0f;
+  float inv_std_input = 0.0f;
+  float sum_seq = 0.0f;
+  float sumsq_seq = 0.0f;
+  float sum_tile = 0.0f;
+  float sumsq_tile = 0.0f;
   float x_eps = 0.0f;
   float inv_std_used = 0.0f;
   float inv_std_true = 0.0f;
@@ -697,6 +709,10 @@ static inline float ln_sanitize_input(float x, int* sanitize_count) {
   return 0.0f;
 }
 
+static inline float ln_sanitize_input_no_count(float x) {
+  return std::isfinite(x) ? x : 0.0f;
+}
+
 static inline float ln_sanitize_output(float x) {
   return std::isfinite(x) ? x : 0.0f;
 }
@@ -709,12 +725,16 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
                                          int token_index,
                                          fp32_ref_t y[D_MODEL]) {
   float sum = 0.0f;
+  float sumsq = 0.0f;
   int sanitize_input_count = 0;
   for (int i = 0; i < D_MODEL; ++i) {
     const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
     sum += xv;
+    sumsq += xv * xv;
   }
   const float mean = sum * LN_INV_D_F32;
+  const float ex2 = sumsq * LN_INV_D_F32;
+  const float mean_sq = mean * mean;
 
   float var_acc = 0.0f;
   for (int i = 0; i < D_MODEL; ++i) {
@@ -723,8 +743,10 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
     var_acc += d * d;
   }
   const float var_raw = var_acc * LN_INV_D_F32;
+  const float var_from_ex2 = ex2 - mean_sq;
   const float x_eps = var_raw + LN_EPS_F32;
   const float x_eps_safe = std::isfinite(x_eps) && (x_eps > 0.0f) ? x_eps : LN_EPS_F32;
+  const float eps_applied = x_eps_safe - var_raw;
   const float inv_std_true = 1.0f / std::sqrt(x_eps_safe);
   const float inv_std_seed = ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
   const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(fp32_ref_t(x_eps_safe)).to_float();
@@ -738,14 +760,37 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
     y[i] = fp32_ref_t(yi);
   }
 
+  float sum_tile = 0.0f;
+  float sumsq_tile = 0.0f;
+  for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
+    for (int lane = 0; lane < LN_TILE_D; ++lane) {
+      const int d = tile_base + lane;
+      const float xv = ln_sanitize_input_no_count(x[d].to_float());
+      sum_tile += xv;
+      sumsq_tile += xv * xv;
+    }
+  }
+
   if (g_ref_ln_debug_enabled) {
     RefLnDebugEntry e{};
     e.sample_index = sample_index;
     e.site = static_cast<int>(site);
     e.token = token_index;
+    e.sum = sum;
+    e.sumsq = sumsq;
     e.mean = mean;
+    e.ex2 = ex2;
+    e.mean_sq = mean_sq;
     e.var_raw = var_raw;
     e.var_final = var_raw;
+    e.var_from_residual = var_raw;
+    e.var_from_ex2 = var_from_ex2;
+    e.eps_applied = eps_applied;
+    e.inv_std_input = x_eps_safe;
+    e.sum_seq = sum;
+    e.sumsq_seq = sumsq;
+    e.sum_tile = sum_tile;
+    e.sumsq_tile = sumsq_tile;
     e.x_eps = x_eps_safe;
     e.inv_std_used = inv_std;
     e.inv_std_true = inv_std_true;
@@ -786,7 +831,19 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
 
   const float mean = sum * LN_INV_D_F32;
   const float ex2 = sumsq * LN_INV_D_F32;
-  const float var_raw = ex2 - (mean * mean);
+  const float mean_sq = mean * mean;
+  const float var_raw = ex2 - mean_sq;
+  float var_residual_acc = 0.0f;
+  float sum_seq = 0.0f;
+  float sumsq_seq = 0.0f;
+  for (int i = 0; i < D_MODEL; ++i) {
+    const float xv = ln_sanitize_input_no_count(x[i].to_float());
+    sum_seq += xv;
+    sumsq_seq += xv * xv;
+    const float d = xv - mean;
+    var_residual_acc += d * d;
+  }
+  const float var_from_residual = var_residual_acc * LN_INV_D_F32;
   float var_final = var_raw;
   if (!std::isfinite(var_final) || var_final < LN_VAR_FLOOR_F32) {
     var_final = LN_VAR_FLOOR_F32;
@@ -795,6 +852,7 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
   if (!std::isfinite(var_eps) || var_eps < LN_EPS_F32) {
     var_eps = LN_EPS_F32;
   }
+  const float eps_applied = var_eps - var_final;
 
   float inv_std = ref_inv_sqrt_nr1_approx(fp32_ref_t(var_eps)).to_float();
   if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
@@ -822,9 +880,21 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
     e.sample_index = sample_index;
     e.site = static_cast<int>(site);
     e.token = token_index;
+    e.sum = sum;
+    e.sumsq = sumsq;
     e.mean = mean;
+    e.ex2 = ex2;
+    e.mean_sq = mean_sq;
     e.var_raw = var_raw;
     e.var_final = var_final;
+    e.var_from_residual = var_from_residual;
+    e.var_from_ex2 = var_raw;
+    e.eps_applied = eps_applied;
+    e.inv_std_input = var_eps;
+    e.sum_seq = sum_seq;
+    e.sumsq_seq = sumsq_seq;
+    e.sum_tile = sum;
+    e.sumsq_tile = sumsq;
     e.x_eps = var_eps;
     e.inv_std_used = inv_std;
     e.inv_std_true = inv_std_true;
@@ -1907,9 +1977,21 @@ bool get_ref_ln_debug_entry(
   int* out_sample_index,
   int* out_site,
   int* out_token,
+  float* out_sum,
+  float* out_sumsq,
   float* out_mean,
+  float* out_ex2,
+  float* out_mean_sq,
   float* out_var_raw,
   float* out_var_final,
+  float* out_var_from_residual,
+  float* out_var_from_ex2,
+  float* out_eps_applied,
+  float* out_inv_std_input,
+  float* out_sum_seq,
+  float* out_sumsq_seq,
+  float* out_sum_tile,
+  float* out_sumsq_tile,
   float* out_x_eps,
   float* out_inv_std_used,
   float* out_inv_std_true,
@@ -1929,9 +2011,21 @@ bool get_ref_ln_debug_entry(
   if (out_sample_index != nullptr) *out_sample_index = e.sample_index;
   if (out_site != nullptr) *out_site = e.site;
   if (out_token != nullptr) *out_token = e.token;
+  if (out_sum != nullptr) *out_sum = e.sum;
+  if (out_sumsq != nullptr) *out_sumsq = e.sumsq;
   if (out_mean != nullptr) *out_mean = e.mean;
+  if (out_ex2 != nullptr) *out_ex2 = e.ex2;
+  if (out_mean_sq != nullptr) *out_mean_sq = e.mean_sq;
   if (out_var_raw != nullptr) *out_var_raw = e.var_raw;
   if (out_var_final != nullptr) *out_var_final = e.var_final;
+  if (out_var_from_residual != nullptr) *out_var_from_residual = e.var_from_residual;
+  if (out_var_from_ex2 != nullptr) *out_var_from_ex2 = e.var_from_ex2;
+  if (out_eps_applied != nullptr) *out_eps_applied = e.eps_applied;
+  if (out_inv_std_input != nullptr) *out_inv_std_input = e.inv_std_input;
+  if (out_sum_seq != nullptr) *out_sum_seq = e.sum_seq;
+  if (out_sumsq_seq != nullptr) *out_sumsq_seq = e.sumsq_seq;
+  if (out_sum_tile != nullptr) *out_sum_tile = e.sum_tile;
+  if (out_sumsq_tile != nullptr) *out_sumsq_tile = e.sumsq_tile;
   if (out_x_eps != nullptr) *out_x_eps = e.x_eps;
   if (out_inv_std_used != nullptr) *out_inv_std_used = e.inv_std_used;
   if (out_inv_std_true != nullptr) *out_inv_std_true = e.inv_std_true;

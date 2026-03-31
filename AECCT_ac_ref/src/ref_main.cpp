@@ -35,9 +35,21 @@ bool get_ref_ln_debug_entry(
   int* out_sample_index,
   int* out_site,
   int* out_token,
+  float* out_sum,
+  float* out_sumsq,
   float* out_mean,
+  float* out_ex2,
+  float* out_mean_sq,
   float* out_var_raw,
   float* out_var_final,
+  float* out_var_from_residual,
+  float* out_var_from_ex2,
+  float* out_eps_applied,
+  float* out_inv_std_input,
+  float* out_sum_seq,
+  float* out_sumsq_seq,
+  float* out_sum_tile,
+  float* out_sumsq_tile,
   float* out_x_eps,
   float* out_inv_std_used,
   float* out_inv_std_true,
@@ -79,6 +91,7 @@ struct CliOptions {
   int topk;
   bool summary_only;
   bool ln_debug;
+  bool ln_var_debug;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
   aecct_ref::RefLayerNormMode ln_mode;
@@ -188,9 +201,21 @@ struct LnDebugEntryRow {
   int sample_index = 0;
   int site = 0;
   int token = 0;
+  float sum = 0.0f;
+  float sumsq = 0.0f;
   float mean = 0.0f;
+  float ex2 = 0.0f;
+  float mean_sq = 0.0f;
   float var_raw = 0.0f;
   float var_final = 0.0f;
+  float var_from_residual = 0.0f;
+  float var_from_ex2 = 0.0f;
+  float eps_applied = 0.0f;
+  float inv_std_input = 0.0f;
+  float sum_seq = 0.0f;
+  float sumsq_seq = 0.0f;
+  float sum_tile = 0.0f;
+  float sumsq_tile = 0.0f;
   float x_eps = 0.0f;
   float inv_std_used = 0.0f;
   float inv_std_true = 0.0f;
@@ -201,6 +226,55 @@ struct LnDebugEntryRow {
   int eps_dominates_var = 0;
   int sanitize_input_count = 0;
   float y[LN_DEBUG_D_MODEL]{};
+};
+
+enum class LnVarFirstDivergenceStage : int {
+  NONE = 0,
+  SUM_OR_SUMSQ = 1,
+  MOMENT_DERIVED = 2,
+  VAR_FORMULA = 3,
+  POST_VAR_HANDLING = 4
+};
+
+struct LnVarTokenDiag {
+  int pattern = -1;
+  int site = -1;
+  int token = -1;
+  float base_sum = 0.0f;
+  float exp_sum = 0.0f;
+  float base_sumsq = 0.0f;
+  float exp_sumsq = 0.0f;
+  float base_mean = 0.0f;
+  float exp_mean = 0.0f;
+  float base_ex2 = 0.0f;
+  float exp_ex2 = 0.0f;
+  float base_mean_sq = 0.0f;
+  float exp_mean_sq = 0.0f;
+  float base_var_raw = 0.0f;
+  float exp_var_raw = 0.0f;
+  float base_var_final = 0.0f;
+  float exp_var_final = 0.0f;
+  float base_eps_applied = 0.0f;
+  float exp_eps_applied = 0.0f;
+  float base_inv_std_input = 0.0f;
+  float exp_inv_std_input = 0.0f;
+  float base_var_from_residual = 0.0f;
+  float exp_var_from_residual = 0.0f;
+  float base_var_from_ex2 = 0.0f;
+  float exp_var_from_ex2 = 0.0f;
+  float base_sum_seq = 0.0f;
+  float exp_sum_seq = 0.0f;
+  float base_sum_tile = 0.0f;
+  float exp_sum_tile = 0.0f;
+  float base_sumsq_seq = 0.0f;
+  float exp_sumsq_seq = 0.0f;
+  float base_sumsq_tile = 0.0f;
+  float exp_sumsq_tile = 0.0f;
+  float y_max_abs_diff = 0.0f;
+  float y_mean_abs_diff = 0.0f;
+  float var_raw_abs_diff = 0.0f;
+  float var_final_abs_diff = 0.0f;
+  LnVarFirstDivergenceStage first_stage = LnVarFirstDivergenceStage::NONE;
 };
 
 struct LnDebugTokenDiag {
@@ -268,6 +342,7 @@ static void print_usage() {
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
   std::printf("  --ln-debug\n");
+  std::printf("  --ln-var-debug\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
   std::printf("  --ln-mode ln_baseline|ln_sum_sumsq_approx\n");
@@ -483,6 +558,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.topk = 5;
   opts.summary_only = false;
   opts.ln_debug = false;
+  opts.ln_var_debug = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
   opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
@@ -559,6 +635,10 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
     }
     if (std::strcmp(arg, "--ln-debug") == 0) {
       opts.ln_debug = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--ln-var-debug") == 0) {
+      opts.ln_var_debug = true;
       continue;
     }
     if (std::strcmp(arg, "--frag-group") == 0) {
@@ -1017,9 +1097,21 @@ static bool collect_ln_debug_entries(std::vector<LnDebugEntryRow>& out) {
           &e.sample_index,
           &e.site,
           &e.token,
+          &e.sum,
+          &e.sumsq,
           &e.mean,
+          &e.ex2,
+          &e.mean_sq,
           &e.var_raw,
           &e.var_final,
+          &e.var_from_residual,
+          &e.var_from_ex2,
+          &e.eps_applied,
+          &e.inv_std_input,
+          &e.sum_seq,
+          &e.sumsq_seq,
+          &e.sum_tile,
+          &e.sumsq_tile,
           &e.x_eps,
           &e.inv_std_used,
           &e.inv_std_true,
@@ -1239,6 +1331,375 @@ static void dump_ln_debug_report(
   const std::string report = oss.str();
   std::printf("%s", report.c_str());
 
+  if (!out_path.empty()) {
+    std::filesystem::path p(out_path);
+    if (p.has_parent_path()) {
+      std::filesystem::create_directories(p.parent_path());
+    }
+    std::ofstream ofs(out_path.c_str(), std::ios::out | std::ios::trunc);
+    if (ofs.good()) {
+      ofs << report;
+    }
+  }
+}
+
+static inline float abs_diff_f(float a, float b) {
+  return static_cast<float>(std::fabs(static_cast<double>(a) - static_cast<double>(b)));
+}
+
+static inline float rel_diff_f(float a, float b) {
+  const double absd = std::fabs(static_cast<double>(a) - static_cast<double>(b));
+  const double ref = std::max(
+    std::max(std::fabs(static_cast<double>(a)), std::fabs(static_cast<double>(b))),
+    1.0e-12);
+  return static_cast<float>(absd / ref);
+}
+
+static inline bool is_material_diff(float a, float b) {
+  const double absd = std::fabs(static_cast<double>(a) - static_cast<double>(b));
+  const double ref = std::max(
+    std::max(std::fabs(static_cast<double>(a)), std::fabs(static_cast<double>(b))),
+    1.0);
+  const double rel = absd / ref;
+  return absd > 1.0e-5 || rel > 1.0e-3;
+}
+
+static const char* ln_var_stage_to_string(LnVarFirstDivergenceStage s) {
+  switch (s) {
+    case LnVarFirstDivergenceStage::SUM_OR_SUMSQ:
+      return "summation/sumsq accumulation";
+    case LnVarFirstDivergenceStage::MOMENT_DERIVED:
+      return "derived moments (mean/ex2/mean_sq)";
+    case LnVarFirstDivergenceStage::VAR_FORMULA:
+      return "variance formation (ex2-mean_sq vs residual)";
+    case LnVarFirstDivergenceStage::POST_VAR_HANDLING:
+      return "post-var handling (clamp/eps/inv_std_input)";
+    default:
+      return "none";
+  }
+}
+
+static LnVarFirstDivergenceStage detect_first_var_divergence(const LnVarTokenDiag& d) {
+  if (is_material_diff(d.base_sum, d.exp_sum) || is_material_diff(d.base_sumsq, d.exp_sumsq)) {
+    return LnVarFirstDivergenceStage::SUM_OR_SUMSQ;
+  }
+  if (is_material_diff(d.base_mean, d.exp_mean) ||
+      is_material_diff(d.base_ex2, d.exp_ex2) ||
+      is_material_diff(d.base_mean_sq, d.exp_mean_sq)) {
+    return LnVarFirstDivergenceStage::MOMENT_DERIVED;
+  }
+  if (is_material_diff(d.base_var_raw, d.exp_var_raw)) {
+    return LnVarFirstDivergenceStage::VAR_FORMULA;
+  }
+  if (is_material_diff(d.base_var_final, d.exp_var_final) ||
+      is_material_diff(d.base_eps_applied, d.exp_eps_applied) ||
+      is_material_diff(d.base_inv_std_input, d.exp_inv_std_input)) {
+    return LnVarFirstDivergenceStage::POST_VAR_HANDLING;
+  }
+  return LnVarFirstDivergenceStage::NONE;
+}
+
+static void append_var_pair_line(std::ostringstream& oss, const char* label, float base_v, float exp_v) {
+  oss << label
+      << " base/exp=" << base_v << " / " << exp_v
+      << " abs_diff=" << abs_diff_f(base_v, exp_v)
+      << " rel_diff=" << rel_diff_f(base_v, exp_v)
+      << "\n";
+}
+
+static void append_ln_var_token_details(std::ostringstream& oss, const LnVarTokenDiag& d) {
+  oss << "[Pattern " << d.pattern << "] [Site " << aecct_ref::ref_ln_debug_site_name(d.site)
+      << "] [Token " << d.token << "]\n";
+  oss << "first_divergence_stage: " << ln_var_stage_to_string(d.first_stage) << "\n";
+  oss << "Baseline:\n";
+  oss << "  sum=" << d.base_sum
+      << " sumsq=" << d.base_sumsq
+      << " mean=" << d.base_mean
+      << " ex2=" << d.base_ex2
+      << " mean_sq=" << d.base_mean_sq
+      << " var_raw=" << d.base_var_raw
+      << " var_final=" << d.base_var_final
+      << " eps_applied=" << d.base_eps_applied
+      << " inv_std_input=" << d.base_inv_std_input
+      << "\n";
+  oss << "  var(residual)=" << d.base_var_from_residual
+      << " var(ex2-mean_sq)=" << d.base_var_from_ex2
+      << " order(sum seq/tile)=" << d.base_sum_seq << " / " << d.base_sum_tile
+      << " order(sumsq seq/tile)=" << d.base_sumsq_seq << " / " << d.base_sumsq_tile
+      << "\n";
+  oss << "Experimental:\n";
+  oss << "  sum=" << d.exp_sum
+      << " sumsq=" << d.exp_sumsq
+      << " mean=" << d.exp_mean
+      << " ex2=" << d.exp_ex2
+      << " mean_sq=" << d.exp_mean_sq
+      << " var_raw=" << d.exp_var_raw
+      << " var_final=" << d.exp_var_final
+      << " eps_applied=" << d.exp_eps_applied
+      << " inv_std_input=" << d.exp_inv_std_input
+      << "\n";
+  oss << "  var(residual)=" << d.exp_var_from_residual
+      << " var(ex2-mean_sq)=" << d.exp_var_from_ex2
+      << " order(sum seq/tile)=" << d.exp_sum_seq << " / " << d.exp_sum_tile
+      << " order(sumsq seq/tile)=" << d.exp_sumsq_seq << " / " << d.exp_sumsq_tile
+      << "\n";
+  oss << "Differences:\n";
+  append_var_pair_line(oss, "  sum           ", d.base_sum, d.exp_sum);
+  append_var_pair_line(oss, "  sumsq         ", d.base_sumsq, d.exp_sumsq);
+  append_var_pair_line(oss, "  mean          ", d.base_mean, d.exp_mean);
+  append_var_pair_line(oss, "  ex2           ", d.base_ex2, d.exp_ex2);
+  append_var_pair_line(oss, "  mean_sq       ", d.base_mean_sq, d.exp_mean_sq);
+  append_var_pair_line(oss, "  var_raw       ", d.base_var_raw, d.exp_var_raw);
+  append_var_pair_line(oss, "  var_final     ", d.base_var_final, d.exp_var_final);
+  append_var_pair_line(oss, "  eps_applied   ", d.base_eps_applied, d.exp_eps_applied);
+  append_var_pair_line(oss, "  inv_std_input ", d.base_inv_std_input, d.exp_inv_std_input);
+  append_var_pair_line(oss, "  var(residual) ", d.base_var_from_residual, d.exp_var_from_residual);
+  append_var_pair_line(oss, "  var(ex2 path) ", d.base_var_from_ex2, d.exp_var_from_ex2);
+  oss << "  order_delta_base(sum/sumsq): "
+      << abs_diff_f(d.base_sum_seq, d.base_sum_tile) << " / "
+      << abs_diff_f(d.base_sumsq_seq, d.base_sumsq_tile) << "\n";
+  oss << "  order_delta_exp(sum/sumsq): "
+      << abs_diff_f(d.exp_sum_seq, d.exp_sum_tile) << " / "
+      << abs_diff_f(d.exp_sumsq_seq, d.exp_sumsq_tile) << "\n";
+  oss << "  LN output max/mean abs diff: "
+      << d.y_max_abs_diff << " / " << d.y_mean_abs_diff << "\n\n";
+}
+
+static void dump_ln_var_debug_report(
+  int pattern_begin,
+  int pattern_count,
+  const std::vector<LnDebugEntryRow>& baseline_entries,
+  const std::vector<LnDebugEntryRow>& experiment_entries,
+  const std::string& out_path
+) {
+  std::unordered_map<std::uint64_t, std::size_t> exp_index;
+  exp_index.reserve(experiment_entries.size());
+  for (std::size_t i = 0; i < experiment_entries.size(); ++i) {
+    exp_index[make_ln_debug_key(
+      experiment_entries[i].sample_index,
+      experiment_entries[i].site,
+      experiment_entries[i].token)] = i;
+  }
+
+  std::vector<LnVarTokenDiag> token_diags;
+  token_diags.reserve(baseline_entries.size());
+  double sum_abs_diff_sum = 0.0;
+  double sumsq_abs_diff_sum = 0.0;
+  double mean_abs_diff_sum = 0.0;
+  double ex2_abs_diff_sum = 0.0;
+  double mean_sq_abs_diff_sum = 0.0;
+  double var_raw_abs_diff_sum = 0.0;
+  double var_final_abs_diff_sum = 0.0;
+  double eps_abs_diff_sum = 0.0;
+  double inv_input_abs_diff_sum = 0.0;
+  double base_formula_gap_sum = 0.0;
+  double exp_formula_gap_sum = 0.0;
+  double base_formula_gap_max = 0.0;
+  double exp_formula_gap_max = 0.0;
+  double base_order_sum_abs = 0.0;
+  double exp_order_sum_abs = 0.0;
+  double base_order_sumsq_abs = 0.0;
+  double exp_order_sumsq_abs = 0.0;
+  std::size_t cancellation_amp_count = 0U;
+  std::size_t order_significant_count = 0U;
+  std::size_t matched = 0U;
+  int stage_hist[5] = {0, 0, 0, 0, 0};
+
+  for (std::size_t i = 0; i < baseline_entries.size(); ++i) {
+    const LnDebugEntryRow& b = baseline_entries[i];
+    const auto it = exp_index.find(make_ln_debug_key(b.sample_index, b.site, b.token));
+    if (it == exp_index.end()) {
+      continue;
+    }
+    const LnDebugEntryRow& e = experiment_entries[it->second];
+    LnVarTokenDiag d{};
+    d.pattern = pattern_begin + b.sample_index;
+    d.site = b.site;
+    d.token = b.token;
+    d.base_sum = b.sum;
+    d.exp_sum = e.sum;
+    d.base_sumsq = b.sumsq;
+    d.exp_sumsq = e.sumsq;
+    d.base_mean = b.mean;
+    d.exp_mean = e.mean;
+    d.base_ex2 = b.ex2;
+    d.exp_ex2 = e.ex2;
+    d.base_mean_sq = b.mean_sq;
+    d.exp_mean_sq = e.mean_sq;
+    d.base_var_raw = b.var_raw;
+    d.exp_var_raw = e.var_raw;
+    d.base_var_final = b.var_final;
+    d.exp_var_final = e.var_final;
+    d.base_eps_applied = b.eps_applied;
+    d.exp_eps_applied = e.eps_applied;
+    d.base_inv_std_input = b.inv_std_input;
+    d.exp_inv_std_input = e.inv_std_input;
+    d.base_var_from_residual = b.var_from_residual;
+    d.exp_var_from_residual = e.var_from_residual;
+    d.base_var_from_ex2 = b.var_from_ex2;
+    d.exp_var_from_ex2 = e.var_from_ex2;
+    d.base_sum_seq = b.sum_seq;
+    d.exp_sum_seq = e.sum_seq;
+    d.base_sum_tile = b.sum_tile;
+    d.exp_sum_tile = e.sum_tile;
+    d.base_sumsq_seq = b.sumsq_seq;
+    d.exp_sumsq_seq = e.sumsq_seq;
+    d.base_sumsq_tile = b.sumsq_tile;
+    d.exp_sumsq_tile = e.sumsq_tile;
+    d.var_raw_abs_diff = abs_diff_f(b.var_raw, e.var_raw);
+    d.var_final_abs_diff = abs_diff_f(b.var_final, e.var_final);
+    d.first_stage = detect_first_var_divergence(d);
+
+    double y_abs_sum = 0.0;
+    double y_abs_max = 0.0;
+    for (int k = 0; k < LN_DEBUG_D_MODEL; ++k) {
+      const double ad = std::fabs(static_cast<double>(e.y[k]) - static_cast<double>(b.y[k]));
+      y_abs_sum += ad;
+      if (ad > y_abs_max) {
+        y_abs_max = ad;
+      }
+    }
+    d.y_max_abs_diff = static_cast<float>(y_abs_max);
+    d.y_mean_abs_diff = static_cast<float>(y_abs_sum / static_cast<double>(LN_DEBUG_D_MODEL));
+    token_diags.push_back(d);
+    matched++;
+
+    sum_abs_diff_sum += abs_diff_f(d.base_sum, d.exp_sum);
+    sumsq_abs_diff_sum += abs_diff_f(d.base_sumsq, d.exp_sumsq);
+    mean_abs_diff_sum += abs_diff_f(d.base_mean, d.exp_mean);
+    ex2_abs_diff_sum += abs_diff_f(d.base_ex2, d.exp_ex2);
+    mean_sq_abs_diff_sum += abs_diff_f(d.base_mean_sq, d.exp_mean_sq);
+    var_raw_abs_diff_sum += d.var_raw_abs_diff;
+    var_final_abs_diff_sum += d.var_final_abs_diff;
+    eps_abs_diff_sum += abs_diff_f(d.base_eps_applied, d.exp_eps_applied);
+    inv_input_abs_diff_sum += abs_diff_f(d.base_inv_std_input, d.exp_inv_std_input);
+    const double base_formula_gap = abs_diff_f(d.base_var_from_residual, d.base_var_from_ex2);
+    const double exp_formula_gap = abs_diff_f(d.exp_var_from_residual, d.exp_var_from_ex2);
+    base_formula_gap_sum += base_formula_gap;
+    exp_formula_gap_sum += exp_formula_gap;
+    if (base_formula_gap > base_formula_gap_max) {
+      base_formula_gap_max = base_formula_gap;
+    }
+    if (exp_formula_gap > exp_formula_gap_max) {
+      exp_formula_gap_max = exp_formula_gap;
+    }
+    const float base_sum_order = abs_diff_f(d.base_sum_seq, d.base_sum_tile);
+    const float exp_sum_order = abs_diff_f(d.exp_sum_seq, d.exp_sum_tile);
+    const float base_sumsq_order = abs_diff_f(d.base_sumsq_seq, d.base_sumsq_tile);
+    const float exp_sumsq_order = abs_diff_f(d.exp_sumsq_seq, d.exp_sumsq_tile);
+    base_order_sum_abs += base_sum_order;
+    exp_order_sum_abs += exp_sum_order;
+    base_order_sumsq_abs += base_sumsq_order;
+    exp_order_sumsq_abs += exp_sumsq_order;
+    if (abs_diff_f(d.base_sum, d.exp_sum) < 1.0e-3f &&
+        abs_diff_f(d.base_sumsq, d.exp_sumsq) < 1.0e-3f &&
+        d.var_raw_abs_diff > 1.0e-2f) {
+      cancellation_amp_count++;
+    }
+    if (exp_sum_order > (0.25f * std::max(abs_diff_f(d.base_sum, d.exp_sum), 1.0e-12f)) ||
+        exp_sumsq_order > (0.25f * std::max(abs_diff_f(d.base_sumsq, d.exp_sumsq), 1.0e-12f))) {
+      order_significant_count++;
+    }
+    stage_hist[static_cast<int>(d.first_stage)]++;
+  }
+
+  std::vector<LnVarTokenDiag> pattern_worst(static_cast<std::size_t>(pattern_count));
+  std::vector<int> pattern_has(static_cast<std::size_t>(pattern_count), 0);
+  for (std::size_t i = 0; i < token_diags.size(); ++i) {
+    const LnVarTokenDiag& d = token_diags[i];
+    const int off = d.pattern - pattern_begin;
+    if (off < 0 || off >= pattern_count) {
+      continue;
+    }
+    if (pattern_has[static_cast<std::size_t>(off)] == 0 ||
+        d.var_final_abs_diff > pattern_worst[static_cast<std::size_t>(off)].var_final_abs_diff) {
+      pattern_worst[static_cast<std::size_t>(off)] = d;
+      pattern_has[static_cast<std::size_t>(off)] = 1;
+    }
+  }
+
+  std::vector<LnVarTokenDiag> sorted_by_var_final = token_diags;
+  std::sort(sorted_by_var_final.begin(), sorted_by_var_final.end(),
+    [](const LnVarTokenDiag& a, const LnVarTokenDiag& b) {
+      return a.var_final_abs_diff > b.var_final_abs_diff;
+    });
+  std::vector<LnVarTokenDiag> sorted_by_var_raw = token_diags;
+  std::sort(sorted_by_var_raw.begin(), sorted_by_var_raw.end(),
+    [](const LnVarTokenDiag& a, const LnVarTokenDiag& b) {
+      return a.var_raw_abs_diff > b.var_raw_abs_diff;
+    });
+
+  std::ostringstream oss;
+  oss.setf(std::ios::scientific);
+  oss << std::setprecision(9);
+  oss << "=== LN Var Alignment Diagnosis ===\n";
+  oss << "baseline_entries: " << baseline_entries.size() << "\n";
+  oss << "experiment_entries: " << experiment_entries.size() << "\n";
+  oss << "matched_entries: " << matched << "\n";
+  oss << "baseline_variance_formula(actual): var = mean((x - mean)^2)\n";
+  oss << "baseline_variance_formula(reconstructed): var = E[x^2] - mean^2\n";
+  oss << "experimental_variance_formula(actual): var = E[x^2] - mean^2\n";
+  oss << "mathematical_equivalence(ideal arithmetic): yes\n";
+  oss << "accumulator_types: baseline(sum=float,var_acc=float) experimental(sum=float,sumsq=float)\n";
+  oss << "accumulation_order: baseline=sequential(0..31), experimental=tiled(tile=8, tile-major)\n";
+  if (matched > 0U) {
+    const double inv = 1.0 / static_cast<double>(matched);
+    oss << "mean_abs_diff(sum): " << (sum_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(sumsq): " << (sumsq_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(mean): " << (mean_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(ex2): " << (ex2_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(mean_sq): " << (mean_sq_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(var_raw): " << (var_raw_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(var_final): " << (var_final_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(eps_applied): " << (eps_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_diff(inv_std_input): " << (inv_input_abs_diff_sum * inv) << "\n";
+    oss << "mean_abs_gap_base(var_residual vs var_ex2): " << (base_formula_gap_sum * inv) << "\n";
+    oss << "mean_abs_gap_exp(var_residual vs var_ex2): " << (exp_formula_gap_sum * inv) << "\n";
+    oss << "max_abs_gap_base(var_residual vs var_ex2): " << base_formula_gap_max << "\n";
+    oss << "max_abs_gap_exp(var_residual vs var_ex2): " << exp_formula_gap_max << "\n";
+    oss << "mean_order_delta_base(sum/sumsq): " << (base_order_sum_abs * inv) << " / "
+        << (base_order_sumsq_abs * inv) << "\n";
+    oss << "mean_order_delta_exp(sum/sumsq): " << (exp_order_sum_abs * inv) << " / "
+        << (exp_order_sumsq_abs * inv) << "\n";
+  }
+  oss << "first_divergence_histogram:\n";
+  oss << "  none: " << stage_hist[static_cast<int>(LnVarFirstDivergenceStage::NONE)] << "\n";
+  oss << "  summation/sumsq: " << stage_hist[static_cast<int>(LnVarFirstDivergenceStage::SUM_OR_SUMSQ)] << "\n";
+  oss << "  derived moments: " << stage_hist[static_cast<int>(LnVarFirstDivergenceStage::MOMENT_DERIVED)] << "\n";
+  oss << "  variance formation: " << stage_hist[static_cast<int>(LnVarFirstDivergenceStage::VAR_FORMULA)] << "\n";
+  oss << "  post-var handling: " << stage_hist[static_cast<int>(LnVarFirstDivergenceStage::POST_VAR_HANDLING)] << "\n";
+  oss << "cancellation_amplification_count(sum/sumsq close but var_raw large): "
+      << cancellation_amp_count << "\n";
+  oss << "order_significant_count(exp order delta >=25% of base-exp sum/sumsq diff): "
+      << order_significant_count << "\n\n";
+
+  oss << "=== Worst Token Per Pattern (rank by |var_final_base - var_final_exp|) ===\n";
+  for (int p = 0; p < pattern_count; ++p) {
+    if (pattern_has[static_cast<std::size_t>(p)] == 0) {
+      continue;
+    }
+    append_ln_var_token_details(oss, pattern_worst[static_cast<std::size_t>(p)]);
+  }
+
+  if (!sorted_by_var_final.empty()) {
+    oss << "=== Global Worst Token Across Batch (by |var_final diff|) ===\n";
+    append_ln_var_token_details(oss, sorted_by_var_final.front());
+  }
+
+  oss << "=== Top-3 by |var_final_base - var_final_exp| ===\n";
+  for (std::size_t i = 0; i < std::min<std::size_t>(3U, sorted_by_var_final.size()); ++i) {
+    oss << "[Rank " << (i + 1U) << "]\n";
+    append_ln_var_token_details(oss, sorted_by_var_final[i]);
+  }
+
+  oss << "=== Top-3 by |var_raw_base - var_raw_exp| ===\n";
+  for (std::size_t i = 0; i < std::min<std::size_t>(3U, sorted_by_var_raw.size()); ++i) {
+    oss << "[Rank " << (i + 1U) << "]\n";
+    append_ln_var_token_details(oss, sorted_by_var_raw[i]);
+  }
+
+  const std::string report = oss.str();
+  std::printf("%s", report.c_str());
   if (!out_path.empty()) {
     std::filesystem::path p(out_path);
     if (p.has_parent_path()) {
@@ -2346,6 +2807,7 @@ int main(int argc, char** argv) {
   std::printf("  topk           : %d\n", opts.topk);
   std::printf("  summary_only   : %d\n", opts.summary_only ? 1 : 0);
   std::printf("  ln_debug       : %d\n", opts.ln_debug ? 1 : 0);
+  std::printf("  ln_var_debug   : %d\n", opts.ln_var_debug ? 1 : 0);
 
   perf.startup_init_s = elapsed_sec(t_program_start, now_tp());
 
@@ -2585,7 +3047,8 @@ int main(int argc, char** argv) {
       need_experiment_outputs &&
       (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD) &&
       (opts.experiment_ln_mode == opts.ln_mode) &&
-      !opts.ln_debug;
+      !opts.ln_debug &&
+      !opts.ln_var_debug;
     if (experiment_use_reconstruct) {
       baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
     }
@@ -2855,13 +3318,15 @@ int main(int argc, char** argv) {
   const bool experiment_use_reconstruct =
     (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD) &&
     (opts.experiment_ln_mode == opts.ln_mode) &&
-    !opts.ln_debug;
+    !opts.ln_debug &&
+    !opts.ln_var_debug;
   if (experiment_use_reconstruct) {
     baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
   }
 
-  aecct_ref::set_ref_ln_debug_enabled(opts.ln_debug);
-  if (opts.ln_debug) {
+  const bool enable_ln_trace = opts.ln_debug || opts.ln_var_debug;
+  aecct_ref::set_ref_ln_debug_enabled(enable_ln_trace);
+  if (enable_ln_trace) {
     aecct_ref::reset_ref_ln_debug_trace();
   }
   const auto t_baseline_start = now_tp();
@@ -2874,7 +3339,7 @@ int main(int argc, char** argv) {
     experiment_use_reconstruct ? baseline_finalhead_s_t.data() : nullptr
   );
   perf.baseline_model_s = elapsed_sec(t_baseline_start, now_tp());
-  if (opts.ln_debug) {
+  if (enable_ln_trace) {
     if (!collect_ln_debug_entries(baseline_ln_debug_entries)) {
       std::printf("[warn] Failed to collect baseline LN debug entries.\n");
     }
@@ -2916,7 +3381,7 @@ int main(int argc, char** argv) {
   }
   experiment_full_stats = aecct_ref::get_ref_full_quant_stats();
   perf.experiment_path_s = elapsed_sec(t_experiment_start, now_tp());
-  if (opts.ln_debug) {
+  if (enable_ln_trace) {
     if (!collect_ln_debug_entries(experiment_ln_debug_entries)) {
       std::printf("[warn] Failed to collect experiment LN debug entries.\n");
     }
@@ -3003,6 +3468,17 @@ int main(int argc, char** argv) {
       ln_debug_path
     );
     std::printf("LN debug report txt     : %s\n", ln_debug_path.c_str());
+  }
+  if (opts.ln_var_debug) {
+    const std::string ln_var_debug_path = csv_path + ".ln_var_debug.txt";
+    dump_ln_var_debug_report(
+      range.begin,
+      range.count,
+      baseline_ln_debug_entries,
+      experiment_ln_debug_entries,
+      ln_var_debug_path
+    );
+    std::printf("LN var debug report txt : %s\n", ln_var_debug_path.c_str());
   }
   perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
   perf.total_s = elapsed_sec(t_program_start, now_tp());
