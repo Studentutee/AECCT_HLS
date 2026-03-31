@@ -342,7 +342,12 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     u32_t* phase_tile_bridge_family_owner_ok = 0,
     u32_t* phase_tile_bridge_family_consumed_count = 0,
     u32_t* phase_tile_bridge_family_compare_ok = 0,
-    u32_t* phase_tile_bridge_family_case_mask = 0
+    u32_t* phase_tile_bridge_family_case_mask = 0,
+    const u32_t* phase_tile_bridge_family_head_idx = 0,
+    const u32_t* phase_tile_bridge_family_key_token_begin = 0,
+    const u32_t* phase_tile_bridge_family_key_token_count = 0,
+    u32_t* phase_tile_bridge_family_desc_visible_count = 0,
+    u32_t* phase_tile_bridge_family_desc_case_mask = 0
 ) {
     static const uint32_t kPhaseTileBridgeFamilyMaxCases = 8u;
     static const uint32_t kPhaseTileBridgeFamilyStrideWords =
@@ -360,6 +365,8 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     if (phase_tile_bridge_family_consumed_count != 0) { *phase_tile_bridge_family_consumed_count = (u32_t)0u; }
     if (phase_tile_bridge_family_compare_ok != 0) { *phase_tile_bridge_family_compare_ok = (u32_t)1u; }
     if (phase_tile_bridge_family_case_mask != 0) { *phase_tile_bridge_family_case_mask = (u32_t)0u; }
+    if (phase_tile_bridge_family_desc_visible_count != 0) { *phase_tile_bridge_family_desc_visible_count = (u32_t)0u; }
+    if (phase_tile_bridge_family_desc_case_mask != 0) { *phase_tile_bridge_family_desc_case_mask = (u32_t)0u; }
     if (!attn_phaseb_softmax_sram_view_ok(sram)) {
         return false;
     }
@@ -412,10 +419,16 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     uint32_t phase_tile_bridge_family_d_tile_u32[kPhaseTileBridgeFamilyMaxCases];
     uint32_t phase_tile_bridge_family_valid_words_u32[kPhaseTileBridgeFamilyMaxCases];
     uint32_t phase_tile_bridge_family_base_word_u32[kPhaseTileBridgeFamilyMaxCases];
+    uint32_t phase_tile_bridge_family_head_idx_u32[kPhaseTileBridgeFamilyMaxCases];
+    uint32_t phase_tile_bridge_family_key_token_begin_u32[kPhaseTileBridgeFamilyMaxCases];
+    uint32_t phase_tile_bridge_family_key_token_count_u32[kPhaseTileBridgeFamilyMaxCases];
     uint32_t phase_tile_bridge_family_seen_words[kPhaseTileBridgeFamilyMaxCases];
+    bool phase_tile_bridge_family_desc_seen[kPhaseTileBridgeFamilyMaxCases];
     uint32_t phase_tile_bridge_family_visible_count_u32 = 0u;
     uint32_t phase_tile_bridge_family_consumed_count_u32 = 0u;
     uint32_t phase_tile_bridge_family_case_mask_u32 = 0u;
+    uint32_t phase_tile_bridge_family_desc_visible_count_u32 = 0u;
+    uint32_t phase_tile_bridge_family_desc_case_mask_u32 = 0u;
     bool phase_tile_bridge_seen = false;
     if (phase_tile_bridge_enabled) {
         if (phase_tile_bridge_d_tile >= d_tile_count) {
@@ -441,17 +454,57 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                 (uint32_t)phase_tile_bridge_family_d_tile_idx[c].to_uint();
             const uint32_t case_valid =
                 (uint32_t)phase_tile_bridge_family_v_words_valid[c].to_uint();
+            const uint32_t case_head_idx =
+                (phase_tile_bridge_family_head_idx != 0)
+                    ? (uint32_t)phase_tile_bridge_family_head_idx[c].to_uint()
+                    : 0u;
+            const uint32_t case_key_token_begin =
+                (phase_tile_bridge_family_key_token_begin != 0)
+                    ? (uint32_t)phase_tile_bridge_family_key_token_begin[c].to_uint()
+                    : 0u;
+            const uint32_t case_key_token_count =
+                (phase_tile_bridge_family_key_token_count != 0)
+                    ? (uint32_t)phase_tile_bridge_family_key_token_count[c].to_uint()
+                    : 1u;
             if (case_d_tile >= d_tile_count) {
                 return false;
             }
             if (case_valid == 0u || case_valid > tile_words || case_valid > d_head) {
                 return false;
             }
-            if (phase_tile_bridge_enabled && case_d_tile == phase_tile_bridge_d_tile) {
+            if (case_head_idx >= n_heads) {
+                return false;
+            }
+            if (case_key_token_count == 0u || case_key_token_count > token_count) {
+                return false;
+            }
+            if (case_key_token_begin >= token_count ||
+                (case_key_token_begin + case_key_token_count) > token_count) {
+                return false;
+            }
+            // W4-C1 bounded contract-only guard:
+            // current helper only consumes bridge descriptors in INIT_ACC (first key token).
+            if (case_key_token_begin != 0u || case_key_token_count != 1u) {
+                return false;
+            }
+            if (phase_tile_bridge_enabled && case_d_tile == phase_tile_bridge_d_tile &&
+                case_head_idx == 0u) {
                 return false;
             }
             ATTN_P11AF_TILE_BRIDGE_FAMILY_OVERLAP_LOOP: for (uint32_t p = 0u; p < c; ++p) {
-                if (phase_tile_bridge_family_d_tile_u32[p] == case_d_tile) {
+                const bool same_head =
+                    (phase_tile_bridge_family_head_idx_u32[p] == case_head_idx);
+                const bool same_d_tile =
+                    (phase_tile_bridge_family_d_tile_u32[p] == case_d_tile);
+                const uint32_t prev_begin =
+                    phase_tile_bridge_family_key_token_begin_u32[p];
+                const uint32_t prev_end =
+                    prev_begin + phase_tile_bridge_family_key_token_count_u32[p];
+                const uint32_t this_end =
+                    case_key_token_begin + case_key_token_count;
+                const bool token_overlap =
+                    !(this_end <= prev_begin || case_key_token_begin >= prev_end);
+                if (same_head && same_d_tile && token_overlap) {
                     return false;
                 }
             }
@@ -459,7 +512,13 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
             phase_tile_bridge_family_valid_words_u32[c] = case_valid;
             phase_tile_bridge_family_base_word_u32[c] =
                 (uint32_t)phase_tile_bridge_family_v_base_words[c].to_uint();
+            phase_tile_bridge_family_head_idx_u32[c] = case_head_idx;
+            phase_tile_bridge_family_key_token_begin_u32[c] =
+                case_key_token_begin;
+            phase_tile_bridge_family_key_token_count_u32[c] =
+                case_key_token_count;
             phase_tile_bridge_family_seen_words[c] = 0u;
+            phase_tile_bridge_family_desc_seen[c] = false;
         }
     }
 
@@ -522,6 +581,29 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
             if (!have_state) {
                 running_max = score;
                 running_l = softmax_sum_t(1);
+                if (phase_tile_bridge_family_enabled) {
+                    ATTN_P11AF_TILE_BRIDGE_FAMILY_DESC_PROBE_LOOP: for (uint32_t c = 0u;
+                         c < phase_tile_bridge_family_case_count_u32; ++c) {
+                        const bool desc_selected =
+                            (h == phase_tile_bridge_family_head_idx_u32[c]) &&
+                            (j >= phase_tile_bridge_family_key_token_begin_u32[c]) &&
+                            (j < (phase_tile_bridge_family_key_token_begin_u32[c] +
+                                  phase_tile_bridge_family_key_token_count_u32[c]));
+                        if (desc_selected && !phase_tile_bridge_family_desc_seen[c]) {
+                            phase_tile_bridge_family_desc_seen[c] = true;
+                            phase_tile_bridge_family_desc_visible_count_u32 += 1u;
+                            phase_tile_bridge_family_desc_case_mask_u32 |= (1u << c);
+                            if (phase_tile_bridge_family_desc_visible_count != 0) {
+                                *phase_tile_bridge_family_desc_visible_count =
+                                    (u32_t)phase_tile_bridge_family_desc_visible_count_u32;
+                            }
+                            if (phase_tile_bridge_family_desc_case_mask != 0) {
+                                *phase_tile_bridge_family_desc_case_mask =
+                                    (u32_t)phase_tile_bridge_family_desc_case_mask_u32;
+                            }
+                        }
+                    }
+                }
                 ATTN_P11AF_MAINLINE_INIT_ACC_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
                     const uint32_t tile_offset = dt * tile_words;
                     const uint32_t valid =
@@ -531,10 +613,16 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                     // Local-only W4-B1/W4-C0 bounded tile bridge:
                     // consume caller-fed V tile descriptors at phase-B init-acc entry only.
                     int32_t phase_tile_bridge_family_case_idx = -1;
-                    if (phase_tile_bridge_family_enabled && h == 0u) {
+                    if (phase_tile_bridge_family_enabled) {
                         ATTN_P11AF_TILE_BRIDGE_FAMILY_CASE_LOOP: for (uint32_t c = 0u;
                              c < phase_tile_bridge_family_case_count_u32; ++c) {
-                            if (dt == phase_tile_bridge_family_d_tile_u32[c]) {
+                            const bool family_selected =
+                                (h == phase_tile_bridge_family_head_idx_u32[c]) &&
+                                (j >= phase_tile_bridge_family_key_token_begin_u32[c]) &&
+                                (j < (phase_tile_bridge_family_key_token_begin_u32[c] +
+                                      phase_tile_bridge_family_key_token_count_u32[c])) &&
+                                (dt == phase_tile_bridge_family_d_tile_u32[c]);
+                            if (family_selected) {
                                 if (phase_tile_bridge_family_case_idx >= 0) {
                                     return false;
                                 }
@@ -741,6 +829,14 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
         if (phase_tile_bridge_family_case_mask != 0) {
             *phase_tile_bridge_family_case_mask =
                 (u32_t)phase_tile_bridge_family_case_mask_u32;
+        }
+        if (phase_tile_bridge_family_desc_visible_count != 0) {
+            *phase_tile_bridge_family_desc_visible_count =
+                (u32_t)phase_tile_bridge_family_desc_visible_count_u32;
+        }
+        if (phase_tile_bridge_family_desc_case_mask != 0) {
+            *phase_tile_bridge_family_desc_case_mask =
+                (u32_t)phase_tile_bridge_family_desc_case_mask_u32;
         }
     }
     fallback_taken = false;

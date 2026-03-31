@@ -47,6 +47,37 @@
   - When `d_tile_count > 1`, TB validates disjoint single+family selector coexistence.
 - Status: advanced (contract-validated bounded implementation).
 
+### Hotspot B2: SoftmaxOut head/token family descriptor contract-only (W4-C1)
+- Hook point: `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h::attn_phaseb_top_managed_softmax_out_mainline`
+- C0 landed contract location:
+  - `ATTN_P11AF_MAINLINE_INIT_ACC_TILE_LOOP` family selector/consume neighborhood.
+- C1 bounded insertion points:
+  - family descriptor precheck block (head/token descriptor validity + bounded guard)
+  - descriptor visibility probe loop:
+    - `ATTN_P11AF_TILE_BRIDGE_FAMILY_DESC_PROBE_LOOP`
+  - family selector condition refinement in init-acc tile consume loop.
+- Minimal descriptor set (contract-only):
+  - selector:
+    - `phase_tile_bridge_family_head_idx[c]`
+    - `phase_tile_bridge_family_d_tile_idx[c]`
+  - payload span:
+    - `phase_tile_bridge_family_key_token_begin[c]`
+    - `phase_tile_bridge_family_key_token_count[c]`
+  - observability only:
+    - `phase_tile_bridge_family_desc_visible_count`
+    - `phase_tile_bridge_family_desc_case_mask`
+  - helper-only passthrough (must stay internal Top helper):
+    - all C1 arrays/counters above (no external Top 4-channel contract exposure)
+- Bounded guard (current C1 scope):
+  - descriptor token span is constrained to init-acc domain only:
+    - `case_key_token_begin == 0`
+    - `case_key_token_count == 1`
+- Why still bounded:
+  - no renorm/acc/writeback skeleton reordering
+  - no external Top interface drift
+  - no second ownership/arbitration semantics
+- Status: advanced (contract-only + probe validated).
+
 ## C. Near Skeleton Risk Zone (Do Not Force)
 
 ### Hotspot C1: AttnLayer0 score/reduction/writeback core loops
@@ -72,4 +103,5 @@
 ## Priority Evolution (Current)
 1. W4-B8/W4-B9 QkScore mature line: done.
 2. W4-C0 contract-first mini-campaign: done with bounded contract delta.
-3. Remaining deferred: AttnLayer0/TransformerLayer skeleton-level ownership migration.
+3. W4-C1 SoftmaxOut head/token contract-only groundwork: done with probe validation.
+4. Remaining deferred: SoftmaxOut online core migration + AttnLayer0/TransformerLayer skeleton-level ownership migration.
