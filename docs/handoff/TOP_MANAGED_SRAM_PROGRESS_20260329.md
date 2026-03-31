@@ -722,3 +722,46 @@
 ### Deferred boundary after W4-B1
 - This round is not full Wave4 payload migration.
 - Inner Phase-B compute/reduction/writeback loops remain SRAM-centric by bounded policy.
+
+## Night-Batch Extension: W4-B2 Phase-B QkScore Bounded Score-tile Bridge (Local-only)
+- Completed one additional bounded Wave4 cut beyond probe-only on `AttnPhaseBTopManagedQkScore`.
+- Added one bounded caller-fed/top-fed score-tile bridge at QkScore token-write boundary:
+  - `run_p11ae_layer0_top_managed_qk_score(...)`
+  - `attn_phaseb_top_managed_qk_score_mainline(...)`
+- Scope remained bounded:
+  - no external formal contract change
+  - no broad rewrite
+  - no inner compute/reduction/writeback major-loop rewrite
+
+### W4-B2 local-only evidence
+- `build/p11w4b2/qkscore_tile_bridge/run.log`: PASS
+  - `W4B2_QKSCORE_TILE_BRIDGE_VISIBLE PASS`
+  - `W4B2_QKSCORE_OWNERSHIP_CHECK PASS`
+  - `W4B2_QKSCORE_NO_SPURIOUS_TOUCH PASS`
+  - `W4B2_QKSCORE_EXPECTED_COMPARE PASS`
+  - `W4B2_QKSCORE_BRIDGE_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`: PASS
+  - includes `guard: W4-B2 QkScore bounded score-tile bridge anchors OK`
+- Full requested chain retained PASS:
+  - W4-B1 and W4-M1/M2/M3(Q/KV) runners
+  - G7/G6/G5 FFN runners
+  - P11AH/P11AJ mainline + provenance
+  - helper split guard / design purity / repo hygiene pre+post
+- Bundle:
+  - `build/evidence/w4b2_qkscore_tile_bridge_20260331/evidence_manifest.txt`
+
+### W4-B2 artifact index
+- `docs/handoff/TOP_MANAGED_SRAM_W4B2_QKSCORE_TILE_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B2_EVIDENCE_INDEX_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B2_COMPLETION_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_CAMPAIGN_COMPLETION_20260331.md`
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `scripts/local/run_p11w4b2_qkscore_tile_bridge.ps1`
+- `tb/tb_w4b2_qkscore_tile_bridge.cpp`
+
+### Deferred boundary after W4-B2
+- This round is not full Wave4 payload migration.
+- W4-B2 bridges one bounded score tile on a constrained key-range path.
+- QkScore inner compute/reduction/writeback loops remain SRAM-centric by bounded policy.

@@ -1036,3 +1036,71 @@
 
 7. Next recommended step
 - W4-B2: bounded QK-score tile bridge with the same ownership/no-spurious/mismatch-reject harness.
+
+## Task C21: W4-B2 Phase-B QkScore Bounded Score-tile Bridge
+1. Summary
+- Landed one bounded tile-level bridge on `AttnPhaseBTopManagedQkScore`.
+- This cut advances beyond phase-entry probe by consuming one caller-fed/top-fed score tile in bounded key-range scope.
+- Inner compute/reduction/writeback flow is intentionally untouched.
+
+2. Exact files changed
+- `src/blocks/AttnPhaseBTopManagedQkScore.h`
+- `src/Top.h`
+- `scripts/check_top_managed_sram_boundary_regression.ps1`
+- `tb/tb_w4b2_qkscore_tile_bridge.cpp`
+- `scripts/local/run_p11w4b2_qkscore_tile_bridge.ps1`
+- `docs/handoff/TOP_MANAGED_SRAM_PROGRESS_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_MINCUTS_20260329.md`
+- `docs/handoff/MORNING_REVIEW_TOP_MANAGED_SRAM_20260329.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B2_QKSCORE_TILE_BRIDGE_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B2_EVIDENCE_INDEX_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4B2_COMPLETION_20260331.md`
+- `docs/handoff/TOP_MANAGED_SRAM_W4_QKSCORE_CAMPAIGN_COMPLETION_20260331.md`
+
+3. Exact commands run
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4b2_qkscore_tile_bridge.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_top_managed_sram_boundary_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4b1_phaseb_tile_bridge.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m3_kv_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m3_phasea_q_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m2_softmaxout_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11w4m1_qkscore_phase_entry_probe.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g7_ffn_w1_bias_descriptor_strict.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_w1_bias_descriptor.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g6_ffn_fallback_observability.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_w1_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_fallback_policy.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_ffn_closure_campaign.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave3_ffn_payload_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11g5_wave35_ffn_w1_weight_migration.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11ah_full_loop_local_e2e.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/local/run_p11aj_top_managed_sram_provenance.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_helper_channel_split_regression.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_design_purity.ps1`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`
+- `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase post`
+
+4. Actual execution evidence / log excerpt
+- `build/p11w4b2/qkscore_tile_bridge/run.log`:
+  - `W4B2_QKSCORE_TILE_BRIDGE_VISIBLE PASS`
+  - `W4B2_QKSCORE_OWNERSHIP_CHECK PASS`
+  - `W4B2_QKSCORE_NO_SPURIOUS_TOUCH PASS`
+  - `W4B2_QKSCORE_EXPECTED_COMPARE PASS`
+  - `W4B2_QKSCORE_BRIDGE_MISMATCH_REJECT PASS`
+- `build/top_managed_sram_guard/check_top_managed_sram_boundary_regression.log`:
+  - `guard: W4-B2 QkScore bounded score-tile bridge anchors OK`
+  - `PASS: check_top_managed_sram_boundary_regression`
+
+5. Governance posture
+- local-only bounded micro-cut
+- not Catapult closure
+- not SCVerify closure
+- Top remains sole production shared-SRAM owner
+
+6. Residual risks
+- W4-B2 bridges one bounded score tile only.
+- full QkScore payload migration is still deferred.
+- inner compute/reduction/writeback loops remain SRAM-centric.
+
+7. Next recommended step
+- W4-B3: bounded non-head0/secondary-range score tile bridge or strict bridge-ready gating expansion with the same no-spurious and mismatch-reject harness.

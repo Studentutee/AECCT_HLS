@@ -233,12 +233,24 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     u32_t phase_entry_probe_words_valid = (u32_t)0u,
     u32_t* phase_entry_probe_visible = 0,
     u32_t* phase_entry_probe_owner_ok = 0,
-    u32_t* phase_entry_probe_compare_ok = 0
+    u32_t* phase_entry_probe_compare_ok = 0,
+    u32_t score_tile_bridge_base_word = (u32_t)0u,
+    const u32_t* score_tile_bridge_words = 0,
+    u32_t score_tile_bridge_words_valid = (u32_t)0u,
+    u32_t score_tile_bridge_key_begin = (u32_t)0u,
+    u32_t* score_tile_bridge_visible = 0,
+    u32_t* score_tile_bridge_owner_ok = 0,
+    u32_t* score_tile_bridge_consumed = 0,
+    u32_t* score_tile_bridge_compare_ok = 0
 ) {
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
     if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
     if (phase_entry_probe_compare_ok != 0) { *phase_entry_probe_compare_ok = (u32_t)0u; }
+    if (score_tile_bridge_visible != 0) { *score_tile_bridge_visible = (u32_t)0u; }
+    if (score_tile_bridge_owner_ok != 0) { *score_tile_bridge_owner_ok = (u32_t)0u; }
+    if (score_tile_bridge_consumed != 0) { *score_tile_bridge_consumed = (u32_t)0u; }
+    if (score_tile_bridge_compare_ok != 0) { *score_tile_bridge_compare_ok = (u32_t)0u; }
     if (!attn_phaseb_sram_view_ok(sram)) {
         return false;
     }
@@ -277,6 +289,26 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
         (phase_entry_probe_q_words != 0) &&
         (phase_entry_probe_k_words != 0) &&
         (phase_entry_probe_valid_words > 0u);
+    const uint32_t score_tile_bridge_valid_words = (uint32_t)score_tile_bridge_words_valid.to_uint();
+    const bool score_tile_bridge_enabled =
+        (score_tile_bridge_words != 0) &&
+        (score_tile_bridge_valid_words > 0u);
+    const uint32_t score_tile_bridge_key_begin_u32 = (uint32_t)score_tile_bridge_key_begin.to_uint();
+    bool score_tile_bridge_seen = false;
+    if (score_tile_bridge_enabled) {
+        if (score_tile_bridge_valid_words > token_count) {
+            return false;
+        }
+        if (score_tile_bridge_valid_words > tile_words) {
+            return false;
+        }
+        if (score_tile_bridge_key_begin_u32 >= token_count) {
+            return false;
+        }
+        if ((score_tile_bridge_key_begin_u32 + score_tile_bridge_valid_words) > token_count) {
+            return false;
+        }
+    }
 
     ATTN_P11AE_HEAD_LOOP: for (uint32_t h = 0u; h < n_heads; ++h) {
         const uint32_t head_col_base = h * d_head;
@@ -342,10 +374,48 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
                 }
             }
             const quant_acc_t scaled = dot * inv_sqrt_d_head;
-            sram[score_head_base + j] = quant_bits_from_acc(scaled);
+            const uint32_t scaled_bits = (uint32_t)quant_bits_from_acc(scaled).to_uint();
+            const bool score_tile_bridge_selected =
+                score_tile_bridge_enabled &&
+                (h == 0u) &&
+                (j >= score_tile_bridge_key_begin_u32) &&
+                (j < (score_tile_bridge_key_begin_u32 + score_tile_bridge_valid_words));
+            if (score_tile_bridge_selected) {
+                if (score_tile_bridge_visible != 0) {
+                    *score_tile_bridge_visible = (u32_t)1u;
+                }
+                const uint32_t expected_bridge_base = score_head_base + score_tile_bridge_key_begin_u32;
+                const bool owner_ok =
+                    ((uint32_t)score_tile_bridge_base_word.to_uint() == expected_bridge_base);
+                if (score_tile_bridge_owner_ok != 0) {
+                    *score_tile_bridge_owner_ok = (u32_t)(owner_ok ? 1u : 0u);
+                }
+                if (!owner_ok) {
+                    return false;
+                }
+                const uint32_t bridge_idx = j - score_tile_bridge_key_begin_u32;
+                const uint32_t bridge_bits = (uint32_t)score_tile_bridge_words[bridge_idx].to_uint();
+                const bool bridge_compare_ok = (bridge_bits == scaled_bits);
+                if (score_tile_bridge_compare_ok != 0) {
+                    *score_tile_bridge_compare_ok = (u32_t)(bridge_compare_ok ? 1u : 0u);
+                }
+                if (!bridge_compare_ok) {
+                    return false;
+                }
+                sram[score_head_base + j] = score_tile_bridge_words[bridge_idx];
+                if (score_tile_bridge_consumed != 0) {
+                    *score_tile_bridge_consumed = (u32_t)1u;
+                }
+                score_tile_bridge_seen = true;
+            } else {
+                sram[score_head_base + j] = (u32_t)scaled_bits;
+            }
         }
     }
 
+    if (score_tile_bridge_enabled && !score_tile_bridge_seen) {
+        return false;
+    }
     fallback_taken = false;
     return true;
 }
