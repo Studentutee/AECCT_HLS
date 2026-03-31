@@ -255,9 +255,11 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     u32_t* score_tile_bridge_family_compare_ok = 0,
     u32_t* score_tile_bridge_family_case_mask = 0
 ) {
-    static const uint32_t kScoreTileBridgeFamilyMaxCases = 4u;
+    // W4-B8: bounded family bridge coverage expansion to full head count.
+    static const uint32_t kScoreTileBridgeFamilyMaxCases = 8u;
+    // W4-B9: family bridge payload stride is promoted to token-domain span.
     static const uint32_t kScoreTileBridgeFamilyStrideWords =
-        (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        (uint32_t)ATTN_TOKEN_COUNT;
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
     if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
@@ -332,7 +334,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
         if (score_tile_bridge_valid_words > token_count) {
             return false;
         }
-        if (score_tile_bridge_valid_words > tile_words) {
+        if (score_tile_bridge_valid_words > (uint32_t)ATTN_TOKEN_COUNT) {
             return false;
         }
         if (score_tile_bridge_key_begin_u32 >= token_count) {
@@ -365,7 +367,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
                 (uint32_t)score_tile_bridge_family_key_begin[c].to_uint();
             const uint32_t head_idx =
                 (uint32_t)score_tile_bridge_family_head_idx[c].to_uint();
-            if (valid == 0u || valid > token_count || valid > tile_words) {
+            if (valid == 0u || valid > token_count || valid > (uint32_t)ATTN_TOKEN_COUNT) {
                 return false;
             }
             if (key_begin >= token_count || (key_begin + valid) > token_count) {

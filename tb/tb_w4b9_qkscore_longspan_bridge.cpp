@@ -1,4 +1,4 @@
-﻿// W4-B6: QkScore bounded bridge family generalization validation (local-only).
+﻿// W4-B9: QkScore bounded family token-span longspan coverage validation (local-only).
 
 #ifndef __SYNTHESIS__
 
@@ -26,18 +26,18 @@
 
 namespace {
 
-class TbW4b6QkScoreFamilyBridge {
+class TbW4b9QkScoreLongspanBridge {
 public:
     int run_all() {
         if (!init_and_bootstrap()) { return 1; }
-        if (!run_positive_family_case()) { return 1; }
-        if (!run_negative_family_mismatch_case()) { return 1; }
-        std::printf("PASS: tb_w4b6_qkscore_family_bridge\n");
+        if (!run_positive_longspan_case()) { return 1; }
+        if (!run_negative_longspan_mismatch_case()) { return 1; }
+        std::printf("PASS: tb_w4b9_qkscore_longspan_bridge\n");
         return 0;
     }
 
 private:
-    static const uint32_t kMaxFamilyCases = 4u;
+    static const uint32_t kMaxFamilyCases = 8u;
 
     std::vector<aecct::u32_t> sram_bootstrap_;
     std::vector<aecct::u32_t> expected_scores_;
@@ -49,12 +49,15 @@ private:
     uint32_t case_key_begin_[kMaxFamilyCases];
     uint32_t case_valid_words_[kMaxFamilyCases];
     uint32_t case_total_words_ = 0u;
+    uint32_t single_head_ = 0u;
+    uint32_t single_key_begin_ = 0u;
+    uint32_t single_valid_words_ = 1u;
 
     bool init_and_bootstrap() {
         sram_bootstrap_.assign((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
         p11aeaf_tb::init_x_rows(sram_bootstrap_);
         if (!p11aeaf_tb::prepare_qkv_payload_set(payloads_)) {
-            std::printf("[w4b6][FAIL] payload preparation failed\n");
+            std::printf("[w4b9][FAIL] payload preparation failed\n");
             return false;
         }
 
@@ -66,58 +69,58 @@ private:
         bool q_fallback_taken = true;
         bool kv_fallback_taken = true;
         if (!p11aeaf_tb::run_ac_ad_mainline(sram_bootstrap_, q_fallback_taken, kv_fallback_taken)) {
-            std::printf("[w4b6][FAIL] AC/AD bootstrap failed\n");
+            std::printf("[w4b9][FAIL] AC/AD bootstrap failed\n");
             return false;
         }
         if (q_fallback_taken || kv_fallback_taken) {
-            std::printf("[w4b6][FAIL] AC/AD bootstrap fallback detected\n");
+            std::printf("[w4b9][FAIL] AC/AD bootstrap fallback detected\n");
             return false;
         }
 
         const uint32_t token_count = (uint32_t)aecct::ATTN_TOKEN_COUNT;
         const uint32_t n_heads = (uint32_t)aecct::ATTN_N_HEADS;
-        const uint32_t tile_words = (uint32_t)aecct::ATTN_TOP_MANAGED_WORK_TILE_WORDS;
-        if (token_count < 2u || n_heads < 2u || tile_words == 0u) {
-            std::printf("[w4b6][FAIL] invalid topology for family bridge\n");
+        if (token_count < 16u || n_heads < 4u) {
+            std::printf("[w4b9][FAIL] invalid topology for longspan bridge\n");
             return false;
         }
 
-        case_count_ = n_heads >= 4u ? 4u : (n_heads >= 3u ? 3u : 2u);
+        // W4-B9 target: token-span bridge windows that are wider than tile_words.
+        case_count_ = 3u;
+        if (case_count_ >= kMaxFamilyCases) {
+            std::printf("[w4b9][FAIL] invalid longspan case_count=%u max=%u\n",
+                (unsigned)case_count_, (unsigned)kMaxFamilyCases);
+            return false;
+        }
         case_head_[0] = 0u;
         case_key_begin_[0] = 0u;
-        case_valid_words_[0] = (token_count >= 2u && tile_words >= 2u) ? 2u : 1u;
-
+        case_valid_words_[0] = 9u;
         case_head_[1] = 1u;
-        case_key_begin_[1] = (token_count > 3u) ? 2u : 1u;
-        const uint32_t remain1 = token_count - case_key_begin_[1];
-        case_valid_words_[1] = (remain1 >= 2u && tile_words >= 2u) ? 2u : 1u;
-
-        if (case_count_ >= 3u) {
-            case_head_[2] = 2u;
-            case_key_begin_[2] = (token_count > 6u) ? 5u : (token_count - 1u);
-            const uint32_t remain2 = token_count - case_key_begin_[2];
-            case_valid_words_[2] = (remain2 >= 2u && tile_words >= 2u) ? 2u : 1u;
-        }
-        if (case_count_ >= 4u) {
-            case_head_[3] = 3u;
-            case_key_begin_[3] = (token_count > 8u) ? 7u : (token_count - 1u);
-            const uint32_t remain3 = token_count - case_key_begin_[3];
-            case_valid_words_[3] = (remain3 >= 2u && tile_words >= 2u) ? 2u : 1u;
-        }
+        case_key_begin_[1] = 12u;
+        case_valid_words_[1] = 7u;
+        case_head_[2] = 2u;
+        case_key_begin_[2] = 24u;
+        case_valid_words_[2] = 6u;
 
         case_total_words_ = 0u;
         for (uint32_t c = 0u; c < case_count_; ++c) {
-            if (case_valid_words_[c] == 0u || case_valid_words_[c] > tile_words) {
-                std::printf("[w4b6][FAIL] invalid case_valid_words for case %u\n", (unsigned)c);
+            if (case_valid_words_[c] == 0u || case_valid_words_[c] > token_count) {
+                std::printf("[w4b9][FAIL] invalid case_valid_words for case %u\n", (unsigned)c);
                 return false;
             }
             if (case_key_begin_[c] >= token_count ||
                 (case_key_begin_[c] + case_valid_words_[c]) > token_count) {
-                std::printf("[w4b6][FAIL] invalid case key range for case %u\n", (unsigned)c);
+                std::printf("[w4b9][FAIL] invalid case key range for case %u\n", (unsigned)c);
                 return false;
             }
             case_total_words_ += case_valid_words_[c];
         }
+        if (n_heads <= case_count_) {
+            std::printf("[w4b9][FAIL] longspan bridge requires one single-only head\n");
+            return false;
+        }
+        single_head_ = case_count_;
+        single_key_begin_ = 40u;
+        single_valid_words_ = 1u;
         return true;
     }
 
@@ -150,7 +153,7 @@ private:
         }
     }
 
-    bool run_positive_family_case() {
+    bool run_positive_longspan_case() {
         std::vector<aecct::u32_t> sram_bridge = sram_bootstrap_;
         std::vector<aecct::u32_t> sram_legacy = sram_bootstrap_;
         const uint32_t token_idx = 0u;
@@ -180,6 +183,17 @@ private:
             family_head_idx);
 
         bool fallback_taken_bridge = true;
+        const uint32_t single_head = single_head_;
+        const uint32_t single_key_begin = single_key_begin_;
+        const uint32_t single_valid_words = single_valid_words_;
+        const uint32_t single_base_word =
+            (uint32_t)sc_.attn.score_base_word.to_uint() + single_head * token_count + single_key_begin;
+        const aecct::u32_t single_bridge_word =
+            expected_scores_[single_head * token_count + single_key_begin];
+        aecct::u32_t single_visible = 0;
+        aecct::u32_t single_owner_ok = 0;
+        aecct::u32_t single_consumed = 0;
+        aecct::u32_t single_compare_ok = 0;
         aecct::u32_t family_visible_count = 0;
         aecct::u32_t family_owner_ok = 0;
         aecct::u32_t family_consumed_count = 0;
@@ -199,15 +213,15 @@ private:
             0,
             0,
             0,
-            (aecct::u32_t)0u,
-            0,
-            (aecct::u32_t)0u,
-            (aecct::u32_t)0u,
-            0,
-            0,
-            0,
-            0,
-            (aecct::u32_t)0u,
+            (aecct::u32_t)single_base_word,
+            &single_bridge_word,
+            (aecct::u32_t)single_valid_words,
+            (aecct::u32_t)single_key_begin,
+            &single_visible,
+            &single_owner_ok,
+            &single_consumed,
+            &single_compare_ok,
+            (aecct::u32_t)single_head,
             (aecct::u32_t)case_count_,
             family_base_words.data(),
             family_words_flat.data(),
@@ -221,7 +235,7 @@ private:
             &family_case_mask);
 
         if (!score_mainline_taken_bridge || fallback_taken_bridge) {
-            std::printf("[w4b6][FAIL] family bridge run did not stay on mainline\n");
+            std::printf("[w4b9][FAIL] mixed bridge run did not stay on mainline\n");
             return false;
         }
         const uint32_t expected_case_mask = (case_count_ == 32u) ? 0xFFFFFFFFu : ((1u << case_count_) - 1u);
@@ -230,7 +244,7 @@ private:
             (uint32_t)family_consumed_count.to_uint() != case_total_words_ ||
             (uint32_t)family_compare_ok.to_uint() != 1u ||
             (uint32_t)family_case_mask.to_uint() != expected_case_mask) {
-            std::printf("[w4b6][FAIL] family observability mismatch visible=%u owner=%u consumed=%u compare=%u mask=0x%X expected_mask=0x%X\n",
+            std::printf("[w4b9][FAIL] family observability mismatch visible=%u owner=%u consumed=%u compare=%u mask=0x%X expected_mask=0x%X\n",
                 (unsigned)(uint32_t)family_visible_count.to_uint(),
                 (unsigned)(uint32_t)family_owner_ok.to_uint(),
                 (unsigned)(uint32_t)family_consumed_count.to_uint(),
@@ -239,9 +253,21 @@ private:
                 (unsigned)expected_case_mask);
             return false;
         }
-        std::printf("W4B6_QKSCORE_FAMILY_BRIDGE_VISIBLE PASS\n");
-        std::printf("W4B6_QKSCORE_FAMILY_OWNERSHIP_CHECK PASS\n");
-        std::printf("W4B6_QKSCORE_FAMILY_MULTI_CASE_ANTI_FALLBACK PASS\n");
+        if ((uint32_t)single_visible.to_uint() != 1u ||
+            (uint32_t)single_owner_ok.to_uint() != 1u ||
+            (uint32_t)single_consumed.to_uint() != 1u ||
+            (uint32_t)single_compare_ok.to_uint() != 1u) {
+            std::printf("[w4b9][FAIL] single observability mismatch visible=%u owner=%u consumed=%u compare=%u\n",
+                (unsigned)(uint32_t)single_visible.to_uint(),
+                (unsigned)(uint32_t)single_owner_ok.to_uint(),
+                (unsigned)(uint32_t)single_consumed.to_uint(),
+                (unsigned)(uint32_t)single_compare_ok.to_uint());
+            return false;
+        }
+        std::printf("W4B9_QKSCORE_LONGSPAN_CONSUME_COUNT_EXACT PASS\n");
+        std::printf("W4B9_QKSCORE_LONGSPAN_BRIDGE_VISIBLE PASS\n");
+        std::printf("W4B9_QKSCORE_LONGSPAN_OWNERSHIP_CHECK PASS\n");
+        std::printf("W4B9_QKSCORE_LONGSPAN_MULTI_PATH_ANTI_FALLBACK PASS\n");
 
         bool fallback_taken_legacy = true;
         const bool score_mainline_taken_legacy = aecct::run_p11ae_layer0_top_managed_qk_score(
@@ -251,7 +277,7 @@ private:
             (aecct::u32_t)token_idx,
             fallback_taken_legacy);
         if (!score_mainline_taken_legacy || fallback_taken_legacy) {
-            std::printf("[w4b6][FAIL] legacy baseline run did not stay on mainline\n");
+            std::printf("[w4b9][FAIL] legacy baseline run did not stay on mainline\n");
             return false;
         }
 
@@ -264,19 +290,19 @@ private:
                 const uint32_t got_legacy = (uint32_t)sram_legacy[head_base + j].to_uint();
                 const uint32_t exp = (uint32_t)expected_scores_[idx].to_uint();
                 if (got_bridge != exp) {
-                    std::printf("[w4b6][FAIL] expected compare mismatch head=%u key=%u got=0x%08X exp=0x%08X\n",
+                    std::printf("[w4b9][FAIL] expected compare mismatch head=%u key=%u got=0x%08X exp=0x%08X\n",
                         (unsigned)h, (unsigned)j, (unsigned)got_bridge, (unsigned)exp);
                     return false;
                 }
                 if (got_bridge != got_legacy) {
-                    std::printf("[w4b6][FAIL] legacy compare mismatch head=%u key=%u bridge=0x%08X legacy=0x%08X\n",
+                    std::printf("[w4b9][FAIL] legacy compare mismatch head=%u key=%u bridge=0x%08X legacy=0x%08X\n",
                         (unsigned)h, (unsigned)j, (unsigned)got_bridge, (unsigned)got_legacy);
                     return false;
                 }
             }
         }
-        std::printf("W4B6_QKSCORE_FAMILY_EXPECTED_COMPARE PASS\n");
-        std::printf("W4B6_QKSCORE_FAMILY_LEGACY_COMPARE PASS\n");
+        std::printf("W4B9_QKSCORE_LONGSPAN_EXPECTED_COMPARE PASS\n");
+        std::printf("W4B9_QKSCORE_LONGSPAN_LEGACY_COMPARE PASS\n");
 
         std::vector<uint8_t> allowed_write((uint32_t)sram_bridge.size(), 0u);
         for (uint32_t h = 0u; h < n_heads; ++h) {
@@ -289,16 +315,16 @@ private:
             const uint32_t before = (uint32_t)sram_bootstrap_[i].to_uint();
             const uint32_t after = (uint32_t)sram_bridge[i].to_uint();
             if (before != after && allowed_write[i] == 0u) {
-                std::printf("[w4b6][FAIL] spurious write addr=%u before=0x%08X after=0x%08X\n",
+                std::printf("[w4b9][FAIL] spurious write addr=%u before=0x%08X after=0x%08X\n",
                     (unsigned)i, (unsigned)before, (unsigned)after);
                 return false;
             }
         }
-        std::printf("W4B6_QKSCORE_FAMILY_NO_SPURIOUS_TOUCH PASS\n");
+        std::printf("W4B9_QKSCORE_LONGSPAN_NO_SPURIOUS_TOUCH PASS\n");
         return true;
     }
 
-    bool run_negative_family_mismatch_case() {
+    bool run_negative_longspan_mismatch_case() {
         std::vector<aecct::u32_t> sram_negative = sram_bootstrap_;
         const uint32_t token_idx = 0u;
         const uint32_t family_stride = (uint32_t)aecct::ATTN_TOKEN_COUNT;
@@ -318,6 +344,18 @@ private:
             (aecct::u32_t)((uint32_t)family_words_flat[0u * family_stride + 0u].to_uint() ^ 0x00000001u);
 
         bool fallback_taken = true;
+        const uint32_t token_count = (uint32_t)aecct::ATTN_TOKEN_COUNT;
+        const uint32_t single_head = single_head_;
+        const uint32_t single_key_begin = single_key_begin_;
+        const uint32_t single_valid_words = single_valid_words_;
+        const uint32_t single_base_word =
+            (uint32_t)sc_.attn.score_base_word.to_uint() + single_head * token_count + single_key_begin;
+        const aecct::u32_t single_bridge_word =
+            expected_scores_[single_head * token_count + single_key_begin];
+        aecct::u32_t single_visible = 0;
+        aecct::u32_t single_owner_ok = 0;
+        aecct::u32_t single_consumed = 0;
+        aecct::u32_t single_compare_ok = 0;
         aecct::u32_t family_visible_count = 0;
         aecct::u32_t family_owner_ok = 0;
         aecct::u32_t family_consumed_count = 0;
@@ -337,15 +375,15 @@ private:
             0,
             0,
             0,
-            (aecct::u32_t)0u,
-            0,
-            (aecct::u32_t)0u,
-            (aecct::u32_t)0u,
-            0,
-            0,
-            0,
-            0,
-            (aecct::u32_t)0u,
+            (aecct::u32_t)single_base_word,
+            &single_bridge_word,
+            (aecct::u32_t)single_valid_words,
+            (aecct::u32_t)single_key_begin,
+            &single_visible,
+            &single_owner_ok,
+            &single_consumed,
+            &single_compare_ok,
+            (aecct::u32_t)single_head,
             (aecct::u32_t)case_count_,
             family_base_words.data(),
             family_words_flat.data(),
@@ -359,7 +397,7 @@ private:
             &family_case_mask);
 
         if (score_mainline_taken || !fallback_taken) {
-            std::printf("[w4b6][FAIL] mismatch family bridge did not reject as expected\n");
+            std::printf("[w4b9][FAIL] mismatch mixed bridge did not reject as expected\n");
             return false;
         }
         if ((uint32_t)family_visible_count.to_uint() != 1u ||
@@ -367,7 +405,7 @@ private:
             (uint32_t)family_consumed_count.to_uint() != 0u ||
             (uint32_t)family_compare_ok.to_uint() != 0u ||
             (uint32_t)family_case_mask.to_uint() != 0x1u) {
-            std::printf("[w4b6][FAIL] mismatch observability flags mismatch visible=%u owner=%u consumed=%u compare=%u mask=0x%X\n",
+            std::printf("[w4b9][FAIL] mismatch observability flags mismatch visible=%u owner=%u consumed=%u compare=%u mask=0x%X\n",
                 (unsigned)(uint32_t)family_visible_count.to_uint(),
                 (unsigned)(uint32_t)family_owner_ok.to_uint(),
                 (unsigned)(uint32_t)family_consumed_count.to_uint(),
@@ -375,14 +413,25 @@ private:
                 (unsigned)(uint32_t)family_case_mask.to_uint());
             return false;
         }
+        if ((uint32_t)single_visible.to_uint() != 0u ||
+            (uint32_t)single_owner_ok.to_uint() != 0u ||
+            (uint32_t)single_consumed.to_uint() != 0u ||
+            (uint32_t)single_compare_ok.to_uint() != 0u) {
+            std::printf("[w4b9][FAIL] mismatch single flags expected zero visible=%u owner=%u consumed=%u compare=%u\n",
+                (unsigned)(uint32_t)single_visible.to_uint(),
+                (unsigned)(uint32_t)single_owner_ok.to_uint(),
+                (unsigned)(uint32_t)single_consumed.to_uint(),
+                (unsigned)(uint32_t)single_compare_ok.to_uint());
+            return false;
+        }
         for (uint32_t i = 0u; i < (uint32_t)sram_negative.size(); ++i) {
             if ((uint32_t)sram_negative[i].to_uint() !=
                 (uint32_t)sram_bootstrap_[i].to_uint()) {
-                std::printf("[w4b6][FAIL] reject path wrote stale state addr=%u\n", (unsigned)i);
+                std::printf("[w4b9][FAIL] reject path wrote stale state addr=%u\n", (unsigned)i);
                 return false;
             }
         }
-        std::printf("W4B6_QKSCORE_FAMILY_MISMATCH_REJECT PASS\n");
+        std::printf("W4B9_QKSCORE_LONGSPAN_MISMATCH_REJECT PASS\n");
         return true;
     }
 };
@@ -392,10 +441,16 @@ private:
 CCS_MAIN(int argc, char** argv) {
     (void)argc;
     (void)argv;
-    TbW4b6QkScoreFamilyBridge tb;
+    TbW4b9QkScoreLongspanBridge tb;
     const int rc = tb.run_all();
     CCS_RETURN(rc);
 }
 
 #endif // __SYNTHESIS__
+
+
+
+
+
+
 

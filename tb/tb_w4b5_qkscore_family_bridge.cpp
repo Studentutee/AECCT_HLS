@@ -122,10 +122,10 @@ private:
         std::vector<aecct::u32_t>& key_begin,
         std::vector<aecct::u32_t>& head_idx) const {
         const uint32_t token_count = (uint32_t)aecct::ATTN_TOKEN_COUNT;
-        const uint32_t tile_words = (uint32_t)aecct::ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        const uint32_t family_stride = (uint32_t)aecct::ATTN_TOKEN_COUNT;
         const uint32_t score_base = (uint32_t)sc_.attn.score_base_word.to_uint();
         base_words.assign(case_count_, (aecct::u32_t)0u);
-        words_flat.assign(case_count_ * tile_words, (aecct::u32_t)0u);
+        words_flat.assign(case_count_ * family_stride, (aecct::u32_t)0u);
         valid_words.assign(case_count_, (aecct::u32_t)0u);
         key_begin.assign(case_count_, (aecct::u32_t)0u);
         head_idx.assign(case_count_, (aecct::u32_t)0u);
@@ -139,7 +139,7 @@ private:
             head_idx[c] = (aecct::u32_t)h;
             for (uint32_t i = 0u; i < valid; ++i) {
                 const uint32_t src = h * token_count + begin + i;
-                words_flat[c * tile_words + i] = expected_scores_[src];
+                words_flat[c * family_stride + i] = expected_scores_[src];
             }
         }
     }
@@ -295,7 +295,7 @@ private:
     bool run_negative_family_mismatch_case() {
         std::vector<aecct::u32_t> sram_negative = sram_bootstrap_;
         const uint32_t token_idx = 0u;
-        const uint32_t tile_words = (uint32_t)aecct::ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        const uint32_t family_stride = (uint32_t)aecct::ATTN_TOKEN_COUNT;
 
         std::vector<aecct::u32_t> family_base_words;
         std::vector<aecct::u32_t> family_words_flat;
@@ -308,8 +308,8 @@ private:
             family_valid_words,
             family_key_begin,
             family_head_idx);
-        family_words_flat[0u * tile_words + 0u] =
-            (aecct::u32_t)((uint32_t)family_words_flat[0u * tile_words + 0u].to_uint() ^ 0x00000001u);
+        family_words_flat[0u * family_stride + 0u] =
+            (aecct::u32_t)((uint32_t)family_words_flat[0u * family_stride + 0u].to_uint() ^ 0x00000001u);
 
         bool fallback_taken = true;
         aecct::u32_t family_visible_count = 0;
