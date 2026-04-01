@@ -143,6 +143,26 @@
   - no second ownership/arbitration semantics introduced.
 - Status: advanced (RENORM single selected probe/consume proof landed).
 
+### Hotspot B6: SoftmaxOut WRITEBACK-path single selected probe (W4-C4)
+- Hook point: `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h::attn_phaseb_top_managed_softmax_out_mainline`
+- Exact cut location:
+  - `ATTN_P11AF_MAINLINE_WRITEBACK_TILE_LOOP` / `ATTN_P11AF_MAINLINE_WRITEBACK_LOOP`
+  - bounded writeback selector label:
+    - `ATTN_P11AF_TILE_BRIDGE_FAMILY_WRITEBACK_CASE_LOOP`
+- Direct SRAM role advanced in this round:
+  - selected later-token family descriptor now has explicit WRITEBACK-path visibility on `(head, d_tile)` touch.
+  - writeback skeleton behavior is preserved for all paths; selected case is probe/observability-first.
+- C4 observability (internal helper only):
+  - `phase_tile_bridge_family_writeback_selected_count`
+  - `phase_tile_bridge_family_writeback_case_mask`
+  - `phase_tile_bridge_family_writeback_touch_count`
+- Why still bounded:
+  - no external Top 4-channel contract drift.
+  - no second ownership/arbitration semantics introduced.
+  - no broad rewrite of online core loops.
+  - selected case remains one later-token + one head + one d-tile bounded probe.
+- Status: advanced (WRITEBACK single selected probe landed).
+
 ## C. Near Skeleton Risk Zone (Do Not Force)
 
 ### Hotspot C1: AttnLayer0 score/reduction/writeback core loops
@@ -172,4 +192,5 @@
 4. W4-C2 SoftmaxOut ACC-path single selected later-token bounded bridge: done.
 5. W4-CFamily harness consolidation: done (shared harness + shared runner wrappers).
 6. W4-C3 SoftmaxOut RENORM single selected probe: done.
-7. Remaining deferred: broader RENORM/WRITEBACK-side migration + AttnLayer0/TransformerLayer skeleton-level ownership migration.
+7. W4-C4 SoftmaxOut WRITEBACK single selected probe: done.
+8. Remaining deferred: broader WRITEBACK-side migration + AttnLayer0/TransformerLayer skeleton-level ownership migration.
