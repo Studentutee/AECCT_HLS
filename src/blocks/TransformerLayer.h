@@ -104,6 +104,12 @@ static inline void TransformerLayerTopManagedAttnBridge(
     attn_cfg.d_model = (u32_t)d_model;
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
+    const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
+        make_attn_layer0_prebuilt_handoff_desc(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed);
 
     AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
         sram_window,
@@ -112,10 +118,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
         sc.attn_out_base_word,
         sc.attn,
         (u32_t)0,
-        kv_prebuilt_from_top_managed,
-        q_prebuilt_from_top_managed,
-        score_prebuilt_from_top_managed,
-        out_prebuilt_from_top_managed
+        attn_prebuilt_handoff
     );
 
     FfnCfg ffn_cfg;
@@ -337,6 +340,12 @@ static inline void TransformerLayer(
     attn_cfg.d_model = (u32_t)d_model;
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
+    const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
+        make_attn_layer0_prebuilt_handoff_desc(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed);
 
     // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
     AttnLayer0<ATTN_STAGE_FULL>(
@@ -346,10 +355,7 @@ static inline void TransformerLayer(
         sc.attn_out_base_word,
         sc.attn,
         (u32_t)0,
-        kv_prebuilt_from_top_managed,
-        q_prebuilt_from_top_managed,
-        score_prebuilt_from_top_managed,
-        out_prebuilt_from_top_managed
+        attn_prebuilt_handoff
     );
 
     FfnCfg ffn_cfg;

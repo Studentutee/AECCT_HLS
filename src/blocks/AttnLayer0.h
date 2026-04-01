@@ -67,6 +67,29 @@ static inline bool attn_live_qkv_gate_ok(
     return true;
 }
 
+// local-only boundary descriptor for Top-fed prebuilt handoff flags.
+// This keeps the AttnLayer0 seam contractized without changing Top ownership policy.
+struct AttnLayer0PrebuiltHandoffDesc {
+    bool kv_prebuilt_from_top_managed;
+    bool q_prebuilt_from_top_managed;
+    bool score_prebuilt_from_top_managed;
+    bool out_prebuilt_from_top_managed;
+};
+
+static inline AttnLayer0PrebuiltHandoffDesc make_attn_layer0_prebuilt_handoff_desc(
+    bool kv_prebuilt_from_top_managed = false,
+    bool q_prebuilt_from_top_managed = false,
+    bool score_prebuilt_from_top_managed = false,
+    bool out_prebuilt_from_top_managed = false
+) {
+    AttnLayer0PrebuiltHandoffDesc desc;
+    desc.kv_prebuilt_from_top_managed = kv_prebuilt_from_top_managed;
+    desc.q_prebuilt_from_top_managed = q_prebuilt_from_top_managed;
+    desc.score_prebuilt_from_top_managed = score_prebuilt_from_top_managed;
+    desc.out_prebuilt_from_top_managed = out_prebuilt_from_top_managed;
+    return desc;
+}
+
 template<unsigned STAGE_MODE, typename SramView>
 // AttnLayer0 executes stage-scoped attention work in SRAM windows owned by Top.
 // Ownership boundary: this block only consumes the base offsets provided by Top.
@@ -86,10 +109,7 @@ static inline void AttnLayer0CoreWindow(
     u32_t attn_out_base_word,
     const AttnScratch& sc,
     u32_t param_base_word = (u32_t)0,
-    bool kv_prebuilt_from_top_managed = false,
-    bool q_prebuilt_from_top_managed = false,
-    bool score_prebuilt_from_top_managed = false,
-    bool out_prebuilt_from_top_managed = false
+    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff = make_attn_layer0_prebuilt_handoff_desc()
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -128,9 +148,9 @@ static inline void AttnLayer0CoreWindow(
         bool live_v_ok = live_v_enabled;
         u32_t live_q_inv_sw_bits = (u32_t)0u;
         // P11AD mainline hook: Top-owned Q prebuild bypasses only Q generation.
-        const bool skip_q_materialization = q_prebuilt_from_top_managed;
+        const bool skip_q_materialization = prebuilt_handoff.q_prebuilt_from_top_managed;
         // P11AC mainline hook: Top-owned K/V prebuild bypasses only K/V generation.
-        const bool skip_kv_materialization = kv_prebuilt_from_top_managed;
+        const bool skip_kv_materialization = prebuilt_handoff.kv_prebuilt_from_top_managed;
 
         if (!skip_kv_materialization) {
             // Baseline priming path: copy X into K/V mirrors before live path overrides.
@@ -463,7 +483,7 @@ static inline void AttnLayer0CoreWindow(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
-        if (score_prebuilt_from_top_managed) {
+        if (prebuilt_handoff.score_prebuilt_from_top_managed) {
             // Top-managed AE/AF path already produced score/pre/post for this layer invocation.
             // Keep existing AC/AD hooks untouched and skip duplicate score/softmax execution only.
         } else {
@@ -520,7 +540,7 @@ static inline void AttnLayer0CoreWindow(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_OUT || STAGE_MODE == ATTN_STAGE_FULL) {
-        if (out_prebuilt_from_top_managed) {
+        if (prebuilt_handoff.out_prebuilt_from_top_managed) {
             // Top-managed AF path already wrote final output for this layer invocation.
             return;
         }
@@ -530,6 +550,27 @@ static inline void AttnLayer0CoreWindow(
             sram[out_base + i] = sram[post_base + i];
         }
     }
+}
+
+template<unsigned STAGE_MODE>
+static inline void AttnLayer0(
+    u32_t* sram,
+    const AttnCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t attn_out_base_word,
+    const AttnScratch& sc,
+    u32_t param_base_word,
+    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff
+) {
+    AttnLayer0CoreWindow<STAGE_MODE, u32_t*>(
+        sram,
+        cfg,
+        x_in_base_word,
+        attn_out_base_word,
+        sc,
+        param_base_word,
+        prebuilt_handoff
+    );
 }
 
 template<unsigned STAGE_MODE>
@@ -552,16 +593,38 @@ static inline void AttnLayer0(
         attn_out_base_word,
         sc,
         param_base_word,
-        kv_prebuilt_from_top_managed,
-        q_prebuilt_from_top_managed,
-        score_prebuilt_from_top_managed,
-        out_prebuilt_from_top_managed
+        make_attn_layer0_prebuilt_handoff_desc(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed)
     );
 }
 
 // P00-011AN: first deep Attn boundary bridge.
 // This keeps the first deep call-site boundary array-shaped for Catapult-facing paths.
 // Internal compute semantics remain the same by forwarding to the accepted AttnLayer0 core.
+template<unsigned STAGE_MODE, uint32_t SRAM_WORDS>
+static inline void AttnLayer0TopManagedWindowBridge(
+    u32_t (&sram_window)[SRAM_WORDS],
+    const AttnCfg& cfg,
+    u32_t x_in_base_word,
+    u32_t attn_out_base_word,
+    const AttnScratch& sc,
+    u32_t param_base_word,
+    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff
+) {
+    AttnLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
+        sram_window,
+        cfg,
+        x_in_base_word,
+        attn_out_base_word,
+        sc,
+        param_base_word,
+        prebuilt_handoff
+    );
+}
+
 template<unsigned STAGE_MODE, uint32_t SRAM_WORDS>
 static inline void AttnLayer0TopManagedWindowBridge(
     u32_t (&sram_window)[SRAM_WORDS],
@@ -582,10 +645,11 @@ static inline void AttnLayer0TopManagedWindowBridge(
         attn_out_base_word,
         sc,
         param_base_word,
-        kv_prebuilt_from_top_managed,
-        q_prebuilt_from_top_managed,
-        score_prebuilt_from_top_managed,
-        out_prebuilt_from_top_managed
+        make_attn_layer0_prebuilt_handoff_desc(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed)
     );
 }
 
