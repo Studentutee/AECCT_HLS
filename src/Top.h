@@ -365,6 +365,12 @@ namespace aecct {
         bool p11av_lid0_ffn_handoff_descriptor_valid;
         u32_t p11av_ffn_handoff_non_empty_count;
         u32_t p11av_lid0_ffn_handoff_non_empty_count;
+        bool p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        bool p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        bool p11aw_pipeline_lid0_ffn_handoff_gate_taken;
+        bool p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+        u32_t p11aw_pipeline_ffn_handoff_non_empty_count;
+        u32_t p11aw_pipeline_lid0_ffn_handoff_non_empty_count;
 
         // Top-controlled block contract placeholders (skeleton only).
         PreprocBlockContract preproc_contract;
@@ -429,6 +435,12 @@ namespace aecct {
             p11av_lid0_ffn_handoff_descriptor_valid = false;
             p11av_ffn_handoff_non_empty_count = 0;
             p11av_lid0_ffn_handoff_non_empty_count = 0;
+            p11aw_pipeline_lid0_ffn_handoff_gate_enable = false;
+            p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = false;
+            p11aw_pipeline_lid0_ffn_handoff_gate_taken = false;
+            p11aw_pipeline_lid0_ffn_handoff_fallback_seen = false;
+            p11aw_pipeline_ffn_handoff_non_empty_count = 0;
+            p11aw_pipeline_lid0_ffn_handoff_non_empty_count = 0;
             clear_preproc_contract(preproc_contract);
             clear_transformer_layer_contract(transformer_contract);
             clear_layernorm_contract(layernorm_contract);
@@ -1561,23 +1573,29 @@ namespace aecct {
             return make_transformer_layer_ffn_topfed_handoff_desc();
         }
 
+        const u32_t fp32_half_bits = (u32_t)0x3f000000u;     // 0.5f
+        const u32_t fp32_one_bits = (u32_t)0x3f800000u;      // 1.0f
+        const u32_t fp32_two_bits = (u32_t)0x40000000u;      // 2.0f
+        const u32_t fp32_three_bits = (u32_t)0x40400000u;    // 3.0f
+        const u32_t fp32_minus_one_bits = (u32_t)0xbf800000u;// -1.0f
+
         TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_X_WORDS; ++i) {
-            topfed_w1_x_words[i] = (u32_t)0u;
+            topfed_w1_x_words[i] = ((i & 0x1u) == 0u) ? fp32_two_bits : fp32_half_bits;
         }
         TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_WEIGHT_WORDS; ++i) {
-            topfed_w1_weight_words[i] = (u32_t)0u;
+            topfed_w1_weight_words[i] = ((i & 0x3u) == 0u) ? fp32_minus_one_bits : fp32_half_bits;
         }
         TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
-            topfed_w1_bias_words[i] = (u32_t)0u;
+            topfed_w1_bias_words[i] = fp32_three_bits;
         }
         TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_INPUT_WORDS; ++i) {
-            topfed_w2_input_words[i] = (u32_t)0u;
+            topfed_w2_input_words[i] = ((i & 0x1u) == 0u) ? fp32_three_bits : fp32_half_bits;
         }
         TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_WEIGHT_WORDS; ++i) {
-            topfed_w2_weight_words[i] = (u32_t)0u;
+            topfed_w2_weight_words[i] = ((i & 0x3u) == 0u) ? fp32_minus_one_bits : fp32_two_bits;
         }
         TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_BIAS_WORDS; ++i) {
-            topfed_w2_bias_words[i] = (u32_t)0u;
+            topfed_w2_bias_words[i] = fp32_three_bits;
         }
 
         uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -2142,15 +2160,54 @@ namespace aecct {
         }
     }
 
-    static inline bool run_infer_pipeline(
+    static inline void run_pipeline_transformer_layer_loop_with_local_ffn_handoff(
+        TopRegs& regs,
+        u32_t* sram
+    ) {
+        const bool gate_enable = regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        const bool descriptor_valid = regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_taken = gate_enable;
+        run_transformer_layer_loop(
+            regs,
+            sram,
+            gate_enable,
+            descriptor_valid
+        );
+        regs.p11aw_pipeline_ffn_handoff_non_empty_count = regs.p11av_ffn_handoff_non_empty_count;
+        regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count = regs.p11av_lid0_ffn_handoff_non_empty_count;
+        uint32_t expected_layers = (uint32_t)build_layer_cfg(regs).n_layers.to_uint();
+        if (expected_layers == 0u) { expected_layers = (uint32_t)N_LAYERS; }
+        regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen =
+            gate_enable && ((uint32_t)regs.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint() < expected_layers);
+    }
+
+    template<uint32_t SRAM_WORDS>
+    static inline void run_pipeline_transformer_layer_loop_top_managed_attn_bridge_with_local_ffn_handoff(
+        TopRegs& regs,
+        u32_t (&sram)[SRAM_WORDS]
+    ) {
+        const bool gate_enable = regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        const bool descriptor_valid = regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_taken = gate_enable;
+        run_transformer_layer_loop_top_managed_attn_bridge(
+            regs,
+            sram,
+            gate_enable,
+            descriptor_valid
+        );
+        regs.p11aw_pipeline_ffn_handoff_non_empty_count = regs.p11av_ffn_handoff_non_empty_count;
+        regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count = regs.p11av_lid0_ffn_handoff_non_empty_count;
+        uint32_t expected_layers = (uint32_t)build_layer_cfg(regs).n_layers.to_uint();
+        if (expected_layers == 0u) { expected_layers = (uint32_t)N_LAYERS; }
+        regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen =
+            gate_enable && ((uint32_t)regs.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint() < expected_layers);
+    }
+
+    static inline bool run_infer_pipeline_finalize(
         TopRegs& regs,
         u32_t* sram,
         ac_channel<ac_int<32, false> >& data_out
     ) {
-        run_preproc_block(regs, sram);
-        run_layernorm_block(regs, sram);
-        run_transformer_layer_loop(regs, sram);
-
         HeadParamBase hp = make_head_param_base(regs.w_base_word);
         const u32_t outmode = regs.outmode;
         const CfgRegs layer_cfg = build_layer_cfg(regs);
@@ -2200,6 +2257,32 @@ namespace aecct {
         const uint32_t mode = (uint32_t)outmode.to_uint();
         return (mode == (uint32_t)FINAL_HEAD_OUTMODE_XPRED) ||
             (mode == (uint32_t)FINAL_HEAD_OUTMODE_LOGITS);
+    }
+
+    static inline bool run_infer_pipeline(
+        TopRegs& regs,
+        u32_t* sram,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        run_preproc_block(regs, sram);
+        run_layernorm_block(regs, sram);
+        run_pipeline_transformer_layer_loop_with_local_ffn_handoff(regs, sram);
+        return run_infer_pipeline_finalize(regs, sram, data_out);
+    }
+
+    template<uint32_t SRAM_WORDS>
+    static inline bool run_infer_pipeline_top_managed_attn_bridge(
+        TopRegs& regs,
+        u32_t (&sram)[SRAM_WORDS],
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        run_preproc_block(regs, sram);
+        run_layernorm_block(regs, sram);
+        run_pipeline_transformer_layer_loop_top_managed_attn_bridge_with_local_ffn_handoff(
+            regs,
+            sram
+        );
+        return run_infer_pipeline_finalize(regs, sram, data_out);
     }
 
     static inline void infer_emit_outmode_payload(

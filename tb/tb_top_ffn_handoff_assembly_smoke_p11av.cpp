@@ -1,4 +1,4 @@
-// P11AV: Top mainline lid0 FFN handoff hook-up smoke (local-only).
+// P11AV: Top pipeline-level lid0 FFN handoff hook-up smoke (local-only).
 // Scope:
 // - Validate representative mainline loop feeds non-empty lid0 FFN handoff.
 // - Validate handoff reaches TransformerLayer through existing dispatch helper.
@@ -99,6 +99,10 @@ static void init_mainline_case_memory(
     X_WORK_SEED_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::LN_X_TOTAL_WORDS; ++i) {
         sram[x_base + i] = (aecct::u32_t)one_bits;
     }
+    const uint32_t infer_in_base = (uint32_t)aecct::IN_BASE_WORD;
+    INFER_IN_SEED_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::INFER_IN_WORDS_EXPECTED; ++i) {
+        sram[infer_in_base + i] = (aecct::u32_t)one_bits;
+    }
 
     // Seed per-layer FFN/LN parameter slices used by representative path.
     if (n_layers == 0u) {
@@ -140,10 +144,34 @@ static bool run_mainline_path_case(const char* case_label, RunFn run_fn) {
     // lid!=0 fallback probe in representative mainline path.
     run_fn(sram_lid_probe, regs_lid_probe, 2u, true, true);
 
-    const uint32_t seam_non_empty_count = (uint32_t)regs_seam.p11av_ffn_handoff_non_empty_count.to_uint();
-    const uint32_t seam_lid0_non_empty_count = (uint32_t)regs_seam.p11av_lid0_ffn_handoff_non_empty_count.to_uint();
-    const uint32_t base_non_empty_count = (uint32_t)regs_baseline.p11av_ffn_handoff_non_empty_count.to_uint();
-    const uint32_t invalid_non_empty_count = (uint32_t)regs_invalid.p11av_ffn_handoff_non_empty_count.to_uint();
+    const bool seam_gate_taken = regs_seam.p11aw_pipeline_lid0_ffn_handoff_gate_taken;
+    const bool base_gate_taken = regs_baseline.p11aw_pipeline_lid0_ffn_handoff_gate_taken;
+    const bool invalid_gate_taken = regs_invalid.p11aw_pipeline_lid0_ffn_handoff_gate_taken;
+    const bool seam_fallback_seen = regs_seam.p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+    const bool base_fallback_seen = regs_baseline.p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+    const bool invalid_fallback_seen = regs_invalid.p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+    const uint32_t seam_non_empty_count = (uint32_t)regs_seam.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint();
+    const uint32_t seam_lid0_non_empty_count = (uint32_t)regs_seam.p11aw_pipeline_lid0_ffn_handoff_non_empty_count.to_uint();
+    const uint32_t base_non_empty_count = (uint32_t)regs_baseline.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint();
+    const uint32_t invalid_non_empty_count = (uint32_t)regs_invalid.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint();
+    if (!seam_gate_taken || base_gate_taken || !invalid_gate_taken) {
+        std::printf(
+            "[p11av][FAIL] %s pipeline gate taken mismatch seam=%u base=%u invalid=%u\n",
+            case_label,
+            (unsigned)(seam_gate_taken ? 1u : 0u),
+            (unsigned)(base_gate_taken ? 1u : 0u),
+            (unsigned)(invalid_gate_taken ? 1u : 0u));
+        return false;
+    }
+    if (seam_fallback_seen || base_fallback_seen || !invalid_fallback_seen) {
+        std::printf(
+            "[p11av][FAIL] %s pipeline fallback marker mismatch seam=%u base=%u invalid=%u\n",
+            case_label,
+            (unsigned)(seam_fallback_seen ? 1u : 0u),
+            (unsigned)(base_fallback_seen ? 1u : 0u),
+            (unsigned)(invalid_fallback_seen ? 1u : 0u));
+        return false;
+    }
     if (seam_non_empty_count != 1u || seam_lid0_non_empty_count != 1u) {
         std::printf(
             "[p11av][FAIL] %s seam non-empty count mismatch total=%u lid0=%u\n",
@@ -161,14 +189,19 @@ static bool run_mainline_path_case(const char* case_label, RunFn run_fn) {
         return false;
     }
 
-    const uint32_t lid_probe_non_empty_count = (uint32_t)regs_lid_probe.p11av_ffn_handoff_non_empty_count.to_uint();
-    const uint32_t lid_probe_lid0_non_empty_count = (uint32_t)regs_lid_probe.p11av_lid0_ffn_handoff_non_empty_count.to_uint();
+    const uint32_t lid_probe_non_empty_count = (uint32_t)regs_lid_probe.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint();
+    const uint32_t lid_probe_lid0_non_empty_count = (uint32_t)regs_lid_probe.p11aw_pipeline_lid0_ffn_handoff_non_empty_count.to_uint();
+    const bool lid_probe_fallback_seen = regs_lid_probe.p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
     if (lid_probe_non_empty_count != 1u || lid_probe_lid0_non_empty_count != 1u) {
         std::printf(
             "[p11av][FAIL] %s lid probe expected only lid0 non-empty total=%u lid0=%u\n",
             case_label,
             (unsigned)lid_probe_non_empty_count,
             (unsigned)lid_probe_lid0_non_empty_count);
+        return false;
+    }
+    if (!lid_probe_fallback_seen) {
+        std::printf("[p11av][FAIL] %s lid probe expected fallback marker for lid!=0\n", case_label);
         return false;
     }
 
@@ -212,6 +245,7 @@ static void setup_mainline_regs(aecct::TopRegs& regs, uint32_t n_layers) {
     regs.cfg_n_heads = (aecct::u32_t)aecct::ATTN_N_HEADS;
     regs.cfg_d_ffn = (aecct::u32_t)aecct::FFN_D_FFN;
     regs.cfg_n_layers = (aecct::u32_t)n_layers;
+    regs.outmode = (aecct::u32_t)2u;
 }
 
 static bool run_pointer_mainline_case() {
@@ -225,15 +259,17 @@ static bool run_pointer_mainline_case() {
             bool descriptor_valid
         ) {
             setup_mainline_regs(regs, n_layers);
-            aecct::run_transformer_layer_loop(
+            regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = handoff_enable;
+            regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = descriptor_valid;
+            aecct::data_ch_t data_out;
+            (void)aecct::run_infer_pipeline(
                 regs,
                 sram,
-                handoff_enable,
-                descriptor_valid
+                data_out
             );
         });
     if (!ok) { return false; }
-    std::printf("TOP_MAINLINE_LID0_FFN_HANDOFF_POINTER_PATH PASS\n");
+    std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_POINTER_PATH PASS\n");
     return true;
 }
 
@@ -248,22 +284,24 @@ static bool run_deep_bridge_mainline_case() {
             bool descriptor_valid
         ) {
             setup_mainline_regs(regs, n_layers);
+            regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = handoff_enable;
+            regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = descriptor_valid;
             static aecct::u32_t sram_window[sram_map::SRAM_WORDS_TOTAL];
             for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
                 sram_window[i] = sram[i];
             }
-            aecct::run_transformer_layer_loop_top_managed_attn_bridge<sram_map::SRAM_WORDS_TOTAL>(
+            aecct::data_ch_t data_out;
+            (void)aecct::run_infer_pipeline_top_managed_attn_bridge<sram_map::SRAM_WORDS_TOTAL>(
                 regs,
                 sram_window,
-                handoff_enable,
-                descriptor_valid
+                data_out
             );
             for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
                 sram[i] = sram_window[i];
             }
         });
     if (!ok) { return false; }
-    std::printf("TOP_MAINLINE_LID0_FFN_HANDOFF_DEEP_BRIDGE_PATH PASS\n");
+    std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_DEEP_BRIDGE_PATH PASS\n");
     return true;
 }
 
@@ -279,7 +317,7 @@ CCS_MAIN(int argc, char** argv) {
     if (!run_deep_bridge_mainline_case()) {
         CCS_RETURN(1);
     }
-    std::printf("TOP_MAINLINE_LID0_FFN_HANDOFF_EXPECTED_COMPARE PASS\n");
+    std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_EXPECTED_COMPARE PASS\n");
     std::printf("PASS: tb_top_ffn_handoff_assembly_smoke_p11av\n");
     CCS_RETURN(0);
 }
