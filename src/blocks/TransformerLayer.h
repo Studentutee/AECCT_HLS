@@ -55,44 +55,79 @@ struct CfgRegs {
     u32_t n_layers;
 };
 
-// local-only higher-level ownership seam for FFN payload handoff.
-// Top can optionally provide preloaded W1 bias words to avoid in-layer preload ownership.
+// local-only higher-level ownership seam for FFN W1 payload handoff.
+// Top can optionally provide preloaded W1 x/weight/bias payload descriptors.
 struct TransformerLayerFfnTopfedHandoffDesc {
+    const u32_t* topfed_w1_x_words;
+    u32_t topfed_w1_x_words_valid;
+    const u32_t* topfed_w1_weight_words;
+    u32_t topfed_w1_weight_words_valid;
     const u32_t* topfed_w1_bias_words;
     u32_t topfed_w1_bias_words_valid;
 };
 
-static inline TransformerLayerFfnTopfedHandoffDesc make_transformer_layer_ffn_topfed_handoff_desc(
-    const u32_t* topfed_w1_bias_words = 0,
-    u32_t topfed_w1_bias_words_valid = (u32_t)0u
-) {
+static inline TransformerLayerFfnTopfedHandoffDesc make_transformer_layer_ffn_topfed_handoff_desc() {
     TransformerLayerFfnTopfedHandoffDesc desc;
+    desc.topfed_w1_x_words = 0;
+    desc.topfed_w1_x_words_valid = (u32_t)0u;
+    desc.topfed_w1_weight_words = 0;
+    desc.topfed_w1_weight_words_valid = (u32_t)0u;
+    desc.topfed_w1_bias_words = 0;
+    desc.topfed_w1_bias_words_valid = (u32_t)0u;
+    return desc;
+}
+
+static inline TransformerLayerFfnTopfedHandoffDesc make_transformer_layer_ffn_topfed_handoff_desc(
+    const u32_t* topfed_w1_bias_words,
+    u32_t topfed_w1_bias_words_valid
+) {
+    TransformerLayerFfnTopfedHandoffDesc desc = make_transformer_layer_ffn_topfed_handoff_desc();
     desc.topfed_w1_bias_words = topfed_w1_bias_words;
     desc.topfed_w1_bias_words_valid = topfed_w1_bias_words_valid;
     return desc;
 }
 
-static inline void transformer_layer_select_topfed_w1_bias_words(
-    const TransformerLayerFfnTopfedHandoffDesc& handoff_desc,
-    const u32_t* local_topfed_w1_bias_words,
-    uint32_t local_topfed_w1_bias_words_valid,
-    const u32_t*& selected_topfed_w1_bias_words,
-    u32_t& selected_topfed_w1_bias_words_valid
+static inline TransformerLayerFfnTopfedHandoffDesc make_transformer_layer_ffn_topfed_handoff_desc(
+    const u32_t* topfed_w1_x_words,
+    u32_t topfed_w1_x_words_valid,
+    const u32_t* topfed_w1_weight_words,
+    u32_t topfed_w1_weight_words_valid,
+    const u32_t* topfed_w1_bias_words,
+    u32_t topfed_w1_bias_words_valid
 ) {
-    selected_topfed_w1_bias_words = local_topfed_w1_bias_words;
-    selected_topfed_w1_bias_words_valid = (u32_t)local_topfed_w1_bias_words_valid;
-    if (handoff_desc.topfed_w1_bias_words == 0) {
+    TransformerLayerFfnTopfedHandoffDesc desc = make_transformer_layer_ffn_topfed_handoff_desc();
+    desc.topfed_w1_x_words = topfed_w1_x_words;
+    desc.topfed_w1_x_words_valid = topfed_w1_x_words_valid;
+    desc.topfed_w1_weight_words = topfed_w1_weight_words;
+    desc.topfed_w1_weight_words_valid = topfed_w1_weight_words_valid;
+    desc.topfed_w1_bias_words = topfed_w1_bias_words;
+    desc.topfed_w1_bias_words_valid = topfed_w1_bias_words_valid;
+    return desc;
+}
+
+static inline void transformer_layer_select_topfed_words(
+    const u32_t* handoff_words,
+    uint32_t handoff_words_valid,
+    uint32_t handoff_words_max,
+    const u32_t* local_words,
+    uint32_t local_words_valid,
+    const u32_t*& selected_words,
+    u32_t& selected_words_valid
+) {
+    selected_words = local_words;
+    selected_words_valid = (u32_t)local_words_valid;
+    if (handoff_words == 0) {
         return;
     }
-    uint32_t from_top_valid = (uint32_t)handoff_desc.topfed_w1_bias_words_valid.to_uint();
+    uint32_t from_top_valid = handoff_words_valid;
     if (from_top_valid == 0u) {
         return;
     }
-    if (from_top_valid > (uint32_t)FFN_W1_BIAS_WORDS) {
-        from_top_valid = (uint32_t)FFN_W1_BIAS_WORDS;
+    if (from_top_valid > handoff_words_max) {
+        from_top_valid = handoff_words_max;
     }
-    selected_topfed_w1_bias_words = handoff_desc.topfed_w1_bias_words;
-    selected_topfed_w1_bias_words_valid = (u32_t)from_top_valid;
+    selected_words = handoff_words;
+    selected_words_valid = (u32_t)from_top_valid;
 }
 
 static inline void load_layer_sublayer1_norm_params(
@@ -184,6 +219,17 @@ static inline void TransformerLayerTopManagedAttnBridge(
     TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
         topfed_ffn_x_words[i] = sram_window[ffn_x_base + i];
     }
+    const u32_t* selected_topfed_ffn_x_words = 0;
+    u32_t selected_topfed_ffn_x_words_valid = (u32_t)0u;
+    transformer_layer_select_topfed_words(
+        ffn_topfed_handoff_desc.topfed_w1_x_words,
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_x_words_valid.to_uint(),
+        (uint32_t)FFN_X_WORDS,
+        topfed_ffn_x_words,
+        ffn_x_words,
+        selected_topfed_ffn_x_words,
+        selected_topfed_ffn_x_words_valid
+    );
     const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
     const uint32_t w1_bias_id = use_layer1 ? 12u : 4u;
     const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
@@ -204,6 +250,17 @@ static inline void TransformerLayerTopManagedAttnBridge(
     TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
         topfed_ffn_w1_words[i] = sram_window[w1_weight_base + i];
     }
+    const u32_t* selected_topfed_ffn_w1_words = 0;
+    u32_t selected_topfed_ffn_w1_words_valid = (u32_t)0u;
+    transformer_layer_select_topfed_words(
+        ffn_topfed_handoff_desc.topfed_w1_weight_words,
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_weight_words_valid.to_uint(),
+        (uint32_t)FFN_W1_WEIGHT_WORDS,
+        topfed_ffn_w1_words,
+        w1_weight_words,
+        selected_topfed_ffn_w1_words,
+        selected_topfed_ffn_w1_words_valid
+    );
     u32_t topfed_ffn_w1_bias_words[FFN_W1_BIAS_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
         topfed_ffn_w1_bias_words[i] = 0;
@@ -220,8 +277,10 @@ static inline void TransformerLayerTopManagedAttnBridge(
     }
     const u32_t* selected_topfed_ffn_w1_bias_words = 0;
     u32_t selected_topfed_ffn_w1_bias_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_w1_bias_words(
-        ffn_topfed_handoff_desc,
+    transformer_layer_select_topfed_words(
+        ffn_topfed_handoff_desc.topfed_w1_bias_words,
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_bias_words_valid.to_uint(),
+        (uint32_t)FFN_W1_BIAS_WORDS,
         topfed_ffn_w1_bias_words,
         w1_bias_words,
         selected_topfed_ffn_w1_bias_words,
@@ -236,9 +295,9 @@ static inline void TransformerLayerTopManagedAttnBridge(
         sc.ffn,
         pb.param_base_word,
         layer_id,
-        topfed_ffn_x_words,
-        topfed_ffn_w1_words,
-        (u32_t)w1_weight_words,
+        selected_topfed_ffn_x_words,
+        selected_topfed_ffn_w1_words,
+        selected_topfed_ffn_w1_words_valid,
         0,
         (u32_t)0u,
         0,
@@ -248,7 +307,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
         (u32_t)FFN_POLICY_REQUIRE_W1_TOPFED,
         0,
         0,
-        (u32_t)ffn_x_words,
+        selected_topfed_ffn_x_words_valid,
         selected_topfed_ffn_w1_bias_words,
         selected_topfed_ffn_w1_bias_words_valid
     );
@@ -432,6 +491,17 @@ static inline void TransformerLayer(
     TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
         topfed_ffn_x_words[i] = sram[ffn_x_base + i];
     }
+    const u32_t* selected_topfed_ffn_x_words = 0;
+    u32_t selected_topfed_ffn_x_words_valid = (u32_t)0u;
+    transformer_layer_select_topfed_words(
+        ffn_topfed_handoff_desc.topfed_w1_x_words,
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_x_words_valid.to_uint(),
+        (uint32_t)FFN_X_WORDS,
+        topfed_ffn_x_words,
+        ffn_x_words,
+        selected_topfed_ffn_x_words,
+        selected_topfed_ffn_x_words_valid
+    );
     const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
     const uint32_t w1_bias_id = use_layer1 ? 12u : 4u;
     const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
@@ -452,6 +522,17 @@ static inline void TransformerLayer(
     TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
         topfed_ffn_w1_words[i] = sram[w1_weight_base + i];
     }
+    const u32_t* selected_topfed_ffn_w1_words = 0;
+    u32_t selected_topfed_ffn_w1_words_valid = (u32_t)0u;
+    transformer_layer_select_topfed_words(
+        ffn_topfed_handoff_desc.topfed_w1_weight_words,
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_weight_words_valid.to_uint(),
+        (uint32_t)FFN_W1_WEIGHT_WORDS,
+        topfed_ffn_w1_words,
+        w1_weight_words,
+        selected_topfed_ffn_w1_words,
+        selected_topfed_ffn_w1_words_valid
+    );
     u32_t topfed_ffn_w1_bias_words[FFN_W1_BIAS_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
         topfed_ffn_w1_bias_words[i] = 0;
@@ -468,8 +549,10 @@ static inline void TransformerLayer(
     }
     const u32_t* selected_topfed_ffn_w1_bias_words = 0;
     u32_t selected_topfed_ffn_w1_bias_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_w1_bias_words(
-        ffn_topfed_handoff_desc,
+    transformer_layer_select_topfed_words(
+        ffn_topfed_handoff_desc.topfed_w1_bias_words,
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_bias_words_valid.to_uint(),
+        (uint32_t)FFN_W1_BIAS_WORDS,
         topfed_ffn_w1_bias_words,
         w1_bias_words,
         selected_topfed_ffn_w1_bias_words,
@@ -484,9 +567,9 @@ static inline void TransformerLayer(
         sc.ffn,
         pb.param_base_word,
         layer_id,
-        topfed_ffn_x_words,
-        topfed_ffn_w1_words,
-        (u32_t)w1_weight_words,
+        selected_topfed_ffn_x_words,
+        selected_topfed_ffn_w1_words,
+        selected_topfed_ffn_w1_words_valid,
         0,
         (u32_t)0u,
         0,
@@ -496,7 +579,7 @@ static inline void TransformerLayer(
         (u32_t)FFN_POLICY_REQUIRE_W1_TOPFED,
         0,
         0,
-        (u32_t)ffn_x_words,
+        selected_topfed_ffn_x_words_valid,
         selected_topfed_ffn_w1_bias_words,
         selected_topfed_ffn_w1_bias_words_valid
     );

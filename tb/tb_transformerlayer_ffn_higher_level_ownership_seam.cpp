@@ -1,6 +1,6 @@
 // P11AU: TransformerLayer higher-level ownership seam smoke (local-only).
 // Scope:
-// - Validate optional Top-fed FFN W1 bias handoff on TransformerLayer boundary.
+// - Validate optional Top-fed FFN W1 payload handoff (x/weight/bias) on TransformerLayer boundary.
 // - Validate both pointer path and deep bridge path consume the seam consistently.
 
 #ifndef __SYNTHESIS__
@@ -71,7 +71,7 @@ static void init_transformer_case_memory(
     const uint32_t attn_out_base = (uint32_t)sc.attn_out_base_word.to_uint();
     const uint32_t attn_out_words = token_count * d_model;
     for (uint32_t i = 0u; i < attn_out_words; ++i) {
-        sram[attn_out_base + i] = (aecct::u32_t)zero_bits;
+        sram[attn_out_base + i] = (aecct::u32_t)one_bits;
     }
 
     const bool use_layer1 = (layer_id == 1u);
@@ -86,7 +86,7 @@ static void init_transformer_case_memory(
     const uint32_t w2_weight_base = param_base + kParamMeta[w2_weight_id].offset_w;
 
     for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_WEIGHT_WORDS; ++i) {
-        sram[w1_weight_base + i] = (aecct::u32_t)zero_bits;
+        sram[w1_weight_base + i] = (aecct::u32_t)one_bits;
     }
     for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_BIAS_WORDS; ++i) {
         // Baseline path should pick this non-zero bias unless seam override is consumed.
@@ -111,7 +111,16 @@ template<typename RunFn>
 static bool run_single_path_case(const char* case_label, RunFn run_fn) {
     static aecct::u32_t sram_baseline[sram_map::SRAM_WORDS_TOTAL];
     static aecct::u32_t sram_seam[sram_map::SRAM_WORDS_TOTAL];
+    static aecct::u32_t sram_fallback[sram_map::SRAM_WORDS_TOTAL];
+    static aecct::u32_t seam_w1_x_words[aecct::FFN_X_WORDS];
+    static aecct::u32_t seam_w1_weight_words[aecct::FFN_W1_WEIGHT_WORDS];
     static aecct::u32_t seam_w1_bias_words[aecct::FFN_W1_BIAS_WORDS];
+    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_X_WORDS; ++i) {
+        seam_w1_x_words[i] = (aecct::u32_t)0u;
+    }
+    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_WEIGHT_WORDS; ++i) {
+        seam_w1_weight_words[i] = (aecct::u32_t)0u;
+    }
     for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_BIAS_WORDS; ++i) {
         seam_w1_bias_words[i] = (aecct::u32_t)0u;
     }
@@ -131,6 +140,16 @@ static bool run_single_path_case(const char* case_label, RunFn run_fn) {
 
     init_transformer_case_memory(sram_baseline, cfg, sc, pb, (uint32_t)layer_id.to_uint());
     init_transformer_case_memory(sram_seam, cfg, sc, pb, (uint32_t)layer_id.to_uint());
+    init_transformer_case_memory(sram_fallback, cfg, sc, pb, (uint32_t)layer_id.to_uint());
+
+    const uint32_t token_count = (uint32_t)aecct::ATTN_TOKEN_COUNT;
+    uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+    uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
+    if (d_model == 0u) { d_model = (uint32_t)aecct::FFN_D_MODEL; }
+    if (d_ffn == 0u) { d_ffn = (uint32_t)aecct::FFN_D_FFN; }
+    const uint32_t w1_x_words = token_count * d_model;
+    const uint32_t w1_weight_words = d_ffn * d_model;
+    const uint32_t w1_bias_words = d_ffn;
 
     run_fn(
         sram_baseline,
@@ -151,26 +170,67 @@ static bool run_single_path_case(const char* case_label, RunFn run_fn) {
         sc,
         pb,
         aecct::make_transformer_layer_ffn_topfed_handoff_desc(
+            seam_w1_x_words,
+            (aecct::u32_t)w1_x_words,
+            seam_w1_weight_words,
+            (aecct::u32_t)w1_weight_words,
             seam_w1_bias_words,
-            (aecct::u32_t)aecct::FFN_W1_BIAS_WORDS)
+            (aecct::u32_t)w1_bias_words)
+    );
+    run_fn(
+        sram_fallback,
+        cfg,
+        layer_id,
+        x_in_base,
+        x_out_base,
+        sc,
+        pb,
+        aecct::make_transformer_layer_ffn_topfed_handoff_desc(
+            seam_w1_x_words,
+            (aecct::u32_t)0u,
+            seam_w1_weight_words,
+            (aecct::u32_t)0u,
+            seam_w1_bias_words,
+            (aecct::u32_t)0u)
     );
 
     const uint32_t w1_out_base = (uint32_t)sc.ffn.w1_out_base_word.to_uint();
-    const uint32_t baseline_w1_word0 = (uint32_t)sram_baseline[w1_out_base].to_uint();
-    const uint32_t seam_w1_word0 = (uint32_t)sram_seam[w1_out_base].to_uint();
-    if (baseline_w1_word0 == seam_w1_word0) {
+    uint32_t seam_change_count = 0u;
+    const uint32_t compare_words = (w1_bias_words < 16u) ? w1_bias_words : 16u;
+    W1_SEAM_COMPARE_LOOP: for (uint32_t i = 0u; i < compare_words; ++i) {
+        const uint32_t baseline_w = (uint32_t)sram_baseline[w1_out_base + i].to_uint();
+        const uint32_t seam_w = (uint32_t)sram_seam[w1_out_base + i].to_uint();
+        const uint32_t fallback_w = (uint32_t)sram_fallback[w1_out_base + i].to_uint();
+        if (baseline_w != seam_w) {
+            ++seam_change_count;
+        }
+        if (baseline_w != fallback_w) {
+            std::printf(
+                "[p11au][FAIL] %s fallback mismatch idx=%u baseline=0x%08X fallback=0x%08X\n",
+                case_label,
+                (unsigned)i,
+                (unsigned)baseline_w,
+                (unsigned)fallback_w);
+            return false;
+        }
+    }
+
+    if (seam_change_count == 0u) {
         std::printf(
-            "[p11au][FAIL] %s seam did not change W1 output baseline=0x%08X seam=0x%08X\n",
+            "[p11au][FAIL] %s seam did not change W1 output in first %u words\n",
             case_label,
-            (unsigned)baseline_w1_word0,
-            (unsigned)seam_w1_word0);
+            (unsigned)compare_words);
         return false;
     }
+
+    const uint32_t seam_w1_word0 = (uint32_t)sram_seam[w1_out_base].to_uint();
+    const uint32_t fallback_w1_word0 = (uint32_t)sram_fallback[w1_out_base].to_uint();
     if (seam_w1_word0 != 0u) {
-        std::printf(
-            "[p11au][FAIL] %s seam W1 output expected zero got=0x%08X\n",
-            case_label,
-            (unsigned)seam_w1_word0);
+        std::printf("[p11au][FAIL] %s seam word0 expected zero got=0x%08X\n", case_label, (unsigned)seam_w1_word0);
+        return false;
+    }
+    if (fallback_w1_word0 == 0u) {
+        std::printf("[p11au][FAIL] %s fallback word0 unexpectedly zero\n", case_label);
         return false;
     }
     return true;
@@ -208,7 +268,7 @@ static bool run_pointer_path_case() {
     if (!ok) {
         return false;
     }
-    std::printf("TRANSFORMER_W1_BIAS_SEAM_POINTER_PATH PASS\n");
+    std::printf("TRANSFORMER_W1_PAYLOAD_SEAM_POINTER_PATH PASS\n");
     return true;
 }
 
@@ -252,7 +312,7 @@ static bool run_deep_bridge_path_case() {
     if (!ok) {
         return false;
     }
-    std::printf("TRANSFORMER_W1_BIAS_SEAM_DEEP_BRIDGE_PATH PASS\n");
+    std::printf("TRANSFORMER_W1_PAYLOAD_SEAM_DEEP_BRIDGE_PATH PASS\n");
     return true;
 }
 
@@ -268,7 +328,7 @@ CCS_MAIN(int argc, char** argv) {
     if (!run_deep_bridge_path_case()) {
         CCS_RETURN(1);
     }
-    std::printf("TRANSFORMER_W1_BIAS_SEAM_EXPECTED_COMPARE PASS\n");
+    std::printf("TRANSFORMER_W1_PAYLOAD_SEAM_EXPECTED_COMPARE PASS\n");
     std::printf("PASS: tb_transformerlayer_ffn_higher_level_ownership_seam\n");
     CCS_RETURN(0);
 }

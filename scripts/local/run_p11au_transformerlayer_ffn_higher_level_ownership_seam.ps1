@@ -72,9 +72,9 @@ try {
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
     $requiredPassLines = @(
-        'TRANSFORMER_W1_BIAS_SEAM_POINTER_PATH PASS',
-        'TRANSFORMER_W1_BIAS_SEAM_DEEP_BRIDGE_PATH PASS',
-        'TRANSFORMER_W1_BIAS_SEAM_EXPECTED_COMPARE PASS',
+        'TRANSFORMER_W1_PAYLOAD_SEAM_POINTER_PATH PASS',
+        'TRANSFORMER_W1_PAYLOAD_SEAM_DEEP_BRIDGE_PATH PASS',
+        'TRANSFORMER_W1_PAYLOAD_SEAM_EXPECTED_COMPARE PASS',
         'PASS: tb_transformerlayer_ffn_higher_level_ownership_seam'
     )
     foreach ($line in $requiredPassLines) {
@@ -121,4 +121,3 @@ catch {
 finally {
     Pop-Location
 }
-
