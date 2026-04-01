@@ -1501,6 +1501,105 @@ namespace aecct {
         contract.done = true;
     }
 
+    // Top-side representative helper for FFN seam assembly.
+    // This is a local-only caller convenience surface and does not change external protocol.
+    static inline TransformerLayerFfnTopfedHandoffDesc top_make_transformer_layer_ffn_topfed_handoff_desc(
+        const u32_t* topfed_w1_x_words = 0,
+        u32_t topfed_w1_x_words_valid = (u32_t)0u,
+        const u32_t* topfed_w1_weight_words = 0,
+        u32_t topfed_w1_weight_words_valid = (u32_t)0u,
+        const u32_t* topfed_w1_bias_words = 0,
+        u32_t topfed_w1_bias_words_valid = (u32_t)0u,
+        const u32_t* topfed_w2_input_words = 0,
+        u32_t topfed_w2_input_words_valid = (u32_t)0u,
+        const u32_t* topfed_w2_weight_words = 0,
+        u32_t topfed_w2_weight_words_valid = (u32_t)0u,
+        const u32_t* topfed_w2_bias_words = 0,
+        u32_t topfed_w2_bias_words_valid = (u32_t)0u
+    ) {
+        return make_transformer_layer_ffn_topfed_handoff_desc(
+            topfed_w1_x_words,
+            topfed_w1_x_words_valid,
+            topfed_w1_weight_words,
+            topfed_w1_weight_words_valid,
+            topfed_w1_bias_words,
+            topfed_w1_bias_words_valid,
+            topfed_w2_input_words,
+            topfed_w2_input_words_valid,
+            topfed_w2_weight_words,
+            topfed_w2_weight_words_valid,
+            topfed_w2_bias_words,
+            topfed_w2_bias_words_valid
+        );
+    }
+
+    static inline void top_dispatch_transformer_layer(
+        u32_t* sram,
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        u32_t x_in_base_word,
+        u32_t x_out_base_word,
+        const LayerScratch& sc,
+        const LayerParamBase& pb,
+        bool kv_prebuilt_from_top_managed = false,
+        bool q_prebuilt_from_top_managed = false,
+        bool score_prebuilt_from_top_managed = false,
+        bool out_prebuilt_from_top_managed = false,
+        bool sublayer1_norm_preloaded_by_top = false,
+        TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+            make_transformer_layer_ffn_topfed_handoff_desc()
+    ) {
+        TransformerLayer(
+            sram,
+            cfg,
+            layer_id,
+            x_in_base_word,
+            x_out_base_word,
+            sc,
+            pb,
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            sublayer1_norm_preloaded_by_top,
+            ffn_topfed_handoff_desc
+        );
+    }
+
+    template<uint32_t SRAM_WORDS>
+    static inline void top_dispatch_transformer_layer_top_managed_attn_bridge(
+        u32_t (&sram)[SRAM_WORDS],
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        u32_t x_in_base_word,
+        u32_t x_out_base_word,
+        const LayerScratch& sc,
+        const LayerParamBase& pb,
+        bool kv_prebuilt_from_top_managed = false,
+        bool q_prebuilt_from_top_managed = false,
+        bool score_prebuilt_from_top_managed = false,
+        bool out_prebuilt_from_top_managed = false,
+        bool sublayer1_norm_preloaded_by_top = false,
+        TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+            make_transformer_layer_ffn_topfed_handoff_desc()
+    ) {
+        TransformerLayerTopManagedAttnBridge(
+            sram,
+            cfg,
+            layer_id,
+            x_in_base_word,
+            x_out_base_word,
+            sc,
+            pb,
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            sublayer1_norm_preloaded_by_top,
+            ffn_topfed_handoff_desc
+        );
+    }
+
     // Top-level layer orchestration boundary.
     // Top owns: layer loop scheduling, X_WORK page alternation, mid/end LN insertion,
     // and latching "mainline taken" vs "fallback taken" status for reviewer-visible checks.
@@ -1616,8 +1715,11 @@ namespace aecct {
                 d_model
             );
 
+            const TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+                top_make_transformer_layer_ffn_topfed_handoff_desc();
+
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
-            TransformerLayer(
+            top_dispatch_transformer_layer(
                 sram,
                 cfg,
                 (u32_t)lid,
@@ -1629,7 +1731,8 @@ namespace aecct {
                 q_prebuilt_from_top_managed,
                 score_prebuilt_from_top_managed,
                 out_prebuilt_from_top_managed,
-                true
+                true,
+                ffn_topfed_handoff_desc
             );
 
             x_in_base = x_out_base;
@@ -1793,7 +1896,10 @@ namespace aecct {
                 d_model
             );
 
-            TransformerLayerTopManagedAttnBridge(
+            const TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+                top_make_transformer_layer_ffn_topfed_handoff_desc();
+
+            top_dispatch_transformer_layer_top_managed_attn_bridge(
                 sram,
                 cfg,
                 (u32_t)lid,
@@ -1805,7 +1911,8 @@ namespace aecct {
                 q_prebuilt_from_top_managed,
                 score_prebuilt_from_top_managed,
                 out_prebuilt_from_top_managed,
-                true
+                true,
+                ffn_topfed_handoff_desc
             );
 
             x_in_base = x_out_base;
