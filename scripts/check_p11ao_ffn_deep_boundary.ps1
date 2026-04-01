@@ -106,7 +106,16 @@ Require-Regex -Text $ffnText -Pattern '(?ms)template<\s*unsigned\s+STAGE_MODE\s*
 
 # Transformer deep bridge must use the new FFN array-shaped bridge.
 Require-Regex -Text $layerText -Pattern '(?ms)TransformerLayerTopManagedAttnBridge\s*\(\s*u32_t\s*\(&\s*sram_window\s*\)\s*\[\s*SRAM_WORDS\s*\]' -Reason "TransformerLayer deep bridge missing array-shaped signature"
-Require-Regex -Text $layerText -Pattern '(?ms)FFNLayer0TopManagedWindowBridge<\s*FFN_STAGE_FULL\s*>\s*\(' -Reason "TransformerLayer deep bridge does not call FFNLayer0TopManagedWindowBridge"
+Require-Regex -Text $layerText -Pattern '(?ms)FFNLayer0TopManagedWindowBridge<\s*FFN_STAGE_W1\s*>\s*\(' -Reason "TransformerLayer deep bridge missing FFN W1 stage dispatch"
+Require-Regex -Text $layerText -Pattern '(?ms)FFNLayer0TopManagedWindowBridge<\s*FFN_STAGE_RELU\s*>\s*\(' -Reason "TransformerLayer deep bridge missing FFN RELU stage dispatch"
+Require-Regex -Text $layerText -Pattern '(?ms)FFNLayer0TopManagedWindowBridge<\s*FFN_STAGE_W2\s*>\s*\(' -Reason "TransformerLayer deep bridge missing FFN W2 stage dispatch"
+Require-Regex -Text $layerText -Pattern '(?ms)FFNLayer0<\s*FFN_STAGE_W1\s*>\s*\(' -Reason "TransformerLayer pointer path missing FFN W1 stage dispatch"
+Require-Regex -Text $layerText -Pattern '(?ms)FFNLayer0<\s*FFN_STAGE_RELU\s*>\s*\(' -Reason "TransformerLayer pointer path missing FFN RELU stage dispatch"
+Require-Regex -Text $layerText -Pattern '(?ms)FFNLayer0<\s*FFN_STAGE_W2\s*>\s*\(' -Reason "TransformerLayer pointer path missing FFN W2 stage dispatch"
+Require-Regex -Text $layerText -Pattern '(?ms)struct\s+TransformerLayerFfnTopfedHandoffDesc\s*\{[\s\S]*?topfed_w2_input_words[\s\S]*?topfed_w2_weight_words[\s\S]*?topfed_w2_bias_words' -Reason "TransformerLayer FFN handoff descriptor missing W2 payload fields"
+Require-Regex -Text $layerText -Pattern '(?ms)transformer_layer_select_topfed_words\s*\([\s\S]*?ffn_topfed_handoff_desc\.topfed_w2_input_words[\s\S]*?selected_topfed_ffn_w2_input_words' -Reason "TransformerLayer missing W2 input seam selector anchor"
+Require-Regex -Text $layerText -Pattern '(?ms)transformer_layer_select_topfed_words\s*\([\s\S]*?ffn_topfed_handoff_desc\.topfed_w2_weight_words[\s\S]*?selected_topfed_ffn_w2_words' -Reason "TransformerLayer missing W2 weight seam selector anchor"
+Require-Regex -Text $layerText -Pattern '(?ms)transformer_layer_select_topfed_words\s*\([\s\S]*?ffn_topfed_handoff_desc\.topfed_w2_bias_words[\s\S]*?selected_topfed_ffn_w2_bias_words' -Reason "TransformerLayer missing W2 bias seam selector anchor"
 
 $bridgeBodyMatch = [System.Text.RegularExpressions.Regex]::Match(
     $layerText,
@@ -115,8 +124,8 @@ if (-not $bridgeBodyMatch.Success) {
     Fail-Check "failed to parse TransformerLayerTopManagedAttnBridge body"
 }
 $bridgeBody = $bridgeBodyMatch.Groups["body"].Value
-if ([System.Text.RegularExpressions.Regex]::IsMatch($bridgeBody, '(?ms)\bFFNLayer0<\s*FFN_STAGE_FULL\s*>\s*\(\s*sram_window\s*,')) {
-    Fail-Check "deep bridge still calls FFNLayer0<...>(sram_window,...) directly"
+if ([System.Text.RegularExpressions.Regex]::IsMatch($bridgeBody, '(?ms)\bFFNLayer0<\s*FFN_STAGE_[A-Z0-9_]+\s*>\s*\(\s*sram_window\s*,')) {
+    Fail-Check "deep bridge still calls pointer-path FFNLayer0<...>(sram_window,...) directly"
 }
 
 # Wrapper and Top dispatch path must remain through the deep bridge loop.
