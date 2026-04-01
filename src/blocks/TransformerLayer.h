@@ -55,6 +55,46 @@ struct CfgRegs {
     u32_t n_layers;
 };
 
+// local-only higher-level ownership seam for FFN payload handoff.
+// Top can optionally provide preloaded W1 bias words to avoid in-layer preload ownership.
+struct TransformerLayerFfnTopfedHandoffDesc {
+    const u32_t* topfed_w1_bias_words;
+    u32_t topfed_w1_bias_words_valid;
+};
+
+static inline TransformerLayerFfnTopfedHandoffDesc make_transformer_layer_ffn_topfed_handoff_desc(
+    const u32_t* topfed_w1_bias_words = 0,
+    u32_t topfed_w1_bias_words_valid = (u32_t)0u
+) {
+    TransformerLayerFfnTopfedHandoffDesc desc;
+    desc.topfed_w1_bias_words = topfed_w1_bias_words;
+    desc.topfed_w1_bias_words_valid = topfed_w1_bias_words_valid;
+    return desc;
+}
+
+static inline void transformer_layer_select_topfed_w1_bias_words(
+    const TransformerLayerFfnTopfedHandoffDesc& handoff_desc,
+    const u32_t* local_topfed_w1_bias_words,
+    uint32_t local_topfed_w1_bias_words_valid,
+    const u32_t*& selected_topfed_w1_bias_words,
+    u32_t& selected_topfed_w1_bias_words_valid
+) {
+    selected_topfed_w1_bias_words = local_topfed_w1_bias_words;
+    selected_topfed_w1_bias_words_valid = (u32_t)local_topfed_w1_bias_words_valid;
+    if (handoff_desc.topfed_w1_bias_words == 0) {
+        return;
+    }
+    uint32_t from_top_valid = (uint32_t)handoff_desc.topfed_w1_bias_words_valid.to_uint();
+    if (from_top_valid == 0u) {
+        return;
+    }
+    if (from_top_valid > (uint32_t)FFN_W1_BIAS_WORDS) {
+        from_top_valid = (uint32_t)FFN_W1_BIAS_WORDS;
+    }
+    selected_topfed_w1_bias_words = handoff_desc.topfed_w1_bias_words;
+    selected_topfed_w1_bias_words_valid = (u32_t)from_top_valid;
+}
+
 static inline void load_layer_sublayer1_norm_params(
     u32_t* sram,
     uint32_t param_base_word,
@@ -90,7 +130,9 @@ static inline void TransformerLayerTopManagedAttnBridge(
     bool q_prebuilt_from_top_managed = false,
     bool score_prebuilt_from_top_managed = false,
     bool out_prebuilt_from_top_managed = false,
-    bool sublayer1_norm_preloaded_by_top = false
+    bool sublayer1_norm_preloaded_by_top = false,
+    TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+        make_transformer_layer_ffn_topfed_handoff_desc()
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -176,6 +218,15 @@ static inline void TransformerLayerTopManagedAttnBridge(
     TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
         topfed_ffn_w1_bias_words[i] = sram_window[w1_bias_base + i];
     }
+    const u32_t* selected_topfed_ffn_w1_bias_words = 0;
+    u32_t selected_topfed_ffn_w1_bias_words_valid = (u32_t)0u;
+    transformer_layer_select_topfed_w1_bias_words(
+        ffn_topfed_handoff_desc,
+        topfed_ffn_w1_bias_words,
+        w1_bias_words,
+        selected_topfed_ffn_w1_bias_words,
+        selected_topfed_ffn_w1_bias_words_valid
+    );
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_W1>(
@@ -198,8 +249,8 @@ static inline void TransformerLayerTopManagedAttnBridge(
         0,
         0,
         (u32_t)ffn_x_words,
-        topfed_ffn_w1_bias_words,
-        (u32_t)w1_bias_words
+        selected_topfed_ffn_w1_bias_words,
+        selected_topfed_ffn_w1_bias_words_valid
     );
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_RELU>(
         sram_window,
@@ -326,7 +377,9 @@ static inline void TransformerLayer(
     bool q_prebuilt_from_top_managed = false,
     bool score_prebuilt_from_top_managed = false,
     bool out_prebuilt_from_top_managed = false,
-    bool sublayer1_norm_preloaded_by_top = false
+    bool sublayer1_norm_preloaded_by_top = false,
+    TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+        make_transformer_layer_ffn_topfed_handoff_desc()
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -413,6 +466,15 @@ static inline void TransformerLayer(
     TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
         topfed_ffn_w1_bias_words[i] = sram[w1_bias_base + i];
     }
+    const u32_t* selected_topfed_ffn_w1_bias_words = 0;
+    u32_t selected_topfed_ffn_w1_bias_words_valid = (u32_t)0u;
+    transformer_layer_select_topfed_w1_bias_words(
+        ffn_topfed_handoff_desc,
+        topfed_ffn_w1_bias_words,
+        w1_bias_words,
+        selected_topfed_ffn_w1_bias_words,
+        selected_topfed_ffn_w1_bias_words_valid
+    );
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
     FFNLayer0<FFN_STAGE_W1>(
@@ -435,8 +497,8 @@ static inline void TransformerLayer(
         0,
         0,
         (u32_t)ffn_x_words,
-        topfed_ffn_w1_bias_words,
-        (u32_t)w1_bias_words
+        selected_topfed_ffn_w1_bias_words,
+        selected_topfed_ffn_w1_bias_words_valid
     );
     FFNLayer0<FFN_STAGE_RELU>(
         sram,
