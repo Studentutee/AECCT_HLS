@@ -106,6 +106,43 @@
   - no second ownership/arbitration semantics introduced.
 - Status: advanced (ACC-only later-token consume proof landed).
 
+### Hotspot B4: SoftmaxOut C-family harness consolidation (W4-CFamily)
+- Hook points:
+  - shared TB bootstrap harness:
+    - `tb/tb_w4cfamily_softmaxout_harness_common.h`
+  - shared runner strategy:
+    - `scripts/local/run_p11w4cfamily_softmaxout_common.ps1`
+  - thin wrappers:
+    - `run_p11w4c0_softmaxout_contract_probe.ps1`
+    - `run_p11w4c1_softmaxout_head_token_contract_probe.ps1`
+    - `run_p11w4c2_softmaxout_acc_single_later_token_bridge.ps1`
+- Chosen consolidation shape:
+  - shared harness + shared runner, legacy per-round entries kept as thin wrappers.
+- Why bounded:
+  - no external contract change
+  - no design semantic rewrite under consolidation-only scope
+  - PASS line contracts preserved per round runner wrapper
+- Status: advanced (family harness/runner landed; C0/C1/C2 baseline retained).
+
+### Hotspot B5: SoftmaxOut RENORM-path single selected probe (W4-C3)
+- Hook point: `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h::attn_phaseb_top_managed_softmax_out_mainline`
+- Exact cut location:
+  - `ATTN_P11AF_MAINLINE_RENORM_TILE_LOOP` / `ATTN_P11AF_MAINLINE_RENORM_LOOP`
+  - bounded renorm family select/compare labels:
+    - `ATTN_P11AF_TILE_BRIDGE_FAMILY_RENORM_CASE_LOOP`
+    - `ATTN_P11AF_TILE_BRIDGE_FAMILY_RENORM_COMPARE_LOOP`
+- Direct SRAM role advanced in this round:
+  - selected `(head, later-token, d_tile)` can consume caller-fed bridge payload in RENORM path.
+  - non-selected RENORM, ACC non-selected, and WRITEBACK remain existing SRAM behavior.
+- C3 observability (internal helper only):
+  - `phase_tile_bridge_family_renorm_selected_count`
+  - `phase_tile_bridge_family_renorm_case_mask`
+- Why still bounded:
+  - WRITEBACK untouched.
+  - no external Top contract drift.
+  - no second ownership/arbitration semantics introduced.
+- Status: advanced (RENORM single selected probe/consume proof landed).
+
 ## C. Near Skeleton Risk Zone (Do Not Force)
 
 ### Hotspot C1: AttnLayer0 score/reduction/writeback core loops
@@ -133,4 +170,6 @@
 2. W4-C0 contract-first mini-campaign: done with bounded contract delta.
 3. W4-C1 SoftmaxOut head/token contract-only groundwork: done with probe validation.
 4. W4-C2 SoftmaxOut ACC-path single selected later-token bounded bridge: done.
-5. Remaining deferred: SoftmaxOut RENORM/WRITEBACK-side migration + AttnLayer0/TransformerLayer skeleton-level ownership migration.
+5. W4-CFamily harness consolidation: done (shared harness + shared runner wrappers).
+6. W4-C3 SoftmaxOut RENORM single selected probe: done.
+7. Remaining deferred: broader RENORM/WRITEBACK-side migration + AttnLayer0/TransformerLayer skeleton-level ownership migration.

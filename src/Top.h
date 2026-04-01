@@ -1332,7 +1332,9 @@ namespace aecct {
         const u32_t* phase_tile_bridge_family_key_token_begin = 0,
         const u32_t* phase_tile_bridge_family_key_token_count = 0,
         u32_t* phase_tile_bridge_family_desc_visible_count = 0,
-        u32_t* phase_tile_bridge_family_desc_case_mask = 0
+        u32_t* phase_tile_bridge_family_desc_case_mask = 0,
+        u32_t* phase_tile_bridge_family_renorm_selected_count = 0,
+        u32_t* phase_tile_bridge_family_renorm_case_mask = 0
     ) {
         AttnCfg attn_cfg;
         attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
@@ -1384,7 +1386,9 @@ namespace aecct {
             phase_tile_bridge_family_key_token_begin,
             phase_tile_bridge_family_key_token_count,
             phase_tile_bridge_family_desc_visible_count,
-            phase_tile_bridge_family_desc_case_mask
+            phase_tile_bridge_family_desc_case_mask,
+            phase_tile_bridge_family_renorm_selected_count,
+            phase_tile_bridge_family_renorm_case_mask
         );
     }
 

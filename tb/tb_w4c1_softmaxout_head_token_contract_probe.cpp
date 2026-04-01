@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "tb_p11aeaf_common.h"
+#include "tb_w4cfamily_softmaxout_harness_common.h"
 
 #if __has_include(<mc_scverify.h>)
 #include <mc_scverify.h>
@@ -55,38 +56,12 @@ private:
     uint32_t family_total_words_ = 0u;
 
     bool init_and_bootstrap() {
-        sram_bootstrap_.assign((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
-        p11aeaf_tb::init_x_rows(sram_bootstrap_);
-        if (!p11aeaf_tb::prepare_qkv_payload_set(payloads_)) {
-            std::printf("[w4c1][FAIL] payload preparation failed\n");
-            return false;
-        }
-
-        const uint32_t param_base = (uint32_t)sram_map::W_REGION_BASE;
-        p11aeaf_tb::load_qkv_payload_set_to_sram(sram_bootstrap_, payloads_, param_base);
-        sc_ = aecct::make_layer_scratch((aecct::u32_t)aecct::LN_X_OUT_BASE_WORD);
-        cfg_ = p11aeaf_tb::build_cfg();
-
-        bool q_fallback_taken = true;
-        bool kv_fallback_taken = true;
-        if (!p11aeaf_tb::run_ac_ad_mainline(sram_bootstrap_, q_fallback_taken, kv_fallback_taken)) {
-            std::printf("[w4c1][FAIL] AC/AD bootstrap failed\n");
-            return false;
-        }
-        if (q_fallback_taken || kv_fallback_taken) {
-            std::printf("[w4c1][FAIL] AC/AD bootstrap fallback detected\n");
-            return false;
-        }
-
-        bool score_fallback_taken = true;
-        const bool score_mainline_taken = aecct::run_p11ae_layer0_top_managed_qk_score(
-            sram_bootstrap_.data(),
-            cfg_,
-            sc_,
-            (aecct::u32_t)0u,
-            score_fallback_taken);
-        if (!score_mainline_taken || score_fallback_taken) {
-            std::printf("[w4c1][FAIL] AE bootstrap failed\n");
+        if (!w4c_softmax_family::bootstrap_mainline_context(
+                "w4c1",
+                sram_bootstrap_,
+                payloads_,
+                sc_,
+                cfg_)) {
             return false;
         }
 
