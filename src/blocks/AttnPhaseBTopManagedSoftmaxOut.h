@@ -460,6 +460,8 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     uint32_t phase_tile_bridge_family_writeback_case_mask_u32 = 0u;
     uint32_t phase_tile_bridge_family_writeback_touch_count_u32 = 0u;
     uint32_t phase_tile_bridge_family_writeback_selected_consumed_count_u32 = 0u;
+    uint32_t phase_tile_bridge_family_writeback_selected_seen_words[kPhaseTileBridgeFamilyMaxCases];
+    bool phase_tile_bridge_family_writeback_selected_seen_case[kPhaseTileBridgeFamilyMaxCases];
     uint32_t phase_tile_bridge_family_writeback_selected_family_base_word_u32[kPhaseTileBridgeFamilyMaxCases];
     uint32_t phase_tile_bridge_family_writeback_selected_family_valid_words_u32[kPhaseTileBridgeFamilyMaxCases];
     bool phase_tile_bridge_seen = false;
@@ -622,6 +624,8 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
             phase_tile_bridge_family_writeback_selected_family_base_word_u32[c] =
                 (uint32_t)phase_tile_bridge_family_writeback_selected_family_base_words[c].to_uint();
             phase_tile_bridge_family_writeback_selected_family_valid_words_u32[c] = case_valid;
+            phase_tile_bridge_family_writeback_selected_seen_words[c] = 0u;
+            phase_tile_bridge_family_writeback_selected_seen_case[c] = false;
         }
     }
 
@@ -1116,6 +1120,12 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
             if (phase_tile_bridge_family_writeback_selected) {
                 const uint32_t case_idx =
                     (uint32_t)phase_tile_bridge_family_writeback_case_idx;
+                if (phase_tile_bridge_family_writeback_selected_family_enabled) {
+                    if (phase_tile_bridge_family_writeback_selected_seen_case[case_idx]) {
+                        return false;
+                    }
+                    phase_tile_bridge_family_writeback_selected_seen_case[case_idx] = true;
+                }
                 phase_tile_bridge_family_writeback_selected_count_u32 += 1u;
                 phase_tile_bridge_family_writeback_case_mask_u32 |= (1u << case_idx);
                 if (phase_tile_bridge_family_writeback_selected_count != 0) {
@@ -1237,6 +1247,9 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                             (u32_t)phase_tile_bridge_family_writeback_selected_consumed_count_u32;
                     }
                 } else if (phase_tile_bridge_family_writeback_selected_family_enabled) {
+                    const uint32_t case_idx =
+                        (uint32_t)phase_tile_bridge_family_writeback_case_idx;
+                    phase_tile_bridge_family_writeback_selected_seen_words[case_idx] += valid;
                     phase_tile_bridge_family_writeback_selected_consumed_count_u32 += valid;
                     if (phase_tile_bridge_family_writeback_selected_consumed_count != 0) {
                         *phase_tile_bridge_family_writeback_selected_consumed_count =
@@ -1306,6 +1319,27 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
         if (phase_tile_bridge_family_writeback_selected_consumed_count != 0) {
             *phase_tile_bridge_family_writeback_selected_consumed_count =
                 (u32_t)phase_tile_bridge_family_writeback_selected_consumed_count_u32;
+        }
+        if (phase_tile_bridge_family_writeback_selected_family_enabled) {
+            if (phase_tile_bridge_family_writeback_selected_count_u32 !=
+                phase_tile_bridge_family_writeback_selected_family_case_count_u32) {
+                return false;
+            }
+            const uint32_t expected_mask =
+                (1u << phase_tile_bridge_family_writeback_selected_family_case_count_u32) - 1u;
+            if (phase_tile_bridge_family_writeback_case_mask_u32 != expected_mask) {
+                return false;
+            }
+            ATTN_P11AF_TILE_BRIDGE_FAMILY_WRITEBACK_FAMILY_FINALIZE_LOOP: for (uint32_t c = 0u;
+                 c < phase_tile_bridge_family_writeback_selected_family_case_count_u32; ++c) {
+                if (!phase_tile_bridge_family_writeback_selected_seen_case[c]) {
+                    return false;
+                }
+                if (phase_tile_bridge_family_writeback_selected_seen_words[c] !=
+                    phase_tile_bridge_family_writeback_selected_family_valid_words_u32[c]) {
+                    return false;
+                }
+            }
         }
     }
     fallback_taken = false;
