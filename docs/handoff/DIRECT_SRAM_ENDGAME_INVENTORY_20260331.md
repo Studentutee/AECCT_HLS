@@ -69,14 +69,42 @@
   - helper-only passthrough (must stay internal Top helper):
     - all C1 arrays/counters above (no external Top 4-channel contract exposure)
 - Bounded guard (current C1 scope):
-  - descriptor token span is constrained to init-acc domain only:
-    - `case_key_token_begin == 0`
+  - descriptor token span is constrained to single-token selector:
     - `case_key_token_count == 1`
 - Why still bounded:
   - no renorm/acc/writeback skeleton reordering
   - no external Top interface drift
   - no second ownership/arbitration semantics
 - Status: advanced (contract-only + probe validated).
+
+### Hotspot B3: SoftmaxOut ACC-path single selected later-token bounded bridge (W4-C2)
+- Hook point: `src/blocks/AttnPhaseBTopManagedSoftmaxOut.h::attn_phaseb_top_managed_softmax_out_mainline`
+- Exact cut location:
+  - `ATTN_P11AF_MAINLINE_ACC_TILE_LOOP` / `ATTN_P11AF_MAINLINE_ACC_LOOP`
+  - bounded family select/compare labels:
+    - `ATTN_P11AF_TILE_BRIDGE_FAMILY_ACC_CASE_LOOP`
+    - `ATTN_P11AF_TILE_BRIDGE_FAMILY_ACC_COMPARE_LOOP`
+- Direct SRAM role advanced in this round:
+  - selected `(head, key_token, d_tile)` in ACC path can consume caller-fed bridge payload instead of SRAM read.
+  - non-selected ACC and all RENORM/WRITEBACK paths remain SRAM reads/writes.
+- Bounded selector shape:
+  - one exact key token (`key_token_count == 1`)
+  - bounded later-token path limit (`phase_tile_bridge_family_later_case_count_u32 <= 1`)
+  - if later-token case exists, this round requires one-case descriptor (`family_case_count == 1`)
+- Observability/evidence fields used:
+  - `phase_tile_bridge_family_visible_count`
+  - `phase_tile_bridge_family_owner_ok`
+  - `phase_tile_bridge_family_compare_ok`
+  - `phase_tile_bridge_family_consumed_count`
+  - `phase_tile_bridge_family_case_mask`
+  - `phase_tile_bridge_family_desc_visible_count`
+  - `phase_tile_bridge_family_desc_case_mask`
+- Why still bounded:
+  - RENORM path untouched.
+  - WRITEBACK skeleton untouched.
+  - external Top 4-channel contract untouched.
+  - no second ownership/arbitration semantics introduced.
+- Status: advanced (ACC-only later-token consume proof landed).
 
 ## C. Near Skeleton Risk Zone (Do Not Force)
 
@@ -104,4 +132,5 @@
 1. W4-B8/W4-B9 QkScore mature line: done.
 2. W4-C0 contract-first mini-campaign: done with bounded contract delta.
 3. W4-C1 SoftmaxOut head/token contract-only groundwork: done with probe validation.
-4. Remaining deferred: SoftmaxOut online core migration + AttnLayer0/TransformerLayer skeleton-level ownership migration.
+4. W4-C2 SoftmaxOut ACC-path single selected later-token bounded bridge: done.
+5. Remaining deferred: SoftmaxOut RENORM/WRITEBACK-side migration + AttnLayer0/TransformerLayer skeleton-level ownership migration.

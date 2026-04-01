@@ -429,6 +429,7 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     uint32_t phase_tile_bridge_family_case_mask_u32 = 0u;
     uint32_t phase_tile_bridge_family_desc_visible_count_u32 = 0u;
     uint32_t phase_tile_bridge_family_desc_case_mask_u32 = 0u;
+    uint32_t phase_tile_bridge_family_later_case_count_u32 = 0u;
     bool phase_tile_bridge_seen = false;
     if (phase_tile_bridge_enabled) {
         if (phase_tile_bridge_d_tile >= d_tile_count) {
@@ -482,10 +483,19 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                 (case_key_token_begin + case_key_token_count) > token_count) {
                 return false;
             }
-            // W4-C1 bounded contract-only guard:
-            // current helper only consumes bridge descriptors in INIT_ACC (first key token).
-            if (case_key_token_begin != 0u || case_key_token_count != 1u) {
+            // W4-C2 bounded ACC-only guard:
+            // keep token selector to one exact key token; no token-span consume in this round.
+            if (case_key_token_count != 1u) {
                 return false;
+            }
+            if (case_key_token_begin > 0u) {
+                phase_tile_bridge_family_later_case_count_u32 += 1u;
+                if (phase_tile_bridge_family_later_case_count_u32 > 1u) {
+                    return false;
+                }
+                if (phase_tile_bridge_family_case_count_u32 != 1u) {
+                    return false;
+                }
             }
             if (phase_tile_bridge_enabled && case_d_tile == phase_tile_bridge_d_tile &&
                 case_head_idx == 0u) {
@@ -577,33 +587,33 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
             const softmax_score_t score =
                 score_fp.template convert_to_ac_fixed<18, 6, true, AC_RND, AC_SAT>(false);
             const uint32_t v_row_base = v_base + j * d_model + head_col_base;
+            if (phase_tile_bridge_family_enabled) {
+                ATTN_P11AF_TILE_BRIDGE_FAMILY_DESC_PROBE_LOOP: for (uint32_t c = 0u;
+                     c < phase_tile_bridge_family_case_count_u32; ++c) {
+                    const bool desc_selected =
+                        (h == phase_tile_bridge_family_head_idx_u32[c]) &&
+                        (j >= phase_tile_bridge_family_key_token_begin_u32[c]) &&
+                        (j < (phase_tile_bridge_family_key_token_begin_u32[c] +
+                              phase_tile_bridge_family_key_token_count_u32[c]));
+                    if (desc_selected && !phase_tile_bridge_family_desc_seen[c]) {
+                        phase_tile_bridge_family_desc_seen[c] = true;
+                        phase_tile_bridge_family_desc_visible_count_u32 += 1u;
+                        phase_tile_bridge_family_desc_case_mask_u32 |= (1u << c);
+                        if (phase_tile_bridge_family_desc_visible_count != 0) {
+                            *phase_tile_bridge_family_desc_visible_count =
+                                (u32_t)phase_tile_bridge_family_desc_visible_count_u32;
+                        }
+                        if (phase_tile_bridge_family_desc_case_mask != 0) {
+                            *phase_tile_bridge_family_desc_case_mask =
+                                (u32_t)phase_tile_bridge_family_desc_case_mask_u32;
+                        }
+                    }
+                }
+            }
 
             if (!have_state) {
                 running_max = score;
                 running_l = softmax_sum_t(1);
-                if (phase_tile_bridge_family_enabled) {
-                    ATTN_P11AF_TILE_BRIDGE_FAMILY_DESC_PROBE_LOOP: for (uint32_t c = 0u;
-                         c < phase_tile_bridge_family_case_count_u32; ++c) {
-                        const bool desc_selected =
-                            (h == phase_tile_bridge_family_head_idx_u32[c]) &&
-                            (j >= phase_tile_bridge_family_key_token_begin_u32[c]) &&
-                            (j < (phase_tile_bridge_family_key_token_begin_u32[c] +
-                                  phase_tile_bridge_family_key_token_count_u32[c]));
-                        if (desc_selected && !phase_tile_bridge_family_desc_seen[c]) {
-                            phase_tile_bridge_family_desc_seen[c] = true;
-                            phase_tile_bridge_family_desc_visible_count_u32 += 1u;
-                            phase_tile_bridge_family_desc_case_mask_u32 |= (1u << c);
-                            if (phase_tile_bridge_family_desc_visible_count != 0) {
-                                *phase_tile_bridge_family_desc_visible_count =
-                                    (u32_t)phase_tile_bridge_family_desc_visible_count_u32;
-                            }
-                            if (phase_tile_bridge_family_desc_case_mask != 0) {
-                                *phase_tile_bridge_family_desc_case_mask =
-                                    (u32_t)phase_tile_bridge_family_desc_case_mask_u32;
-                            }
-                        }
-                    }
-                }
                 ATTN_P11AF_MAINLINE_INIT_ACC_TILE_LOOP: for (uint32_t dt = 0u; dt < d_tile_count; ++dt) {
                     const uint32_t tile_offset = dt * tile_words;
                     const uint32_t valid =
@@ -780,9 +790,100 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                         attn_top_managed_tile_valid_words(d_head, tile_words, dt);
                     if (valid == 0u || valid > tile_words) { return false; }
                     if ((tile_offset + valid) > d_head) { return false; }
+                    int32_t phase_tile_bridge_family_acc_case_idx = -1;
+                    if (phase_tile_bridge_family_enabled) {
+                        ATTN_P11AF_TILE_BRIDGE_FAMILY_ACC_CASE_LOOP: for (uint32_t c = 0u;
+                             c < phase_tile_bridge_family_case_count_u32; ++c) {
+                            const bool family_selected =
+                                (h == phase_tile_bridge_family_head_idx_u32[c]) &&
+                                (j >= phase_tile_bridge_family_key_token_begin_u32[c]) &&
+                                (j < (phase_tile_bridge_family_key_token_begin_u32[c] +
+                                      phase_tile_bridge_family_key_token_count_u32[c])) &&
+                                (dt == phase_tile_bridge_family_d_tile_u32[c]);
+                            if (family_selected) {
+                                if (phase_tile_bridge_family_acc_case_idx >= 0) {
+                                    return false;
+                                }
+                                phase_tile_bridge_family_acc_case_idx = (int32_t)c;
+                            }
+                        }
+                    }
+                    const bool phase_tile_bridge_family_acc_selected =
+                        (phase_tile_bridge_family_acc_case_idx >= 0);
+                    if (phase_tile_bridge_family_acc_selected) {
+                        const uint32_t case_idx =
+                            (uint32_t)phase_tile_bridge_family_acc_case_idx;
+                        if (phase_tile_bridge_family_seen_words[case_idx] == 0u) {
+                            phase_tile_bridge_family_visible_count_u32 += 1u;
+                            phase_tile_bridge_family_case_mask_u32 |= (1u << case_idx);
+                            if (phase_tile_bridge_family_visible_count != 0) {
+                                *phase_tile_bridge_family_visible_count =
+                                    (u32_t)phase_tile_bridge_family_visible_count_u32;
+                            }
+                            if (phase_tile_bridge_family_case_mask != 0) {
+                                *phase_tile_bridge_family_case_mask =
+                                    (u32_t)phase_tile_bridge_family_case_mask_u32;
+                            }
+                        }
+                        const uint32_t expected_bridge_base = v_row_base + tile_offset;
+                        const bool owner_ok =
+                            (phase_tile_bridge_family_base_word_u32[case_idx] ==
+                             expected_bridge_base);
+                        if (phase_tile_bridge_family_owner_ok != 0) {
+                            *phase_tile_bridge_family_owner_ok =
+                                (u32_t)(owner_ok ? 1u : 0u);
+                        }
+                        if (!owner_ok) {
+                            return false;
+                        }
+                        if (phase_tile_bridge_family_valid_words_u32[case_idx] != valid) {
+                            return false;
+                        }
+                        bool bridge_compare_ok = true;
+                        ATTN_P11AF_TILE_BRIDGE_FAMILY_ACC_COMPARE_LOOP: for (uint32_t i = 0u;
+                             i < valid; ++i) {
+                            const uint32_t family_word_idx =
+                                case_idx * kPhaseTileBridgeFamilyStrideWords + i;
+                            const uint32_t bridge_word =
+                                (uint32_t)phase_tile_bridge_family_v_words[family_word_idx].to_uint();
+                            const uint32_t sram_word =
+                                (uint32_t)sram[expected_bridge_base + i].to_uint();
+                            if (bridge_word != sram_word) {
+                                bridge_compare_ok = false;
+                                break;
+                            }
+                        }
+                        if (phase_tile_bridge_family_compare_ok != 0) {
+                            *phase_tile_bridge_family_compare_ok =
+                                (u32_t)(bridge_compare_ok ? 1u : 0u);
+                        }
+                        if (!bridge_compare_ok) {
+                            return false;
+                        }
+                    }
                     ATTN_P11AF_MAINLINE_ACC_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
-                        const quant_act_t vv = quant_act_from_bits(sram[v_row_base + tile_offset + i]);
+                        quant_act_t vv;
+                        if (phase_tile_bridge_family_acc_selected) {
+                            const uint32_t case_idx =
+                                (uint32_t)phase_tile_bridge_family_acc_case_idx;
+                            const uint32_t family_word_idx =
+                                case_idx * kPhaseTileBridgeFamilyStrideWords + i;
+                            vv = quant_act_from_bits(
+                                phase_tile_bridge_family_v_words[family_word_idx]);
+                        } else {
+                            vv = quant_act_from_bits(sram[v_row_base + tile_offset + i]);
+                        }
                         running_acc[tile_offset + i] += quant_acc_t(beta) * quant_acc_t(vv);
+                    }
+                    if (phase_tile_bridge_family_acc_selected) {
+                        const uint32_t case_idx =
+                            (uint32_t)phase_tile_bridge_family_acc_case_idx;
+                        phase_tile_bridge_family_seen_words[case_idx] += valid;
+                        phase_tile_bridge_family_consumed_count_u32 += valid;
+                        if (phase_tile_bridge_family_consumed_count != 0) {
+                            *phase_tile_bridge_family_consumed_count =
+                                (u32_t)phase_tile_bridge_family_consumed_count_u32;
+                        }
                     }
                 }
             }
