@@ -133,6 +133,7 @@ Require-Regex -Text $wrapperText -Pattern '(?ms)run_transformer_layer_loop_top_m
 Require-Regex -Text $topText -Pattern '(?ms)run_transformer_layer_loop_top_managed_attn_bridge\s*\(\s*TopRegs&\s+regs\s*,\s*u32_t\s*\(&\s*sram\s*\)\s*\[\s*SRAM_WORDS\s*\]' -Reason "Top deep-bridge loop function missing"
 Require-Regex -Text $topText -Pattern '(?ms)run_transformer_layer_loop_top_managed_attn_bridge[\s\S]*?(TransformerLayerTopManagedAttnBridge|top_dispatch_transformer_layer_top_managed_attn_bridge)\s*\(' -Reason "Top deep-bridge loop does not dispatch TransformerLayerTopManagedAttnBridge (direct or helper path)"
 Require-Regex -Text $topText -Pattern '(?ms)top_make_transformer_layer_ffn_topfed_handoff_desc\s*\(' -Reason "Top-side FFN handoff assembly helper missing"
+Require-Regex -Text $topText -Pattern '(?ms)top_make_lid0_local_only_ffn_fixed_handoff_desc\s*\(' -Reason "Top-side lid0 local-only fixed FFN preload/handoff helper missing"
 Require-Regex -Text $topText -Pattern '(?ms)top_dispatch_transformer_layer\s*\(' -Reason "Top pointer-path transformer dispatch helper missing"
 Require-Regex -Text $topText -Pattern '(?ms)top_dispatch_transformer_layer_top_managed_attn_bridge\s*\(' -Reason "Top deep-bridge transformer dispatch helper missing"
 Require-Regex -Text $topText -Pattern '(?ms)run_transformer_layer_loop[\s\S]*?top_make_transformer_layer_ffn_topfed_handoff_desc\s*\([\s\S]*?top_dispatch_transformer_layer\s*\(' -Reason "Top run_transformer_layer_loop missing FFN handoff assembly->dispatch wiring"

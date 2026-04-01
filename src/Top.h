@@ -1533,6 +1533,89 @@ namespace aecct {
         );
     }
 
+    // local-only representative helper:
+    // - scope is bounded to lid==0 smoke feed verification
+    // - payload is fixed and owned by caller-provided local buffers
+    // - production Top ownership semantics remain unchanged
+    static inline TransformerLayerFfnTopfedHandoffDesc top_make_lid0_local_only_ffn_fixed_handoff_desc(
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t (&topfed_w1_x_words)[FFN_X_WORDS],
+        u32_t (&topfed_w1_weight_words)[FFN_W1_WEIGHT_WORDS],
+        u32_t (&topfed_w1_bias_words)[FFN_W1_BIAS_WORDS],
+        u32_t (&topfed_w2_input_words)[FFN_W2_INPUT_WORDS],
+        u32_t (&topfed_w2_weight_words)[FFN_W2_WEIGHT_WORDS],
+        u32_t (&topfed_w2_bias_words)[FFN_W2_BIAS_WORDS]
+    ) {
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return make_transformer_layer_ffn_topfed_handoff_desc();
+        }
+
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_X_WORDS; ++i) {
+            topfed_w1_x_words[i] = (u32_t)0u;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_WEIGHT_WORDS; ++i) {
+            topfed_w1_weight_words[i] = (u32_t)0u;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
+            topfed_w1_bias_words[i] = (u32_t)0u;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_INPUT_WORDS; ++i) {
+            topfed_w2_input_words[i] = (u32_t)0u;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_WEIGHT_WORDS; ++i) {
+            topfed_w2_weight_words[i] = (u32_t)0u;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_BIAS_WORDS; ++i) {
+            topfed_w2_bias_words[i] = (u32_t)0u;
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)FFN_D_MODEL; }
+        if (d_ffn == 0u) { d_ffn = (uint32_t)FFN_D_FFN; }
+        const uint32_t token_count = (uint32_t)FFN_TOKEN_COUNT;
+        uint32_t w1_x_words_valid = token_count * d_model;
+        uint32_t w1_weight_words_valid = d_ffn * d_model;
+        uint32_t w1_bias_words_valid = d_ffn;
+        uint32_t w2_input_words_valid = token_count * d_ffn;
+        uint32_t w2_weight_words_valid = d_model * d_ffn;
+        uint32_t w2_bias_words_valid = d_model;
+
+        if (w1_x_words_valid > (uint32_t)FFN_X_WORDS) { w1_x_words_valid = (uint32_t)FFN_X_WORDS; }
+        if (w1_weight_words_valid > (uint32_t)FFN_W1_WEIGHT_WORDS) { w1_weight_words_valid = (uint32_t)FFN_W1_WEIGHT_WORDS; }
+        if (w1_bias_words_valid > (uint32_t)FFN_W1_BIAS_WORDS) { w1_bias_words_valid = (uint32_t)FFN_W1_BIAS_WORDS; }
+        if (w2_input_words_valid > (uint32_t)FFN_W2_INPUT_WORDS) { w2_input_words_valid = (uint32_t)FFN_W2_INPUT_WORDS; }
+        if (w2_weight_words_valid > (uint32_t)FFN_W2_WEIGHT_WORDS) { w2_weight_words_valid = (uint32_t)FFN_W2_WEIGHT_WORDS; }
+        if (w2_bias_words_valid > (uint32_t)FFN_W2_BIAS_WORDS) { w2_bias_words_valid = (uint32_t)FFN_W2_BIAS_WORDS; }
+
+        if (!descriptor_valid) {
+            w1_x_words_valid = 0u;
+            w1_weight_words_valid = 0u;
+            w1_bias_words_valid = 0u;
+            w2_input_words_valid = 0u;
+            w2_weight_words_valid = 0u;
+            w2_bias_words_valid = 0u;
+        }
+
+        return top_make_transformer_layer_ffn_topfed_handoff_desc(
+            topfed_w1_x_words,
+            (u32_t)w1_x_words_valid,
+            topfed_w1_weight_words,
+            (u32_t)w1_weight_words_valid,
+            topfed_w1_bias_words,
+            (u32_t)w1_bias_words_valid,
+            topfed_w2_input_words,
+            (u32_t)w2_input_words_valid,
+            topfed_w2_weight_words,
+            (u32_t)w2_weight_words_valid,
+            topfed_w2_bias_words,
+            (u32_t)w2_bias_words_valid
+        );
+    }
+
     static inline void top_dispatch_transformer_layer(
         u32_t* sram,
         const CfgRegs& cfg,

@@ -1,8 +1,8 @@
-// P11AV: Top-side FFN handoff assembly smoke (local-only).
+// P11AV: Top-side FFN preload + handoff feed smoke (local-only).
 // Scope:
-// - Validate Top-side caller helper can assemble W1+W2 seam descriptors.
-// - Validate Top-side dispatch helper forwards descriptors to TransformerLayer.
-// - Validate invalid descriptors keep legacy preload fallback behavior.
+// - Validate Top can preload fixed W1+W2 payload and assemble handoff desc.
+// - Validate Top dispatch helper forwards fed descriptors to TransformerLayer.
+// - Validate invalid/disabled descriptors keep legacy preload fallback behavior.
 
 #ifndef __SYNTHESIS__
 
@@ -112,18 +112,12 @@ static bool run_single_path_case(const char* case_label, RunFn run_fn) {
     static aecct::u32_t sram_baseline[sram_map::SRAM_WORDS_TOTAL];
     static aecct::u32_t sram_seam[sram_map::SRAM_WORDS_TOTAL];
     static aecct::u32_t sram_fallback[sram_map::SRAM_WORDS_TOTAL];
-    static aecct::u32_t seam_w1_x_words[aecct::FFN_X_WORDS];
-    static aecct::u32_t seam_w1_weight_words[aecct::FFN_W1_WEIGHT_WORDS];
-    static aecct::u32_t seam_w1_bias_words[aecct::FFN_W1_BIAS_WORDS];
-    static aecct::u32_t seam_w2_input_words[aecct::FFN_W2_INPUT_WORDS];
-    static aecct::u32_t seam_w2_weight_words[aecct::FFN_W2_WEIGHT_WORDS];
-    static aecct::u32_t seam_w2_bias_words[aecct::FFN_W2_BIAS_WORDS];
-    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_X_WORDS; ++i) { seam_w1_x_words[i] = (aecct::u32_t)0u; }
-    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_WEIGHT_WORDS; ++i) { seam_w1_weight_words[i] = (aecct::u32_t)0u; }
-    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_BIAS_WORDS; ++i) { seam_w1_bias_words[i] = (aecct::u32_t)0u; }
-    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W2_INPUT_WORDS; ++i) { seam_w2_input_words[i] = (aecct::u32_t)0u; }
-    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W2_WEIGHT_WORDS; ++i) { seam_w2_weight_words[i] = (aecct::u32_t)0u; }
-    for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W2_BIAS_WORDS; ++i) { seam_w2_bias_words[i] = (aecct::u32_t)0u; }
+    static aecct::u32_t topfed_w1_x_words[aecct::FFN_X_WORDS];
+    static aecct::u32_t topfed_w1_weight_words[aecct::FFN_W1_WEIGHT_WORDS];
+    static aecct::u32_t topfed_w1_bias_words[aecct::FFN_W1_BIAS_WORDS];
+    static aecct::u32_t topfed_w2_input_words[aecct::FFN_W2_INPUT_WORDS];
+    static aecct::u32_t topfed_w2_weight_words[aecct::FFN_W2_WEIGHT_WORDS];
+    static aecct::u32_t topfed_w2_bias_words[aecct::FFN_W2_BIAS_WORDS];
 
     aecct::CfgRegs cfg;
     cfg.d_model = (aecct::u32_t)aecct::ATTN_D_MODEL;
@@ -154,6 +148,98 @@ static bool run_single_path_case(const char* case_label, RunFn run_fn) {
     const uint32_t w2_weight_words = d_model * d_ffn;
     const uint32_t w2_bias_words = d_model;
 
+    const aecct::TransformerLayerFfnTopfedHandoffDesc disabled_desc =
+        aecct::top_make_lid0_local_only_ffn_fixed_handoff_desc(
+            cfg,
+            layer_id,
+            false,
+            true,
+            topfed_w1_x_words,
+            topfed_w1_weight_words,
+            topfed_w1_bias_words,
+            topfed_w2_input_words,
+            topfed_w2_weight_words,
+            topfed_w2_bias_words
+        );
+    const aecct::TransformerLayerFfnTopfedHandoffDesc seam_desc =
+        aecct::top_make_lid0_local_only_ffn_fixed_handoff_desc(
+            cfg,
+            layer_id,
+            true,
+            true,
+            topfed_w1_x_words,
+            topfed_w1_weight_words,
+            topfed_w1_bias_words,
+            topfed_w2_input_words,
+            topfed_w2_weight_words,
+            topfed_w2_bias_words
+        );
+    const aecct::TransformerLayerFfnTopfedHandoffDesc invalid_desc =
+        aecct::top_make_lid0_local_only_ffn_fixed_handoff_desc(
+            cfg,
+            layer_id,
+            true,
+            false,
+            topfed_w1_x_words,
+            topfed_w1_weight_words,
+            topfed_w1_bias_words,
+            topfed_w2_input_words,
+            topfed_w2_weight_words,
+            topfed_w2_bias_words
+        );
+
+    const bool seam_mapping_ok =
+        (seam_desc.topfed_w1_x_words == topfed_w1_x_words) &&
+        ((uint32_t)seam_desc.topfed_w1_x_words_valid.to_uint() == w1_x_words) &&
+        (seam_desc.topfed_w1_weight_words == topfed_w1_weight_words) &&
+        ((uint32_t)seam_desc.topfed_w1_weight_words_valid.to_uint() == w1_weight_words) &&
+        (seam_desc.topfed_w1_bias_words == topfed_w1_bias_words) &&
+        ((uint32_t)seam_desc.topfed_w1_bias_words_valid.to_uint() == w1_bias_words) &&
+        (seam_desc.topfed_w2_input_words == topfed_w2_input_words) &&
+        ((uint32_t)seam_desc.topfed_w2_input_words_valid.to_uint() == w2_input_words) &&
+        (seam_desc.topfed_w2_weight_words == topfed_w2_weight_words) &&
+        ((uint32_t)seam_desc.topfed_w2_weight_words_valid.to_uint() == w2_weight_words) &&
+        (seam_desc.topfed_w2_bias_words == topfed_w2_bias_words) &&
+        ((uint32_t)seam_desc.topfed_w2_bias_words_valid.to_uint() == w2_bias_words);
+    if (!seam_mapping_ok) {
+        std::printf("[p11av][FAIL] %s seam descriptor mapping mismatch\n", case_label);
+        return false;
+    }
+    const bool invalid_mapping_ok =
+        (invalid_desc.topfed_w1_x_words == topfed_w1_x_words) &&
+        ((uint32_t)invalid_desc.topfed_w1_x_words_valid.to_uint() == 0u) &&
+        (invalid_desc.topfed_w1_weight_words == topfed_w1_weight_words) &&
+        ((uint32_t)invalid_desc.topfed_w1_weight_words_valid.to_uint() == 0u) &&
+        (invalid_desc.topfed_w1_bias_words == topfed_w1_bias_words) &&
+        ((uint32_t)invalid_desc.topfed_w1_bias_words_valid.to_uint() == 0u) &&
+        (invalid_desc.topfed_w2_input_words == topfed_w2_input_words) &&
+        ((uint32_t)invalid_desc.topfed_w2_input_words_valid.to_uint() == 0u) &&
+        (invalid_desc.topfed_w2_weight_words == topfed_w2_weight_words) &&
+        ((uint32_t)invalid_desc.topfed_w2_weight_words_valid.to_uint() == 0u) &&
+        (invalid_desc.topfed_w2_bias_words == topfed_w2_bias_words) &&
+        ((uint32_t)invalid_desc.topfed_w2_bias_words_valid.to_uint() == 0u);
+    if (!invalid_mapping_ok) {
+        std::printf("[p11av][FAIL] %s invalid descriptor mapping mismatch\n", case_label);
+        return false;
+    }
+    const bool disabled_mapping_ok =
+        (disabled_desc.topfed_w1_x_words == 0) &&
+        ((uint32_t)disabled_desc.topfed_w1_x_words_valid.to_uint() == 0u) &&
+        (disabled_desc.topfed_w1_weight_words == 0) &&
+        ((uint32_t)disabled_desc.topfed_w1_weight_words_valid.to_uint() == 0u) &&
+        (disabled_desc.topfed_w1_bias_words == 0) &&
+        ((uint32_t)disabled_desc.topfed_w1_bias_words_valid.to_uint() == 0u) &&
+        (disabled_desc.topfed_w2_input_words == 0) &&
+        ((uint32_t)disabled_desc.topfed_w2_input_words_valid.to_uint() == 0u) &&
+        (disabled_desc.topfed_w2_weight_words == 0) &&
+        ((uint32_t)disabled_desc.topfed_w2_weight_words_valid.to_uint() == 0u) &&
+        (disabled_desc.topfed_w2_bias_words == 0) &&
+        ((uint32_t)disabled_desc.topfed_w2_bias_words_valid.to_uint() == 0u);
+    if (!disabled_mapping_ok) {
+        std::printf("[p11av][FAIL] %s disabled descriptor mapping mismatch\n", case_label);
+        return false;
+    }
+
     run_fn(
         sram_baseline,
         cfg,
@@ -162,7 +248,7 @@ static bool run_single_path_case(const char* case_label, RunFn run_fn) {
         x_out_base,
         sc,
         pb,
-        aecct::top_make_transformer_layer_ffn_topfed_handoff_desc()
+        disabled_desc
     );
     run_fn(
         sram_seam,
@@ -172,13 +258,7 @@ static bool run_single_path_case(const char* case_label, RunFn run_fn) {
         x_out_base,
         sc,
         pb,
-        aecct::top_make_transformer_layer_ffn_topfed_handoff_desc(
-            seam_w1_x_words, (aecct::u32_t)w1_x_words,
-            seam_w1_weight_words, (aecct::u32_t)w1_weight_words,
-            seam_w1_bias_words, (aecct::u32_t)w1_bias_words,
-            seam_w2_input_words, (aecct::u32_t)w2_input_words,
-            seam_w2_weight_words, (aecct::u32_t)w2_weight_words,
-            seam_w2_bias_words, (aecct::u32_t)w2_bias_words)
+        seam_desc
     );
     run_fn(
         sram_fallback,
@@ -188,13 +268,7 @@ static bool run_single_path_case(const char* case_label, RunFn run_fn) {
         x_out_base,
         sc,
         pb,
-        aecct::top_make_transformer_layer_ffn_topfed_handoff_desc(
-            seam_w1_x_words, (aecct::u32_t)0u,
-            seam_w1_weight_words, (aecct::u32_t)0u,
-            seam_w1_bias_words, (aecct::u32_t)0u,
-            seam_w2_input_words, (aecct::u32_t)0u,
-            seam_w2_weight_words, (aecct::u32_t)0u,
-            seam_w2_bias_words, (aecct::u32_t)0u)
+        invalid_desc
     );
 
     const uint32_t w1_out_base = (uint32_t)sc.ffn.w1_out_base_word.to_uint();
@@ -254,7 +328,7 @@ static bool run_pointer_dispatch_case() {
             );
         });
     if (!ok) { return false; }
-    std::printf("TOP_FFN_HANDOFF_ASSEMBLY_POINTER_DISPATCH PASS\n");
+    std::printf("TOP_FFN_HANDOFF_FEED_POINTER_DISPATCH PASS\n");
     return true;
 }
 
@@ -295,7 +369,7 @@ static bool run_deep_bridge_dispatch_case() {
             }
         });
     if (!ok) { return false; }
-    std::printf("TOP_FFN_HANDOFF_ASSEMBLY_DEEP_BRIDGE_DISPATCH PASS\n");
+    std::printf("TOP_FFN_HANDOFF_FEED_DEEP_BRIDGE_DISPATCH PASS\n");
     return true;
 }
 
@@ -311,10 +385,9 @@ CCS_MAIN(int argc, char** argv) {
     if (!run_deep_bridge_dispatch_case()) {
         CCS_RETURN(1);
     }
-    std::printf("TOP_FFN_HANDOFF_ASSEMBLY_EXPECTED_COMPARE PASS\n");
+    std::printf("TOP_FFN_HANDOFF_FEED_EXPECTED_COMPARE PASS\n");
     std::printf("PASS: tb_top_ffn_handoff_assembly_smoke_p11av\n");
     CCS_RETURN(0);
 }
 
 #endif // __SYNTHESIS__
-
