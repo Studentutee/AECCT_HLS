@@ -1337,7 +1337,13 @@ namespace aecct {
         u32_t* phase_tile_bridge_family_renorm_case_mask = 0,
         u32_t* phase_tile_bridge_family_writeback_selected_count = 0,
         u32_t* phase_tile_bridge_family_writeback_case_mask = 0,
-        u32_t* phase_tile_bridge_family_writeback_touch_count = 0
+        u32_t* phase_tile_bridge_family_writeback_touch_count = 0,
+        u32_t phase_tile_bridge_family_writeback_selected_base_word = (u32_t)0u,
+        const u32_t* phase_tile_bridge_family_writeback_selected_words = 0,
+        u32_t phase_tile_bridge_family_writeback_selected_words_valid = (u32_t)0u,
+        u32_t* phase_tile_bridge_family_writeback_selected_consumed_count = 0,
+        u32_t* phase_tile_bridge_family_writeback_selected_owner_ok = 0,
+        u32_t* phase_tile_bridge_family_writeback_selected_compare_ok = 0
     ) {
         AttnCfg attn_cfg;
         attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
@@ -1394,7 +1400,13 @@ namespace aecct {
             phase_tile_bridge_family_renorm_case_mask,
             phase_tile_bridge_family_writeback_selected_count,
             phase_tile_bridge_family_writeback_case_mask,
-            phase_tile_bridge_family_writeback_touch_count
+            phase_tile_bridge_family_writeback_touch_count,
+            phase_tile_bridge_family_writeback_selected_base_word,
+            phase_tile_bridge_family_writeback_selected_words,
+            phase_tile_bridge_family_writeback_selected_words_valid,
+            phase_tile_bridge_family_writeback_selected_consumed_count,
+            phase_tile_bridge_family_writeback_selected_owner_ok,
+            phase_tile_bridge_family_writeback_selected_compare_ok
         );
     }
 

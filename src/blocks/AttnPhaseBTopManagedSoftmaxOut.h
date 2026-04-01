@@ -352,7 +352,13 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     u32_t* phase_tile_bridge_family_renorm_case_mask = 0,
     u32_t* phase_tile_bridge_family_writeback_selected_count = 0,
     u32_t* phase_tile_bridge_family_writeback_case_mask = 0,
-    u32_t* phase_tile_bridge_family_writeback_touch_count = 0
+    u32_t* phase_tile_bridge_family_writeback_touch_count = 0,
+    u32_t phase_tile_bridge_family_writeback_selected_base_word = (u32_t)0u,
+    const u32_t* phase_tile_bridge_family_writeback_selected_words = 0,
+    u32_t phase_tile_bridge_family_writeback_selected_words_valid = (u32_t)0u,
+    u32_t* phase_tile_bridge_family_writeback_selected_consumed_count = 0,
+    u32_t* phase_tile_bridge_family_writeback_selected_owner_ok = 0,
+    u32_t* phase_tile_bridge_family_writeback_selected_compare_ok = 0
 ) {
     static const uint32_t kPhaseTileBridgeFamilyMaxCases = 8u;
     static const uint32_t kPhaseTileBridgeFamilyStrideWords =
@@ -377,6 +383,9 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     if (phase_tile_bridge_family_writeback_selected_count != 0) { *phase_tile_bridge_family_writeback_selected_count = (u32_t)0u; }
     if (phase_tile_bridge_family_writeback_case_mask != 0) { *phase_tile_bridge_family_writeback_case_mask = (u32_t)0u; }
     if (phase_tile_bridge_family_writeback_touch_count != 0) { *phase_tile_bridge_family_writeback_touch_count = (u32_t)0u; }
+    if (phase_tile_bridge_family_writeback_selected_consumed_count != 0) { *phase_tile_bridge_family_writeback_selected_consumed_count = (u32_t)0u; }
+    if (phase_tile_bridge_family_writeback_selected_owner_ok != 0) { *phase_tile_bridge_family_writeback_selected_owner_ok = (u32_t)0u; }
+    if (phase_tile_bridge_family_writeback_selected_compare_ok != 0) { *phase_tile_bridge_family_writeback_selected_compare_ok = (u32_t)0u; }
     if (!attn_phaseb_softmax_sram_view_ok(sram)) {
         return false;
     }
@@ -445,7 +454,13 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     uint32_t phase_tile_bridge_family_writeback_selected_count_u32 = 0u;
     uint32_t phase_tile_bridge_family_writeback_case_mask_u32 = 0u;
     uint32_t phase_tile_bridge_family_writeback_touch_count_u32 = 0u;
+    uint32_t phase_tile_bridge_family_writeback_selected_consumed_count_u32 = 0u;
     bool phase_tile_bridge_seen = false;
+    const uint32_t phase_tile_bridge_family_writeback_selected_valid_words_u32 =
+        (uint32_t)phase_tile_bridge_family_writeback_selected_words_valid.to_uint();
+    const bool phase_tile_bridge_family_writeback_selected_enabled =
+        (phase_tile_bridge_family_writeback_selected_words != 0) &&
+        (phase_tile_bridge_family_writeback_selected_valid_words_u32 > 0u);
     if (phase_tile_bridge_enabled) {
         if (phase_tile_bridge_d_tile >= d_tile_count) {
             return false;
@@ -544,6 +559,12 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                 case_key_token_count;
             phase_tile_bridge_family_seen_words[c] = 0u;
             phase_tile_bridge_family_desc_seen[c] = false;
+        }
+    }
+    if (phase_tile_bridge_family_writeback_selected_enabled) {
+        if (phase_tile_bridge_family_writeback_selected_valid_words_u32 > tile_words ||
+            phase_tile_bridge_family_writeback_selected_valid_words_u32 > d_head) {
+            return false;
         }
     }
 
@@ -1016,7 +1037,9 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
             if ((tile_offset + valid) > d_head) { return false; }
             int32_t phase_tile_bridge_family_writeback_case_idx = -1;
             if (phase_tile_bridge_family_enabled) {
-                // WRITEBACK probe-only selector: later-token family case on one selected (head,d_tile).
+                // WRITEBACK selected descriptor on one later-token (head,d_tile):
+                // always keeps selector observability, and can enable selected consume
+                // when caller provides a writeback payload bridge.
                 ATTN_P11AF_TILE_BRIDGE_FAMILY_WRITEBACK_CASE_LOOP: for (uint32_t c = 0u;
                      c < phase_tile_bridge_family_case_count_u32; ++c) {
                     const bool writeback_selected =
@@ -1047,14 +1070,66 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                         (u32_t)phase_tile_bridge_family_writeback_case_mask_u32;
                 }
             }
+            if (phase_tile_bridge_family_writeback_selected &&
+                phase_tile_bridge_family_writeback_selected_enabled) {
+                const uint32_t expected_bridge_base =
+                    pre_row_base + head_col_base + tile_offset;
+                const bool owner_ok =
+                    ((uint32_t)phase_tile_bridge_family_writeback_selected_base_word.to_uint() ==
+                     expected_bridge_base);
+                if (phase_tile_bridge_family_writeback_selected_owner_ok != 0) {
+                    *phase_tile_bridge_family_writeback_selected_owner_ok =
+                        (u32_t)(owner_ok ? 1u : 0u);
+                }
+                if (!owner_ok) {
+                    return false;
+                }
+                if (phase_tile_bridge_family_writeback_selected_valid_words_u32 != valid) {
+                    return false;
+                }
+                bool writeback_compare_ok = true;
+                ATTN_P11AF_TILE_BRIDGE_FAMILY_WRITEBACK_COMPARE_LOOP: for (uint32_t i = 0u;
+                     i < valid; ++i) {
+                    const quant_acc_t out_val =
+                        running_acc[tile_offset + i] * quant_acc_t(inv_l);
+                    const uint32_t out_bits =
+                        (uint32_t)quant_bits_from_acc(out_val).to_uint();
+                    const uint32_t bridge_bits =
+                        (uint32_t)phase_tile_bridge_family_writeback_selected_words[i].to_uint();
+                    if (bridge_bits != out_bits) {
+                        writeback_compare_ok = false;
+                        break;
+                    }
+                }
+                if (phase_tile_bridge_family_writeback_selected_compare_ok != 0) {
+                    *phase_tile_bridge_family_writeback_selected_compare_ok =
+                        (u32_t)(writeback_compare_ok ? 1u : 0u);
+                }
+                if (!writeback_compare_ok) {
+                    return false;
+                }
+            }
             ATTN_P11AF_MAINLINE_WRITEBACK_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                 const quant_acc_t out_val = running_acc[tile_offset + i] * quant_acc_t(inv_l);
                 const u32_t out_bits = quant_bits_from_acc(out_val);
-                sram[pre_row_base + head_col_base + tile_offset + i] = out_bits;
-                sram[post_row_base + head_col_base + tile_offset + i] = out_bits;
-                sram[out_row_base + head_col_base + tile_offset + i] = out_bits;
+                u32_t writeback_bits = out_bits;
+                if (phase_tile_bridge_family_writeback_selected &&
+                    phase_tile_bridge_family_writeback_selected_enabled) {
+                    writeback_bits =
+                        phase_tile_bridge_family_writeback_selected_words[i];
+                }
+                sram[pre_row_base + head_col_base + tile_offset + i] = writeback_bits;
+                sram[post_row_base + head_col_base + tile_offset + i] = writeback_bits;
+                sram[out_row_base + head_col_base + tile_offset + i] = writeback_bits;
             }
             if (phase_tile_bridge_family_writeback_selected) {
+                if (phase_tile_bridge_family_writeback_selected_enabled) {
+                    phase_tile_bridge_family_writeback_selected_consumed_count_u32 += valid;
+                    if (phase_tile_bridge_family_writeback_selected_consumed_count != 0) {
+                        *phase_tile_bridge_family_writeback_selected_consumed_count =
+                            (u32_t)phase_tile_bridge_family_writeback_selected_consumed_count_u32;
+                    }
+                }
                 phase_tile_bridge_family_writeback_touch_count_u32 += valid * 3u;
                 if (phase_tile_bridge_family_writeback_touch_count != 0) {
                     *phase_tile_bridge_family_writeback_touch_count =
@@ -1114,6 +1189,10 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
         if (phase_tile_bridge_family_writeback_touch_count != 0) {
             *phase_tile_bridge_family_writeback_touch_count =
                 (u32_t)phase_tile_bridge_family_writeback_touch_count_u32;
+        }
+        if (phase_tile_bridge_family_writeback_selected_consumed_count != 0) {
+            *phase_tile_bridge_family_writeback_selected_consumed_count =
+                (u32_t)phase_tile_bridge_family_writeback_selected_consumed_count_u32;
         }
     }
     fallback_taken = false;
