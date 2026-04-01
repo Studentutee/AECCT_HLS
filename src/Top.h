@@ -361,6 +361,10 @@ namespace aecct {
         bool p11ae_score_fallback_taken;
         bool p11af_mainline_softmax_output_path_taken;
         bool p11af_softmax_output_fallback_taken;
+        bool p11av_lid0_ffn_handoff_enable;
+        bool p11av_lid0_ffn_handoff_descriptor_valid;
+        u32_t p11av_ffn_handoff_non_empty_count;
+        u32_t p11av_lid0_ffn_handoff_non_empty_count;
 
         // Top-controlled block contract placeholders (skeleton only).
         PreprocBlockContract preproc_contract;
@@ -421,6 +425,10 @@ namespace aecct {
             p11ae_score_fallback_taken = false;
             p11af_mainline_softmax_output_path_taken = false;
             p11af_softmax_output_fallback_taken = false;
+            p11av_lid0_ffn_handoff_enable = false;
+            p11av_lid0_ffn_handoff_descriptor_valid = false;
+            p11av_ffn_handoff_non_empty_count = 0;
+            p11av_lid0_ffn_handoff_non_empty_count = 0;
             clear_preproc_contract(preproc_contract);
             clear_transformer_layer_contract(transformer_contract);
             clear_layernorm_contract(layernorm_contract);
@@ -1616,6 +1624,53 @@ namespace aecct {
         );
     }
 
+    static inline bool transformer_layer_ffn_handoff_desc_non_empty(
+        const TransformerLayerFfnTopfedHandoffDesc& desc
+    ) {
+        const bool w1_ready =
+            (desc.topfed_w1_x_words != 0) &&
+            ((uint32_t)desc.topfed_w1_x_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w1_weight_words != 0) &&
+            ((uint32_t)desc.topfed_w1_weight_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w1_bias_words != 0) &&
+            ((uint32_t)desc.topfed_w1_bias_words_valid.to_uint() > 0u);
+        const bool w2_ready =
+            (desc.topfed_w2_input_words != 0) &&
+            ((uint32_t)desc.topfed_w2_input_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w2_weight_words != 0) &&
+            ((uint32_t)desc.topfed_w2_weight_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w2_bias_words != 0) &&
+            ((uint32_t)desc.topfed_w2_bias_words_valid.to_uint() > 0u);
+        return w1_ready && w2_ready;
+    }
+
+    // local-only representative run-loop feed helper for lid==0.
+    static inline TransformerLayerFfnTopfedHandoffDesc top_make_runloop_lid0_local_only_ffn_handoff_desc(
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid
+    ) {
+        static u32_t topfed_w1_x_words[FFN_X_WORDS];
+        static u32_t topfed_w1_weight_words[FFN_W1_WEIGHT_WORDS];
+        static u32_t topfed_w1_bias_words[FFN_W1_BIAS_WORDS];
+        static u32_t topfed_w2_input_words[FFN_W2_INPUT_WORDS];
+        static u32_t topfed_w2_weight_words[FFN_W2_WEIGHT_WORDS];
+        static u32_t topfed_w2_bias_words[FFN_W2_BIAS_WORDS];
+        return top_make_lid0_local_only_ffn_fixed_handoff_desc(
+            cfg,
+            layer_id,
+            handoff_enable,
+            descriptor_valid,
+            topfed_w1_x_words,
+            topfed_w1_weight_words,
+            topfed_w1_bias_words,
+            topfed_w2_input_words,
+            topfed_w2_weight_words,
+            topfed_w2_bias_words
+        );
+    }
+
     static inline void top_dispatch_transformer_layer(
         u32_t* sram,
         const CfgRegs& cfg,
@@ -1687,7 +1742,12 @@ namespace aecct {
     // Top owns: layer loop scheduling, X_WORK page alternation, mid/end LN insertion,
     // and latching "mainline taken" vs "fallback taken" status for reviewer-visible checks.
     // TransformerLayer owns: per-layer compute under the base words handed in by Top.
-    static inline void run_transformer_layer_loop(TopRegs& regs, u32_t* sram) {
+    static inline void run_transformer_layer_loop(
+        TopRegs& regs,
+        u32_t* sram,
+        bool lid0_local_only_ffn_handoff_enable = false,
+        bool lid0_local_only_ffn_handoff_descriptor_valid = true
+    ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
         uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -1706,6 +1766,10 @@ namespace aecct {
         regs.p11ae_score_fallback_taken = false;
         regs.p11af_mainline_softmax_output_path_taken = false;
         regs.p11af_softmax_output_fallback_taken = false;
+        regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
+        regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
+        regs.p11av_ffn_handoff_non_empty_count = 0;
+        regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
 
         TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
@@ -1799,7 +1863,22 @@ namespace aecct {
             );
 
             const TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
-                top_make_transformer_layer_ffn_topfed_handoff_desc();
+                top_make_runloop_lid0_local_only_ffn_handoff_desc(
+                    cfg,
+                    (u32_t)lid,
+                    lid0_local_only_ffn_handoff_enable,
+                    lid0_local_only_ffn_handoff_descriptor_valid
+                );
+            const bool ffn_topfed_handoff_non_empty =
+                transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
+            if (ffn_topfed_handoff_non_empty) {
+                regs.p11av_ffn_handoff_non_empty_count =
+                    regs.p11av_ffn_handoff_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11av_lid0_ffn_handoff_non_empty_count =
+                        regs.p11av_lid0_ffn_handoff_non_empty_count + (u32_t)1u;
+                }
+            }
 
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
             top_dispatch_transformer_layer(
@@ -1871,7 +1950,9 @@ namespace aecct {
     template<uint32_t SRAM_WORDS>
     static inline void run_transformer_layer_loop_top_managed_attn_bridge(
         TopRegs& regs,
-        u32_t (&sram)[SRAM_WORDS]
+        u32_t (&sram)[SRAM_WORDS],
+        bool lid0_local_only_ffn_handoff_enable = false,
+        bool lid0_local_only_ffn_handoff_descriptor_valid = true
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -1891,6 +1972,10 @@ namespace aecct {
         regs.p11ae_score_fallback_taken = false;
         regs.p11af_mainline_softmax_output_path_taken = false;
         regs.p11af_softmax_output_fallback_taken = false;
+        regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
+        regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
+        regs.p11av_ffn_handoff_non_empty_count = 0;
+        regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
 
         TOP_LAYER_ORCHESTRATION_AN_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
@@ -1980,7 +2065,22 @@ namespace aecct {
             );
 
             const TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
-                top_make_transformer_layer_ffn_topfed_handoff_desc();
+                top_make_runloop_lid0_local_only_ffn_handoff_desc(
+                    cfg,
+                    (u32_t)lid,
+                    lid0_local_only_ffn_handoff_enable,
+                    lid0_local_only_ffn_handoff_descriptor_valid
+                );
+            const bool ffn_topfed_handoff_non_empty =
+                transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
+            if (ffn_topfed_handoff_non_empty) {
+                regs.p11av_ffn_handoff_non_empty_count =
+                    regs.p11av_ffn_handoff_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11av_lid0_ffn_handoff_non_empty_count =
+                        regs.p11av_lid0_ffn_handoff_non_empty_count + (u32_t)1u;
+                }
+            }
 
             top_dispatch_transformer_layer_top_managed_attn_bridge(
                 sram,

@@ -71,9 +71,9 @@ try {
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
     $requiredPassLines = @(
-        'TOP_FFN_HANDOFF_FEED_POINTER_DISPATCH PASS',
-        'TOP_FFN_HANDOFF_FEED_DEEP_BRIDGE_DISPATCH PASS',
-        'TOP_FFN_HANDOFF_FEED_EXPECTED_COMPARE PASS',
+        'TOP_MAINLINE_LID0_FFN_HANDOFF_POINTER_PATH PASS',
+        'TOP_MAINLINE_LID0_FFN_HANDOFF_DEEP_BRIDGE_PATH PASS',
+        'TOP_MAINLINE_LID0_FFN_HANDOFF_EXPECTED_COMPARE PASS',
         'PASS: tb_top_ffn_handoff_assembly_smoke_p11av'
     )
     foreach ($line in $requiredPassLines) {
