@@ -467,8 +467,16 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
                 ATTN_P11AE_DOT_COL_LOOP: for (uint32_t i = 0u; i < tile_valid_words; ++i) {
                     const quant_act_t qv =
                         quant_act_from_bits(sram[q_row_base + head_col_base + tile_offset + i]);
-                    const quant_act_t kv =
-                        quant_act_from_bits(sram[k_row_base + tile_offset + i]);
+                    const bool kvscan_probe_selected =
+                        phase_entry_probe_enabled &&
+                        (h == 0u) &&
+                        (j == 0u) &&
+                        (dt == 0u) &&
+                        (i < phase_entry_probe_valid_words);
+                    const u32_t kv_word_bits = kvscan_probe_selected ?
+                        phase_entry_probe_k_words[i] :
+                        sram[k_row_base + tile_offset + i];
+                    const quant_act_t kv = quant_act_from_bits(kv_word_bits);
                     dot += quant_acc_t(qv) * quant_acc_t(kv);
                 }
             }
