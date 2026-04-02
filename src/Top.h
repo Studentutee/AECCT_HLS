@@ -363,12 +363,16 @@ namespace aecct {
         bool p11af_softmax_output_fallback_taken;
         bool p11av_lid0_ffn_handoff_enable;
         bool p11av_lid0_ffn_handoff_descriptor_valid;
+        u32_t p11av_ffn_handoff_gate_taken_count;
+        u32_t p11av_ffn_handoff_fallback_seen_count;
         u32_t p11av_ffn_handoff_non_empty_count;
         u32_t p11av_lid0_ffn_handoff_non_empty_count;
         bool p11aw_pipeline_lid0_ffn_handoff_gate_enable;
         bool p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
         bool p11aw_pipeline_lid0_ffn_handoff_gate_taken;
         bool p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+        u32_t p11aw_pipeline_ffn_handoff_gate_taken_count;
+        u32_t p11aw_pipeline_ffn_handoff_fallback_seen_count;
         u32_t p11aw_pipeline_ffn_handoff_non_empty_count;
         u32_t p11aw_pipeline_lid0_ffn_handoff_non_empty_count;
 
@@ -433,12 +437,16 @@ namespace aecct {
             p11af_softmax_output_fallback_taken = false;
             p11av_lid0_ffn_handoff_enable = false;
             p11av_lid0_ffn_handoff_descriptor_valid = false;
+            p11av_ffn_handoff_gate_taken_count = 0;
+            p11av_ffn_handoff_fallback_seen_count = 0;
             p11av_ffn_handoff_non_empty_count = 0;
             p11av_lid0_ffn_handoff_non_empty_count = 0;
             p11aw_pipeline_lid0_ffn_handoff_gate_enable = false;
             p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = false;
             p11aw_pipeline_lid0_ffn_handoff_gate_taken = false;
             p11aw_pipeline_lid0_ffn_handoff_fallback_seen = false;
+            p11aw_pipeline_ffn_handoff_gate_taken_count = 0;
+            p11aw_pipeline_ffn_handoff_fallback_seen_count = 0;
             p11aw_pipeline_ffn_handoff_non_empty_count = 0;
             p11aw_pipeline_lid0_ffn_handoff_non_empty_count = 0;
             clear_preproc_contract(preproc_contract);
@@ -1786,6 +1794,8 @@ namespace aecct {
         regs.p11af_softmax_output_fallback_taken = false;
         regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
         regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
+        regs.p11av_ffn_handoff_gate_taken_count = 0;
+        regs.p11av_ffn_handoff_fallback_seen_count = 0;
         regs.p11av_ffn_handoff_non_empty_count = 0;
         regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
 
@@ -1887,6 +1897,10 @@ namespace aecct {
                     lid0_local_only_ffn_handoff_enable,
                     lid0_local_only_ffn_handoff_descriptor_valid
                 );
+            if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_gate_taken_count =
+                    regs.p11av_ffn_handoff_gate_taken_count + (u32_t)1u;
+            }
             const bool ffn_topfed_handoff_non_empty =
                 transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
             if (ffn_topfed_handoff_non_empty) {
@@ -1896,6 +1910,9 @@ namespace aecct {
                     regs.p11av_lid0_ffn_handoff_non_empty_count =
                         regs.p11av_lid0_ffn_handoff_non_empty_count + (u32_t)1u;
                 }
+            } else if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_fallback_seen_count =
+                    regs.p11av_ffn_handoff_fallback_seen_count + (u32_t)1u;
             }
 
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
@@ -1992,6 +2009,8 @@ namespace aecct {
         regs.p11af_softmax_output_fallback_taken = false;
         regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
         regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
+        regs.p11av_ffn_handoff_gate_taken_count = 0;
+        regs.p11av_ffn_handoff_fallback_seen_count = 0;
         regs.p11av_ffn_handoff_non_empty_count = 0;
         regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
 
@@ -2089,6 +2108,10 @@ namespace aecct {
                     lid0_local_only_ffn_handoff_enable,
                     lid0_local_only_ffn_handoff_descriptor_valid
                 );
+            if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_gate_taken_count =
+                    regs.p11av_ffn_handoff_gate_taken_count + (u32_t)1u;
+            }
             const bool ffn_topfed_handoff_non_empty =
                 transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
             if (ffn_topfed_handoff_non_empty) {
@@ -2098,6 +2121,9 @@ namespace aecct {
                     regs.p11av_lid0_ffn_handoff_non_empty_count =
                         regs.p11av_lid0_ffn_handoff_non_empty_count + (u32_t)1u;
                 }
+            } else if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_fallback_seen_count =
+                    regs.p11av_ffn_handoff_fallback_seen_count + (u32_t)1u;
             }
 
             top_dispatch_transformer_layer_top_managed_attn_bridge(
@@ -2173,12 +2199,12 @@ namespace aecct {
             gate_enable,
             descriptor_valid
         );
+        regs.p11aw_pipeline_ffn_handoff_gate_taken_count = regs.p11av_ffn_handoff_gate_taken_count;
+        regs.p11aw_pipeline_ffn_handoff_fallback_seen_count = regs.p11av_ffn_handoff_fallback_seen_count;
         regs.p11aw_pipeline_ffn_handoff_non_empty_count = regs.p11av_ffn_handoff_non_empty_count;
         regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count = regs.p11av_lid0_ffn_handoff_non_empty_count;
-        uint32_t expected_layers = (uint32_t)build_layer_cfg(regs).n_layers.to_uint();
-        if (expected_layers == 0u) { expected_layers = (uint32_t)N_LAYERS; }
         regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen =
-            gate_enable && ((uint32_t)regs.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint() < expected_layers);
+            ((uint32_t)regs.p11aw_pipeline_ffn_handoff_fallback_seen_count.to_uint() > 0u);
     }
 
     template<uint32_t SRAM_WORDS>
@@ -2195,12 +2221,12 @@ namespace aecct {
             gate_enable,
             descriptor_valid
         );
+        regs.p11aw_pipeline_ffn_handoff_gate_taken_count = regs.p11av_ffn_handoff_gate_taken_count;
+        regs.p11aw_pipeline_ffn_handoff_fallback_seen_count = regs.p11av_ffn_handoff_fallback_seen_count;
         regs.p11aw_pipeline_ffn_handoff_non_empty_count = regs.p11av_ffn_handoff_non_empty_count;
         regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count = regs.p11av_lid0_ffn_handoff_non_empty_count;
-        uint32_t expected_layers = (uint32_t)build_layer_cfg(regs).n_layers.to_uint();
-        if (expected_layers == 0u) { expected_layers = (uint32_t)N_LAYERS; }
         regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen =
-            gate_enable && ((uint32_t)regs.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint() < expected_layers);
+            ((uint32_t)regs.p11aw_pipeline_ffn_handoff_fallback_seen_count.to_uint() > 0u);
     }
 
     static inline bool run_infer_pipeline_finalize(

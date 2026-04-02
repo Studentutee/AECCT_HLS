@@ -153,11 +153,16 @@ static bool run_mainline_path_case(
         [case_label, n_layers](const char* phase_label, const aecct::TopRegs& regs, bool gate_enable, bool descriptor_valid) -> bool {
         const bool gate_taken = regs.p11aw_pipeline_lid0_ffn_handoff_gate_taken;
         const bool fallback_seen = regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+        const uint32_t gate_taken_count = (uint32_t)regs.p11aw_pipeline_ffn_handoff_gate_taken_count.to_uint();
+        const uint32_t fallback_seen_count = (uint32_t)regs.p11aw_pipeline_ffn_handoff_fallback_seen_count.to_uint();
         const uint32_t non_empty_count = (uint32_t)regs.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint();
         const uint32_t lid0_non_empty_count = (uint32_t)regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count.to_uint();
         const uint32_t expected_non_empty_count =
             (gate_enable && descriptor_valid) ? 1u : 0u;
-        const bool expected_fallback_seen = gate_enable && (expected_non_empty_count < n_layers);
+        const uint32_t expected_gate_taken_count = gate_enable ? n_layers : 0u;
+        const uint32_t expected_fallback_seen_count =
+            gate_enable ? (n_layers - expected_non_empty_count) : 0u;
+        const bool expected_fallback_seen = (expected_fallback_seen_count > 0u);
 
         if (gate_taken != gate_enable) {
             std::printf(
@@ -187,6 +192,28 @@ static bool run_mainline_path_case(
                 (unsigned)lid0_non_empty_count,
                 (unsigned)expected_non_empty_count,
                 (unsigned)n_layers);
+            return false;
+        }
+        if (gate_taken_count != expected_gate_taken_count || fallback_seen_count != expected_fallback_seen_count) {
+            std::printf(
+                "[p11av][FAIL] %s %s gate/fallback count mismatch gate=%u fallback=%u expected_gate=%u expected_fallback=%u n_layers=%u\n",
+                case_label,
+                phase_label,
+                (unsigned)gate_taken_count,
+                (unsigned)fallback_seen_count,
+                (unsigned)expected_gate_taken_count,
+                (unsigned)expected_fallback_seen_count,
+                (unsigned)n_layers);
+            return false;
+        }
+        if (gate_taken_count != (non_empty_count + fallback_seen_count)) {
+            std::printf(
+                "[p11av][FAIL] %s %s monotonic accounting mismatch gate=%u non_empty=%u fallback=%u\n",
+                case_label,
+                phase_label,
+                (unsigned)gate_taken_count,
+                (unsigned)non_empty_count,
+                (unsigned)fallback_seen_count);
             return false;
         }
         return true;
@@ -229,6 +256,86 @@ static bool run_mainline_path_case(
             (unsigned)w2_change_count);
         return false;
     }
+    return true;
+}
+
+template<typename RunFn>
+static bool run_monotonicity_quick_sweep(
+    const char* case_label,
+    RunFn run_fn
+) {
+    static aecct::u32_t sram[sram_map::SRAM_WORDS_TOTAL];
+    const uint32_t sweep_layers[3] = {1u, 3u, 4u};
+    uint32_t prev_gate_taken_count = 0u;
+    uint32_t prev_non_empty_count = 0u;
+    uint32_t prev_fallback_seen_count = 0u;
+
+    MONOTONICITY_SWEEP_LOOP: for (uint32_t k = 0u; k < 3u; ++k) {
+        const uint32_t n_layers = sweep_layers[k];
+        aecct::TopRegs regs;
+        regs.clear();
+        init_mainline_case_memory(sram, n_layers);
+        run_fn(sram, regs, n_layers, true, true);
+
+        const bool gate_taken = regs.p11aw_pipeline_lid0_ffn_handoff_gate_taken;
+        const bool fallback_seen = regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+        const uint32_t gate_taken_count = (uint32_t)regs.p11aw_pipeline_ffn_handoff_gate_taken_count.to_uint();
+        const uint32_t non_empty_count = (uint32_t)regs.p11aw_pipeline_ffn_handoff_non_empty_count.to_uint();
+        const uint32_t lid0_non_empty_count = (uint32_t)regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count.to_uint();
+        const uint32_t fallback_seen_count = (uint32_t)regs.p11aw_pipeline_ffn_handoff_fallback_seen_count.to_uint();
+        const uint32_t expected_fallback_seen_count = n_layers - 1u;
+        const bool expected_fallback_seen = (expected_fallback_seen_count > 0u);
+
+        if (!gate_taken ||
+            gate_taken_count != n_layers ||
+            non_empty_count != 1u ||
+            lid0_non_empty_count != 1u ||
+            fallback_seen_count != expected_fallback_seen_count ||
+            fallback_seen != expected_fallback_seen) {
+            std::printf(
+                "[p11av][FAIL] %s n_layers=%u monotonic sweep mismatch gate_taken=%u gate_count=%u non_empty=%u lid0_non_empty=%u fallback_seen=%u fallback_count=%u\n",
+                case_label,
+                (unsigned)n_layers,
+                (unsigned)(gate_taken ? 1u : 0u),
+                (unsigned)gate_taken_count,
+                (unsigned)non_empty_count,
+                (unsigned)lid0_non_empty_count,
+                (unsigned)(fallback_seen ? 1u : 0u),
+                (unsigned)fallback_seen_count);
+            return false;
+        }
+        if (gate_taken_count != (non_empty_count + fallback_seen_count)) {
+            std::printf(
+                "[p11av][FAIL] %s n_layers=%u monotonic accounting mismatch gate=%u non_empty=%u fallback=%u\n",
+                case_label,
+                (unsigned)n_layers,
+                (unsigned)gate_taken_count,
+                (unsigned)non_empty_count,
+                (unsigned)fallback_seen_count);
+            return false;
+        }
+        if (k > 0u &&
+            (gate_taken_count < prev_gate_taken_count ||
+             non_empty_count < prev_non_empty_count ||
+             fallback_seen_count < prev_fallback_seen_count)) {
+            std::printf(
+                "[p11av][FAIL] %s n_layers=%u monotonic regression prev(gate=%u non_empty=%u fallback=%u) curr(gate=%u non_empty=%u fallback=%u)\n",
+                case_label,
+                (unsigned)n_layers,
+                (unsigned)prev_gate_taken_count,
+                (unsigned)prev_non_empty_count,
+                (unsigned)prev_fallback_seen_count,
+                (unsigned)gate_taken_count,
+                (unsigned)non_empty_count,
+                (unsigned)fallback_seen_count);
+            return false;
+        }
+
+        prev_gate_taken_count = gate_taken_count;
+        prev_non_empty_count = non_empty_count;
+        prev_fallback_seen_count = fallback_seen_count;
+    }
+
     return true;
 }
 
@@ -291,6 +398,52 @@ static bool run_pointer_mainline_case() {
         false);
     if (!ok_long) { return false; }
     std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_LONG_LOOP_POINTER_MATRIX PASS\n");
+
+    const bool ok_quick_n3 = run_mainline_path_case(
+        "pointer_mainline_n3_quick_sweep",
+        [](
+            aecct::u32_t* sram,
+            aecct::TopRegs& regs,
+            uint32_t n_layers,
+            bool handoff_enable,
+            bool descriptor_valid
+        ) {
+            setup_mainline_regs(regs, n_layers);
+            regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = handoff_enable;
+            regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = descriptor_valid;
+            aecct::data_ch_t data_out;
+            (void)aecct::run_infer_pipeline(
+                regs,
+                sram,
+                data_out
+            );
+        },
+        3u,
+        false);
+    if (!ok_quick_n3) { return false; }
+    std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_N3_POINTER_QUICK_SWEEP PASS\n");
+
+    const bool ok_mono = run_monotonicity_quick_sweep(
+        "pointer_mainline_monotonicity",
+        [](
+            aecct::u32_t* sram,
+            aecct::TopRegs& regs,
+            uint32_t n_layers,
+            bool handoff_enable,
+            bool descriptor_valid
+        ) {
+            setup_mainline_regs(regs, n_layers);
+            regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = handoff_enable;
+            regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = descriptor_valid;
+            aecct::data_ch_t data_out;
+            (void)aecct::run_infer_pipeline(
+                regs,
+                sram,
+                data_out
+            );
+        });
+    if (!ok_mono) { return false; }
+    std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_MONOTONICITY_POINTER PASS\n");
     return true;
 }
 
@@ -356,6 +509,66 @@ static bool run_deep_bridge_mainline_case() {
         false);
     if (!ok_long) { return false; }
     std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_LONG_LOOP_DEEP_BRIDGE_MATRIX PASS\n");
+
+    const bool ok_quick_n3 = run_mainline_path_case(
+        "deep_bridge_mainline_n3_quick_sweep",
+        [](
+            aecct::u32_t* sram,
+            aecct::TopRegs& regs,
+            uint32_t n_layers,
+            bool handoff_enable,
+            bool descriptor_valid
+        ) {
+            setup_mainline_regs(regs, n_layers);
+            regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = handoff_enable;
+            regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = descriptor_valid;
+            static aecct::u32_t sram_window[sram_map::SRAM_WORDS_TOTAL];
+            for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                sram_window[i] = sram[i];
+            }
+            aecct::data_ch_t data_out;
+            (void)aecct::run_infer_pipeline_top_managed_attn_bridge<sram_map::SRAM_WORDS_TOTAL>(
+                regs,
+                sram_window,
+                data_out
+            );
+            for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                sram[i] = sram_window[i];
+            }
+        },
+        3u,
+        false);
+    if (!ok_quick_n3) { return false; }
+    std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_N3_DEEP_BRIDGE_QUICK_SWEEP PASS\n");
+
+    const bool ok_mono = run_monotonicity_quick_sweep(
+        "deep_bridge_mainline_monotonicity",
+        [](
+            aecct::u32_t* sram,
+            aecct::TopRegs& regs,
+            uint32_t n_layers,
+            bool handoff_enable,
+            bool descriptor_valid
+        ) {
+            setup_mainline_regs(regs, n_layers);
+            regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = handoff_enable;
+            regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = descriptor_valid;
+            static aecct::u32_t sram_window[sram_map::SRAM_WORDS_TOTAL];
+            for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                sram_window[i] = sram[i];
+            }
+            aecct::data_ch_t data_out;
+            (void)aecct::run_infer_pipeline_top_managed_attn_bridge<sram_map::SRAM_WORDS_TOTAL>(
+                regs,
+                sram_window,
+                data_out
+            );
+            for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                sram[i] = sram_window[i];
+            }
+        });
+    if (!ok_mono) { return false; }
+    std::printf("TOP_PIPELINE_LID0_FFN_HANDOFF_MONOTONICITY_DEEP_BRIDGE PASS\n");
     return true;
 }
 
