@@ -1711,7 +1711,10 @@ namespace aecct {
         bool out_prebuilt_from_top_managed = false,
         bool sublayer1_norm_preloaded_by_top = false,
         TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
-            make_transformer_layer_ffn_topfed_handoff_desc()
+            make_transformer_layer_ffn_topfed_handoff_desc(),
+        bool attn_out_topfed_payload_enable = false,
+        const u32_t* attn_out_topfed_payload_words = 0,
+        u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
         TransformerLayer(
             sram,
@@ -1726,7 +1729,10 @@ namespace aecct {
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
             sublayer1_norm_preloaded_by_top,
-            ffn_topfed_handoff_desc
+            ffn_topfed_handoff_desc,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid
         );
     }
 
@@ -1745,7 +1751,10 @@ namespace aecct {
         bool out_prebuilt_from_top_managed = false,
         bool sublayer1_norm_preloaded_by_top = false,
         TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
-            make_transformer_layer_ffn_topfed_handoff_desc()
+            make_transformer_layer_ffn_topfed_handoff_desc(),
+        bool attn_out_topfed_payload_enable = false,
+        const u32_t* attn_out_topfed_payload_words = 0,
+        u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
         TransformerLayerTopManagedAttnBridge(
             sram,
@@ -1760,7 +1769,10 @@ namespace aecct {
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
             sublayer1_norm_preloaded_by_top,
-            ffn_topfed_handoff_desc
+            ffn_topfed_handoff_desc,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid
         );
     }
 

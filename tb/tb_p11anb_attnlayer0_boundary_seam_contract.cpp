@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <vector>
 
+#include "Top.h"
 #include "blocks/AttnLayer0.h"
 #include "blocks/TransformerLayer.h"
 #include "gen/SramMap.h"
@@ -149,8 +150,11 @@ public:
         if (!run_out_topfed_payload_deeper_consume_case()) { return 1; }
         if (!run_transformerlayer_out_topfed_mapping_pointer_case()) { return 1; }
         if (!run_transformerlayer_out_topfed_mapping_deep_bridge_case()) { return 1; }
+        if (!run_top_caller_out_topfed_mapping_pointer_case()) { return 1; }
+        if (!run_top_caller_out_topfed_mapping_deep_bridge_case()) { return 1; }
         if (!run_legacy_descriptor_equivalence_case()) { return 1; }
         std::printf("P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_MAPPING_EXPECTED_COMPARE PASS\n");
+        std::printf("P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_CHAIN_EXPECTED_COMPARE PASS\n");
         std::printf("PASS: tb_p11anb_attnlayer0_boundary_seam_contract\n");
         return 0;
     }
@@ -622,6 +626,87 @@ private:
                     sram_window[i] = sram[i];
                 }
                 aecct::TransformerLayerTopManagedAttnBridge<sram_map::SRAM_WORDS_TOTAL>(
+                    sram_window,
+                    cfg,
+                    layer_id,
+                    x_in_base,
+                    x_out_base,
+                    sc,
+                    pb,
+                    true,   // kv_prebuilt_from_top_managed
+                    true,   // q_prebuilt_from_top_managed
+                    true,   // score_prebuilt_from_top_managed
+                    false,  // out_prebuilt_from_top_managed
+                    true,   // sublayer1_norm_preloaded_by_top
+                    aecct::make_transformer_layer_ffn_topfed_handoff_desc(),
+                    out_topfed_payload_enable,
+                    out_topfed_payload_words,
+                    out_topfed_payload_words_valid);
+                for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                    sram[i] = sram_window[i];
+                }
+            });
+    }
+
+    bool run_top_caller_out_topfed_mapping_pointer_case() {
+        return run_transformerlayer_out_topfed_mapping_case(
+            "P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_POINTER_CHAIN_CONSUME",
+            "P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_POINTER_CHAIN_INVALID_FALLBACK",
+            "P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_POINTER_CHAIN_DISABLED_FALLBACK",
+            [](
+                std::vector<aecct::u32_t>& sram,
+                const aecct::CfgRegs& cfg,
+                aecct::u32_t layer_id,
+                aecct::u32_t x_in_base,
+                aecct::u32_t x_out_base,
+                const aecct::LayerScratch& sc,
+                const aecct::LayerParamBase& pb,
+                bool out_topfed_payload_enable,
+                aecct::u32_t out_topfed_payload_words_valid,
+                const aecct::u32_t* out_topfed_payload_words
+            ) {
+                aecct::top_dispatch_transformer_layer(
+                    sram.data(),
+                    cfg,
+                    layer_id,
+                    x_in_base,
+                    x_out_base,
+                    sc,
+                    pb,
+                    true,   // kv_prebuilt_from_top_managed
+                    true,   // q_prebuilt_from_top_managed
+                    true,   // score_prebuilt_from_top_managed
+                    false,  // out_prebuilt_from_top_managed
+                    true,   // sublayer1_norm_preloaded_by_top
+                    aecct::make_transformer_layer_ffn_topfed_handoff_desc(),
+                    out_topfed_payload_enable,
+                    out_topfed_payload_words,
+                    out_topfed_payload_words_valid);
+            });
+    }
+
+    bool run_top_caller_out_topfed_mapping_deep_bridge_case() {
+        return run_transformerlayer_out_topfed_mapping_case(
+            "P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_DEEP_BRIDGE_CHAIN_CONSUME",
+            "P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_DEEP_BRIDGE_CHAIN_INVALID_FALLBACK",
+            "P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_DEEP_BRIDGE_CHAIN_DISABLED_FALLBACK",
+            [](
+                std::vector<aecct::u32_t>& sram,
+                const aecct::CfgRegs& cfg,
+                aecct::u32_t layer_id,
+                aecct::u32_t x_in_base,
+                aecct::u32_t x_out_base,
+                const aecct::LayerScratch& sc,
+                const aecct::LayerParamBase& pb,
+                bool out_topfed_payload_enable,
+                aecct::u32_t out_topfed_payload_words_valid,
+                const aecct::u32_t* out_topfed_payload_words
+            ) {
+                static aecct::u32_t sram_window[sram_map::SRAM_WORDS_TOTAL];
+                for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                    sram_window[i] = sram[i];
+                }
+                aecct::top_dispatch_transformer_layer_top_managed_attn_bridge<sram_map::SRAM_WORDS_TOTAL>(
                     sram_window,
                     cfg,
                     layer_id,
