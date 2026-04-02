@@ -763,33 +763,54 @@ private:
 
     bool run_full_loop_mainline() {
         aecct::run_transformer_layer_loop(regs_full_, sram_full_.data());
-        const bool all_mainline =
-            regs_full_.p11ac_mainline_path_taken &&
-            regs_full_.p11ad_mainline_q_path_taken &&
-            regs_full_.p11ae_mainline_score_path_taken &&
-            regs_full_.p11af_mainline_softmax_output_path_taken;
-        const bool fallback_taken =
-            regs_full_.p11ac_fallback_taken ||
-            regs_full_.p11ad_q_fallback_taken ||
-            regs_full_.p11ae_score_fallback_taken ||
-            regs_full_.p11af_softmax_output_fallback_taken;
-        if (!all_mainline) {
+        const bool ad_mainline = regs_full_.p11ad_mainline_q_path_taken;
+        const bool ac_mainline = regs_full_.p11ac_mainline_path_taken;
+        const bool ae_mainline = regs_full_.p11ae_mainline_score_path_taken;
+        const bool af_mainline = regs_full_.p11af_mainline_softmax_output_path_taken;
+        const bool ad_fallback = regs_full_.p11ad_q_fallback_taken;
+        const bool ac_fallback = regs_full_.p11ac_fallback_taken;
+        const bool ae_fallback = regs_full_.p11ae_score_fallback_taken;
+        const bool af_fallback = regs_full_.p11af_softmax_output_fallback_taken;
+
+        std::printf(
+            "LID0_ATTN_MAINLINE_FLAGS p11ad_mainline_q_path_taken=%u p11ac_mainline_path_taken=%u p11ae_mainline_score_path_taken=%u p11af_mainline_softmax_output_path_taken=%u\n",
+            ad_mainline ? 1u : 0u,
+            ac_mainline ? 1u : 0u,
+            ae_mainline ? 1u : 0u,
+            af_mainline ? 1u : 0u);
+        std::printf(
+            "LID0_ATTN_FALLBACK_FLAGS p11ad_q_fallback_taken=%u p11ac_fallback_taken=%u p11ae_score_fallback_taken=%u p11af_softmax_output_fallback_taken=%u\n",
+            ad_fallback ? 1u : 0u,
+            ac_fallback ? 1u : 0u,
+            ae_fallback ? 1u : 0u,
+            af_fallback ? 1u : 0u);
+
+        if (!ad_mainline || !ac_mainline || !ae_mainline || !af_mainline) {
             std::printf("[p11aj][FAIL] full-loop mainline flags invalid (ac=%d ad=%d ae=%d af=%d)\n",
-                regs_full_.p11ac_mainline_path_taken ? 1 : 0,
-                regs_full_.p11ad_mainline_q_path_taken ? 1 : 0,
-                regs_full_.p11ae_mainline_score_path_taken ? 1 : 0,
-                regs_full_.p11af_mainline_softmax_output_path_taken ? 1 : 0);
+                ac_mainline ? 1 : 0,
+                ad_mainline ? 1 : 0,
+                ae_mainline ? 1 : 0,
+                af_mainline ? 1 : 0);
             return false;
         }
-        if (fallback_taken) {
+        if (ad_fallback || ac_fallback || ae_fallback || af_fallback) {
             std::printf("[p11aj][FAIL] fallback path was taken in full-loop (ac=%d ad=%d ae=%d af=%d)\n",
-                regs_full_.p11ac_fallback_taken ? 1 : 0,
-                regs_full_.p11ad_q_fallback_taken ? 1 : 0,
-                regs_full_.p11ae_score_fallback_taken ? 1 : 0,
-                regs_full_.p11af_softmax_output_fallback_taken ? 1 : 0);
+                ac_fallback ? 1 : 0,
+                ad_fallback ? 1 : 0,
+                ae_fallback ? 1 : 0,
+                af_fallback ? 1 : 0);
             return false;
         }
 
+        std::printf("LID0_ATTN_STAGE_AD_MAINLINE_TAKEN PASS\n");
+        std::printf("LID0_ATTN_STAGE_AC_MAINLINE_TAKEN PASS\n");
+        std::printf("LID0_ATTN_STAGE_AE_MAINLINE_TAKEN PASS\n");
+        std::printf("LID0_ATTN_STAGE_AF_MAINLINE_TAKEN PASS\n");
+        std::printf("LID0_ATTN_STAGE_AD_FALLBACK_NOT_TAKEN PASS\n");
+        std::printf("LID0_ATTN_STAGE_AC_FALLBACK_NOT_TAKEN PASS\n");
+        std::printf("LID0_ATTN_STAGE_AE_FALLBACK_NOT_TAKEN PASS\n");
+        std::printf("LID0_ATTN_STAGE_AF_FALLBACK_NOT_TAKEN PASS\n");
+        std::printf("LID0_ATTN_DIRECT_SRAM_FALLBACK_NOT_TAKEN PASS\n");
         std::printf("FULL_LOOP_MAINLINE_PATH_TAKEN PASS\n");
         std::printf("fallback_taken = false\n");
         std::printf("FULL_LOOP_FALLBACK_NOT_TAKEN PASS\n");
