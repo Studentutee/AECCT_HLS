@@ -92,12 +92,35 @@ static inline bool check_region_untouched(
     return true;
 }
 
+static inline bool check_equal_region_to_words(
+    const std::vector<aecct::u32_t>& sram,
+    uint32_t lhs_base,
+    const std::vector<aecct::u32_t>& rhs_words,
+    uint32_t words,
+    const char* fail_tag
+) {
+    for (uint32_t i = 0u; i < words; ++i) {
+        const uint32_t lhs = u32_bits(sram[lhs_base + i]);
+        const uint32_t rhs = u32_bits(rhs_words[i]);
+        if (lhs != rhs) {
+            std::printf("[p11anb][FAIL] %s mismatch idx=%u lhs=0x%08X rhs=0x%08X\n",
+                fail_tag,
+                (unsigned)i,
+                (unsigned)lhs,
+                (unsigned)rhs);
+            return false;
+        }
+    }
+    return true;
+}
+
 class TbP11anbAttnLayer0BoundarySeamContract {
 public:
     int run_all() {
         if (!run_qkv_descriptor_consume_case()) { return 1; }
         if (!run_qkv_descriptor_skip_case()) { return 1; }
         if (!run_out_descriptor_gate_case()) { return 1; }
+        if (!run_out_topfed_payload_deeper_consume_case()) { return 1; }
         if (!run_legacy_descriptor_equivalence_case()) { return 1; }
         std::printf("PASS: tb_p11anb_attnlayer0_boundary_seam_contract\n");
         return 0;
@@ -291,6 +314,100 @@ private:
             return false;
         }
         std::printf("P11ANB_ATTNLAYER0_OUT_DESCRIPTOR_ANTI_FALLBACK PASS\n");
+        return true;
+    }
+
+    bool run_out_topfed_payload_deeper_consume_case() {
+        std::vector<aecct::u32_t> sram(kSramWords, (aecct::u32_t)0u);
+        const aecct::AttnCfg cfg = make_attn_cfg();
+        const LocalAttnLayout layout = make_local_layout();
+        if (!layout_fits_local_sram(layout)) {
+            std::printf("[p11anb][FAIL] local SRAM too small for OUT topfed consume case\n");
+            return false;
+        }
+        const uint32_t words = (uint32_t)aecct::ATTN_TENSOR_WORDS;
+        const uint32_t post_base = (uint32_t)layout.sc.post_concat_base_word.to_uint();
+        const uint32_t out_base = layout.out_base_word;
+
+        std::vector<aecct::u32_t> topfed_words(words, (aecct::u32_t)0u);
+        for (uint32_t i = 0u; i < words; ++i) {
+            topfed_words[i] = (aecct::u32_t)(0x9A000000u + i);
+        }
+
+        fill_with_pattern(sram, post_base, words, 0x8A000000u);
+        fill_with_pattern(sram, out_base, words, 0x8B000000u);
+        const aecct::AttnLayer0PrebuiltHandoffDesc topfed_handoff =
+            aecct::make_attn_layer0_prebuilt_handoff_desc(
+                false,
+                false,
+                false,
+                false,
+                true,
+                topfed_words.data(),
+                (aecct::u32_t)words);
+        aecct::AttnLayer0<aecct::ATTN_STAGE_OUT>(
+            sram.data(),
+            cfg,
+            (aecct::u32_t)layout.x_base_word,
+            (aecct::u32_t)out_base,
+            layout.sc,
+            (aecct::u32_t)0u,
+            topfed_handoff);
+
+        if (!check_equal_region_to_words(sram, out_base, topfed_words, words, "OUT-topfed-consume")) {
+            return false;
+        }
+        std::printf("P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_CONSUME PASS\n");
+
+        fill_with_pattern(sram, post_base, words, 0x8C000000u);
+        fill_with_pattern(sram, out_base, words, 0x8D000000u);
+        const aecct::AttnLayer0PrebuiltHandoffDesc invalid_handoff =
+            aecct::make_attn_layer0_prebuilt_handoff_desc(
+                false,
+                false,
+                false,
+                false,
+                true,
+                topfed_words.data(),
+                (aecct::u32_t)(words - 1u));
+        aecct::AttnLayer0<aecct::ATTN_STAGE_OUT>(
+            sram.data(),
+            cfg,
+            (aecct::u32_t)layout.x_base_word,
+            (aecct::u32_t)out_base,
+            layout.sc,
+            (aecct::u32_t)0u,
+            invalid_handoff);
+
+        if (!check_equal_region(sram, out_base, post_base, words, "OUT-topfed-invalid-fallback")) {
+            return false;
+        }
+        std::printf("P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_INVALID_FALLBACK PASS\n");
+
+        fill_with_pattern(sram, post_base, words, 0x8E000000u);
+        fill_with_pattern(sram, out_base, words, 0x8F000000u);
+        const aecct::AttnLayer0PrebuiltHandoffDesc disabled_handoff =
+            aecct::make_attn_layer0_prebuilt_handoff_desc(
+                false,
+                false,
+                false,
+                false,
+                false,
+                topfed_words.data(),
+                (aecct::u32_t)words);
+        aecct::AttnLayer0<aecct::ATTN_STAGE_OUT>(
+            sram.data(),
+            cfg,
+            (aecct::u32_t)layout.x_base_word,
+            (aecct::u32_t)out_base,
+            layout.sc,
+            (aecct::u32_t)0u,
+            disabled_handoff);
+
+        if (!check_equal_region(sram, out_base, post_base, words, "OUT-topfed-disabled-fallback")) {
+            return false;
+        }
+        std::printf("P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_DISABLED_FALLBACK PASS\n");
         return true;
     }
 

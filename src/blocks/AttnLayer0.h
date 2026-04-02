@@ -74,6 +74,9 @@ struct AttnLayer0PrebuiltHandoffDesc {
     bool q_prebuilt_from_top_managed;
     bool score_prebuilt_from_top_managed;
     bool out_prebuilt_from_top_managed;
+    bool out_topfed_payload_enable;
+    const u32_t* out_topfed_payload_words;
+    u32_t out_topfed_payload_words_valid;
 };
 
 static inline AttnLayer0PrebuiltHandoffDesc make_attn_layer0_prebuilt_handoff_desc(
@@ -87,6 +90,31 @@ static inline AttnLayer0PrebuiltHandoffDesc make_attn_layer0_prebuilt_handoff_de
     desc.q_prebuilt_from_top_managed = q_prebuilt_from_top_managed;
     desc.score_prebuilt_from_top_managed = score_prebuilt_from_top_managed;
     desc.out_prebuilt_from_top_managed = out_prebuilt_from_top_managed;
+    desc.out_topfed_payload_enable = false;
+    desc.out_topfed_payload_words = 0;
+    desc.out_topfed_payload_words_valid = (u32_t)0u;
+    return desc;
+}
+
+// local-only deeper ownership seam:
+// caller can provide top-fed OUT payload that is consumed inside AttnLayer0 OUT stage.
+static inline AttnLayer0PrebuiltHandoffDesc make_attn_layer0_prebuilt_handoff_desc(
+    bool kv_prebuilt_from_top_managed,
+    bool q_prebuilt_from_top_managed,
+    bool score_prebuilt_from_top_managed,
+    bool out_prebuilt_from_top_managed,
+    bool out_topfed_payload_enable,
+    const u32_t* out_topfed_payload_words,
+    u32_t out_topfed_payload_words_valid
+) {
+    AttnLayer0PrebuiltHandoffDesc desc = make_attn_layer0_prebuilt_handoff_desc(
+        kv_prebuilt_from_top_managed,
+        q_prebuilt_from_top_managed,
+        score_prebuilt_from_top_managed,
+        out_prebuilt_from_top_managed);
+    desc.out_topfed_payload_enable = out_topfed_payload_enable;
+    desc.out_topfed_payload_words = out_topfed_payload_words;
+    desc.out_topfed_payload_words_valid = out_topfed_payload_words_valid;
     return desc;
 }
 
@@ -540,6 +568,34 @@ static inline void AttnLayer0CoreWindow(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_OUT || STAGE_MODE == ATTN_STAGE_FULL) {
+        const uint32_t out_topfed_valid_raw =
+            (uint32_t)prebuilt_handoff.out_topfed_payload_words_valid.to_uint();
+        uint32_t out_topfed_valid = out_topfed_valid_raw;
+        if (out_topfed_valid > tensor_words) {
+            out_topfed_valid = tensor_words;
+        }
+        const bool out_topfed_ready =
+            prebuilt_handoff.out_topfed_payload_enable &&
+            (prebuilt_handoff.out_topfed_payload_words != 0) &&
+            (out_topfed_valid >= tensor_words);
+
+        if (out_topfed_ready) {
+            // Deeper consume site:
+            // when caller-fed payload is valid, OUT stage consumes it before local scratch fallback.
+            ATTN_OUT_TOPFED_PAYLOAD_CONSUME_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
+                sram[out_base + i] = prebuilt_handoff.out_topfed_payload_words[i];
+            }
+            return;
+        }
+
+        if (prebuilt_handoff.out_topfed_payload_enable) {
+            // Invalid/short top-fed payload falls back to local post-concat consume path.
+            ATTN_OUT_TOPFED_INVALID_FALLBACK_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
+                sram[out_base + i] = sram[post_base + i];
+            }
+            return;
+        }
+
         if (prebuilt_handoff.out_prebuilt_from_top_managed) {
             // Top-managed AF path already wrote final output for this layer invocation.
             return;
