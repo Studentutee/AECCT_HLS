@@ -210,7 +210,10 @@ static inline void TransformerLayerTopManagedAttnBridge(
     bool out_prebuilt_from_top_managed = false,
     bool sublayer1_norm_preloaded_by_top = false,
     TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
-        make_transformer_layer_ffn_topfed_handoff_desc()
+        make_transformer_layer_ffn_topfed_handoff_desc(),
+    bool attn_out_topfed_payload_enable = false,
+    const u32_t* attn_out_topfed_payload_words = 0,
+    u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -229,7 +232,10 @@ static inline void TransformerLayerTopManagedAttnBridge(
             kv_prebuilt_from_top_managed,
             q_prebuilt_from_top_managed,
             score_prebuilt_from_top_managed,
-            out_prebuilt_from_top_managed);
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid);
 
     AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
         sram_window,
@@ -514,7 +520,10 @@ static inline void TransformerLayer(
     bool out_prebuilt_from_top_managed = false,
     bool sublayer1_norm_preloaded_by_top = false,
     TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
-        make_transformer_layer_ffn_topfed_handoff_desc()
+        make_transformer_layer_ffn_topfed_handoff_desc(),
+    bool attn_out_topfed_payload_enable = false,
+    const u32_t* attn_out_topfed_payload_words = 0,
+    u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -533,7 +542,10 @@ static inline void TransformerLayer(
             kv_prebuilt_from_top_managed,
             q_prebuilt_from_top_managed,
             score_prebuilt_from_top_managed,
-            out_prebuilt_from_top_managed);
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid);
 
     // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
     AttnLayer0<ATTN_STAGE_FULL>(

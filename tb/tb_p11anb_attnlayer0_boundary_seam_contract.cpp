@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "blocks/AttnLayer0.h"
+#include "blocks/TransformerLayer.h"
 #include "gen/SramMap.h"
 
 #if __has_include(<mc_scverify.h>)
@@ -114,6 +115,31 @@ static inline bool check_equal_region_to_words(
     return true;
 }
 
+static inline uint32_t count_region_diff(
+    const std::vector<aecct::u32_t>& lhs,
+    const std::vector<aecct::u32_t>& rhs,
+    uint32_t base,
+    uint32_t words
+) {
+    uint32_t diff_count = 0u;
+    for (uint32_t i = 0u; i < words; ++i) {
+        const uint32_t lhs_v = u32_bits(lhs[base + i]);
+        const uint32_t rhs_v = u32_bits(rhs[base + i]);
+        if (lhs_v != rhs_v) {
+            ++diff_count;
+        }
+    }
+    return diff_count;
+}
+
+static inline aecct::u32_t local_alternate_x_page(aecct::u32_t x_base_word) {
+    const uint32_t x_base = (uint32_t)x_base_word.to_uint();
+    if (x_base == (uint32_t)sram_map::X_PAGE0_BASE_W) {
+        return (aecct::u32_t)sram_map::X_PAGE1_BASE_W;
+    }
+    return (aecct::u32_t)sram_map::X_PAGE0_BASE_W;
+}
+
 class TbP11anbAttnLayer0BoundarySeamContract {
 public:
     int run_all() {
@@ -121,7 +147,10 @@ public:
         if (!run_qkv_descriptor_skip_case()) { return 1; }
         if (!run_out_descriptor_gate_case()) { return 1; }
         if (!run_out_topfed_payload_deeper_consume_case()) { return 1; }
+        if (!run_transformerlayer_out_topfed_mapping_pointer_case()) { return 1; }
+        if (!run_transformerlayer_out_topfed_mapping_deep_bridge_case()) { return 1; }
         if (!run_legacy_descriptor_equivalence_case()) { return 1; }
+        std::printf("P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_MAPPING_EXPECTED_COMPARE PASS\n");
         std::printf("PASS: tb_p11anb_attnlayer0_boundary_seam_contract\n");
         return 0;
     }
@@ -409,6 +438,210 @@ private:
         }
         std::printf("P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_DISABLED_FALLBACK PASS\n");
         return true;
+    }
+
+    template<typename RunFn>
+    bool run_transformerlayer_out_topfed_mapping_case(
+        const char* consume_pass_banner,
+        const char* invalid_fallback_pass_banner,
+        const char* disabled_fallback_pass_banner,
+        RunFn run_fn
+    ) {
+        const aecct::AttnCfg attn_cfg = make_attn_cfg();
+        const uint32_t words = (uint32_t)aecct::ATTN_TENSOR_WORDS;
+        if (words == 0u) {
+            std::printf("[p11anb][FAIL] transformer mapping words must be non-zero\n");
+            return false;
+        }
+
+        aecct::CfgRegs cfg;
+        cfg.d_model = attn_cfg.d_model;
+        cfg.n_heads = attn_cfg.n_heads;
+        cfg.d_ffn = (aecct::u32_t)aecct::FFN_D_FFN;
+        cfg.n_layers = (aecct::u32_t)1u;
+
+        const aecct::u32_t layer_id = (aecct::u32_t)0u;
+        const aecct::u32_t x_in_base = (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD_DEFAULT;
+        const aecct::u32_t x_out_base = local_alternate_x_page(x_in_base);
+        const aecct::LayerScratch sc = aecct::make_layer_scratch(x_in_base);
+        const aecct::LayerParamBase pb =
+            aecct::make_layer_param_base((aecct::u32_t)sram_map::W_REGION_BASE, layer_id);
+        const uint32_t post_base = (uint32_t)sc.attn.post_concat_base_word.to_uint();
+        const uint32_t out_base = (uint32_t)sc.attn_out_base_word.to_uint();
+
+        std::vector<aecct::u32_t> sram_baseline(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_valid(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_invalid(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_disabled(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> topfed_words(words, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> fallback_words(words, (aecct::u32_t)0u);
+        for (uint32_t i = 0u; i < words; ++i) {
+            topfed_words[i] = (aecct::u32_t)(0xA5000000u + i);
+            fallback_words[i] = (aecct::u32_t)(0xA1000000u + i);
+        }
+
+        const uint32_t fallback_pattern = 0xA1000000u;
+        fill_with_pattern(sram_baseline, post_base, words, fallback_pattern);
+        fill_with_pattern(sram_valid, post_base, words, fallback_pattern);
+        fill_with_pattern(sram_invalid, post_base, words, fallback_pattern);
+        fill_with_pattern(sram_disabled, post_base, words, fallback_pattern);
+
+        fill_with_pattern(sram_baseline, out_base, words, 0xA2000000u);
+        fill_with_pattern(sram_valid, out_base, words, 0xA3000000u);
+        fill_with_pattern(sram_invalid, out_base, words, 0xA4000000u);
+        fill_with_pattern(sram_disabled, out_base, words, 0xA6000000u);
+
+        run_fn(
+            sram_baseline,
+            cfg,
+            layer_id,
+            x_in_base,
+            x_out_base,
+            sc,
+            pb,
+            false,
+            (aecct::u32_t)0u,
+            topfed_words.data());
+        run_fn(
+            sram_valid,
+            cfg,
+            layer_id,
+            x_in_base,
+            x_out_base,
+            sc,
+            pb,
+            true,
+            (aecct::u32_t)words,
+            topfed_words.data());
+        run_fn(
+            sram_invalid,
+            cfg,
+            layer_id,
+            x_in_base,
+            x_out_base,
+            sc,
+            pb,
+            true,
+            (aecct::u32_t)(words - 1u),
+            topfed_words.data());
+        run_fn(
+            sram_disabled,
+            cfg,
+            layer_id,
+            x_in_base,
+            x_out_base,
+            sc,
+            pb,
+            false,
+            (aecct::u32_t)words,
+            topfed_words.data());
+
+        if (!check_equal_region_to_words(sram_baseline, out_base, fallback_words, words, "TRANSFORMER-OUT-baseline-fallback")) {
+            return false;
+        }
+        if (!check_equal_region_to_words(sram_valid, out_base, topfed_words, words, "TRANSFORMER-OUT-topfed-consume")) {
+            return false;
+        }
+        if (!check_equal_region_to_words(sram_invalid, out_base, fallback_words, words, "TRANSFORMER-OUT-invalid-fallback")) {
+            return false;
+        }
+        if (!check_equal_region_to_words(sram_disabled, out_base, fallback_words, words, "TRANSFORMER-OUT-disabled-fallback")) {
+            return false;
+        }
+
+        const uint32_t diff_words = (words < 16u) ? words : 16u;
+        const uint32_t diff_count = count_region_diff(sram_valid, sram_baseline, out_base, diff_words);
+        if (diff_count == 0u) {
+            std::printf("[p11anb][FAIL] transformer mapping expected compare unchanged first=%u words\n",
+                (unsigned)diff_words);
+            return false;
+        }
+
+        std::printf("%s PASS\n", consume_pass_banner);
+        std::printf("%s PASS\n", invalid_fallback_pass_banner);
+        std::printf("%s PASS\n", disabled_fallback_pass_banner);
+        return true;
+    }
+
+    bool run_transformerlayer_out_topfed_mapping_pointer_case() {
+        return run_transformerlayer_out_topfed_mapping_case(
+            "P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_POINTER_MAPPING_CONSUME",
+            "P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_POINTER_INVALID_FALLBACK",
+            "P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_POINTER_DISABLED_FALLBACK",
+            [](
+                std::vector<aecct::u32_t>& sram,
+                const aecct::CfgRegs& cfg,
+                aecct::u32_t layer_id,
+                aecct::u32_t x_in_base,
+                aecct::u32_t x_out_base,
+                const aecct::LayerScratch& sc,
+                const aecct::LayerParamBase& pb,
+                bool out_topfed_payload_enable,
+                aecct::u32_t out_topfed_payload_words_valid,
+                const aecct::u32_t* out_topfed_payload_words
+            ) {
+                aecct::TransformerLayer(
+                    sram.data(),
+                    cfg,
+                    layer_id,
+                    x_in_base,
+                    x_out_base,
+                    sc,
+                    pb,
+                    true,   // kv_prebuilt_from_top_managed
+                    true,   // q_prebuilt_from_top_managed
+                    true,   // score_prebuilt_from_top_managed
+                    false,  // out_prebuilt_from_top_managed
+                    true,   // sublayer1_norm_preloaded_by_top
+                    aecct::make_transformer_layer_ffn_topfed_handoff_desc(),
+                    out_topfed_payload_enable,
+                    out_topfed_payload_words,
+                    out_topfed_payload_words_valid);
+            });
+    }
+
+    bool run_transformerlayer_out_topfed_mapping_deep_bridge_case() {
+        return run_transformerlayer_out_topfed_mapping_case(
+            "P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_MAPPING_CONSUME",
+            "P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_INVALID_FALLBACK",
+            "P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_DISABLED_FALLBACK",
+            [](
+                std::vector<aecct::u32_t>& sram,
+                const aecct::CfgRegs& cfg,
+                aecct::u32_t layer_id,
+                aecct::u32_t x_in_base,
+                aecct::u32_t x_out_base,
+                const aecct::LayerScratch& sc,
+                const aecct::LayerParamBase& pb,
+                bool out_topfed_payload_enable,
+                aecct::u32_t out_topfed_payload_words_valid,
+                const aecct::u32_t* out_topfed_payload_words
+            ) {
+                static aecct::u32_t sram_window[sram_map::SRAM_WORDS_TOTAL];
+                for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                    sram_window[i] = sram[i];
+                }
+                aecct::TransformerLayerTopManagedAttnBridge<sram_map::SRAM_WORDS_TOTAL>(
+                    sram_window,
+                    cfg,
+                    layer_id,
+                    x_in_base,
+                    x_out_base,
+                    sc,
+                    pb,
+                    true,   // kv_prebuilt_from_top_managed
+                    true,   // q_prebuilt_from_top_managed
+                    true,   // score_prebuilt_from_top_managed
+                    false,  // out_prebuilt_from_top_managed
+                    true,   // sublayer1_norm_preloaded_by_top
+                    aecct::make_transformer_layer_ffn_topfed_handoff_desc(),
+                    out_topfed_payload_enable,
+                    out_topfed_payload_words,
+                    out_topfed_payload_words_valid);
+                for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                    sram[i] = sram_window[i];
+                }
+            });
     }
 
     bool run_legacy_descriptor_equivalence_case() {

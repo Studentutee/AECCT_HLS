@@ -84,16 +84,18 @@ Add-Content -Path $logPath -Value ("===== check_p11anb_attnlayer0_deeper_boundar
 Write-Log ("[p11anb_deeper] phase={0}" -f $Phase)
 
 $attnRel = "src/blocks/AttnLayer0.h"
+$transformerRel = "src/blocks/TransformerLayer.h"
 $tbRel = "tb/tb_p11anb_attnlayer0_boundary_seam_contract.cpp"
 $runnerRel = "scripts/local/run_p11anb_attnlayer0_boundary_seam_contract.ps1"
 
-foreach ($rel in @($attnRel, $tbRel, $runnerRel)) {
+foreach ($rel in @($attnRel, $transformerRel, $tbRel, $runnerRel)) {
     if (-not (Test-Path (Join-Path $repo $rel))) {
         Fail-Check ("required file missing: {0}" -f $rel)
     }
 }
 
 $attnText = Get-Content -Path (Join-Path $repo $attnRel) -Raw
+$transformerText = Get-Content -Path (Join-Path $repo $transformerRel) -Raw
 $tbText = Get-Content -Path (Join-Path $repo $tbRel) -Raw
 $runnerText = Get-Content -Path (Join-Path $repo $runnerRel) -Raw
 
@@ -102,13 +104,31 @@ Require-Regex -Text $attnText -Pattern '(?ms)make_attn_layer0_prebuilt_handoff_d
 Require-Regex -Text $attnText -Pattern '(?ms)if\s+constexpr\s*\(\s*STAGE_MODE\s*==\s*ATTN_STAGE_OUT[\s\S]*?out_topfed_ready[\s\S]*?ATTN_OUT_TOPFED_PAYLOAD_CONSUME_LOOP[\s\S]*?ATTN_OUT_TOPFED_INVALID_FALLBACK_LOOP' -Reason "AttnLayer0 OUT stage missing deeper consume/fallback loops for topfed payload"
 Require-Regex -Text $attnText -Pattern '(?ms)if\s*\(\s*prebuilt_handoff\.out_prebuilt_from_top_managed\s*\)\s*\{[\s\S]*?return;' -Reason "AttnLayer0 legacy out_prebuilt anti-fallback guard missing"
 
+Require-Regex -Text $transformerText -Pattern '(?ms)TransformerLayerTopManagedAttnBridge\s*\([\s\S]*?bool\s+attn_out_topfed_payload_enable\s*=\s*false[\s\S]*?const\s+u32_t\*\s+attn_out_topfed_payload_words\s*=\s*0[\s\S]*?u32_t\s+attn_out_topfed_payload_words_valid' -Reason "TransformerLayer deep bridge missing Attn OUT topfed payload args"
+Require-Regex -Text $transformerText -Pattern '(?ms)TransformerLayer\s*\([\s\S]*?bool\s+attn_out_topfed_payload_enable\s*=\s*false[\s\S]*?const\s+u32_t\*\s+attn_out_topfed_payload_words\s*=\s*0[\s\S]*?u32_t\s+attn_out_topfed_payload_words_valid' -Reason "TransformerLayer pointer path missing Attn OUT topfed payload args"
+Require-Regex -Text $transformerText -Pattern '(?ms)make_attn_layer0_prebuilt_handoff_desc\s*\([\s\S]*?attn_out_topfed_payload_enable[\s\S]*?attn_out_topfed_payload_words[\s\S]*?attn_out_topfed_payload_words_valid' -Reason "TransformerLayer -> AttnLayer0 mapping missing Attn OUT topfed payload forwarding"
+
 Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_CONSUME PASS' -Reason "TB missing topfed deeper consume PASS banner"
 Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_INVALID_FALLBACK PASS' -Reason "TB missing topfed invalid fallback PASS banner"
 Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_DISABLED_FALLBACK PASS' -Reason "TB missing topfed disabled fallback PASS banner"
+Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_POINTER_MAPPING_CONSUME' -Reason "TB missing TransformerLayer pointer mapping consume banner"
+Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_POINTER_INVALID_FALLBACK' -Reason "TB missing TransformerLayer pointer invalid fallback banner"
+Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_POINTER_DISABLED_FALLBACK' -Reason "TB missing TransformerLayer pointer disabled fallback banner"
+Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_MAPPING_CONSUME' -Reason "TB missing TransformerLayer deep bridge mapping consume banner"
+Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_INVALID_FALLBACK' -Reason "TB missing TransformerLayer deep bridge invalid fallback banner"
+Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_DISABLED_FALLBACK' -Reason "TB missing TransformerLayer deep bridge disabled fallback banner"
+Require-Regex -Text $tbText -Pattern '(?ms)P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_MAPPING_EXPECTED_COMPARE PASS' -Reason "TB missing TransformerLayer expected compare PASS banner"
 
 Require-Regex -Text $runnerText -Pattern '(?ms)OUT_TOPFED_PAYLOAD_CONSUME PASS' -Reason "runner missing topfed consume gate"
 Require-Regex -Text $runnerText -Pattern '(?ms)OUT_TOPFED_PAYLOAD_INVALID_FALLBACK PASS' -Reason "runner missing topfed invalid fallback gate"
 Require-Regex -Text $runnerText -Pattern '(?ms)OUT_TOPFED_PAYLOAD_DISABLED_FALLBACK PASS' -Reason "runner missing topfed disabled fallback gate"
+Require-Regex -Text $runnerText -Pattern '(?ms)TRANSFORMER_ATTN_OUT_TOPFED_POINTER_MAPPING_CONSUME PASS' -Reason "runner missing TransformerLayer pointer mapping consume gate"
+Require-Regex -Text $runnerText -Pattern '(?ms)TRANSFORMER_ATTN_OUT_TOPFED_POINTER_INVALID_FALLBACK PASS' -Reason "runner missing TransformerLayer pointer invalid fallback gate"
+Require-Regex -Text $runnerText -Pattern '(?ms)TRANSFORMER_ATTN_OUT_TOPFED_POINTER_DISABLED_FALLBACK PASS' -Reason "runner missing TransformerLayer pointer disabled fallback gate"
+Require-Regex -Text $runnerText -Pattern '(?ms)TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_MAPPING_CONSUME PASS' -Reason "runner missing TransformerLayer deep bridge mapping consume gate"
+Require-Regex -Text $runnerText -Pattern '(?ms)TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_INVALID_FALLBACK PASS' -Reason "runner missing TransformerLayer deep bridge invalid fallback gate"
+Require-Regex -Text $runnerText -Pattern '(?ms)TRANSFORMER_ATTN_OUT_TOPFED_DEEP_BRIDGE_DISABLED_FALLBACK PASS' -Reason "runner missing TransformerLayer deep bridge disabled fallback gate"
+Require-Regex -Text $runnerText -Pattern '(?ms)TRANSFORMER_ATTN_OUT_TOPFED_MAPPING_EXPECTED_COMPARE PASS' -Reason "runner missing TransformerLayer expected compare gate"
 
 Write-Log "PASS: check_p11anb_attnlayer0_deeper_boundary"
 Write-Summary -Status "PASS" -Detail "all checks passed"
