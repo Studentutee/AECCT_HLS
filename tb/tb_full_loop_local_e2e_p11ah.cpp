@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "AecctProtocol.h"
 #include "tb_p11aeaf_common.h"
 
 #if __has_include(<mc_scverify.h>)
@@ -32,6 +33,9 @@ public:
         if (!init()) {
             return 1;
         }
+        if (!run_top_infer_marker_checker()) {
+            return 1;
+        }
         if (!run_full_loop_mainline()) {
             return 1;
         }
@@ -50,6 +54,13 @@ public:
     }
 
 private:
+    struct TopIo {
+        aecct::ctrl_ch_t ctrl_cmd;
+        aecct::ctrl_ch_t ctrl_rsp;
+        aecct::data_ch_t data_in;
+        aecct::data_ch_t data_out;
+    };
+
     std::vector<aecct::u32_t> sram_mainline_;
     std::vector<aecct::u32_t> sram_ref_;
     p11aeaf_tb::QkvPayloadSet payloads_;
@@ -83,6 +94,274 @@ private:
 
     static bool is_nonfinite_bits(uint32_t bits) {
         return ((bits & 0x7F800000u) == 0x7F800000u);
+    }
+
+    static void top_tick(TopIo& io) {
+        aecct::top(io.ctrl_cmd, io.ctrl_rsp, io.data_in, io.data_out);
+    }
+
+    static void top_send_cmd(TopIo& io, uint8_t op) {
+        io.ctrl_cmd.write(aecct::pack_ctrl_cmd(op));
+        top_tick(io);
+    }
+
+    static bool top_expect_no_rsp(TopIo& io, const char* tag) {
+        aecct::u16_t w;
+        if (io.ctrl_rsp.nb_read(w)) {
+            std::printf("[p11ah][FAIL] %s unexpected rsp kind=%u payload=%u\n",
+                tag,
+                (unsigned)aecct::unpack_ctrl_rsp_kind(w),
+                (unsigned)aecct::unpack_ctrl_rsp_payload(w));
+            return false;
+        }
+        return true;
+    }
+
+    static bool top_expect_rsp_exact(
+        TopIo& io,
+        uint8_t kind_exp,
+        uint8_t payload_exp,
+        const char* tag
+    ) {
+        aecct::u16_t w;
+        if (!io.ctrl_rsp.nb_read(w)) {
+            std::printf("[p11ah][FAIL] %s missing ctrl_rsp\n", tag);
+            return false;
+        }
+        const uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
+        const uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
+        if (kind != kind_exp || payload != payload_exp) {
+            std::printf("[p11ah][FAIL] %s rsp mismatch kind=%u payload=%u expect_kind=%u expect_payload=%u\n",
+                tag,
+                (unsigned)kind,
+                (unsigned)payload,
+                (unsigned)kind_exp,
+                (unsigned)payload_exp);
+            return false;
+        }
+        return true;
+    }
+
+    static bool top_expect_rsp_kind_either(
+        TopIo& io,
+        uint8_t kind_exp0,
+        uint8_t kind_exp1,
+        uint8_t payload_exp,
+        const char* tag
+    ) {
+        aecct::u16_t w;
+        if (!io.ctrl_rsp.nb_read(w)) {
+            std::printf("[p11ah][FAIL] %s missing ctrl_rsp\n", tag);
+            return false;
+        }
+        const uint8_t kind = aecct::unpack_ctrl_rsp_kind(w);
+        const uint8_t payload = aecct::unpack_ctrl_rsp_payload(w);
+        if ((kind != kind_exp0 && kind != kind_exp1) || payload != payload_exp) {
+            std::printf(
+                "[p11ah][FAIL] %s rsp mismatch kind=%u payload=%u expect_kind=%u|%u expect_payload=%u\n",
+                tag,
+                (unsigned)kind,
+                (unsigned)payload,
+                (unsigned)kind_exp0,
+                (unsigned)kind_exp1,
+                (unsigned)payload_exp);
+            return false;
+        }
+        return true;
+    }
+
+    static void dump_top_infer_marker_snapshot(
+        const char* banner,
+        bool ac_mainline,
+        bool ad_mainline,
+        bool ae_mainline,
+        bool af_mainline,
+        bool ac_fallback,
+        bool ad_fallback,
+        bool ae_fallback,
+        bool af_fallback
+    ) {
+        std::printf("%s\n", banner);
+        std::printf("  AC(KV stage): mainline=%u fallback=%u\n",
+            (unsigned)(ac_mainline ? 1u : 0u),
+            (unsigned)(ac_fallback ? 1u : 0u));
+        std::printf("  AD(Q stage): mainline=%u fallback=%u\n",
+            (unsigned)(ad_mainline ? 1u : 0u),
+            (unsigned)(ad_fallback ? 1u : 0u));
+        std::printf("  AE(Score stage): mainline=%u fallback=%u\n",
+            (unsigned)(ae_mainline ? 1u : 0u),
+            (unsigned)(ae_fallback ? 1u : 0u));
+        std::printf("  AF(SoftmaxOut stage): mainline=%u fallback=%u\n",
+            (unsigned)(af_mainline ? 1u : 0u),
+            (unsigned)(af_fallback ? 1u : 0u));
+    }
+
+    bool run_top_infer_marker_checker() {
+        TopIo io;
+
+        const uint32_t param_base = (uint32_t)sram_map::W_REGION_BASE;
+        std::vector<aecct::u32_t> sram_seed((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
+        p11aeaf_tb::load_qkv_payload_set_to_sram(sram_seed, payloads_, param_base);
+
+        std::vector<aecct::u32_t> param_words((uint32_t)EXP_LEN_PARAM_WORDS, (aecct::u32_t)0u);
+        for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_PARAM_WORDS; ++i) {
+            param_words[i] = sram_seed[param_base + i];
+        }
+
+        top_send_cmd(io, (uint8_t)aecct::OP_SOFT_RESET);
+        if (!top_expect_rsp_exact(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET, "top_soft_reset")) {
+            return false;
+        }
+
+        uint32_t cfg_words[EXP_LEN_CFG_WORDS];
+        for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_CFG_WORDS; ++i) {
+            cfg_words[i] = 0u;
+        }
+        cfg_words[CFG_CODE_N] = CODE_N;
+        cfg_words[CFG_CODE_K] = CODE_K;
+        cfg_words[CFG_CODE_C] = CODE_C;
+        cfg_words[CFG_N_NODES] = N_NODES;
+        cfg_words[CFG_D_MODEL] = (uint32_t)p11aeaf_tb::kTileWords;
+        cfg_words[CFG_N_HEAD] = 8u;
+        cfg_words[CFG_N_LAYERS] = 1u;
+        cfg_words[CFG_D_FFN] = (uint32_t)p11aeaf_tb::kTileWords;
+        cfg_words[CFG_ENABLE_LPE] = 1u;
+        cfg_words[CFG_ENABLE_LPE_TOKEN] = 1u;
+        cfg_words[CFG_OUT_MODE] = 2u;
+        cfg_words[CFG_RESERVED0] = 0u;
+
+        top_send_cmd(io, (uint8_t)aecct::OP_CFG_BEGIN);
+        if (!top_expect_rsp_exact(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN, "top_cfg_begin")) {
+            return false;
+        }
+        for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_CFG_WORDS; ++i) {
+            io.data_in.write((aecct::u32_t)cfg_words[i]);
+            top_tick(io);
+            if (!top_expect_no_rsp(io, "top_cfg_ingest")) {
+                return false;
+            }
+        }
+        top_send_cmd(io, (uint8_t)aecct::OP_CFG_COMMIT);
+        if (!top_expect_rsp_kind_either(
+            io,
+            (uint8_t)aecct::RSP_OK,
+            (uint8_t)aecct::RSP_DONE,
+            (uint8_t)aecct::OP_CFG_COMMIT,
+            "top_cfg_commit")) {
+            return false;
+        }
+
+        io.data_in.write((aecct::u32_t)param_base);
+        top_send_cmd(io, (uint8_t)aecct::OP_SET_W_BASE);
+        if (!top_expect_rsp_kind_either(
+            io,
+            (uint8_t)aecct::RSP_OK,
+            (uint8_t)aecct::RSP_DONE,
+            (uint8_t)aecct::OP_SET_W_BASE,
+            "top_set_w_base")) {
+            return false;
+        }
+
+        top_send_cmd(io, (uint8_t)aecct::OP_LOAD_W);
+        if (!top_expect_rsp_exact(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_LOAD_W, "top_load_w_begin")) {
+            return false;
+        }
+        for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_PARAM_WORDS; ++i) {
+            io.data_in.write(param_words[i]);
+            top_tick(io);
+            if (i + 1u < (uint32_t)EXP_LEN_PARAM_WORDS) {
+                if (!top_expect_no_rsp(io, "top_load_w_ingest")) {
+                    return false;
+                }
+            } else {
+                if (!top_expect_rsp_exact(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_LOAD_W, "top_load_w_done")) {
+                    return false;
+                }
+            }
+        }
+
+        io.data_in.write((aecct::u32_t)2u);
+        top_send_cmd(io, (uint8_t)aecct::OP_SET_OUTMODE);
+        if (!top_expect_rsp_exact(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_OUTMODE, "top_set_outmode")) {
+            return false;
+        }
+
+        top_send_cmd(io, (uint8_t)aecct::OP_INFER);
+        if (!top_expect_rsp_exact(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_INFER, "top_infer_begin")) {
+            return false;
+        }
+        for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_INFER_IN_WORDS; ++i) {
+            const int32_t sv = (int32_t)(i & 31u) - 16;
+            const float fv = ((float)sv) * 0.03125f;
+            io.data_in.write((aecct::u32_t)f32_to_bits(fv));
+            top_tick(io);
+            if (i + 1u < (uint32_t)EXP_LEN_INFER_IN_WORDS) {
+                if (!top_expect_no_rsp(io, "top_infer_ingest")) {
+                    return false;
+                }
+            } else {
+                if (!top_expect_rsp_exact(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_INFER, "top_infer_done")) {
+                    return false;
+                }
+            }
+        }
+
+        const bool ac_mainline = aecct::top_peek_p11ac_mainline_path_taken();
+        const bool ad_mainline = aecct::top_peek_p11ad_mainline_q_path_taken();
+        const bool ae_mainline = aecct::top_peek_p11ae_mainline_score_path_taken();
+        const bool af_mainline = aecct::top_peek_p11af_mainline_softmax_output_path_taken();
+        const bool ac_fallback = aecct::top_peek_p11ac_fallback_taken();
+        const bool ad_fallback = aecct::top_peek_p11ad_q_fallback_taken();
+        const bool ae_fallback = aecct::top_peek_p11ae_score_fallback_taken();
+        const bool af_fallback = aecct::top_peek_p11af_softmax_output_fallback_taken();
+
+        const bool pass =
+            ac_mainline &&
+            ad_mainline &&
+            ae_mainline &&
+            af_mainline &&
+            !ac_fallback &&
+            !ad_fallback &&
+            !ae_fallback &&
+            !af_fallback;
+
+        if (!pass) {
+            dump_top_infer_marker_snapshot(
+                "P11AH_TOP_INFER_LID0_ATTN_MARKER_CHECKER FAIL",
+                ac_mainline,
+                ad_mainline,
+                ae_mainline,
+                af_mainline,
+                ac_fallback,
+                ad_fallback,
+                ae_fallback,
+                af_fallback);
+            if (!ac_mainline || ac_fallback) {
+                std::printf("  FAIL_STAGE: AC = KV stage\n");
+            }
+            if (!ad_mainline || ad_fallback) {
+                std::printf("  FAIL_STAGE: AD = Q stage\n");
+            }
+            if (!ae_mainline || ae_fallback) {
+                std::printf("  FAIL_STAGE: AE = Score stage\n");
+            }
+            if (!af_mainline || af_fallback) {
+                std::printf("  FAIL_STAGE: AF = SoftmaxOut stage\n");
+            }
+            return false;
+        }
+
+        dump_top_infer_marker_snapshot(
+            "P11AH_TOP_INFER_LID0_ATTN_MARKER_CHECKER PASS",
+            ac_mainline,
+            ad_mainline,
+            ae_mainline,
+            af_mainline,
+            ac_fallback,
+            ad_fallback,
+            ae_fallback,
+            af_fallback);
+        return true;
     }
 
     bool init() {
