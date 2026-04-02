@@ -185,6 +185,7 @@ public:
         if (!run_loop_caller_qkscore_qsrc_handoff_deep_bridge_case()) { return 1; }
         if (!run_loop_caller_qkscore_wq_handoff_pointer_case()) { return 1; }
         if (!run_loop_caller_qkscore_wq_handoff_deep_bridge_case()) { return 1; }
+        if (!run_loop_caller_qkscore_multi_seam_mask_wq_priority_pointer_case()) { return 1; }
         if (!run_loop_caller_qkscore_multi_seam_wq_qsrc_priority_pointer_case()) { return 1; }
         if (!run_loop_caller_qkscore_multi_seam_qsrc_kvscan_priority_pointer_case()) { return 1; }
         if (!run_legacy_descriptor_equivalence_case()) { return 1; }
@@ -195,6 +196,7 @@ public:
         std::printf("P11ANB_LOOP_CALLER_QKSCORE_KVSCAN_HOOK_EXPECTED_COMPARE PASS\n");
         std::printf("P11ANB_LOOP_CALLER_QKSCORE_QSRC_HOOK_EXPECTED_COMPARE PASS\n");
         std::printf("P11ANB_LOOP_CALLER_QKSCORE_WQ_HOOK_EXPECTED_COMPARE PASS\n");
+        std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_MASK_WQ_PRIORITY_EXPECTED_COMPARE PASS\n");
         std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_WQ_QSRC_PRIORITY_EXPECTED_COMPARE PASS\n");
         std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_QSRC_KVSCAN_PRIORITY_EXPECTED_COMPARE PASS\n");
         std::printf("PASS: tb_p11anb_attnlayer0_boundary_seam_contract\n");
@@ -1755,6 +1757,180 @@ private:
                     sram[i] = sram_window[i];
                 }
             });
+    }
+
+    bool run_loop_caller_qkscore_multi_seam_mask_wq_priority_pointer_case() {
+        p11aeaf_tb::QkvPayloadSet payloads;
+        if (!p11aeaf_tb::prepare_qkv_payload_set(payloads)) {
+            std::printf("[p11anb][FAIL] qkscore multi-seam MASK+WQ payload preparation failed\n");
+            return false;
+        }
+        const uint32_t param_base = (uint32_t)sram_map::W_REGION_BASE;
+        const aecct::CfgRegs bootstrap_cfg = p11aeaf_tb::build_cfg();
+        auto run_case = [&](aecct::TopRegs& regs,
+                            std::vector<aecct::u32_t>& sram,
+                            uint32_t n_layers,
+                            bool mask_enable,
+                            bool mask_descriptor_valid,
+                            bool wq_enable,
+                            bool wq_descriptor_valid) {
+            regs.clear();
+            regs.w_base_word = (aecct::u32_t)sram_map::W_REGION_BASE;
+            regs.cfg_d_model = bootstrap_cfg.d_model;
+            regs.cfg_n_heads = bootstrap_cfg.n_heads;
+            regs.cfg_d_ffn = bootstrap_cfg.d_ffn;
+            regs.cfg_n_layers = (aecct::u32_t)n_layers;
+            for (uint32_t i = 0u; i < kSramWords; ++i) {
+                sram[i] = (aecct::u32_t)0u;
+            }
+            p11aeaf_tb::init_x_rows(sram);
+            p11aeaf_tb::load_qkv_payload_set_to_sram(sram, payloads, param_base);
+            aecct::run_transformer_layer_loop(
+                regs,
+                sram.data(),
+                false,  // lid0_local_only_ffn_handoff_enable
+                true,   // lid0_local_only_ffn_handoff_descriptor_valid
+                false,  // lid0_local_only_attn_out_payload_enable
+                true,   // lid0_local_only_attn_out_payload_descriptor_valid
+                mask_enable,
+                mask_descriptor_valid,
+                false,  // lid0_local_only_qkscore_kvscan_handoff_enable
+                true,   // lid0_local_only_qkscore_kvscan_handoff_descriptor_valid
+                false,  // lid0_local_only_qkscore_qsrc_handoff_enable
+                true,   // lid0_local_only_qkscore_qsrc_handoff_descriptor_valid
+                wq_enable,
+                wq_descriptor_valid);
+        };
+
+        std::vector<aecct::u32_t> sram_baseline(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_valid(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_invalid(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_disabled(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_lid_nonzero(kSramWords, (aecct::u32_t)0u);
+        aecct::TopRegs regs_baseline;
+        aecct::TopRegs regs_valid;
+        aecct::TopRegs regs_invalid;
+        aecct::TopRegs regs_disabled;
+        aecct::TopRegs regs_lid_nonzero;
+
+        run_case(regs_baseline, sram_baseline, 1u, false, true, false, true);
+        run_case(regs_valid, sram_valid, 1u, true, true, true, true);
+        run_case(regs_invalid, sram_invalid, 1u, true, false, true, true);
+        run_case(regs_disabled, sram_disabled, 1u, false, true, false, true);
+        run_case(regs_lid_nonzero, sram_lid_nonzero, 2u, true, true, true, true);
+
+        if (!regs_valid.p11ae_mainline_score_path_taken || regs_valid.p11ae_score_fallback_taken) {
+            std::printf("[p11anb][FAIL] qkscore multi-seam MASK+WQ valid case did not stay on score mainline\n");
+            return false;
+        }
+        if (regs_invalid.p11ae_mainline_score_path_taken || !regs_invalid.p11ae_score_fallback_taken) {
+            std::printf("[p11anb][FAIL] qkscore multi-seam MASK+WQ invalid case did not take fallback\n");
+            return false;
+        }
+        if (!regs_disabled.p11ae_mainline_score_path_taken || regs_disabled.p11ae_score_fallback_taken) {
+            std::printf("[p11anb][FAIL] qkscore multi-seam MASK+WQ disabled case unexpectedly left mainline\n");
+            return false;
+        }
+
+        if (u32_bits(regs_valid.p11ay_qkscore_mask_handoff_gate_taken_count) != 1u ||
+            u32_bits(regs_valid.p11ay_qkscore_mask_handoff_non_empty_count) != 1u ||
+            u32_bits(regs_valid.p11ay_lid0_qkscore_mask_handoff_non_empty_count) != 1u ||
+            u32_bits(regs_valid.p11ay_qkscore_mask_handoff_fallback_seen_count) != 0u) {
+            std::printf("[p11anb][FAIL] multi-seam MASK+WQ MASK-selected marker mismatch gate=%u non_empty=%u lid0_non_empty=%u fallback=%u\n",
+                (unsigned)u32_bits(regs_valid.p11ay_qkscore_mask_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_valid.p11ay_qkscore_mask_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_valid.p11ay_lid0_qkscore_mask_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_valid.p11ay_qkscore_mask_handoff_fallback_seen_count));
+            return false;
+        }
+        if (u32_bits(regs_valid.p11bb_qkscore_wq_handoff_gate_taken_count) != 1u ||
+            u32_bits(regs_valid.p11bb_qkscore_wq_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_valid.p11bb_lid0_qkscore_wq_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_valid.p11bb_qkscore_wq_handoff_fallback_seen_count) != 1u) {
+            std::printf("[p11anb][FAIL] multi-seam MASK+WQ non-selected WQ marker mismatch gate=%u non_empty=%u lid0_non_empty=%u fallback=%u\n",
+                (unsigned)u32_bits(regs_valid.p11bb_qkscore_wq_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_valid.p11bb_qkscore_wq_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_valid.p11bb_lid0_qkscore_wq_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_valid.p11bb_qkscore_wq_handoff_fallback_seen_count));
+            return false;
+        }
+
+        if (u32_bits(regs_invalid.p11ay_qkscore_mask_handoff_gate_taken_count) != 1u ||
+            u32_bits(regs_invalid.p11ay_qkscore_mask_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_invalid.p11ay_qkscore_mask_handoff_fallback_seen_count) != 1u ||
+            u32_bits(regs_invalid.p11bb_qkscore_wq_handoff_gate_taken_count) != 1u ||
+            u32_bits(regs_invalid.p11bb_qkscore_wq_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_invalid.p11bb_qkscore_wq_handoff_fallback_seen_count) != 1u) {
+            std::printf("[p11anb][FAIL] multi-seam MASK+WQ invalid marker mismatch mask(g=%u ne=%u fb=%u) wq(g=%u ne=%u fb=%u)\n",
+                (unsigned)u32_bits(regs_invalid.p11ay_qkscore_mask_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_invalid.p11ay_qkscore_mask_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_invalid.p11ay_qkscore_mask_handoff_fallback_seen_count),
+                (unsigned)u32_bits(regs_invalid.p11bb_qkscore_wq_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_invalid.p11bb_qkscore_wq_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_invalid.p11bb_qkscore_wq_handoff_fallback_seen_count));
+            return false;
+        }
+        if (u32_bits(regs_disabled.p11ay_qkscore_mask_handoff_gate_taken_count) != 0u ||
+            u32_bits(regs_disabled.p11ay_qkscore_mask_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_disabled.p11ay_qkscore_mask_handoff_fallback_seen_count) != 0u ||
+            u32_bits(regs_disabled.p11bb_qkscore_wq_handoff_gate_taken_count) != 0u ||
+            u32_bits(regs_disabled.p11bb_qkscore_wq_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_disabled.p11bb_qkscore_wq_handoff_fallback_seen_count) != 0u) {
+            std::printf("[p11anb][FAIL] multi-seam MASK+WQ disabled marker mismatch mask(g=%u ne=%u fb=%u) wq(g=%u ne=%u fb=%u)\n",
+                (unsigned)u32_bits(regs_disabled.p11ay_qkscore_mask_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_disabled.p11ay_qkscore_mask_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_disabled.p11ay_qkscore_mask_handoff_fallback_seen_count),
+                (unsigned)u32_bits(regs_disabled.p11bb_qkscore_wq_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_disabled.p11bb_qkscore_wq_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_disabled.p11bb_qkscore_wq_handoff_fallback_seen_count));
+            return false;
+        }
+        if (u32_bits(regs_lid_nonzero.p11ay_qkscore_mask_handoff_gate_taken_count) != 2u ||
+            u32_bits(regs_lid_nonzero.p11ay_qkscore_mask_handoff_non_empty_count) != 1u ||
+            u32_bits(regs_lid_nonzero.p11ay_lid0_qkscore_mask_handoff_non_empty_count) != 1u ||
+            u32_bits(regs_lid_nonzero.p11ay_qkscore_mask_handoff_fallback_seen_count) != 1u ||
+            u32_bits(regs_lid_nonzero.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count) != 1u) {
+            std::printf("[p11anb][FAIL] multi-seam MASK+WQ lid!=0 MASK marker mismatch gate=%u non_empty=%u lid0_non_empty=%u fallback=%u lid_nonzero_fallback=%u\n",
+                (unsigned)u32_bits(regs_lid_nonzero.p11ay_qkscore_mask_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ay_qkscore_mask_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ay_lid0_qkscore_mask_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ay_qkscore_mask_handoff_fallback_seen_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count));
+            return false;
+        }
+        if (u32_bits(regs_lid_nonzero.p11bb_qkscore_wq_handoff_gate_taken_count) != 2u ||
+            u32_bits(regs_lid_nonzero.p11bb_qkscore_wq_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_lid_nonzero.p11bb_lid0_qkscore_wq_handoff_non_empty_count) != 0u ||
+            u32_bits(regs_lid_nonzero.p11bb_qkscore_wq_handoff_fallback_seen_count) != 2u ||
+            u32_bits(regs_lid_nonzero.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count) != 1u) {
+            std::printf("[p11anb][FAIL] multi-seam MASK+WQ lid!=0 WQ marker mismatch gate=%u non_empty=%u lid0_non_empty=%u fallback=%u lid_nonzero_fallback=%u\n",
+                (unsigned)u32_bits(regs_lid_nonzero.p11bb_qkscore_wq_handoff_gate_taken_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11bb_qkscore_wq_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11bb_lid0_qkscore_wq_handoff_non_empty_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11bb_qkscore_wq_handoff_fallback_seen_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count));
+            return false;
+        }
+
+        const aecct::LayerScratch sc = aecct::make_layer_scratch((aecct::u32_t)aecct::LN_X_OUT_BASE_WORD);
+        const uint32_t score_base = u32_bits(sc.attn.score_base_word);
+        const uint32_t score_words = (uint32_t)aecct::ATTN_TOKEN_COUNT * (uint32_t)aecct::ATTN_N_HEADS;
+        if (!check_equal_region_between_srams(
+                sram_valid,
+                sram_baseline,
+                score_base,
+                score_words,
+                "TOP-LOOP-QKSCORE-MULTI-MASK-WQ-valid-vs-baseline")) {
+            return false;
+        }
+
+        std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_MASK_WQ_POINTER_PRIORITY_CONSUME PASS\n");
+        std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_MASK_WQ_POINTER_PRIORITY_INVALID_FALLBACK PASS\n");
+        std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_MASK_WQ_POINTER_PRIORITY_DISABLED_FALLBACK PASS\n");
+        std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_MASK_WQ_POINTER_PRIORITY_LID_NONZERO_FALLBACK PASS\n");
+        std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_MASK_WQ_POINTER_PRIORITY_NON_SELECTED_ANTI_SPURIOUS_TOUCH PASS\n");
+        std::printf("P11ANB_LOOP_CALLER_QKSCORE_MULTI_SEAM_MASK_WQ_POINTER_PRIORITY_MARKER_CONSISTENCY PASS\n");
+        return true;
     }
 
     bool run_loop_caller_qkscore_multi_seam_wq_qsrc_priority_pointer_case() {
