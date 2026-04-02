@@ -375,6 +375,13 @@ namespace aecct {
         u32_t p11aw_pipeline_ffn_handoff_fallback_seen_count;
         u32_t p11aw_pipeline_ffn_handoff_non_empty_count;
         u32_t p11aw_pipeline_lid0_ffn_handoff_non_empty_count;
+        bool p11ax_lid0_attn_out_payload_enable;
+        bool p11ax_lid0_attn_out_payload_descriptor_valid;
+        u32_t p11ax_attn_out_payload_gate_taken_count;
+        u32_t p11ax_attn_out_payload_fallback_seen_count;
+        u32_t p11ax_attn_out_payload_non_empty_count;
+        u32_t p11ax_lid0_attn_out_payload_non_empty_count;
+        u32_t p11ax_lid_nonzero_attn_out_payload_fallback_seen_count;
 
         // Top-controlled block contract placeholders (skeleton only).
         PreprocBlockContract preproc_contract;
@@ -449,6 +456,13 @@ namespace aecct {
             p11aw_pipeline_ffn_handoff_fallback_seen_count = 0;
             p11aw_pipeline_ffn_handoff_non_empty_count = 0;
             p11aw_pipeline_lid0_ffn_handoff_non_empty_count = 0;
+            p11ax_lid0_attn_out_payload_enable = false;
+            p11ax_lid0_attn_out_payload_descriptor_valid = false;
+            p11ax_attn_out_payload_gate_taken_count = 0;
+            p11ax_attn_out_payload_fallback_seen_count = 0;
+            p11ax_attn_out_payload_non_empty_count = 0;
+            p11ax_lid0_attn_out_payload_non_empty_count = 0;
+            p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
             clear_preproc_contract(preproc_contract);
             clear_transformer_layer_contract(transformer_contract);
             clear_layernorm_contract(layernorm_contract);
@@ -590,6 +604,15 @@ namespace aecct {
     static inline bool top_peek_p11ae_score_fallback_taken() { return top_regs().p11ae_score_fallback_taken; }
     static inline bool top_peek_p11af_mainline_softmax_output_path_taken() { return top_regs().p11af_mainline_softmax_output_path_taken; }
     static inline bool top_peek_p11af_softmax_output_fallback_taken() { return top_regs().p11af_softmax_output_fallback_taken; }
+    static inline bool top_peek_p11ax_lid0_attn_out_payload_enable() { return top_regs().p11ax_lid0_attn_out_payload_enable; }
+    static inline bool top_peek_p11ax_lid0_attn_out_payload_descriptor_valid() { return top_regs().p11ax_lid0_attn_out_payload_descriptor_valid; }
+    static inline u32_t top_peek_p11ax_attn_out_payload_gate_taken_count() { return top_regs().p11ax_attn_out_payload_gate_taken_count; }
+    static inline u32_t top_peek_p11ax_attn_out_payload_fallback_seen_count() { return top_regs().p11ax_attn_out_payload_fallback_seen_count; }
+    static inline u32_t top_peek_p11ax_attn_out_payload_non_empty_count() { return top_regs().p11ax_attn_out_payload_non_empty_count; }
+    static inline u32_t top_peek_p11ax_lid0_attn_out_payload_non_empty_count() { return top_regs().p11ax_lid0_attn_out_payload_non_empty_count; }
+    static inline u32_t top_peek_p11ax_lid_nonzero_attn_out_payload_fallback_seen_count() {
+        return top_regs().p11ax_lid_nonzero_attn_out_payload_fallback_seen_count;
+    }
 
     static inline RegionId decode_region(const u32_t& addr_word) {
         unsigned a = (unsigned)addr_word.to_uint();
@@ -1697,6 +1720,48 @@ namespace aecct {
         );
     }
 
+    static inline u32_t top_lid0_local_only_attn_out_fixed_payload_word(uint32_t word_index) {
+        return (u32_t)(0xA7000000u + word_index);
+    }
+
+    // local-only representative run-loop feed helper for Attn OUT payload seam.
+    static inline void top_make_runloop_lid0_local_only_attn_out_payload_handoff(
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid,
+        bool& topfed_payload_enable,
+        const u32_t*& topfed_payload_words,
+        u32_t& topfed_payload_words_valid
+    ) {
+        topfed_payload_enable = false;
+        topfed_payload_words = 0;
+        topfed_payload_words_valid = (u32_t)0u;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        static u32_t topfed_payload_words_local[ATTN_TENSOR_WORDS];
+        TOP_LID0_LOCAL_ONLY_ATTN_OUT_PAYLOAD_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)ATTN_TENSOR_WORDS; ++i) {
+            topfed_payload_words_local[i] = top_lid0_local_only_attn_out_fixed_payload_word(i);
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
+        uint32_t payload_words_valid = token_count * d_model;
+        if (payload_words_valid > (uint32_t)ATTN_TENSOR_WORDS) {
+            payload_words_valid = (uint32_t)ATTN_TENSOR_WORDS;
+        }
+        if (!descriptor_valid) {
+            payload_words_valid = 0u;
+        }
+
+        topfed_payload_enable = true;
+        topfed_payload_words = topfed_payload_words_local;
+        topfed_payload_words_valid = (u32_t)payload_words_valid;
+    }
+
     static inline void top_dispatch_transformer_layer(
         u32_t* sram,
         const CfgRegs& cfg,
@@ -1784,7 +1849,9 @@ namespace aecct {
         TopRegs& regs,
         u32_t* sram,
         bool lid0_local_only_ffn_handoff_enable = false,
-        bool lid0_local_only_ffn_handoff_descriptor_valid = true
+        bool lid0_local_only_ffn_handoff_descriptor_valid = true,
+        bool lid0_local_only_attn_out_payload_enable = false,
+        bool lid0_local_only_attn_out_payload_descriptor_valid = true
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -1810,6 +1877,13 @@ namespace aecct {
         regs.p11av_ffn_handoff_fallback_seen_count = 0;
         regs.p11av_ffn_handoff_non_empty_count = 0;
         regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_enable = lid0_local_only_attn_out_payload_enable;
+        regs.p11ax_lid0_attn_out_payload_descriptor_valid = lid0_local_only_attn_out_payload_descriptor_valid;
+        regs.p11ax_attn_out_payload_gate_taken_count = 0;
+        regs.p11ax_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ax_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
 
         TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
@@ -1927,6 +2001,44 @@ namespace aecct {
                     regs.p11av_ffn_handoff_fallback_seen_count + (u32_t)1u;
             }
 
+            bool attn_out_topfed_payload_enable_for_layer = false;
+            const u32_t* attn_out_topfed_payload_words_for_layer = 0;
+            u32_t attn_out_topfed_payload_words_valid_for_layer = (u32_t)0u;
+            top_make_runloop_lid0_local_only_attn_out_payload_handoff(
+                cfg,
+                (u32_t)lid,
+                lid0_local_only_attn_out_payload_enable,
+                lid0_local_only_attn_out_payload_descriptor_valid,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+            if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_gate_taken_count =
+                    regs.p11ax_attn_out_payload_gate_taken_count + (u32_t)1u;
+            }
+            const uint32_t attn_out_topfed_payload_words_valid_raw =
+                (uint32_t)attn_out_topfed_payload_words_valid_for_layer.to_uint();
+            const bool attn_out_topfed_payload_non_empty =
+                attn_out_topfed_payload_enable_for_layer &&
+                (attn_out_topfed_payload_words_for_layer != 0) &&
+                (attn_out_topfed_payload_words_valid_raw >= (uint32_t)ATTN_TENSOR_WORDS);
+            if (attn_out_topfed_payload_non_empty) {
+                regs.p11ax_attn_out_payload_non_empty_count =
+                    regs.p11ax_attn_out_payload_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11ax_lid0_attn_out_payload_non_empty_count =
+                        regs.p11ax_lid0_attn_out_payload_non_empty_count + (u32_t)1u;
+                }
+            } else if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_fallback_seen_count =
+                    regs.p11ax_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                if (lid != 0u) {
+                    regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count =
+                        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                }
+            }
+
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
             top_dispatch_transformer_layer(
                 sram,
@@ -1941,7 +2053,10 @@ namespace aecct {
                 score_prebuilt_from_top_managed,
                 out_prebuilt_from_top_managed,
                 true,
-                ffn_topfed_handoff_desc
+                ffn_topfed_handoff_desc,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
             );
 
             x_in_base = x_out_base;
@@ -1999,7 +2114,9 @@ namespace aecct {
         TopRegs& regs,
         u32_t (&sram)[SRAM_WORDS],
         bool lid0_local_only_ffn_handoff_enable = false,
-        bool lid0_local_only_ffn_handoff_descriptor_valid = true
+        bool lid0_local_only_ffn_handoff_descriptor_valid = true,
+        bool lid0_local_only_attn_out_payload_enable = false,
+        bool lid0_local_only_attn_out_payload_descriptor_valid = true
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -2025,6 +2142,13 @@ namespace aecct {
         regs.p11av_ffn_handoff_fallback_seen_count = 0;
         regs.p11av_ffn_handoff_non_empty_count = 0;
         regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_enable = lid0_local_only_attn_out_payload_enable;
+        regs.p11ax_lid0_attn_out_payload_descriptor_valid = lid0_local_only_attn_out_payload_descriptor_valid;
+        regs.p11ax_attn_out_payload_gate_taken_count = 0;
+        regs.p11ax_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ax_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
 
         TOP_LAYER_ORCHESTRATION_AN_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             LayerScratch sc = make_layer_scratch(x_in_base);
@@ -2138,6 +2262,44 @@ namespace aecct {
                     regs.p11av_ffn_handoff_fallback_seen_count + (u32_t)1u;
             }
 
+            bool attn_out_topfed_payload_enable_for_layer = false;
+            const u32_t* attn_out_topfed_payload_words_for_layer = 0;
+            u32_t attn_out_topfed_payload_words_valid_for_layer = (u32_t)0u;
+            top_make_runloop_lid0_local_only_attn_out_payload_handoff(
+                cfg,
+                (u32_t)lid,
+                lid0_local_only_attn_out_payload_enable,
+                lid0_local_only_attn_out_payload_descriptor_valid,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+            if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_gate_taken_count =
+                    regs.p11ax_attn_out_payload_gate_taken_count + (u32_t)1u;
+            }
+            const uint32_t attn_out_topfed_payload_words_valid_raw =
+                (uint32_t)attn_out_topfed_payload_words_valid_for_layer.to_uint();
+            const bool attn_out_topfed_payload_non_empty =
+                attn_out_topfed_payload_enable_for_layer &&
+                (attn_out_topfed_payload_words_for_layer != 0) &&
+                (attn_out_topfed_payload_words_valid_raw >= (uint32_t)ATTN_TENSOR_WORDS);
+            if (attn_out_topfed_payload_non_empty) {
+                regs.p11ax_attn_out_payload_non_empty_count =
+                    regs.p11ax_attn_out_payload_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11ax_lid0_attn_out_payload_non_empty_count =
+                        regs.p11ax_lid0_attn_out_payload_non_empty_count + (u32_t)1u;
+                }
+            } else if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_fallback_seen_count =
+                    regs.p11ax_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                if (lid != 0u) {
+                    regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count =
+                        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                }
+            }
+
             top_dispatch_transformer_layer_top_managed_attn_bridge(
                 sram,
                 cfg,
@@ -2151,7 +2313,10 @@ namespace aecct {
                 score_prebuilt_from_top_managed,
                 out_prebuilt_from_top_managed,
                 true,
-                ffn_topfed_handoff_desc
+                ffn_topfed_handoff_desc,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
             );
 
             x_in_base = x_out_base;

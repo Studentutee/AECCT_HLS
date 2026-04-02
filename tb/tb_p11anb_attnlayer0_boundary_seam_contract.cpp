@@ -116,6 +116,28 @@ static inline bool check_equal_region_to_words(
     return true;
 }
 
+static inline bool check_equal_region_between_srams(
+    const std::vector<aecct::u32_t>& lhs_sram,
+    const std::vector<aecct::u32_t>& rhs_sram,
+    uint32_t base,
+    uint32_t words,
+    const char* fail_tag
+) {
+    for (uint32_t i = 0u; i < words; ++i) {
+        const uint32_t lhs = u32_bits(lhs_sram[base + i]);
+        const uint32_t rhs = u32_bits(rhs_sram[base + i]);
+        if (lhs != rhs) {
+            std::printf("[p11anb][FAIL] %s mismatch idx=%u lhs=0x%08X rhs=0x%08X\n",
+                fail_tag,
+                (unsigned)i,
+                (unsigned)lhs,
+                (unsigned)rhs);
+            return false;
+        }
+    }
+    return true;
+}
+
 static inline uint32_t count_region_diff(
     const std::vector<aecct::u32_t>& lhs,
     const std::vector<aecct::u32_t>& rhs,
@@ -152,9 +174,12 @@ public:
         if (!run_transformerlayer_out_topfed_mapping_deep_bridge_case()) { return 1; }
         if (!run_top_caller_out_topfed_mapping_pointer_case()) { return 1; }
         if (!run_top_caller_out_topfed_mapping_deep_bridge_case()) { return 1; }
+        if (!run_loop_caller_out_topfed_mapping_pointer_case()) { return 1; }
+        if (!run_loop_caller_out_topfed_mapping_deep_bridge_case()) { return 1; }
         if (!run_legacy_descriptor_equivalence_case()) { return 1; }
         std::printf("P11ANB_TRANSFORMER_ATTN_OUT_TOPFED_MAPPING_EXPECTED_COMPARE PASS\n");
         std::printf("P11ANB_TOP_CALLER_ATTN_OUT_TOPFED_CHAIN_EXPECTED_COMPARE PASS\n");
+        std::printf("P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_HOOK_EXPECTED_COMPARE PASS\n");
         std::printf("PASS: tb_p11anb_attnlayer0_boundary_seam_contract\n");
         return 0;
     }
@@ -723,6 +748,212 @@ private:
                     out_topfed_payload_enable,
                     out_topfed_payload_words,
                     out_topfed_payload_words_valid);
+                for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                    sram[i] = sram_window[i];
+                }
+            });
+    }
+
+    template<typename RunLoopFn>
+    bool run_loop_caller_out_topfed_mapping_case(
+        const char* consume_pass_banner,
+        const char* invalid_fallback_pass_banner,
+        const char* disabled_fallback_pass_banner,
+        const char* lid_nonzero_fallback_pass_banner,
+        RunLoopFn run_loop_fn
+    ) {
+        const uint32_t words = (uint32_t)aecct::ATTN_TENSOR_WORDS;
+        if (words == 0u) {
+            std::printf("[p11anb][FAIL] loop caller mapping words must be non-zero\n");
+            return false;
+        }
+
+        auto init_regs = [](aecct::TopRegs& regs, uint32_t n_layers) {
+            regs.clear();
+            regs.w_base_word = (aecct::u32_t)sram_map::W_REGION_BASE;
+            regs.cfg_d_model = (aecct::u32_t)aecct::ATTN_D_MODEL;
+            regs.cfg_n_heads = (aecct::u32_t)aecct::ATTN_N_HEADS;
+            regs.cfg_d_ffn = (aecct::u32_t)aecct::FFN_D_FFN;
+            regs.cfg_n_layers = (aecct::u32_t)n_layers;
+        };
+        auto init_sram = [](std::vector<aecct::u32_t>& sram) {
+            for (uint32_t i = 0u; i < kSramWords; ++i) {
+                sram[i] = (aecct::u32_t)0u;
+            }
+            const uint32_t x_base = (uint32_t)aecct::LN_X_OUT_BASE_WORD;
+            const uint32_t x_words = (uint32_t)aecct::LN_X_TOTAL_WORDS;
+            for (uint32_t i = 0u; i < x_words; ++i) {
+                sram[x_base + i] = (aecct::u32_t)(0x3F000000u + i);
+            }
+        };
+
+        std::vector<aecct::u32_t> sram_baseline(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_valid(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_invalid(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_disabled(kSramWords, (aecct::u32_t)0u);
+        std::vector<aecct::u32_t> sram_lid_nonzero(kSramWords, (aecct::u32_t)0u);
+        aecct::TopRegs regs_baseline;
+        aecct::TopRegs regs_valid;
+        aecct::TopRegs regs_invalid;
+        aecct::TopRegs regs_disabled;
+        aecct::TopRegs regs_lid_nonzero;
+
+        init_sram(sram_baseline);
+        init_sram(sram_valid);
+        init_sram(sram_invalid);
+        init_sram(sram_disabled);
+        init_sram(sram_lid_nonzero);
+        init_regs(regs_baseline, 1u);
+        init_regs(regs_valid, 1u);
+        init_regs(regs_invalid, 1u);
+        init_regs(regs_disabled, 1u);
+        init_regs(regs_lid_nonzero, 2u);
+
+        run_loop_fn(regs_baseline, sram_baseline, false, true);
+        run_loop_fn(regs_valid, sram_valid, true, true);
+        run_loop_fn(regs_invalid, sram_invalid, true, false);
+        run_loop_fn(regs_disabled, sram_disabled, false, true);
+        run_loop_fn(regs_lid_nonzero, sram_lid_nonzero, true, true);
+
+        const uint32_t final_base_baseline = u32_bits(regs_baseline.infer_final_x_base_word);
+        const uint32_t final_base_valid = u32_bits(regs_valid.infer_final_x_base_word);
+        const uint32_t final_base_invalid = u32_bits(regs_invalid.infer_final_x_base_word);
+        const uint32_t final_base_disabled = u32_bits(regs_disabled.infer_final_x_base_word);
+        if (final_base_valid != final_base_baseline ||
+            final_base_invalid != final_base_baseline ||
+            final_base_disabled != final_base_baseline) {
+            std::printf("[p11anb][FAIL] top loop final base mismatch baseline=%u valid=%u invalid=%u disabled=%u\n",
+                (unsigned)final_base_baseline,
+                (unsigned)final_base_valid,
+                (unsigned)final_base_invalid,
+                (unsigned)final_base_disabled);
+            return false;
+        }
+
+        const uint32_t compare_words = 16u;
+        if (!check_equal_region_between_srams(
+                sram_invalid,
+                sram_baseline,
+                final_base_baseline,
+                compare_words,
+                "TOP-LOOP-FINAL-invalid-fallback")) {
+            return false;
+        }
+        if (!check_equal_region_between_srams(
+                sram_disabled,
+                sram_baseline,
+                final_base_baseline,
+                compare_words,
+                "TOP-LOOP-FINAL-disabled-fallback")) {
+            return false;
+        }
+
+        const uint32_t diff_count = count_region_diff(
+            sram_valid,
+            sram_baseline,
+            final_base_baseline,
+            compare_words);
+        if (diff_count == 0u) {
+            std::printf("[p11anb][FAIL] top loop caller expected compare unchanged at final X first=%u words\n",
+                (unsigned)compare_words);
+            return false;
+        }
+
+        if (u32_bits(regs_valid.p11ax_attn_out_payload_gate_taken_count) != 1u ||
+            u32_bits(regs_valid.p11ax_attn_out_payload_non_empty_count) != 1u ||
+            u32_bits(regs_valid.p11ax_lid0_attn_out_payload_non_empty_count) != 1u ||
+            u32_bits(regs_valid.p11ax_attn_out_payload_fallback_seen_count) != 0u) {
+            std::printf("[p11anb][FAIL] top loop valid marker mismatch gate=%u non_empty=%u lid0_non_empty=%u fallback=%u\n",
+                (unsigned)u32_bits(regs_valid.p11ax_attn_out_payload_gate_taken_count),
+                (unsigned)u32_bits(regs_valid.p11ax_attn_out_payload_non_empty_count),
+                (unsigned)u32_bits(regs_valid.p11ax_lid0_attn_out_payload_non_empty_count),
+                (unsigned)u32_bits(regs_valid.p11ax_attn_out_payload_fallback_seen_count));
+            return false;
+        }
+        if (u32_bits(regs_invalid.p11ax_attn_out_payload_gate_taken_count) != 1u ||
+            u32_bits(regs_invalid.p11ax_attn_out_payload_non_empty_count) != 0u ||
+            u32_bits(regs_invalid.p11ax_attn_out_payload_fallback_seen_count) != 1u) {
+            std::printf("[p11anb][FAIL] top loop invalid marker mismatch gate=%u non_empty=%u fallback=%u\n",
+                (unsigned)u32_bits(regs_invalid.p11ax_attn_out_payload_gate_taken_count),
+                (unsigned)u32_bits(regs_invalid.p11ax_attn_out_payload_non_empty_count),
+                (unsigned)u32_bits(regs_invalid.p11ax_attn_out_payload_fallback_seen_count));
+            return false;
+        }
+        if (u32_bits(regs_disabled.p11ax_attn_out_payload_gate_taken_count) != 0u ||
+            u32_bits(regs_disabled.p11ax_attn_out_payload_non_empty_count) != 0u ||
+            u32_bits(regs_disabled.p11ax_attn_out_payload_fallback_seen_count) != 0u) {
+            std::printf("[p11anb][FAIL] top loop disabled marker mismatch gate=%u non_empty=%u fallback=%u\n",
+                (unsigned)u32_bits(regs_disabled.p11ax_attn_out_payload_gate_taken_count),
+                (unsigned)u32_bits(regs_disabled.p11ax_attn_out_payload_non_empty_count),
+                (unsigned)u32_bits(regs_disabled.p11ax_attn_out_payload_fallback_seen_count));
+            return false;
+        }
+        if (u32_bits(regs_lid_nonzero.p11ax_attn_out_payload_gate_taken_count) != 2u ||
+            u32_bits(regs_lid_nonzero.p11ax_attn_out_payload_non_empty_count) != 1u ||
+            u32_bits(regs_lid_nonzero.p11ax_lid0_attn_out_payload_non_empty_count) != 1u ||
+            u32_bits(regs_lid_nonzero.p11ax_attn_out_payload_fallback_seen_count) != 1u ||
+            u32_bits(regs_lid_nonzero.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count) != 1u) {
+            std::printf("[p11anb][FAIL] top loop lid!=0 marker mismatch gate=%u non_empty=%u lid0_non_empty=%u fallback=%u lid_nonzero_fallback=%u\n",
+                (unsigned)u32_bits(regs_lid_nonzero.p11ax_attn_out_payload_gate_taken_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ax_attn_out_payload_non_empty_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ax_lid0_attn_out_payload_non_empty_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ax_attn_out_payload_fallback_seen_count),
+                (unsigned)u32_bits(regs_lid_nonzero.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count));
+            return false;
+        }
+
+        std::printf("%s PASS\n", consume_pass_banner);
+        std::printf("%s PASS\n", invalid_fallback_pass_banner);
+        std::printf("%s PASS\n", disabled_fallback_pass_banner);
+        std::printf("%s PASS\n", lid_nonzero_fallback_pass_banner);
+        return true;
+    }
+
+    bool run_loop_caller_out_topfed_mapping_pointer_case() {
+        return run_loop_caller_out_topfed_mapping_case(
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_POINTER_HOOK_CONSUME",
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_POINTER_HOOK_INVALID_FALLBACK",
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_POINTER_HOOK_DISABLED_FALLBACK",
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_POINTER_HOOK_LID_NONZERO_FALLBACK",
+            [](
+                aecct::TopRegs& regs,
+                std::vector<aecct::u32_t>& sram,
+                bool payload_enable,
+                bool descriptor_valid
+            ) {
+                aecct::run_transformer_layer_loop(
+                    regs,
+                    sram.data(),
+                    false,  // lid0_local_only_ffn_handoff_enable
+                    true,   // lid0_local_only_ffn_handoff_descriptor_valid
+                    payload_enable,
+                    descriptor_valid);
+            });
+    }
+
+    bool run_loop_caller_out_topfed_mapping_deep_bridge_case() {
+        return run_loop_caller_out_topfed_mapping_case(
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_DEEP_BRIDGE_HOOK_CONSUME",
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_DEEP_BRIDGE_HOOK_INVALID_FALLBACK",
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_DEEP_BRIDGE_HOOK_DISABLED_FALLBACK",
+            "P11ANB_LOOP_CALLER_ATTN_OUT_TOPFED_DEEP_BRIDGE_HOOK_LID_NONZERO_FALLBACK",
+            [](
+                aecct::TopRegs& regs,
+                std::vector<aecct::u32_t>& sram,
+                bool payload_enable,
+                bool descriptor_valid
+            ) {
+                static aecct::u32_t sram_window[sram_map::SRAM_WORDS_TOTAL];
+                for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
+                    sram_window[i] = sram[i];
+                }
+                aecct::run_transformer_layer_loop_top_managed_attn_bridge<sram_map::SRAM_WORDS_TOTAL>(
+                    regs,
+                    sram_window,
+                    false,  // lid0_local_only_ffn_handoff_enable
+                    true,   // lid0_local_only_ffn_handoff_descriptor_valid
+                    payload_enable,
+                    descriptor_valid);
                 for (uint32_t i = 0u; i < (uint32_t)sram_map::SRAM_WORDS_TOTAL; ++i) {
                     sram[i] = sram_window[i];
                 }
