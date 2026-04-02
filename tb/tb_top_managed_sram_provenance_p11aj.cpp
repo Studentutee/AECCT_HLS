@@ -48,6 +48,9 @@ public:
         if (!run_full_loop_mainline()) {
             return 1;
         }
+        if (!run_full_loop_mixed_layer_mainline()) {
+            return 1;
+        }
         if (!validate_full_flow_key_span_compare()) {
             return 1;
         }
@@ -97,6 +100,10 @@ private:
             return (aecct::u32_t)0u;
         }
         return (aecct::u32_t)0x3F800000u;
+    }
+
+    static bool is_nonfinite_bits(uint32_t bits) {
+        return ((bits & 0x7F800000u) == 0x7F800000u);
     }
 
     void apply_bridge_probe_norm_params(std::vector<aecct::u32_t>& sram_vec) const {
@@ -221,6 +228,157 @@ private:
         return diffs;
     }
 
+    void seed_full_loop_sram(std::vector<aecct::u32_t>& sram_vec) const {
+        sram_vec.assign((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
+        init_full_x_rows(sram_vec);
+        p11aeaf_tb::load_qkv_payload_set_to_sram(sram_vec, payloads_, param_base_);
+    }
+
+    void init_top_regs_for_layers(aecct::TopRegs& regs, uint32_t n_layers) const {
+        regs.clear();
+        regs.w_base_set = true;
+        regs.w_base_word = (aecct::u32_t)param_base_;
+        regs.cfg_d_model = cfg_.d_model;
+        regs.cfg_n_heads = cfg_.n_heads;
+        regs.cfg_d_ffn = cfg_.d_ffn;
+        regs.cfg_n_layers = (aecct::u32_t)n_layers;
+        regs.cfg_ready = true;
+    }
+
+    bool check_lid0_marker_contract(
+        const aecct::TopRegs& regs,
+        const char* case_tag,
+        bool emit_legacy_lines
+    ) const {
+        const bool ad_mainline = regs.p11ad_mainline_q_path_taken;
+        const bool ac_mainline = regs.p11ac_mainline_path_taken;
+        const bool ae_mainline = regs.p11ae_mainline_score_path_taken;
+        const bool af_mainline = regs.p11af_mainline_softmax_output_path_taken;
+        const bool ad_fallback = regs.p11ad_q_fallback_taken;
+        const bool ac_fallback = regs.p11ac_fallback_taken;
+        const bool ae_fallback = regs.p11ae_score_fallback_taken;
+        const bool af_fallback = regs.p11af_softmax_output_fallback_taken;
+
+        std::printf(
+            "CASE_%s_LID0_ATTN_MAINLINE_FLAGS p11ad_mainline_q_path_taken=%u p11ac_mainline_path_taken=%u p11ae_mainline_score_path_taken=%u p11af_mainline_softmax_output_path_taken=%u\n",
+            case_tag,
+            ad_mainline ? 1u : 0u,
+            ac_mainline ? 1u : 0u,
+            ae_mainline ? 1u : 0u,
+            af_mainline ? 1u : 0u);
+        std::printf(
+            "CASE_%s_LID0_ATTN_FALLBACK_FLAGS p11ad_q_fallback_taken=%u p11ac_fallback_taken=%u p11ae_score_fallback_taken=%u p11af_softmax_output_fallback_taken=%u\n",
+            case_tag,
+            ad_fallback ? 1u : 0u,
+            ac_fallback ? 1u : 0u,
+            ae_fallback ? 1u : 0u,
+            af_fallback ? 1u : 0u);
+        if (emit_legacy_lines) {
+            std::printf(
+                "LID0_ATTN_MAINLINE_FLAGS p11ad_mainline_q_path_taken=%u p11ac_mainline_path_taken=%u p11ae_mainline_score_path_taken=%u p11af_mainline_softmax_output_path_taken=%u\n",
+                ad_mainline ? 1u : 0u,
+                ac_mainline ? 1u : 0u,
+                ae_mainline ? 1u : 0u,
+                af_mainline ? 1u : 0u);
+            std::printf(
+                "LID0_ATTN_FALLBACK_FLAGS p11ad_q_fallback_taken=%u p11ac_fallback_taken=%u p11ae_score_fallback_taken=%u p11af_softmax_output_fallback_taken=%u\n",
+                ad_fallback ? 1u : 0u,
+                ac_fallback ? 1u : 0u,
+                ae_fallback ? 1u : 0u,
+                af_fallback ? 1u : 0u);
+        }
+
+        if (!ad_mainline || !ac_mainline || !ae_mainline || !af_mainline) {
+            std::printf(
+                "[p11aj][FAIL] %s lid0 mainline flags invalid (ac=%d ad=%d ae=%d af=%d)\n",
+                case_tag,
+                ac_mainline ? 1 : 0,
+                ad_mainline ? 1 : 0,
+                ae_mainline ? 1 : 0,
+                af_mainline ? 1 : 0);
+            return false;
+        }
+        if (ad_fallback || ac_fallback || ae_fallback || af_fallback) {
+            std::printf(
+                "[p11aj][FAIL] %s lid0 fallback flag asserted (ac=%d ad=%d ae=%d af=%d)\n",
+                case_tag,
+                ac_fallback ? 1 : 0,
+                ad_fallback ? 1 : 0,
+                ae_fallback ? 1 : 0,
+                af_fallback ? 1 : 0);
+            return false;
+        }
+
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AD_MAINLINE_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AC_MAINLINE_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AE_MAINLINE_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AF_MAINLINE_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AD_FALLBACK_NOT_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AC_FALLBACK_NOT_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AE_FALLBACK_NOT_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_STAGE_AF_FALLBACK_NOT_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_LID0_ATTN_DIRECT_SRAM_FALLBACK_NOT_TAKEN PASS\n", case_tag);
+        if (emit_legacy_lines) {
+            std::printf("LID0_ATTN_STAGE_AD_MAINLINE_TAKEN PASS\n");
+            std::printf("LID0_ATTN_STAGE_AC_MAINLINE_TAKEN PASS\n");
+            std::printf("LID0_ATTN_STAGE_AE_MAINLINE_TAKEN PASS\n");
+            std::printf("LID0_ATTN_STAGE_AF_MAINLINE_TAKEN PASS\n");
+            std::printf("LID0_ATTN_STAGE_AD_FALLBACK_NOT_TAKEN PASS\n");
+            std::printf("LID0_ATTN_STAGE_AC_FALLBACK_NOT_TAKEN PASS\n");
+            std::printf("LID0_ATTN_STAGE_AE_FALLBACK_NOT_TAKEN PASS\n");
+            std::printf("LID0_ATTN_STAGE_AF_FALLBACK_NOT_TAKEN PASS\n");
+            std::printf("LID0_ATTN_DIRECT_SRAM_FALLBACK_NOT_TAKEN PASS\n");
+        }
+        return true;
+    }
+
+    bool check_handoff_counter_conservation(
+        const aecct::TopRegs& regs,
+        const char* case_tag
+    ) const {
+        struct CounterTriplet {
+            const char* name;
+            uint32_t gate;
+            uint32_t non_empty;
+            uint32_t fallback;
+        };
+        const CounterTriplet checks[] = {
+            {"p11av_ffn_handoff", (uint32_t)regs.p11av_ffn_handoff_gate_taken_count.to_uint(),
+                (uint32_t)regs.p11av_ffn_handoff_non_empty_count.to_uint(),
+                (uint32_t)regs.p11av_ffn_handoff_fallback_seen_count.to_uint()},
+            {"p11ax_attn_out_payload", (uint32_t)regs.p11ax_attn_out_payload_gate_taken_count.to_uint(),
+                (uint32_t)regs.p11ax_attn_out_payload_non_empty_count.to_uint(),
+                (uint32_t)regs.p11ax_attn_out_payload_fallback_seen_count.to_uint()},
+            {"p11ay_qkscore_mask", (uint32_t)regs.p11ay_qkscore_mask_handoff_gate_taken_count.to_uint(),
+                (uint32_t)regs.p11ay_qkscore_mask_handoff_non_empty_count.to_uint(),
+                (uint32_t)regs.p11ay_qkscore_mask_handoff_fallback_seen_count.to_uint()},
+            {"p11az_qkscore_kvscan", (uint32_t)regs.p11az_qkscore_kvscan_handoff_gate_taken_count.to_uint(),
+                (uint32_t)regs.p11az_qkscore_kvscan_handoff_non_empty_count.to_uint(),
+                (uint32_t)regs.p11az_qkscore_kvscan_handoff_fallback_seen_count.to_uint()},
+            {"p11ba_qkscore_qsrc", (uint32_t)regs.p11ba_qkscore_qsrc_handoff_gate_taken_count.to_uint(),
+                (uint32_t)regs.p11ba_qkscore_qsrc_handoff_non_empty_count.to_uint(),
+                (uint32_t)regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count.to_uint()},
+            {"p11bb_qkscore_wq", (uint32_t)regs.p11bb_qkscore_wq_handoff_gate_taken_count.to_uint(),
+                (uint32_t)regs.p11bb_qkscore_wq_handoff_non_empty_count.to_uint(),
+                (uint32_t)regs.p11bb_qkscore_wq_handoff_fallback_seen_count.to_uint()}
+        };
+
+        for (const auto& c : checks) {
+            if (c.gate != (c.non_empty + c.fallback)) {
+                std::printf(
+                    "[p11aj][FAIL] %s counter conservation mismatch %s gate=%u non_empty=%u fallback=%u\n",
+                    case_tag,
+                    c.name,
+                    (unsigned)c.gate,
+                    (unsigned)c.non_empty,
+                    (unsigned)c.fallback);
+                return false;
+            }
+        }
+        std::printf("CASE_%s_HANDOFF_COUNTER_CONSERVATION PASS\n", case_tag);
+        return true;
+    }
+
     bool init_state() {
         token_count_ = (uint32_t)aecct::ATTN_TOKEN_COUNT;
         d_model_ = (uint32_t)aecct::ATTN_D_MODEL;
@@ -238,26 +396,14 @@ private:
             return false;
         }
 
-        sram_stage_.assign((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
-        sram_full_.assign((uint32_t)sram_map::SRAM_WORDS_TOTAL, (aecct::u32_t)0u);
-
-        init_full_x_rows(sram_stage_);
-        init_full_x_rows(sram_full_);
-        p11aeaf_tb::load_qkv_payload_set_to_sram(sram_stage_, payloads_, param_base_);
-        p11aeaf_tb::load_qkv_payload_set_to_sram(sram_full_, payloads_, param_base_);
+        seed_full_loop_sram(sram_stage_);
+        seed_full_loop_sram(sram_full_);
 
         cfg_ = p11aeaf_tb::build_cfg();
         cfg_.n_layers = (aecct::u32_t)1u;
         sc_ = aecct::make_layer_scratch((aecct::u32_t)aecct::LN_X_OUT_BASE_WORD);
 
-        regs_full_.clear();
-        regs_full_.w_base_set = true;
-        regs_full_.w_base_word = (aecct::u32_t)param_base_;
-        regs_full_.cfg_d_model = cfg_.d_model;
-        regs_full_.cfg_n_heads = cfg_.n_heads;
-        regs_full_.cfg_d_ffn = cfg_.d_ffn;
-        regs_full_.cfg_n_layers = cfg_.n_layers;
-        regs_full_.cfg_ready = true;
+        init_top_regs_for_layers(regs_full_, 1u);
         return true;
     }
 
@@ -763,57 +909,111 @@ private:
 
     bool run_full_loop_mainline() {
         aecct::run_transformer_layer_loop(regs_full_, sram_full_.data());
-        const bool ad_mainline = regs_full_.p11ad_mainline_q_path_taken;
-        const bool ac_mainline = regs_full_.p11ac_mainline_path_taken;
-        const bool ae_mainline = regs_full_.p11ae_mainline_score_path_taken;
-        const bool af_mainline = regs_full_.p11af_mainline_softmax_output_path_taken;
-        const bool ad_fallback = regs_full_.p11ad_q_fallback_taken;
-        const bool ac_fallback = regs_full_.p11ac_fallback_taken;
-        const bool ae_fallback = regs_full_.p11ae_score_fallback_taken;
-        const bool af_fallback = regs_full_.p11af_softmax_output_fallback_taken;
-
-        std::printf(
-            "LID0_ATTN_MAINLINE_FLAGS p11ad_mainline_q_path_taken=%u p11ac_mainline_path_taken=%u p11ae_mainline_score_path_taken=%u p11af_mainline_softmax_output_path_taken=%u\n",
-            ad_mainline ? 1u : 0u,
-            ac_mainline ? 1u : 0u,
-            ae_mainline ? 1u : 0u,
-            af_mainline ? 1u : 0u);
-        std::printf(
-            "LID0_ATTN_FALLBACK_FLAGS p11ad_q_fallback_taken=%u p11ac_fallback_taken=%u p11ae_score_fallback_taken=%u p11af_softmax_output_fallback_taken=%u\n",
-            ad_fallback ? 1u : 0u,
-            ac_fallback ? 1u : 0u,
-            ae_fallback ? 1u : 0u,
-            af_fallback ? 1u : 0u);
-
-        if (!ad_mainline || !ac_mainline || !ae_mainline || !af_mainline) {
-            std::printf("[p11aj][FAIL] full-loop mainline flags invalid (ac=%d ad=%d ae=%d af=%d)\n",
-                ac_mainline ? 1 : 0,
-                ad_mainline ? 1 : 0,
-                ae_mainline ? 1 : 0,
-                af_mainline ? 1 : 0);
+        if (!check_lid0_marker_contract(regs_full_, "BASELINE_N1", true)) {
             return false;
         }
-        if (ad_fallback || ac_fallback || ae_fallback || af_fallback) {
-            std::printf("[p11aj][FAIL] fallback path was taken in full-loop (ac=%d ad=%d ae=%d af=%d)\n",
-                ac_fallback ? 1 : 0,
-                ad_fallback ? 1 : 0,
-                ae_fallback ? 1 : 0,
-                af_fallback ? 1 : 0);
+        if (!check_handoff_counter_conservation(regs_full_, "BASELINE_N1")) {
             return false;
         }
-
-        std::printf("LID0_ATTN_STAGE_AD_MAINLINE_TAKEN PASS\n");
-        std::printf("LID0_ATTN_STAGE_AC_MAINLINE_TAKEN PASS\n");
-        std::printf("LID0_ATTN_STAGE_AE_MAINLINE_TAKEN PASS\n");
-        std::printf("LID0_ATTN_STAGE_AF_MAINLINE_TAKEN PASS\n");
-        std::printf("LID0_ATTN_STAGE_AD_FALLBACK_NOT_TAKEN PASS\n");
-        std::printf("LID0_ATTN_STAGE_AC_FALLBACK_NOT_TAKEN PASS\n");
-        std::printf("LID0_ATTN_STAGE_AE_FALLBACK_NOT_TAKEN PASS\n");
-        std::printf("LID0_ATTN_STAGE_AF_FALLBACK_NOT_TAKEN PASS\n");
-        std::printf("LID0_ATTN_DIRECT_SRAM_FALLBACK_NOT_TAKEN PASS\n");
         std::printf("FULL_LOOP_MAINLINE_PATH_TAKEN PASS\n");
         std::printf("fallback_taken = false\n");
         std::printf("FULL_LOOP_FALLBACK_NOT_TAKEN PASS\n");
+        return true;
+    }
+
+    bool run_full_loop_mixed_layer_mainline() {
+        std::vector<aecct::u32_t> sram_mixed_a;
+        std::vector<aecct::u32_t> sram_mixed_b;
+        seed_full_loop_sram(sram_mixed_a);
+        seed_full_loop_sram(sram_mixed_b);
+
+        aecct::TopRegs regs_mixed_a;
+        aecct::TopRegs regs_mixed_b;
+        init_top_regs_for_layers(regs_mixed_a, 3u);
+        init_top_regs_for_layers(regs_mixed_b, 3u);
+
+        aecct::run_transformer_layer_loop(regs_mixed_a, sram_mixed_a.data());
+        aecct::run_transformer_layer_loop(regs_mixed_b, sram_mixed_b.data());
+
+        if (!check_lid0_marker_contract(regs_mixed_a, "MIXED_N3", false)) {
+            return false;
+        }
+        if (!check_handoff_counter_conservation(regs_mixed_a, "MIXED_N3")) {
+            return false;
+        }
+
+        if (regs_mixed_a.p11ad_mainline_q_path_taken != regs_full_.p11ad_mainline_q_path_taken ||
+            regs_mixed_a.p11ac_mainline_path_taken != regs_full_.p11ac_mainline_path_taken ||
+            regs_mixed_a.p11ae_mainline_score_path_taken != regs_full_.p11ae_mainline_score_path_taken ||
+            regs_mixed_a.p11af_mainline_softmax_output_path_taken != regs_full_.p11af_mainline_softmax_output_path_taken ||
+            regs_mixed_a.p11ad_q_fallback_taken != regs_full_.p11ad_q_fallback_taken ||
+            regs_mixed_a.p11ac_fallback_taken != regs_full_.p11ac_fallback_taken ||
+            regs_mixed_a.p11ae_score_fallback_taken != regs_full_.p11ae_score_fallback_taken ||
+            regs_mixed_a.p11af_softmax_output_fallback_taken != regs_full_.p11af_softmax_output_fallback_taken) {
+            std::printf("[p11aj][FAIL] mixed n_layers=3 lid0 marker mismatch vs baseline n_layers=1 snapshot\n");
+            return false;
+        }
+        std::printf("CASE_MIXED_N3_LID0_MARKERS_STABLE_VS_BASELINE PASS\n");
+
+        if (regs_mixed_a.p11ad_mainline_q_path_taken != regs_mixed_b.p11ad_mainline_q_path_taken ||
+            regs_mixed_a.p11ac_mainline_path_taken != regs_mixed_b.p11ac_mainline_path_taken ||
+            regs_mixed_a.p11ae_mainline_score_path_taken != regs_mixed_b.p11ae_mainline_score_path_taken ||
+            regs_mixed_a.p11af_mainline_softmax_output_path_taken != regs_mixed_b.p11af_mainline_softmax_output_path_taken ||
+            regs_mixed_a.p11ad_q_fallback_taken != regs_mixed_b.p11ad_q_fallback_taken ||
+            regs_mixed_a.p11ac_fallback_taken != regs_mixed_b.p11ac_fallback_taken ||
+            regs_mixed_a.p11ae_score_fallback_taken != regs_mixed_b.p11ae_score_fallback_taken ||
+            regs_mixed_a.p11af_softmax_output_fallback_taken != regs_mixed_b.p11af_softmax_output_fallback_taken) {
+            std::printf("[p11aj][FAIL] mixed n_layers=3 lid0 marker mismatch between repeated runs\n");
+            return false;
+        }
+        std::printf("CASE_MIXED_N3_MARKER_REPEATABILITY PASS\n");
+
+        const uint32_t final_base_a = (uint32_t)regs_mixed_a.infer_final_x_base_word.to_uint();
+        const uint32_t final_base_b = (uint32_t)regs_mixed_b.infer_final_x_base_word.to_uint();
+        if (final_base_a != final_base_b) {
+            std::printf("[p11aj][FAIL] mixed n_layers=3 final_x base mismatch runA=%u runB=%u\n",
+                (unsigned)final_base_a,
+                (unsigned)final_base_b);
+            return false;
+        }
+        if (!compare_span_exact(
+                sram_mixed_a,
+                sram_mixed_b,
+                final_base_a,
+                (uint32_t)aecct::LN_X_TOTAL_WORDS,
+                "mixed_n3_final_x_repeatability")) {
+            return false;
+        }
+        std::printf("CASE_MIXED_N3_FINAL_X_DETERMINISTIC PASS\n");
+
+        for (uint32_t i = 0u; i < (uint32_t)aecct::LN_X_TOTAL_WORDS; ++i) {
+            const uint32_t bits = (uint32_t)sram_mixed_a[final_base_a + i].to_uint();
+            if (is_nonfinite_bits(bits)) {
+                std::printf(
+                    "[p11aj][FAIL] mixed n_layers=3 final_x non-finite at idx=%u bits=0x%08X\n",
+                    (unsigned)i,
+                    (unsigned)bits);
+                return false;
+            }
+        }
+        std::printf("CASE_MIXED_N3_FINAL_X_NONFINITE_SCAN PASS\n");
+
+        const uint32_t baseline_final_base = (uint32_t)regs_full_.infer_final_x_base_word.to_uint();
+        if (baseline_final_base == final_base_a) {
+            const uint32_t diffs = count_span_diffs(
+                sram_full_,
+                sram_mixed_a,
+                final_base_a,
+                (uint32_t)aecct::LN_X_TOTAL_WORDS);
+            std::printf("CASE_MIXED_N3_FINAL_X_DIFFS_VS_BASELINE_N1 = %u\n", (unsigned)diffs);
+        } else {
+            std::printf(
+                "CASE_MIXED_N3_FINAL_X_BASE_NOTE baseline_base=%u mixed_base=%u\n",
+                (unsigned)baseline_final_base,
+                (unsigned)final_base_a);
+        }
+
+        std::printf("CASE_MIXED_N3_ACCEPTANCE PASS\n");
         return true;
     }
 
