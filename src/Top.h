@@ -403,6 +403,13 @@ namespace aecct {
         u32_t p11ba_qkscore_qsrc_handoff_non_empty_count;
         u32_t p11ba_lid0_qkscore_qsrc_handoff_non_empty_count;
         u32_t p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count;
+        bool p11bb_lid0_qkscore_wq_handoff_enable;
+        bool p11bb_lid0_qkscore_wq_handoff_descriptor_valid;
+        u32_t p11bb_qkscore_wq_handoff_gate_taken_count;
+        u32_t p11bb_qkscore_wq_handoff_fallback_seen_count;
+        u32_t p11bb_qkscore_wq_handoff_non_empty_count;
+        u32_t p11bb_lid0_qkscore_wq_handoff_non_empty_count;
+        u32_t p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count;
 
         // Top-controlled block contract placeholders (skeleton only).
         PreprocBlockContract preproc_contract;
@@ -505,6 +512,13 @@ namespace aecct {
             p11ba_qkscore_qsrc_handoff_non_empty_count = 0;
             p11ba_lid0_qkscore_qsrc_handoff_non_empty_count = 0;
             p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count = 0;
+            p11bb_lid0_qkscore_wq_handoff_enable = false;
+            p11bb_lid0_qkscore_wq_handoff_descriptor_valid = false;
+            p11bb_qkscore_wq_handoff_gate_taken_count = 0;
+            p11bb_qkscore_wq_handoff_fallback_seen_count = 0;
+            p11bb_qkscore_wq_handoff_non_empty_count = 0;
+            p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
+            p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
             clear_preproc_contract(preproc_contract);
             clear_transformer_layer_contract(transformer_contract);
             clear_layernorm_contract(layernorm_contract);
@@ -717,6 +731,27 @@ namespace aecct {
     }
     static inline u32_t top_peek_p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count() {
         return top_regs().p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count;
+    }
+    static inline bool top_peek_p11bb_lid0_qkscore_wq_handoff_enable() {
+        return top_regs().p11bb_lid0_qkscore_wq_handoff_enable;
+    }
+    static inline bool top_peek_p11bb_lid0_qkscore_wq_handoff_descriptor_valid() {
+        return top_regs().p11bb_lid0_qkscore_wq_handoff_descriptor_valid;
+    }
+    static inline u32_t top_peek_p11bb_qkscore_wq_handoff_gate_taken_count() {
+        return top_regs().p11bb_qkscore_wq_handoff_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11bb_qkscore_wq_handoff_fallback_seen_count() {
+        return top_regs().p11bb_qkscore_wq_handoff_fallback_seen_count;
+    }
+    static inline u32_t top_peek_p11bb_qkscore_wq_handoff_non_empty_count() {
+        return top_regs().p11bb_qkscore_wq_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11bb_lid0_qkscore_wq_handoff_non_empty_count() {
+        return top_regs().p11bb_lid0_qkscore_wq_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count() {
+        return top_regs().p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count;
     }
 
     static inline RegionId decode_region(const u32_t& addr_word) {
@@ -2046,6 +2081,71 @@ namespace aecct {
         phase_entry_probe_words_valid = (u32_t)probe_words_valid;
     }
 
+    // local-only representative run-loop feed helper for Phase-B WQ seam.
+    // This handoff feeds weighted-Q probe words through the same bounded phase-entry slot.
+    template<typename SramView>
+    static inline void top_make_runloop_lid0_local_only_qkscore_wq_probe_handoff(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t layer_id,
+        u32_t token_idx,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t& phase_entry_probe_q_base_word,
+        u32_t& phase_entry_probe_k_base_word,
+        const u32_t*& phase_entry_probe_q_words,
+        const u32_t*& phase_entry_probe_k_words,
+        u32_t& phase_entry_probe_words_valid
+    ) {
+        phase_entry_probe_q_base_word = (u32_t)0u;
+        phase_entry_probe_k_base_word = (u32_t)0u;
+        phase_entry_probe_q_words = 0;
+        phase_entry_probe_k_words = 0;
+        phase_entry_probe_words_valid = (u32_t)0u;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        uint32_t d_head = d_model / n_heads;
+        if (d_head == 0u) { d_head = (uint32_t)ATTN_D_HEAD; }
+
+        uint32_t probe_words_valid = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        if (probe_words_valid > d_head) {
+            probe_words_valid = d_head;
+        }
+        if (probe_words_valid == 0u) {
+            return;
+        }
+
+        static u32_t probe_q_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        static u32_t probe_k_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        const uint32_t token = (uint32_t)token_idx.to_uint();
+        const uint32_t q_base = (uint32_t)sc.attn.q_base_word.to_uint();
+        const uint32_t k_base = (uint32_t)sc.attn.k_base_word.to_uint();
+        const uint32_t q_row_base = q_base + token * d_model;
+
+        TOP_LID0_LOCAL_ONLY_QKSCORE_WQ_PROBE_PRELOAD_LOOP: for (uint32_t i = 0u; i < probe_words_valid; ++i) {
+            probe_q_words_local[i] = sram[q_row_base + i];
+            probe_k_words_local[i] = sram[k_base + i];
+        }
+        if (!descriptor_valid) {
+            probe_q_words_local[0] = (u32_t)((uint32_t)probe_q_words_local[0].to_uint() ^ 0x00000004u);
+        }
+
+        phase_entry_probe_q_base_word = (u32_t)q_row_base;
+        phase_entry_probe_k_base_word = (u32_t)k_base;
+        phase_entry_probe_q_words = probe_q_words_local;
+        phase_entry_probe_k_words = probe_k_words_local;
+        phase_entry_probe_words_valid = (u32_t)probe_words_valid;
+    }
+
     static inline void top_dispatch_transformer_layer(
         u32_t* sram,
         const CfgRegs& cfg,
@@ -2141,7 +2241,9 @@ namespace aecct {
         bool lid0_local_only_qkscore_kvscan_handoff_enable = false,
         bool lid0_local_only_qkscore_kvscan_handoff_descriptor_valid = true,
         bool lid0_local_only_qkscore_qsrc_handoff_enable = false,
-        bool lid0_local_only_qkscore_qsrc_handoff_descriptor_valid = true
+        bool lid0_local_only_qkscore_qsrc_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_wq_handoff_enable = false,
+        bool lid0_local_only_qkscore_wq_handoff_descriptor_valid = true
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -2195,6 +2297,13 @@ namespace aecct {
         regs.p11ba_qkscore_qsrc_handoff_non_empty_count = 0;
         regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count = 0;
         regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_enable = lid0_local_only_qkscore_wq_handoff_enable;
+        regs.p11bb_lid0_qkscore_wq_handoff_descriptor_valid = lid0_local_only_qkscore_wq_handoff_descriptor_valid;
+        regs.p11bb_qkscore_wq_handoff_gate_taken_count = 0;
+        regs.p11bb_qkscore_wq_handoff_fallback_seen_count = 0;
+        regs.p11bb_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
 
         TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             if (lid0_local_only_qkscore_mask_handoff_enable) {
@@ -2208,6 +2317,10 @@ namespace aecct {
             if (lid0_local_only_qkscore_qsrc_handoff_enable) {
                 regs.p11ba_qkscore_qsrc_handoff_gate_taken_count =
                     regs.p11ba_qkscore_qsrc_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_gate_taken_count =
+                    regs.p11bb_qkscore_wq_handoff_gate_taken_count + (u32_t)1u;
             }
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
@@ -2253,6 +2366,8 @@ namespace aecct {
                 bool qkscore_kvscan_handoff_applied_for_layer = false;
                 bool qkscore_qsrc_handoff_non_empty_for_layer = false;
                 bool qkscore_qsrc_handoff_applied_for_layer = false;
+                bool qkscore_wq_handoff_non_empty_for_layer = false;
+                bool qkscore_wq_handoff_applied_for_layer = false;
                 if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
                     const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
                     TOP_P11AEAF_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
@@ -2333,6 +2448,45 @@ namespace aecct {
                                 0,
                                 0,
                                 0
+                            );
+                        } else if (lid0_local_only_qkscore_wq_handoff_enable && lid == 0u) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_wq_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_wq_handoff_enable,
+                                lid0_local_only_qkscore_wq_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_wq_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_wq_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
                             );
                         } else if (lid0_local_only_qkscore_qsrc_handoff_enable && lid == 0u) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
@@ -2485,6 +2639,19 @@ namespace aecct {
                             regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
                     }
                 }
+                if (lid0_local_only_qkscore_wq_handoff_enable) {
+                    if (qkscore_wq_handoff_applied_for_layer &&
+                        qkscore_wq_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11bb_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                            regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
 
                 score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
                 out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
@@ -2509,6 +2676,12 @@ namespace aecct {
                     regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count =
                     regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (lid != 0u && lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
             }
 
             top_preload_layer_sublayer1_norm_params(
@@ -2665,7 +2838,9 @@ namespace aecct {
         bool lid0_local_only_qkscore_kvscan_handoff_enable = false,
         bool lid0_local_only_qkscore_kvscan_handoff_descriptor_valid = true,
         bool lid0_local_only_qkscore_qsrc_handoff_enable = false,
-        bool lid0_local_only_qkscore_qsrc_handoff_descriptor_valid = true
+        bool lid0_local_only_qkscore_qsrc_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_wq_handoff_enable = false,
+        bool lid0_local_only_qkscore_wq_handoff_descriptor_valid = true
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -2719,6 +2894,13 @@ namespace aecct {
         regs.p11ba_qkscore_qsrc_handoff_non_empty_count = 0;
         regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count = 0;
         regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_enable = lid0_local_only_qkscore_wq_handoff_enable;
+        regs.p11bb_lid0_qkscore_wq_handoff_descriptor_valid = lid0_local_only_qkscore_wq_handoff_descriptor_valid;
+        regs.p11bb_qkscore_wq_handoff_gate_taken_count = 0;
+        regs.p11bb_qkscore_wq_handoff_fallback_seen_count = 0;
+        regs.p11bb_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
 
         TOP_LAYER_ORCHESTRATION_AN_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             if (lid0_local_only_qkscore_mask_handoff_enable) {
@@ -2732,6 +2914,10 @@ namespace aecct {
             if (lid0_local_only_qkscore_qsrc_handoff_enable) {
                 regs.p11ba_qkscore_qsrc_handoff_gate_taken_count =
                     regs.p11ba_qkscore_qsrc_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_gate_taken_count =
+                    regs.p11bb_qkscore_wq_handoff_gate_taken_count + (u32_t)1u;
             }
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
@@ -2773,6 +2959,8 @@ namespace aecct {
                 bool qkscore_kvscan_handoff_applied_for_layer = false;
                 bool qkscore_qsrc_handoff_non_empty_for_layer = false;
                 bool qkscore_qsrc_handoff_applied_for_layer = false;
+                bool qkscore_wq_handoff_non_empty_for_layer = false;
+                bool qkscore_wq_handoff_applied_for_layer = false;
                 if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
                     const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
                     TOP_P11AEAF_AN_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
@@ -2853,6 +3041,45 @@ namespace aecct {
                                 0,
                                 0,
                                 0
+                            );
+                        } else if (lid0_local_only_qkscore_wq_handoff_enable && lid == 0u) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_wq_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_wq_handoff_enable,
+                                lid0_local_only_qkscore_wq_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_wq_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_wq_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
                             );
                         } else if (lid0_local_only_qkscore_qsrc_handoff_enable && lid == 0u) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
@@ -3005,6 +3232,19 @@ namespace aecct {
                             regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
                     }
                 }
+                if (lid0_local_only_qkscore_wq_handoff_enable) {
+                    if (qkscore_wq_handoff_applied_for_layer &&
+                        qkscore_wq_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11bb_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                            regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
 
                 score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
                 out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
@@ -3029,6 +3269,12 @@ namespace aecct {
                     regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count =
                     regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (lid != 0u && lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
             }
 
             top_preload_layer_sublayer1_norm_params(
