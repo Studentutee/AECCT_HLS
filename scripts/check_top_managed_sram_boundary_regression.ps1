@@ -170,8 +170,8 @@ Forbid-Regex -Text $topText -Pattern '(?ms)run_infer_pipeline[\s\S]{0,2200}\bFin
 Require-Regex -Text $topText -Pattern '(?ms)static\s+inline\s+void\s+top_preload_layer_sublayer1_norm_params\s*\(' -Reason "Top preload helper for sublayer1 norm params missing"
 Require-Regex -Text $topText -Pattern '(?ms)run_transformer_layer_loop[\s\S]*?top_preload_layer_sublayer1_norm_params\s*\(' -Reason "Top main loop must preload sublayer1 norm params"
 Require-Regex -Text $topText -Pattern '(?ms)run_transformer_layer_loop_top_managed_attn_bridge[\s\S]*?top_preload_layer_sublayer1_norm_params\s*\(' -Reason "Top bridge loop must preload sublayer1 norm params"
-Require-Regex -Text $topText -Pattern '(?ms)TransformerLayer\s*\([\s\S]*?out_prebuilt_from_top_managed\s*,\s*true\s*\)' -Reason "Top main loop must signal sublayer1_norm_preloaded_by_top=true"
-Require-Regex -Text $topText -Pattern '(?ms)TransformerLayerTopManagedAttnBridge\s*\([\s\S]*?out_prebuilt_from_top_managed\s*,\s*true\s*\)' -Reason "Top bridge loop must signal sublayer1_norm_preloaded_by_top=true"
+Require-Regex -Text $topText -Pattern '(?ms)run_transformer_layer_loop[\s\S]*?top_dispatch_transformer_layer\s*\([\s\S]*?out_prebuilt_from_top_managed\s*,\s*true\s*,' -Reason "Top main loop must signal sublayer1_norm_preloaded_by_top=true via dispatch helper"
+Require-Regex -Text $topText -Pattern '(?ms)run_transformer_layer_loop_top_managed_attn_bridge[\s\S]*?top_dispatch_transformer_layer_top_managed_attn_bridge\s*\([\s\S]*?out_prebuilt_from_top_managed\s*,\s*true\s*,' -Reason "Top bridge loop must signal sublayer1_norm_preloaded_by_top=true via dispatch helper"
 
 # TransformerLayer consumes Top preload with guarded fallback.
 Require-Regex -Text $layerText -Pattern '(?ms)TransformerLayerTopManagedAttnBridge\s*\([\s\S]*?bool\s+sublayer1_norm_preloaded_by_top\s*=\s*false' -Reason "TransformerLayerTopManagedAttnBridge preload flag missing"

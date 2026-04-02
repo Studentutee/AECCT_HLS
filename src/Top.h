@@ -382,6 +382,13 @@ namespace aecct {
         u32_t p11ax_attn_out_payload_non_empty_count;
         u32_t p11ax_lid0_attn_out_payload_non_empty_count;
         u32_t p11ax_lid_nonzero_attn_out_payload_fallback_seen_count;
+        bool p11ay_lid0_qkscore_mask_handoff_enable;
+        bool p11ay_lid0_qkscore_mask_handoff_descriptor_valid;
+        u32_t p11ay_qkscore_mask_handoff_gate_taken_count;
+        u32_t p11ay_qkscore_mask_handoff_fallback_seen_count;
+        u32_t p11ay_qkscore_mask_handoff_non_empty_count;
+        u32_t p11ay_lid0_qkscore_mask_handoff_non_empty_count;
+        u32_t p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count;
 
         // Top-controlled block contract placeholders (skeleton only).
         PreprocBlockContract preproc_contract;
@@ -463,6 +470,13 @@ namespace aecct {
             p11ax_attn_out_payload_non_empty_count = 0;
             p11ax_lid0_attn_out_payload_non_empty_count = 0;
             p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
+            p11ay_lid0_qkscore_mask_handoff_enable = false;
+            p11ay_lid0_qkscore_mask_handoff_descriptor_valid = false;
+            p11ay_qkscore_mask_handoff_gate_taken_count = 0;
+            p11ay_qkscore_mask_handoff_fallback_seen_count = 0;
+            p11ay_qkscore_mask_handoff_non_empty_count = 0;
+            p11ay_lid0_qkscore_mask_handoff_non_empty_count = 0;
+            p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count = 0;
             clear_preproc_contract(preproc_contract);
             clear_transformer_layer_contract(transformer_contract);
             clear_layernorm_contract(layernorm_contract);
@@ -612,6 +626,27 @@ namespace aecct {
     static inline u32_t top_peek_p11ax_lid0_attn_out_payload_non_empty_count() { return top_regs().p11ax_lid0_attn_out_payload_non_empty_count; }
     static inline u32_t top_peek_p11ax_lid_nonzero_attn_out_payload_fallback_seen_count() {
         return top_regs().p11ax_lid_nonzero_attn_out_payload_fallback_seen_count;
+    }
+    static inline bool top_peek_p11ay_lid0_qkscore_mask_handoff_enable() {
+        return top_regs().p11ay_lid0_qkscore_mask_handoff_enable;
+    }
+    static inline bool top_peek_p11ay_lid0_qkscore_mask_handoff_descriptor_valid() {
+        return top_regs().p11ay_lid0_qkscore_mask_handoff_descriptor_valid;
+    }
+    static inline u32_t top_peek_p11ay_qkscore_mask_handoff_gate_taken_count() {
+        return top_regs().p11ay_qkscore_mask_handoff_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11ay_qkscore_mask_handoff_fallback_seen_count() {
+        return top_regs().p11ay_qkscore_mask_handoff_fallback_seen_count;
+    }
+    static inline u32_t top_peek_p11ay_qkscore_mask_handoff_non_empty_count() {
+        return top_regs().p11ay_qkscore_mask_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11ay_lid0_qkscore_mask_handoff_non_empty_count() {
+        return top_regs().p11ay_lid0_qkscore_mask_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count() {
+        return top_regs().p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count;
     }
 
     static inline RegionId decode_region(const u32_t& addr_word) {
@@ -1762,6 +1797,55 @@ namespace aecct {
         topfed_payload_words_valid = (u32_t)payload_words_valid;
     }
 
+    // local-only representative run-loop feed helper for Phase-B QkScore MASK family seam.
+    // This helper is bounded to one family case (head0/key0) and keeps production protocol unchanged.
+    template<typename SramView>
+    static inline void top_make_runloop_lid0_local_only_qkscore_mask_family_handoff(
+        SramView&& sram,
+        const LayerScratch& sc,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t& score_tile_bridge_family_case_count,
+        const u32_t*& score_tile_bridge_family_base_words,
+        const u32_t*& score_tile_bridge_family_words,
+        const u32_t*& score_tile_bridge_family_words_valid,
+        const u32_t*& score_tile_bridge_family_key_begin,
+        const u32_t*& score_tile_bridge_family_head_idx
+    ) {
+        score_tile_bridge_family_case_count = (u32_t)0u;
+        score_tile_bridge_family_base_words = 0;
+        score_tile_bridge_family_words = 0;
+        score_tile_bridge_family_words_valid = 0;
+        score_tile_bridge_family_key_begin = 0;
+        score_tile_bridge_family_head_idx = 0;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        static u32_t family_base_words_local[1];
+        static u32_t family_words_local[ATTN_TOKEN_COUNT];
+        static u32_t family_words_valid_local[1];
+        static u32_t family_key_begin_local[1];
+        static u32_t family_head_idx_local[1];
+        const uint32_t score_base = (uint32_t)sc.attn.score_base_word.to_uint();
+
+        family_base_words_local[0] = (u32_t)score_base;
+        family_key_begin_local[0] = (u32_t)0u;
+        family_head_idx_local[0] = (u32_t)0u;
+        family_words_valid_local[0] = descriptor_valid ? (u32_t)1u : (u32_t)0u;
+        TOP_LID0_LOCAL_ONLY_QKSCORE_MASK_FAMILY_WORD_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)ATTN_TOKEN_COUNT; ++i) {
+            family_words_local[i] = sram[score_base + i];
+        }
+
+        score_tile_bridge_family_case_count = (u32_t)1u;
+        score_tile_bridge_family_base_words = family_base_words_local;
+        score_tile_bridge_family_words = family_words_local;
+        score_tile_bridge_family_words_valid = family_words_valid_local;
+        score_tile_bridge_family_key_begin = family_key_begin_local;
+        score_tile_bridge_family_head_idx = family_head_idx_local;
+    }
+
     static inline void top_dispatch_transformer_layer(
         u32_t* sram,
         const CfgRegs& cfg,
@@ -1851,7 +1935,9 @@ namespace aecct {
         bool lid0_local_only_ffn_handoff_enable = false,
         bool lid0_local_only_ffn_handoff_descriptor_valid = true,
         bool lid0_local_only_attn_out_payload_enable = false,
-        bool lid0_local_only_attn_out_payload_descriptor_valid = true
+        bool lid0_local_only_attn_out_payload_descriptor_valid = true,
+        bool lid0_local_only_qkscore_mask_handoff_enable = false,
+        bool lid0_local_only_qkscore_mask_handoff_descriptor_valid = true
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -1884,8 +1970,19 @@ namespace aecct {
         regs.p11ax_attn_out_payload_non_empty_count = 0;
         regs.p11ax_lid0_attn_out_payload_non_empty_count = 0;
         regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_enable = lid0_local_only_qkscore_mask_handoff_enable;
+        regs.p11ay_lid0_qkscore_mask_handoff_descriptor_valid = lid0_local_only_qkscore_mask_handoff_descriptor_valid;
+        regs.p11ay_qkscore_mask_handoff_gate_taken_count = 0;
+        regs.p11ay_qkscore_mask_handoff_fallback_seen_count = 0;
+        regs.p11ay_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count = 0;
 
         TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
+            if (lid0_local_only_qkscore_mask_handoff_enable) {
+                regs.p11ay_qkscore_mask_handoff_gate_taken_count =
+                    regs.p11ay_qkscore_mask_handoff_gate_taken_count + (u32_t)1u;
+            }
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
             bool q_prebuilt_from_top_managed = false;
@@ -1924,17 +2021,98 @@ namespace aecct {
 
                 bool ae_mainline_score_path_taken = true;
                 bool af_mainline_softmax_output_path_taken = true;
+                bool qkscore_mask_handoff_non_empty_for_layer = false;
+                bool qkscore_mask_handoff_applied_for_layer = false;
                 if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
                     const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
                     TOP_P11AEAF_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
                         bool score_fallback_taken = true;
-                        const bool score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
-                            sram,
-                            cfg,
-                            sc,
-                            (u32_t)t,
-                            score_fallback_taken
-                        );
+                        bool score_mainline_taken = false;
+                        if (lid0_local_only_qkscore_mask_handoff_enable && lid == 0u) {
+                            bool warmup_fallback_taken = true;
+                            const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                warmup_fallback_taken
+                            );
+                            if (!warmup_mainline_taken || warmup_fallback_taken) {
+                                ae_mainline_score_path_taken = false;
+                                af_mainline_softmax_output_path_taken = false;
+                                break;
+                            }
+
+                            u32_t score_tile_bridge_family_case_count = (u32_t)0u;
+                            const u32_t* score_tile_bridge_family_base_words = 0;
+                            const u32_t* score_tile_bridge_family_words = 0;
+                            const u32_t* score_tile_bridge_family_words_valid = 0;
+                            const u32_t* score_tile_bridge_family_key_begin = 0;
+                            const u32_t* score_tile_bridge_family_head_idx = 0;
+                            top_make_runloop_lid0_local_only_qkscore_mask_family_handoff(
+                                sram,
+                                sc,
+                                (u32_t)lid,
+                                lid0_local_only_qkscore_mask_handoff_enable,
+                                lid0_local_only_qkscore_mask_handoff_descriptor_valid,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx
+                            );
+                            qkscore_mask_handoff_applied_for_layer = true;
+                            if (score_tile_bridge_family_case_count.to_uint() > 0u &&
+                                score_tile_bridge_family_words_valid != 0 &&
+                                score_tile_bridge_family_words_valid[0].to_uint() > 0u) {
+                                qkscore_mask_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                            );
+                        } else {
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken
+                            );
+                        }
                         if (!score_mainline_taken || score_fallback_taken) {
                             ae_mainline_score_path_taken = false;
                             af_mainline_softmax_output_path_taken = false;
@@ -1960,12 +2138,31 @@ namespace aecct {
                     af_mainline_softmax_output_path_taken = false;
                 }
 
+                if (lid0_local_only_qkscore_mask_handoff_enable) {
+                    if (qkscore_mask_handoff_applied_for_layer &&
+                        qkscore_mask_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11ay_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                            regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+
                 score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
                 out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
                 regs.p11ae_mainline_score_path_taken = ae_mainline_score_path_taken;
                 regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
                 regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
                 regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
+            } else if (lid0_local_only_qkscore_mask_handoff_enable) {
+                regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
             }
 
             top_preload_layer_sublayer1_norm_params(
@@ -2116,7 +2313,9 @@ namespace aecct {
         bool lid0_local_only_ffn_handoff_enable = false,
         bool lid0_local_only_ffn_handoff_descriptor_valid = true,
         bool lid0_local_only_attn_out_payload_enable = false,
-        bool lid0_local_only_attn_out_payload_descriptor_valid = true
+        bool lid0_local_only_attn_out_payload_descriptor_valid = true,
+        bool lid0_local_only_qkscore_mask_handoff_enable = false,
+        bool lid0_local_only_qkscore_mask_handoff_descriptor_valid = true
     ) {
         CfgRegs cfg = build_layer_cfg(regs);
         uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
@@ -2149,8 +2348,19 @@ namespace aecct {
         regs.p11ax_attn_out_payload_non_empty_count = 0;
         regs.p11ax_lid0_attn_out_payload_non_empty_count = 0;
         regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_enable = lid0_local_only_qkscore_mask_handoff_enable;
+        regs.p11ay_lid0_qkscore_mask_handoff_descriptor_valid = lid0_local_only_qkscore_mask_handoff_descriptor_valid;
+        regs.p11ay_qkscore_mask_handoff_gate_taken_count = 0;
+        regs.p11ay_qkscore_mask_handoff_fallback_seen_count = 0;
+        regs.p11ay_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count = 0;
 
         TOP_LAYER_ORCHESTRATION_AN_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
+            if (lid0_local_only_qkscore_mask_handoff_enable) {
+                regs.p11ay_qkscore_mask_handoff_gate_taken_count =
+                    regs.p11ay_qkscore_mask_handoff_gate_taken_count + (u32_t)1u;
+            }
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
             bool q_prebuilt_from_top_managed = false;
@@ -2185,17 +2395,98 @@ namespace aecct {
 
                 bool ae_mainline_score_path_taken = true;
                 bool af_mainline_softmax_output_path_taken = true;
+                bool qkscore_mask_handoff_non_empty_for_layer = false;
+                bool qkscore_mask_handoff_applied_for_layer = false;
                 if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
                     const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
                     TOP_P11AEAF_AN_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
                         bool score_fallback_taken = true;
-                        const bool score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
-                            sram,
-                            cfg,
-                            sc,
-                            (u32_t)t,
-                            score_fallback_taken
-                        );
+                        bool score_mainline_taken = false;
+                        if (lid0_local_only_qkscore_mask_handoff_enable && lid == 0u) {
+                            bool warmup_fallback_taken = true;
+                            const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                warmup_fallback_taken
+                            );
+                            if (!warmup_mainline_taken || warmup_fallback_taken) {
+                                ae_mainline_score_path_taken = false;
+                                af_mainline_softmax_output_path_taken = false;
+                                break;
+                            }
+
+                            u32_t score_tile_bridge_family_case_count = (u32_t)0u;
+                            const u32_t* score_tile_bridge_family_base_words = 0;
+                            const u32_t* score_tile_bridge_family_words = 0;
+                            const u32_t* score_tile_bridge_family_words_valid = 0;
+                            const u32_t* score_tile_bridge_family_key_begin = 0;
+                            const u32_t* score_tile_bridge_family_head_idx = 0;
+                            top_make_runloop_lid0_local_only_qkscore_mask_family_handoff(
+                                sram,
+                                sc,
+                                (u32_t)lid,
+                                lid0_local_only_qkscore_mask_handoff_enable,
+                                lid0_local_only_qkscore_mask_handoff_descriptor_valid,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx
+                            );
+                            qkscore_mask_handoff_applied_for_layer = true;
+                            if (score_tile_bridge_family_case_count.to_uint() > 0u &&
+                                score_tile_bridge_family_words_valid != 0 &&
+                                score_tile_bridge_family_words_valid[0].to_uint() > 0u) {
+                                qkscore_mask_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                            );
+                        } else {
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken
+                            );
+                        }
                         if (!score_mainline_taken || score_fallback_taken) {
                             ae_mainline_score_path_taken = false;
                             af_mainline_softmax_output_path_taken = false;
@@ -2221,12 +2512,31 @@ namespace aecct {
                     af_mainline_softmax_output_path_taken = false;
                 }
 
+                if (lid0_local_only_qkscore_mask_handoff_enable) {
+                    if (qkscore_mask_handoff_applied_for_layer &&
+                        qkscore_mask_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11ay_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                            regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+
                 score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
                 out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
                 regs.p11ae_mainline_score_path_taken = ae_mainline_score_path_taken;
                 regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
                 regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
                 regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
+            } else if (lid0_local_only_qkscore_mask_handoff_enable) {
+                regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
             }
 
             top_preload_layer_sublayer1_norm_params(
