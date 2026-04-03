@@ -361,6 +361,9 @@ namespace aecct {
         bool p11ae_score_fallback_taken;
         bool p11af_mainline_softmax_output_path_taken;
         bool p11af_softmax_output_fallback_taken;
+        u32_t p11bc_managed_attention_target_layer_id;
+        u32_t p11bc_managed_attention_gate_taken_count;
+        u32_t p11bc_managed_attention_last_layer_id;
         bool p11av_lid0_ffn_handoff_enable;
         bool p11av_lid0_ffn_handoff_descriptor_valid;
         u32_t p11av_ffn_handoff_gate_taken_count;
@@ -470,6 +473,9 @@ namespace aecct {
             p11ae_score_fallback_taken = false;
             p11af_mainline_softmax_output_path_taken = false;
             p11af_softmax_output_fallback_taken = false;
+            p11bc_managed_attention_target_layer_id = 0;
+            p11bc_managed_attention_gate_taken_count = 0;
+            p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
             p11av_lid0_ffn_handoff_enable = false;
             p11av_lid0_ffn_handoff_descriptor_valid = false;
             p11av_ffn_handoff_gate_taken_count = 0;
@@ -660,6 +666,15 @@ namespace aecct {
     static inline bool top_peek_p11ae_score_fallback_taken() { return top_regs().p11ae_score_fallback_taken; }
     static inline bool top_peek_p11af_mainline_softmax_output_path_taken() { return top_regs().p11af_mainline_softmax_output_path_taken; }
     static inline bool top_peek_p11af_softmax_output_fallback_taken() { return top_regs().p11af_softmax_output_fallback_taken; }
+    static inline u32_t top_peek_p11bc_managed_attention_target_layer_id() {
+        return top_regs().p11bc_managed_attention_target_layer_id;
+    }
+    static inline u32_t top_peek_p11bc_managed_attention_gate_taken_count() {
+        return top_regs().p11bc_managed_attention_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11bc_managed_attention_last_layer_id() {
+        return top_regs().p11bc_managed_attention_last_layer_id;
+    }
     static inline bool top_peek_p11ax_lid0_attn_out_payload_enable() { return top_regs().p11ax_lid0_attn_out_payload_enable; }
     static inline bool top_peek_p11ax_lid0_attn_out_payload_descriptor_valid() { return top_regs().p11ax_lid0_attn_out_payload_descriptor_valid; }
     static inline u32_t top_peek_p11ax_attn_out_payload_gate_taken_count() { return top_regs().p11ax_attn_out_payload_gate_taken_count; }
@@ -2263,6 +2278,13 @@ namespace aecct {
         regs.p11ae_score_fallback_taken = false;
         regs.p11af_mainline_softmax_output_path_taken = false;
         regs.p11af_softmax_output_fallback_taken = false;
+        const uint32_t configured_managed_attn_target_layer =
+            (uint32_t)regs.p11bc_managed_attention_target_layer_id.to_uint();
+        const uint32_t managed_attn_target_layer =
+            (configured_managed_attn_target_layer < n_layers) ? configured_managed_attn_target_layer : 0u;
+        regs.p11bc_managed_attention_target_layer_id = (u32_t)managed_attn_target_layer;
+        regs.p11bc_managed_attention_gate_taken_count = 0;
+        regs.p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
         regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
         regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
         regs.p11av_ffn_handoff_gate_taken_count = 0;
@@ -2328,11 +2350,15 @@ namespace aecct {
             bool kv_prebuilt_from_top_managed = false;
             bool score_prebuilt_from_top_managed = false;
             bool out_prebuilt_from_top_managed = false;
+            const bool is_managed_attention_layer = (lid == managed_attn_target_layer);
 
-            // P11AC mainline wiring is intentionally scoped to the current
-            // local-only target layer path to keep integration additive.
-            if (lid == 0u) {
-                // Layer-0 is the only place where Top prebuilds Q/KV in this local-only path.
+            // P11AC mainline wiring is intentionally scoped to one
+            // local-only managed-attention target layer per run.
+            if (is_managed_attention_layer) {
+                regs.p11bc_managed_attention_gate_taken_count =
+                    regs.p11bc_managed_attention_gate_taken_count + (u32_t)1u;
+                regs.p11bc_managed_attention_last_layer_id = (u32_t)lid;
+                // Managed prebuilds are allowed only on the selected target layer.
                 // Fallback meaning is established and latched here for reviewer evidence.
                 bool q_fallback_taken = true;
                 q_prebuilt_from_top_managed = run_p11ad_layer0_top_managed_q(
@@ -2373,7 +2399,7 @@ namespace aecct {
                     TOP_P11AEAF_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
                         bool score_fallback_taken = true;
                         bool score_mainline_taken = false;
-                        if (lid0_local_only_qkscore_mask_handoff_enable && lid == 0u) {
+                        if (lid0_local_only_qkscore_mask_handoff_enable && is_managed_attention_layer) {
                             bool warmup_fallback_taken = true;
                             const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
                                 sram,
@@ -2449,7 +2475,7 @@ namespace aecct {
                                 0,
                                 0
                             );
-                        } else if (lid0_local_only_qkscore_wq_handoff_enable && lid == 0u) {
+                        } else if (lid0_local_only_qkscore_wq_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
                             const u32_t* phase_entry_probe_q_words = 0;
@@ -2488,7 +2514,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
-                        } else if (lid0_local_only_qkscore_qsrc_handoff_enable && lid == 0u) {
+                        } else if (lid0_local_only_qkscore_qsrc_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
                             const u32_t* phase_entry_probe_q_words = 0;
@@ -2527,7 +2553,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
-                        } else if (lid0_local_only_qkscore_kvscan_handoff_enable && lid == 0u) {
+                        } else if (lid0_local_only_qkscore_kvscan_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
                             const u32_t* phase_entry_probe_q_words = 0;
@@ -2659,25 +2685,25 @@ namespace aecct {
                 regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
                 regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
                 regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
-            } else if (lid0_local_only_qkscore_mask_handoff_enable) {
+            } else if (lid0_local_only_qkscore_mask_handoff_enable && !is_managed_attention_layer) {
                 regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
                     regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count =
                     regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
             }
-            if (lid != 0u && lid0_local_only_qkscore_kvscan_handoff_enable) {
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_kvscan_handoff_enable) {
                 regs.p11az_qkscore_kvscan_handoff_fallback_seen_count =
                     regs.p11az_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count =
                     regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
             }
-            if (lid != 0u && lid0_local_only_qkscore_qsrc_handoff_enable) {
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_qsrc_handoff_enable) {
                 regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count =
                     regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count =
                     regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
             }
-            if (lid != 0u && lid0_local_only_qkscore_wq_handoff_enable) {
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_wq_handoff_enable) {
                 regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
                     regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count =
@@ -2860,6 +2886,13 @@ namespace aecct {
         regs.p11ae_score_fallback_taken = false;
         regs.p11af_mainline_softmax_output_path_taken = false;
         regs.p11af_softmax_output_fallback_taken = false;
+        const uint32_t configured_managed_attn_target_layer =
+            (uint32_t)regs.p11bc_managed_attention_target_layer_id.to_uint();
+        const uint32_t managed_attn_target_layer =
+            (configured_managed_attn_target_layer < n_layers) ? configured_managed_attn_target_layer : 0u;
+        regs.p11bc_managed_attention_target_layer_id = (u32_t)managed_attn_target_layer;
+        regs.p11bc_managed_attention_gate_taken_count = 0;
+        regs.p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
         regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
         regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
         regs.p11av_ffn_handoff_gate_taken_count = 0;
@@ -2925,8 +2958,12 @@ namespace aecct {
             bool kv_prebuilt_from_top_managed = false;
             bool score_prebuilt_from_top_managed = false;
             bool out_prebuilt_from_top_managed = false;
+            const bool is_managed_attention_layer = (lid == managed_attn_target_layer);
 
-            if (lid == 0u) {
+            if (is_managed_attention_layer) {
+                regs.p11bc_managed_attention_gate_taken_count =
+                    regs.p11bc_managed_attention_gate_taken_count + (u32_t)1u;
+                regs.p11bc_managed_attention_last_layer_id = (u32_t)lid;
                 bool q_fallback_taken = true;
                 q_prebuilt_from_top_managed = run_p11ad_layer0_top_managed_q(
                     sram,
@@ -2966,7 +3003,7 @@ namespace aecct {
                     TOP_P11AEAF_AN_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
                         bool score_fallback_taken = true;
                         bool score_mainline_taken = false;
-                        if (lid0_local_only_qkscore_mask_handoff_enable && lid == 0u) {
+                        if (lid0_local_only_qkscore_mask_handoff_enable && is_managed_attention_layer) {
                             bool warmup_fallback_taken = true;
                             const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
                                 sram,
@@ -3042,7 +3079,7 @@ namespace aecct {
                                 0,
                                 0
                             );
-                        } else if (lid0_local_only_qkscore_wq_handoff_enable && lid == 0u) {
+                        } else if (lid0_local_only_qkscore_wq_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
                             const u32_t* phase_entry_probe_q_words = 0;
@@ -3081,7 +3118,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
-                        } else if (lid0_local_only_qkscore_qsrc_handoff_enable && lid == 0u) {
+                        } else if (lid0_local_only_qkscore_qsrc_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
                             const u32_t* phase_entry_probe_q_words = 0;
@@ -3120,7 +3157,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
-                        } else if (lid0_local_only_qkscore_kvscan_handoff_enable && lid == 0u) {
+                        } else if (lid0_local_only_qkscore_kvscan_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
                             const u32_t* phase_entry_probe_q_words = 0;
@@ -3252,25 +3289,25 @@ namespace aecct {
                 regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
                 regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
                 regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
-            } else if (lid0_local_only_qkscore_mask_handoff_enable) {
+            } else if (lid0_local_only_qkscore_mask_handoff_enable && !is_managed_attention_layer) {
                 regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
                     regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count =
                     regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
             }
-            if (lid != 0u && lid0_local_only_qkscore_kvscan_handoff_enable) {
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_kvscan_handoff_enable) {
                 regs.p11az_qkscore_kvscan_handoff_fallback_seen_count =
                     regs.p11az_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count =
                     regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
             }
-            if (lid != 0u && lid0_local_only_qkscore_qsrc_handoff_enable) {
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_qsrc_handoff_enable) {
                 regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count =
                     regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count =
                     regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
             }
-            if (lid != 0u && lid0_local_only_qkscore_wq_handoff_enable) {
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_wq_handoff_enable) {
                 regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
                     regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
                 regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count =

@@ -51,6 +51,9 @@ public:
         if (!run_full_loop_mixed_layer_mainline()) {
             return 1;
         }
+        if (!run_full_loop_nonzero_target_layer_mainline()) {
+            return 1;
+        }
         if (!validate_full_flow_key_span_compare()) {
             return 1;
         }
@@ -234,7 +237,11 @@ private:
         p11aeaf_tb::load_qkv_payload_set_to_sram(sram_vec, payloads_, param_base_);
     }
 
-    void init_top_regs_for_layers(aecct::TopRegs& regs, uint32_t n_layers) const {
+    void init_top_regs_for_layers(
+        aecct::TopRegs& regs,
+        uint32_t n_layers,
+        uint32_t managed_target_layer = 0u
+    ) const {
         regs.clear();
         regs.w_base_set = true;
         regs.w_base_word = (aecct::u32_t)param_base_;
@@ -242,6 +249,7 @@ private:
         regs.cfg_n_heads = cfg_.n_heads;
         regs.cfg_d_ffn = cfg_.d_ffn;
         regs.cfg_n_layers = (aecct::u32_t)n_layers;
+        regs.p11bc_managed_attention_target_layer_id = (aecct::u32_t)managed_target_layer;
         regs.cfg_ready = true;
     }
 
@@ -329,6 +337,111 @@ private:
             std::printf("LID0_ATTN_STAGE_AF_FALLBACK_NOT_TAKEN PASS\n");
             std::printf("LID0_ATTN_DIRECT_SRAM_FALLBACK_NOT_TAKEN PASS\n");
         }
+        return true;
+    }
+
+    bool check_target_layer_marker_contract(
+        const aecct::TopRegs& regs,
+        const char* case_tag,
+        uint32_t expected_target_layer_id
+    ) const {
+        const bool ad_mainline = regs.p11ad_mainline_q_path_taken;
+        const bool ac_mainline = regs.p11ac_mainline_path_taken;
+        const bool ae_mainline = regs.p11ae_mainline_score_path_taken;
+        const bool af_mainline = regs.p11af_mainline_softmax_output_path_taken;
+        const bool ad_fallback = regs.p11ad_q_fallback_taken;
+        const bool ac_fallback = regs.p11ac_fallback_taken;
+        const bool ae_fallback = regs.p11ae_score_fallback_taken;
+        const bool af_fallback = regs.p11af_softmax_output_fallback_taken;
+
+        std::printf(
+            "CASE_%s_TARGET_ATTN_MAINLINE_FLAGS target_layer_id=%u p11ad_mainline_q_path_taken=%u p11ac_mainline_path_taken=%u p11ae_mainline_score_path_taken=%u p11af_mainline_softmax_output_path_taken=%u\n",
+            case_tag,
+            (unsigned)expected_target_layer_id,
+            ad_mainline ? 1u : 0u,
+            ac_mainline ? 1u : 0u,
+            ae_mainline ? 1u : 0u,
+            af_mainline ? 1u : 0u);
+        std::printf(
+            "CASE_%s_TARGET_ATTN_FALLBACK_FLAGS target_layer_id=%u p11ad_q_fallback_taken=%u p11ac_fallback_taken=%u p11ae_score_fallback_taken=%u p11af_softmax_output_fallback_taken=%u\n",
+            case_tag,
+            (unsigned)expected_target_layer_id,
+            ad_fallback ? 1u : 0u,
+            ac_fallback ? 1u : 0u,
+            ae_fallback ? 1u : 0u,
+            af_fallback ? 1u : 0u);
+
+        if (!ad_mainline || !ac_mainline || !ae_mainline || !af_mainline) {
+            std::printf(
+                "[p11aj][FAIL] %s target-layer mainline flags invalid (ac=%d ad=%d ae=%d af=%d)\n",
+                case_tag,
+                ac_mainline ? 1 : 0,
+                ad_mainline ? 1 : 0,
+                ae_mainline ? 1 : 0,
+                af_mainline ? 1 : 0);
+            return false;
+        }
+        if (ad_fallback || ac_fallback || ae_fallback || af_fallback) {
+            std::printf(
+                "[p11aj][FAIL] %s target-layer fallback flag asserted (ac=%d ad=%d ae=%d af=%d)\n",
+                case_tag,
+                ac_fallback ? 1 : 0,
+                ad_fallback ? 1 : 0,
+                ae_fallback ? 1 : 0,
+                af_fallback ? 1 : 0);
+            return false;
+        }
+
+        std::printf("CASE_%s_TARGET_ATTN_MAINLINE_TAKEN PASS\n", case_tag);
+        std::printf("CASE_%s_TARGET_ATTN_FALLBACK_NOT_TAKEN PASS\n", case_tag);
+        return true;
+    }
+
+    bool check_managed_target_selection_observability(
+        const aecct::TopRegs& regs,
+        const char* case_tag,
+        uint32_t expected_target_layer_id
+    ) const {
+        const uint32_t got_target_layer_id =
+            (uint32_t)regs.p11bc_managed_attention_target_layer_id.to_uint();
+        const uint32_t gate_taken_count =
+            (uint32_t)regs.p11bc_managed_attention_gate_taken_count.to_uint();
+        const uint32_t last_layer_id =
+            (uint32_t)regs.p11bc_managed_attention_last_layer_id.to_uint();
+
+        std::printf(
+            "CASE_%s_MANAGED_TARGET_SELECTION target_layer_id=%u gate_taken_count=%u last_layer_id=%u\n",
+            case_tag,
+            (unsigned)got_target_layer_id,
+            (unsigned)gate_taken_count,
+            (unsigned)last_layer_id);
+
+        if (got_target_layer_id != expected_target_layer_id) {
+            std::printf(
+                "[p11aj][FAIL] %s managed target mismatch got=%u exp=%u\n",
+                case_tag,
+                (unsigned)got_target_layer_id,
+                (unsigned)expected_target_layer_id);
+            return false;
+        }
+        if (gate_taken_count != 1u) {
+            std::printf(
+                "[p11aj][FAIL] %s managed gate count mismatch got=%u exp=1\n",
+                case_tag,
+                (unsigned)gate_taken_count);
+            return false;
+        }
+        if (last_layer_id != expected_target_layer_id) {
+            std::printf(
+                "[p11aj][FAIL] %s managed last-layer mismatch got=%u exp=%u\n",
+                case_tag,
+                (unsigned)last_layer_id,
+                (unsigned)expected_target_layer_id);
+            return false;
+        }
+
+        std::printf("CASE_%s_MANAGED_TARGET_SELECTION PASS\n", case_tag);
+        std::printf("CASE_%s_NON_TARGET_LAYERS_NOT_MANAGED PASS\n", case_tag);
         return true;
     }
 
@@ -912,6 +1025,12 @@ private:
         if (!check_lid0_marker_contract(regs_full_, "BASELINE_N1", true)) {
             return false;
         }
+        if (!check_target_layer_marker_contract(regs_full_, "BASELINE_N1_TARGET0", 0u)) {
+            return false;
+        }
+        if (!check_managed_target_selection_observability(regs_full_, "BASELINE_N1_TARGET0", 0u)) {
+            return false;
+        }
         if (!check_handoff_counter_conservation(regs_full_, "BASELINE_N1")) {
             return false;
         }
@@ -929,13 +1048,19 @@ private:
 
         aecct::TopRegs regs_mixed_a;
         aecct::TopRegs regs_mixed_b;
-        init_top_regs_for_layers(regs_mixed_a, 3u);
-        init_top_regs_for_layers(regs_mixed_b, 3u);
+        init_top_regs_for_layers(regs_mixed_a, 3u, 0u);
+        init_top_regs_for_layers(regs_mixed_b, 3u, 0u);
 
         aecct::run_transformer_layer_loop(regs_mixed_a, sram_mixed_a.data());
         aecct::run_transformer_layer_loop(regs_mixed_b, sram_mixed_b.data());
 
         if (!check_lid0_marker_contract(regs_mixed_a, "MIXED_N3", false)) {
+            return false;
+        }
+        if (!check_target_layer_marker_contract(regs_mixed_a, "TARGET0_N3", 0u)) {
+            return false;
+        }
+        if (!check_managed_target_selection_observability(regs_mixed_a, "TARGET0_N3", 0u)) {
             return false;
         }
         if (!check_handoff_counter_conservation(regs_mixed_a, "MIXED_N3")) {
@@ -999,21 +1124,101 @@ private:
         std::printf("CASE_MIXED_N3_FINAL_X_NONFINITE_SCAN PASS\n");
 
         const uint32_t baseline_final_base = (uint32_t)regs_full_.infer_final_x_base_word.to_uint();
-        if (baseline_final_base == final_base_a) {
-            const uint32_t diffs = count_span_diffs(
-                sram_full_,
-                sram_mixed_a,
-                final_base_a,
-                (uint32_t)aecct::LN_X_TOTAL_WORDS);
-            std::printf("CASE_MIXED_N3_FINAL_X_DIFFS_VS_BASELINE_N1 = %u\n", (unsigned)diffs);
-        } else {
-            std::printf(
-                "CASE_MIXED_N3_FINAL_X_BASE_NOTE baseline_base=%u mixed_base=%u\n",
-                (unsigned)baseline_final_base,
-                (unsigned)final_base_a);
+        const uint32_t mixed_vs_baseline_diffs = count_span_diffs(
+            sram_full_,
+            sram_mixed_a,
+            baseline_final_base,
+            (uint32_t)aecct::LN_X_TOTAL_WORDS);
+        const uint32_t mixed_vs_baseline_diffs_aligned = count_span_diffs(
+            sram_full_,
+            sram_mixed_a,
+            final_base_a,
+            (uint32_t)aecct::LN_X_TOTAL_WORDS);
+        if (mixed_vs_baseline_diffs == 0u && mixed_vs_baseline_diffs_aligned == 0u) {
+            std::printf("[p11aj][FAIL] mixed n_layers=3 showed no observable nonzero-layer effect vs baseline n_layers=1\n");
+            return false;
         }
+        std::printf(
+            "CASE_MIXED_N3_FINAL_X_DIFFS_VS_BASELINE_N1 baseline_base=%u mixed_base=%u diffs_baseline_base=%u diffs_mixed_base=%u\n",
+            (unsigned)baseline_final_base,
+            (unsigned)final_base_a,
+            (unsigned)mixed_vs_baseline_diffs,
+            (unsigned)mixed_vs_baseline_diffs_aligned);
+        std::printf("CASE_MIXED_N3_NONZERO_LAYER_EFFECT_OBSERVED PASS\n");
 
         std::printf("CASE_MIXED_N3_ACCEPTANCE PASS\n");
+        return true;
+    }
+
+    bool run_full_loop_nonzero_target_layer_mainline() {
+        std::vector<aecct::u32_t> sram_target1_a;
+        std::vector<aecct::u32_t> sram_target1_b;
+        seed_full_loop_sram(sram_target1_a);
+        seed_full_loop_sram(sram_target1_b);
+
+        aecct::TopRegs regs_target1_a;
+        aecct::TopRegs regs_target1_b;
+        init_top_regs_for_layers(regs_target1_a, 3u, 1u);
+        init_top_regs_for_layers(regs_target1_b, 3u, 1u);
+
+        aecct::run_transformer_layer_loop(regs_target1_a, sram_target1_a.data());
+        aecct::run_transformer_layer_loop(regs_target1_b, sram_target1_b.data());
+
+        if (!check_target_layer_marker_contract(regs_target1_a, "TARGET1_N3", 1u)) {
+            return false;
+        }
+        if (!check_managed_target_selection_observability(regs_target1_a, "TARGET1_N3", 1u)) {
+            return false;
+        }
+        if (!check_handoff_counter_conservation(regs_target1_a, "TARGET1_N3")) {
+            return false;
+        }
+
+        if (regs_target1_a.p11ad_mainline_q_path_taken != regs_target1_b.p11ad_mainline_q_path_taken ||
+            regs_target1_a.p11ac_mainline_path_taken != regs_target1_b.p11ac_mainline_path_taken ||
+            regs_target1_a.p11ae_mainline_score_path_taken != regs_target1_b.p11ae_mainline_score_path_taken ||
+            regs_target1_a.p11af_mainline_softmax_output_path_taken != regs_target1_b.p11af_mainline_softmax_output_path_taken ||
+            regs_target1_a.p11ad_q_fallback_taken != regs_target1_b.p11ad_q_fallback_taken ||
+            regs_target1_a.p11ac_fallback_taken != regs_target1_b.p11ac_fallback_taken ||
+            regs_target1_a.p11ae_score_fallback_taken != regs_target1_b.p11ae_score_fallback_taken ||
+            regs_target1_a.p11af_softmax_output_fallback_taken != regs_target1_b.p11af_softmax_output_fallback_taken ||
+            regs_target1_a.p11bc_managed_attention_gate_taken_count != regs_target1_b.p11bc_managed_attention_gate_taken_count ||
+            regs_target1_a.p11bc_managed_attention_last_layer_id != regs_target1_b.p11bc_managed_attention_last_layer_id) {
+            std::printf("[p11aj][FAIL] target1 n_layers=3 marker/selection mismatch between repeated runs\n");
+            return false;
+        }
+        std::printf("CASE_TARGET1_N3_MARKER_REPEATABILITY PASS\n");
+
+        const uint32_t final_base_a = (uint32_t)regs_target1_a.infer_final_x_base_word.to_uint();
+        const uint32_t final_base_b = (uint32_t)regs_target1_b.infer_final_x_base_word.to_uint();
+        if (final_base_a != final_base_b) {
+            std::printf("[p11aj][FAIL] target1 n_layers=3 final_x base mismatch runA=%u runB=%u\n",
+                (unsigned)final_base_a,
+                (unsigned)final_base_b);
+            return false;
+        }
+        if (!compare_span_exact(
+                sram_target1_a,
+                sram_target1_b,
+                final_base_a,
+                (uint32_t)aecct::LN_X_TOTAL_WORDS,
+                "target1_n3_final_x_repeatability")) {
+            return false;
+        }
+        std::printf("CASE_TARGET1_N3_FINAL_X_DETERMINISTIC PASS\n");
+
+        for (uint32_t i = 0u; i < (uint32_t)aecct::LN_X_TOTAL_WORDS; ++i) {
+            const uint32_t bits = (uint32_t)sram_target1_a[final_base_a + i].to_uint();
+            if (is_nonfinite_bits(bits)) {
+                std::printf(
+                    "[p11aj][FAIL] target1 n_layers=3 final_x non-finite at idx=%u bits=0x%08X\n",
+                    (unsigned)i,
+                    (unsigned)bits);
+                return false;
+            }
+        }
+        std::printf("CASE_TARGET1_N3_FINAL_X_NONFINITE_SCAN PASS\n");
+        std::printf("CASE_TARGET1_N3_ACCEPTANCE PASS\n");
         return true;
     }
 
