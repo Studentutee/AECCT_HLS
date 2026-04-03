@@ -29,6 +29,15 @@
 
 namespace {
 
+static float bits_to_f32(aecct::u32_t bits) {
+    union {
+        uint32_t u;
+        float f;
+    } cvt;
+    cvt.u = (uint32_t)bits.to_uint();
+    return cvt.f;
+}
+
 static bool expect_true(bool cond, const char* label) {
     if (!cond) {
         std::printf("[p11lna][FAIL] %s\n", label);
@@ -47,6 +56,15 @@ static bool expect_close(float got, float exp, float tol, const char* label) {
             exp,
             err,
             tol);
+        return false;
+    }
+    return true;
+}
+
+static bool expect_u32_eq(aecct::u32_t got, uint32_t exp, const char* label) {
+    const uint32_t got_u32 = (uint32_t)got.to_uint();
+    if (got_u32 != exp) {
+        std::printf("[p11lna][FAIL] %s got=%u exp=%u\n", label, (unsigned)got_u32, (unsigned)exp);
         return false;
     }
     return true;
@@ -104,15 +122,15 @@ CCS_MAIN(int argc, char** argv) {
     topfed_beta[1] = aecct::bits_from_fp32(aecct::fp32_t(40.0f));
 
     auto read_out_f32 = [&](uint32_t idx) -> float {
-        const aecct::fp32_t v = aecct::fp32_from_bits(sram[x_out_base + idx]);
-        return (float)v.to_double();
+        return bits_to_f32(sram[x_out_base + idx]);
     };
 
     aecct::LayerNormAffineConsumeTrace trace;
+    aecct::u32_t* sram_ptr = sram;
 
     // Case A: top-fed gamma+beta both present.
     aecct::LayerNormBlockCoreWindow<aecct::u32_t*>(
-        sram,
+        sram_ptr,
         cfg,
         (aecct::u32_t)x_in_base,
         (aecct::u32_t)x_out_base,
@@ -124,6 +142,10 @@ CCS_MAIN(int argc, char** argv) {
     if (!expect_true(trace.saw_topfed_gamma && trace.saw_topfed_beta, "caseA saw topfed pair") ||
         !expect_true(trace.used_topfed_gamma && trace.used_topfed_beta, "caseA used topfed pair") ||
         !expect_true(!trace.used_fallback_gamma && !trace.used_fallback_beta, "caseA no fallback") ||
+        !expect_u32_eq(trace.topfed_gamma_words_consumed, d_model, "caseA topfed gamma words") ||
+        !expect_u32_eq(trace.topfed_beta_words_consumed, d_model, "caseA topfed beta words") ||
+        !expect_u32_eq(trace.fallback_gamma_words_consumed, 0u, "caseA fallback gamma words") ||
+        !expect_u32_eq(trace.fallback_beta_words_consumed, 0u, "caseA fallback beta words") ||
         !expect_close(read_out_f32(0u), 28.0f, 1.0e-4f, "caseA out0") ||
         !expect_close(read_out_f32(1u), 42.0f, 1.0e-4f, "caseA out1")) {
         CCS_RETURN(1);
@@ -131,7 +153,7 @@ CCS_MAIN(int argc, char** argv) {
 
     // Case B: no top-fed payload, pure SRAM fallback.
     aecct::LayerNormBlockCoreWindow<aecct::u32_t*>(
-        sram,
+        sram_ptr,
         cfg,
         (aecct::u32_t)x_in_base,
         (aecct::u32_t)x_out_base,
@@ -143,6 +165,10 @@ CCS_MAIN(int argc, char** argv) {
     if (!expect_true(!trace.saw_topfed_gamma && !trace.saw_topfed_beta, "caseB saw no topfed") ||
         !expect_true(trace.used_fallback_gamma && trace.used_fallback_beta, "caseB used fallback pair") ||
         !expect_true(!trace.used_topfed_gamma && !trace.used_topfed_beta, "caseB no topfed use") ||
+        !expect_u32_eq(trace.topfed_gamma_words_consumed, 0u, "caseB topfed gamma words") ||
+        !expect_u32_eq(trace.topfed_beta_words_consumed, 0u, "caseB topfed beta words") ||
+        !expect_u32_eq(trace.fallback_gamma_words_consumed, d_model, "caseB fallback gamma words") ||
+        !expect_u32_eq(trace.fallback_beta_words_consumed, d_model, "caseB fallback beta words") ||
         !expect_close(read_out_f32(0u), 5.0f, 1.0e-4f, "caseB out0") ||
         !expect_close(read_out_f32(1u), 25.0f, 1.0e-4f, "caseB out1")) {
         CCS_RETURN(1);
@@ -150,7 +176,7 @@ CCS_MAIN(int argc, char** argv) {
 
     // Case C: mixed source (gamma top-fed, beta fallback).
     aecct::LayerNormBlockCoreWindow<aecct::u32_t*>(
-        sram,
+        sram_ptr,
         cfg,
         (aecct::u32_t)x_in_base,
         (aecct::u32_t)x_out_base,
@@ -162,6 +188,10 @@ CCS_MAIN(int argc, char** argv) {
     if (!expect_true(trace.saw_topfed_gamma && !trace.saw_topfed_beta, "caseC mixed saw") ||
         !expect_true(trace.used_topfed_gamma && !trace.used_topfed_beta, "caseC gamma topfed only") ||
         !expect_true(!trace.used_fallback_gamma && trace.used_fallback_beta, "caseC beta fallback only") ||
+        !expect_u32_eq(trace.topfed_gamma_words_consumed, d_model, "caseC topfed gamma words") ||
+        !expect_u32_eq(trace.topfed_beta_words_consumed, 0u, "caseC topfed beta words") ||
+        !expect_u32_eq(trace.fallback_gamma_words_consumed, 0u, "caseC fallback gamma words") ||
+        !expect_u32_eq(trace.fallback_beta_words_consumed, d_model, "caseC fallback beta words") ||
         !expect_close(read_out_f32(0u), 8.0f, 1.0e-4f, "caseC out0") ||
         !expect_close(read_out_f32(1u), 22.0f, 1.0e-4f, "caseC out1")) {
         CCS_RETURN(1);

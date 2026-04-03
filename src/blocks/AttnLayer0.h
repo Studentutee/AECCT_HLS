@@ -595,18 +595,19 @@ static inline void AttnLayer0CoreWindow(
             return;
         }
 
-        // OUT priority 2: descriptor was enabled but not complete, so copy local post-concat as fallback.
+        // OUT priority 2: prebuilt output already committed by Top-managed AF path.
+        // Ownership seam: committed prebuilt output must not be overwritten by local fallback copy.
+        if (prebuilt_handoff.out_prebuilt_from_top_managed) {
+            // Top-managed AF path already wrote final output for this layer invocation.
+            return;
+        }
+
+        // OUT priority 3: descriptor was enabled but not complete, so copy local post-concat as fallback.
         if (prebuilt_handoff.out_topfed_payload_enable) {
             // Invalid/short top-fed payload falls back to local post-concat consume path.
             ATTN_OUT_TOPFED_INVALID_FALLBACK_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
                 sram[out_base + i] = sram[post_base + i];
             }
-            return;
-        }
-
-        // OUT priority 3: prebuilt output already committed by Top-managed AF path.
-        if (prebuilt_handoff.out_prebuilt_from_top_managed) {
-            // Top-managed AF path already wrote final output for this layer invocation.
             return;
         }
         // OUT stage write-back boundary:

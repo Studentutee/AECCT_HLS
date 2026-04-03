@@ -463,6 +463,32 @@ private:
         }
         std::printf("P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_INVALID_FALLBACK PASS\n");
 
+        // Prebuilt ownership seam: committed output must remain untouched even when payload descriptor is invalid.
+        fill_with_pattern(sram, post_base, words, 0x8E000000u);
+        fill_with_pattern(sram, out_base, words, 0x8F000000u);
+        const aecct::AttnLayer0PrebuiltHandoffDesc prebuilt_invalid_handoff =
+            aecct::make_attn_layer0_prebuilt_handoff_desc(
+                false,
+                false,
+                false,
+                true,
+                true,
+                topfed_words.data(),
+                (aecct::u32_t)(words - 1u));
+        aecct::AttnLayer0<aecct::ATTN_STAGE_OUT>(
+            sram.data(),
+            cfg,
+            (aecct::u32_t)layout.x_base_word,
+            (aecct::u32_t)out_base,
+            layout.sc,
+            (aecct::u32_t)0u,
+            prebuilt_invalid_handoff);
+
+        if (!check_region_untouched(sram, out_base, words, 0x8F000000u, "OUT-topfed-invalid-prebuilt-skip")) {
+            return false;
+        }
+        std::printf("P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_INVALID_PREBUILT_SKIP PASS\n");
+
         fill_with_pattern(sram, post_base, words, 0x8E000000u);
         fill_with_pattern(sram, out_base, words, 0x8F000000u);
         const aecct::AttnLayer0PrebuiltHandoffDesc disabled_handoff =

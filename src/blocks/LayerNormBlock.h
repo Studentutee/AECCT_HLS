@@ -72,6 +72,10 @@ struct LayerNormAffineConsumeTrace {
     bool used_topfed_beta;
     bool used_fallback_gamma;
     bool used_fallback_beta;
+    u32_t topfed_gamma_words_consumed;
+    u32_t topfed_beta_words_consumed;
+    u32_t fallback_gamma_words_consumed;
+    u32_t fallback_beta_words_consumed;
 };
 
 static inline void clear_layernorm_affine_consume_trace(LayerNormAffineConsumeTrace& t) {
@@ -81,6 +85,14 @@ static inline void clear_layernorm_affine_consume_trace(LayerNormAffineConsumeTr
     t.used_topfed_beta = false;
     t.used_fallback_gamma = false;
     t.used_fallback_beta = false;
+    t.topfed_gamma_words_consumed = (u32_t)0u;
+    t.topfed_beta_words_consumed = (u32_t)0u;
+    t.fallback_gamma_words_consumed = (u32_t)0u;
+    t.fallback_beta_words_consumed = (u32_t)0u;
+}
+
+static inline void layernorm_affine_trace_inc(u32_t& counter) {
+    counter = (u32_t)((uint32_t)counter.to_uint() + 1u);
 }
 
 static inline bool layernorm_top_managed_tile_meta_ok(
@@ -308,13 +320,17 @@ static inline void LayerNormBlockCoreWindow(
                 if (affine_trace != 0) {
                     if (topfed_gamma_words != 0) {
                         affine_trace->used_topfed_gamma = true;
+                        layernorm_affine_trace_inc(affine_trace->topfed_gamma_words_consumed);
                     } else {
                         affine_trace->used_fallback_gamma = true;
+                        layernorm_affine_trace_inc(affine_trace->fallback_gamma_words_consumed);
                     }
                     if (topfed_beta_words != 0) {
                         affine_trace->used_topfed_beta = true;
+                        layernorm_affine_trace_inc(affine_trace->topfed_beta_words_consumed);
                     } else {
                         affine_trace->used_fallback_beta = true;
+                        layernorm_affine_trace_inc(affine_trace->fallback_beta_words_consumed);
                     }
                 }
                 const fp32_t g = fp32_from_bits(g_bits);
