@@ -108,6 +108,148 @@ static void init_transformer_case_memory(
 }
 
 template<typename RunFn>
+static bool run_w1_input_observability_case(
+    const char* case_label,
+    const char* banner_suffix,
+    RunFn run_fn
+) {
+    static aecct::u32_t sram_w1_ready[sram_map::SRAM_WORDS_TOTAL];
+    static aecct::u32_t sram_w1_fallback[sram_map::SRAM_WORDS_TOTAL];
+
+    static aecct::u32_t seam_w1_x_words[aecct::FFN_X_WORDS];
+    static aecct::u32_t seam_w1_weight_words[aecct::FFN_W1_WEIGHT_WORDS];
+    static aecct::u32_t seam_w1_bias_words[aecct::FFN_W1_BIAS_WORDS];
+    static aecct::u32_t seam_w2_input_words[aecct::FFN_W2_INPUT_WORDS];
+    static aecct::u32_t seam_w2_weight_words[aecct::FFN_W2_WEIGHT_WORDS];
+    static aecct::u32_t seam_w2_bias_words[aecct::FFN_W2_BIAS_WORDS];
+
+    const uint32_t one_bits = f32_to_bits(1.0f);
+    const uint32_t half_bits = f32_to_bits(0.5f);
+    const uint32_t two_bits = f32_to_bits(2.0f);
+
+    FILL_W1_INPUT_PROBE_X_DESC_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_X_WORDS; ++i) {
+        seam_w1_x_words[i] = (aecct::u32_t)one_bits;
+    }
+    FILL_W1_INPUT_PROBE_W1_WEIGHT_DESC_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_WEIGHT_WORDS; ++i) {
+        seam_w1_weight_words[i] = (aecct::u32_t)one_bits;
+    }
+    FILL_W1_INPUT_PROBE_W1_BIAS_DESC_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W1_BIAS_WORDS; ++i) {
+        seam_w1_bias_words[i] = (aecct::u32_t)half_bits;
+    }
+    FILL_W1_INPUT_PROBE_W2_INPUT_DESC_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W2_INPUT_WORDS; ++i) {
+        seam_w2_input_words[i] = ((i & 0x1u) == 0u) ? (aecct::u32_t)two_bits : (aecct::u32_t)one_bits;
+    }
+    FILL_W1_INPUT_PROBE_W2_WEIGHT_DESC_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W2_WEIGHT_WORDS; ++i) {
+        seam_w2_weight_words[i] = (aecct::u32_t)one_bits;
+    }
+    FILL_W1_INPUT_PROBE_W2_BIAS_DESC_LOOP: for (uint32_t i = 0u; i < (uint32_t)aecct::FFN_W2_BIAS_WORDS; ++i) {
+        seam_w2_bias_words[i] = (aecct::u32_t)half_bits;
+    }
+
+    aecct::CfgRegs cfg;
+    cfg.d_model = (aecct::u32_t)aecct::ATTN_D_MODEL;
+    cfg.n_heads = (aecct::u32_t)aecct::ATTN_N_HEADS;
+    cfg.d_ffn = (aecct::u32_t)aecct::FFN_D_FFN;
+    cfg.n_layers = (aecct::u32_t)1u;
+
+    const aecct::u32_t layer_id = (aecct::u32_t)0u;
+    const aecct::u32_t x_in_base = (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD_DEFAULT;
+    const aecct::u32_t x_out_base = local_alternate_x_page(x_in_base);
+    const aecct::LayerScratch sc = aecct::make_layer_scratch(x_in_base);
+    const aecct::LayerParamBase pb =
+        aecct::make_layer_param_base((aecct::u32_t)sram_map::W_REGION_BASE, layer_id);
+
+    const uint32_t token_count = (uint32_t)aecct::ATTN_TOKEN_COUNT;
+    uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+    uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
+    if (d_model == 0u) { d_model = (uint32_t)aecct::FFN_D_MODEL; }
+    if (d_ffn == 0u) { d_ffn = (uint32_t)aecct::FFN_D_FFN; }
+    uint32_t w1_x_words = token_count * d_model;
+    if (w1_x_words > (uint32_t)aecct::FFN_X_WORDS) {
+        w1_x_words = (uint32_t)aecct::FFN_X_WORDS;
+    }
+    uint32_t w1_weight_words = d_ffn * d_model;
+    if (w1_weight_words > (uint32_t)aecct::FFN_W1_WEIGHT_WORDS) {
+        w1_weight_words = (uint32_t)aecct::FFN_W1_WEIGHT_WORDS;
+    }
+    uint32_t w1_bias_words = d_ffn;
+    if (w1_bias_words > (uint32_t)aecct::FFN_W1_BIAS_WORDS) {
+        w1_bias_words = (uint32_t)aecct::FFN_W1_BIAS_WORDS;
+    }
+    uint32_t w2_input_words = token_count * d_ffn;
+    if (w2_input_words > (uint32_t)aecct::FFN_W2_INPUT_WORDS) {
+        w2_input_words = (uint32_t)aecct::FFN_W2_INPUT_WORDS;
+    }
+    uint32_t w2_weight_words = d_model * d_ffn;
+    if (w2_weight_words > (uint32_t)aecct::FFN_W2_WEIGHT_WORDS) {
+        w2_weight_words = (uint32_t)aecct::FFN_W2_WEIGHT_WORDS;
+    }
+    uint32_t w2_bias_words = d_model;
+    if (w2_bias_words > (uint32_t)aecct::FFN_W2_BIAS_WORDS) {
+        w2_bias_words = (uint32_t)aecct::FFN_W2_BIAS_WORDS;
+    }
+
+    aecct::TransformerLayerW2SeamProbe ready_probe;
+    aecct::TransformerLayerW2SeamProbe fallback_probe;
+    const auto run_case =
+        [&](aecct::u32_t* sram_mem, bool w1_input_ready, aecct::TransformerLayerW2SeamProbe& probe) {
+        // Probe this call boundary to capture W1 input mainline/fallback branch decisions.
+        aecct::clear_transformer_layer_w2_seam_probe(probe);
+        init_transformer_case_memory(sram_mem, cfg, sc, pb, (uint32_t)layer_id.to_uint());
+        run_fn(
+            sram_mem,
+            cfg,
+            layer_id,
+            x_in_base,
+            x_out_base,
+            sc,
+            pb,
+            aecct::make_transformer_layer_ffn_topfed_handoff_desc(
+                seam_w1_x_words,
+                w1_input_ready ? (aecct::u32_t)w1_x_words : (aecct::u32_t)0u,
+                seam_w1_weight_words,
+                (aecct::u32_t)w1_weight_words,
+                seam_w1_bias_words,
+                (aecct::u32_t)w1_bias_words,
+                seam_w2_input_words,
+                (aecct::u32_t)w2_input_words,
+                seam_w2_weight_words,
+                (aecct::u32_t)w2_weight_words,
+                seam_w2_bias_words,
+                (aecct::u32_t)w2_bias_words),
+            &probe
+        );
+    };
+
+    run_case(sram_w1_ready, true, ready_probe);
+    if ((uint32_t)ready_probe.w1_input_mainline_taken_count.to_uint() != 1u ||
+        (uint32_t)ready_probe.w1_input_fallback_preload_count.to_uint() != 0u) {
+        std::printf(
+            "[p11au][FAIL] %s W1 ready probe mismatch mainline=%u fallback=%u\n",
+            case_label,
+            (unsigned)ready_probe.w1_input_mainline_taken_count.to_uint(),
+            (unsigned)ready_probe.w1_input_fallback_preload_count.to_uint());
+        return false;
+    }
+
+    run_case(sram_w1_fallback, false, fallback_probe);
+    if ((uint32_t)fallback_probe.w1_input_mainline_taken_count.to_uint() != 0u ||
+        (uint32_t)fallback_probe.w1_input_fallback_preload_count.to_uint() != 1u) {
+        std::printf(
+            "[p11au][FAIL] %s W1 fallback probe mismatch mainline=%u fallback=%u\n",
+            case_label,
+            (unsigned)fallback_probe.w1_input_mainline_taken_count.to_uint(),
+            (unsigned)fallback_probe.w1_input_fallback_preload_count.to_uint());
+        return false;
+    }
+
+    std::printf("W1_INPUT_MAINLINE_TAKEN_%s PASS\n", banner_suffix);
+    std::printf("W1_INPUT_PRELOAD_FALLBACK_NOT_TAKEN_%s PASS\n", banner_suffix);
+    std::printf("W1_INPUT_PRELOAD_FALLBACK_EXPECTED_%s PASS\n", banner_suffix);
+    return true;
+}
+
+template<typename RunFn>
 static bool run_w2_weight_bias_observability_case(
     const char* case_label,
     const char* banner_suffix,
@@ -499,6 +641,9 @@ static bool run_pointer_path_case() {
     if (!ok) {
         return false;
     }
+    if (!run_w1_input_observability_case("pointer_path", "POINTER_PATH", pointer_run_fn)) {
+        return false;
+    }
     if (!run_w2_weight_bias_observability_case("pointer_path", "POINTER_PATH", pointer_run_fn)) {
         return false;
     }
@@ -552,6 +697,9 @@ static bool run_deep_bridge_path_case() {
         "deep_bridge_path",
         deep_bridge_run_fn);
     if (!ok) {
+        return false;
+    }
+    if (!run_w1_input_observability_case("deep_bridge_path", "DEEP_BRIDGE_PATH", deep_bridge_run_fn)) {
         return false;
     }
     if (!run_w2_weight_bias_observability_case("deep_bridge_path", "DEEP_BRIDGE_PATH", deep_bridge_run_fn)) {

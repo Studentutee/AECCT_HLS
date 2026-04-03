@@ -48,9 +48,11 @@ static inline void clear_transformer_layer_contract(TransformerLayerContract& c)
     c.w_base_word = 0;
 }
 
-// local-only probe surface for W2 weight/bias seam observability.
+// local-only probe surface for W1/W2 seam observability.
 // This does not alter functional outputs; it only tracks branch selection.
 struct TransformerLayerW2SeamProbe {
+    u32_t w1_input_mainline_taken_count;
+    u32_t w1_input_fallback_preload_count;
     u32_t w2_weight_mainline_taken_count;
     u32_t w2_weight_fallback_preload_count;
     u32_t w2_bias_mainline_taken_count;
@@ -58,6 +60,8 @@ struct TransformerLayerW2SeamProbe {
 };
 
 static inline void clear_transformer_layer_w2_seam_probe(TransformerLayerW2SeamProbe& p) {
+    p.w1_input_mainline_taken_count = (u32_t)0u;
+    p.w1_input_fallback_preload_count = (u32_t)0u;
     p.w2_weight_mainline_taken_count = (u32_t)0u;
     p.w2_weight_fallback_preload_count = (u32_t)0u;
     p.w2_bias_mainline_taken_count = (u32_t)0u;
@@ -306,21 +310,41 @@ static inline void TransformerLayerTopManagedAttnBridge(
     if (ffn_x_words > (uint32_t)FFN_X_WORDS) {
         ffn_x_words = (uint32_t)FFN_X_WORDS;
     }
+    const uint32_t topfed_w1_x_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_x_words_valid.to_uint();
+    // Top decides descriptor readiness here; this block only consumes it.
+    const bool w1_input_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w1_x_words != 0) &&
+        (topfed_w1_x_words_valid_raw >= ffn_x_words);
     const uint32_t ffn_x_base = (uint32_t)sc.attn_out_base_word.to_uint();
-    TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
-        topfed_ffn_x_words[i] = sram_window[ffn_x_base + i];
+    if (!w1_input_topfed_ready) {
+        // Probe this branch to prove W1 input compatibility preload fallback.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_input_fallback_preload_count);
+        }
+        // This fallback keeps the legacy preload path alive when descriptor data is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
+            topfed_ffn_x_words[i] = sram_window[ffn_x_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_x_words = 0;
     u32_t selected_topfed_ffn_x_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w1_x_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_x_words_valid.to_uint(),
-        (uint32_t)FFN_X_WORDS,
-        topfed_ffn_x_words,
-        ffn_x_words,
-        selected_topfed_ffn_x_words,
-        selected_topfed_ffn_x_words_valid
-    );
+    if (w1_input_topfed_ready) {
+        // Probe this branch to prove W1 input mainline descriptor consumption.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_input_mainline_taken_count);
+        }
+        // This mainline consumes W1 data directly from the top-fed descriptor.
+        selected_topfed_ffn_x_words = ffn_topfed_handoff_desc.topfed_w1_x_words;
+        uint32_t selected_valid = topfed_w1_x_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_X_WORDS) {
+            selected_valid = (uint32_t)FFN_X_WORDS;
+        }
+        selected_topfed_ffn_x_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_x_words = topfed_ffn_x_words;
+        selected_topfed_ffn_x_words_valid = (u32_t)ffn_x_words;
+    }
     const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
     const uint32_t w1_bias_id = use_layer1 ? 12u : 4u;
     const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
@@ -694,21 +718,41 @@ static inline void TransformerLayer(
     if (ffn_x_words > (uint32_t)FFN_X_WORDS) {
         ffn_x_words = (uint32_t)FFN_X_WORDS;
     }
+    const uint32_t topfed_w1_x_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_x_words_valid.to_uint();
+    // Top decides descriptor readiness here; this block only consumes it.
+    const bool w1_input_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w1_x_words != 0) &&
+        (topfed_w1_x_words_valid_raw >= ffn_x_words);
     const uint32_t ffn_x_base = (uint32_t)sc.attn_out_base_word.to_uint();
-    TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
-        topfed_ffn_x_words[i] = sram[ffn_x_base + i];
+    if (!w1_input_topfed_ready) {
+        // Probe this branch to prove W1 input compatibility preload fallback.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_input_fallback_preload_count);
+        }
+        // This fallback keeps the legacy preload path alive when descriptor data is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < ffn_x_words; ++i) {
+            topfed_ffn_x_words[i] = sram[ffn_x_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_x_words = 0;
     u32_t selected_topfed_ffn_x_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w1_x_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_x_words_valid.to_uint(),
-        (uint32_t)FFN_X_WORDS,
-        topfed_ffn_x_words,
-        ffn_x_words,
-        selected_topfed_ffn_x_words,
-        selected_topfed_ffn_x_words_valid
-    );
+    if (w1_input_topfed_ready) {
+        // Probe this branch to prove W1 input mainline descriptor consumption.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_input_mainline_taken_count);
+        }
+        // This mainline consumes W1 data directly from the top-fed descriptor.
+        selected_topfed_ffn_x_words = ffn_topfed_handoff_desc.topfed_w1_x_words;
+        uint32_t selected_valid = topfed_w1_x_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_X_WORDS) {
+            selected_valid = (uint32_t)FFN_X_WORDS;
+        }
+        selected_topfed_ffn_x_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_x_words = topfed_ffn_x_words;
+        selected_topfed_ffn_x_words_valid = (u32_t)ffn_x_words;
+    }
     const bool use_layer1 = ((uint32_t)layer_id.to_uint() == 1u);
     const uint32_t w1_bias_id = use_layer1 ? 12u : 4u;
     const uint32_t w1_weight_id = use_layer1 ? 56u : 36u;
