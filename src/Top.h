@@ -2180,6 +2180,14 @@ namespace aecct {
         const u32_t* attn_out_topfed_payload_words = 0,
         u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
+        const bool attn_fully_prebuilt_from_top_managed =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            out_prebuilt_from_top_managed;
+        const bool attn_compat_shell_enable =
+            (!attn_fully_prebuilt_from_top_managed) ||
+            attn_out_topfed_payload_enable;
         TransformerLayer(
             sram,
             cfg,
@@ -2196,7 +2204,8 @@ namespace aecct {
             ffn_topfed_handoff_desc,
             attn_out_topfed_payload_enable,
             attn_out_topfed_payload_words,
-            attn_out_topfed_payload_words_valid
+            attn_out_topfed_payload_words_valid,
+            attn_compat_shell_enable
         );
     }
 
@@ -2220,6 +2229,14 @@ namespace aecct {
         const u32_t* attn_out_topfed_payload_words = 0,
         u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
+        const bool attn_fully_prebuilt_from_top_managed =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            out_prebuilt_from_top_managed;
+        const bool attn_compat_shell_enable =
+            (!attn_fully_prebuilt_from_top_managed) ||
+            attn_out_topfed_payload_enable;
         TransformerLayerTopManagedAttnBridge(
             sram,
             cfg,
@@ -2236,7 +2253,8 @@ namespace aecct {
             ffn_topfed_handoff_desc,
             attn_out_topfed_payload_enable,
             attn_out_topfed_payload_words,
-            attn_out_topfed_payload_words_valid
+            attn_out_topfed_payload_words_valid,
+            attn_compat_shell_enable
         );
     }
 

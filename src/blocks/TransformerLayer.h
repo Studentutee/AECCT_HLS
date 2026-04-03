@@ -213,7 +213,8 @@ static inline void TransformerLayerTopManagedAttnBridge(
         make_transformer_layer_ffn_topfed_handoff_desc(),
     bool attn_out_topfed_payload_enable = false,
     const u32_t* attn_out_topfed_payload_words = 0,
-    u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
+    u32_t attn_out_topfed_payload_words_valid = (u32_t)0u,
+    bool attn_compat_shell_enable = true
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -227,34 +228,36 @@ static inline void TransformerLayerTopManagedAttnBridge(
     attn_cfg.d_model = (u32_t)d_model;
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
-    const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
-        make_attn_layer0_prebuilt_handoff_desc(
-            kv_prebuilt_from_top_managed,
-            q_prebuilt_from_top_managed,
-            score_prebuilt_from_top_managed,
-            out_prebuilt_from_top_managed,
-            attn_out_topfed_payload_enable,
-            attn_out_topfed_payload_words,
-            attn_out_topfed_payload_words_valid);
+    if (attn_compat_shell_enable) {
+        const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
+            make_attn_layer0_prebuilt_handoff_desc(
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                attn_out_topfed_payload_enable,
+                attn_out_topfed_payload_words,
+                attn_out_topfed_payload_words_valid);
 
-    const bool attn_fully_prebuilt_from_top_managed =
-        kv_prebuilt_from_top_managed &&
-        q_prebuilt_from_top_managed &&
-        score_prebuilt_from_top_managed &&
-        out_prebuilt_from_top_managed;
-    const bool attn_shell_must_run =
-        (!attn_fully_prebuilt_from_top_managed) ||
-        attn_out_topfed_payload_enable;
-    if (attn_shell_must_run) {
-        AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
-            sram_window,
-            attn_cfg,
-            x_in_base_word,
-            sc.attn_out_base_word,
-            sc.attn,
-            (u32_t)0,
-            attn_prebuilt_handoff
-        );
+        const bool attn_fully_prebuilt_from_top_managed =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            out_prebuilt_from_top_managed;
+        const bool attn_shell_must_run =
+            (!attn_fully_prebuilt_from_top_managed) ||
+            attn_out_topfed_payload_enable;
+        if (attn_shell_must_run) {
+            AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
+                sram_window,
+                attn_cfg,
+                x_in_base_word,
+                sc.attn_out_base_word,
+                sc.attn,
+                (u32_t)0,
+                attn_prebuilt_handoff
+            );
+        }
     }
 
     FfnCfg ffn_cfg;
@@ -533,7 +536,8 @@ static inline void TransformerLayer(
         make_transformer_layer_ffn_topfed_handoff_desc(),
     bool attn_out_topfed_payload_enable = false,
     const u32_t* attn_out_topfed_payload_words = 0,
-    u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
+    u32_t attn_out_topfed_payload_words_valid = (u32_t)0u,
+    bool attn_compat_shell_enable = true
 ) {
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
@@ -547,35 +551,37 @@ static inline void TransformerLayer(
     attn_cfg.d_model = (u32_t)d_model;
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
-    const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
-        make_attn_layer0_prebuilt_handoff_desc(
-            kv_prebuilt_from_top_managed,
-            q_prebuilt_from_top_managed,
-            score_prebuilt_from_top_managed,
-            out_prebuilt_from_top_managed,
-            attn_out_topfed_payload_enable,
-            attn_out_topfed_payload_words,
-            attn_out_topfed_payload_words_valid);
+    if (attn_compat_shell_enable) {
+        const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
+            make_attn_layer0_prebuilt_handoff_desc(
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                attn_out_topfed_payload_enable,
+                attn_out_topfed_payload_words,
+                attn_out_topfed_payload_words_valid);
 
-    const bool attn_fully_prebuilt_from_top_managed =
-        kv_prebuilt_from_top_managed &&
-        q_prebuilt_from_top_managed &&
-        score_prebuilt_from_top_managed &&
-        out_prebuilt_from_top_managed;
-    const bool attn_shell_must_run =
-        (!attn_fully_prebuilt_from_top_managed) ||
-        attn_out_topfed_payload_enable;
-    if (attn_shell_must_run) {
-        // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
-        AttnLayer0<ATTN_STAGE_FULL>(
-            sram,
-            attn_cfg,
-            x_in_base_word,
-            sc.attn_out_base_word,
-            sc.attn,
-            (u32_t)0,
-            attn_prebuilt_handoff
-        );
+        const bool attn_fully_prebuilt_from_top_managed =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            out_prebuilt_from_top_managed;
+        const bool attn_shell_must_run =
+            (!attn_fully_prebuilt_from_top_managed) ||
+            attn_out_topfed_payload_enable;
+        if (attn_shell_must_run) {
+            // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
+            AttnLayer0<ATTN_STAGE_FULL>(
+                sram,
+                attn_cfg,
+                x_in_base_word,
+                sc.attn_out_base_word,
+                sc.attn,
+                (u32_t)0,
+                attn_prebuilt_handoff
+            );
+        }
     }
 
     FfnCfg ffn_cfg;
