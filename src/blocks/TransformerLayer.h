@@ -425,8 +425,17 @@ static inline void TransformerLayerTopManagedAttnBridge(
     if (w2_weight_words > (uint32_t)FFN_W2_WEIGHT_WORDS) {
         w2_weight_words = (uint32_t)FFN_W2_WEIGHT_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_weight_words; ++i) {
-        topfed_ffn_w2_words[i] = sram_window[w2_weight_base + i];
+    const uint32_t topfed_w2_weight_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_weight_words_valid.to_uint();
+    // Top decides descriptor readiness; this block only consumes it.
+    const bool w2_weight_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w2_weight_words != 0) &&
+        (topfed_w2_weight_words_valid_raw >= w2_weight_words);
+    if (!w2_weight_topfed_ready) {
+        // This fallback keeps the legacy preload path alive when descriptor data is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_weight_words; ++i) {
+            topfed_ffn_w2_words[i] = sram_window[w2_weight_base + i];
+        }
     }
     u32_t topfed_ffn_w2_bias_words[FFN_W2_BIAS_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_BIAS_WORDS; ++i) {
@@ -436,8 +445,17 @@ static inline void TransformerLayerTopManagedAttnBridge(
     if (w2_bias_words > (uint32_t)FFN_W2_BIAS_WORDS) {
         w2_bias_words = (uint32_t)FFN_W2_BIAS_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_bias_words; ++i) {
-        topfed_ffn_w2_bias_words[i] = sram_window[w2_bias_base + i];
+    const uint32_t topfed_w2_bias_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_bias_words_valid.to_uint();
+    // Top decides descriptor readiness; this block only consumes it.
+    const bool w2_bias_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w2_bias_words != 0) &&
+        (topfed_w2_bias_words_valid_raw >= w2_bias_words);
+    if (!w2_bias_topfed_ready) {
+        // This local materialization remains a compatibility path, not a new ownership model.
+        TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_bias_words; ++i) {
+            topfed_ffn_w2_bias_words[i] = sram_window[w2_bias_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_w2_input_words = 0;
     u32_t selected_topfed_ffn_w2_input_words_valid = (u32_t)0u;
@@ -455,26 +473,32 @@ static inline void TransformerLayerTopManagedAttnBridge(
     }
     const u32_t* selected_topfed_ffn_w2_words = 0;
     u32_t selected_topfed_ffn_w2_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w2_weight_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_weight_words_valid.to_uint(),
-        (uint32_t)FFN_W2_WEIGHT_WORDS,
-        topfed_ffn_w2_words,
-        w2_weight_words,
-        selected_topfed_ffn_w2_words,
-        selected_topfed_ffn_w2_words_valid
-    );
+    if (w2_weight_topfed_ready) {
+        // This mainline consumes W2 weight from the top-fed descriptor.
+        selected_topfed_ffn_w2_words = ffn_topfed_handoff_desc.topfed_w2_weight_words;
+        uint32_t selected_valid = topfed_w2_weight_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W2_WEIGHT_WORDS) {
+            selected_valid = (uint32_t)FFN_W2_WEIGHT_WORDS;
+        }
+        selected_topfed_ffn_w2_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w2_words = topfed_ffn_w2_words;
+        selected_topfed_ffn_w2_words_valid = (u32_t)w2_weight_words;
+    }
     const u32_t* selected_topfed_ffn_w2_bias_words = 0;
     u32_t selected_topfed_ffn_w2_bias_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w2_bias_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_bias_words_valid.to_uint(),
-        (uint32_t)FFN_W2_BIAS_WORDS,
-        topfed_ffn_w2_bias_words,
-        w2_bias_words,
-        selected_topfed_ffn_w2_bias_words,
-        selected_topfed_ffn_w2_bias_words_valid
-    );
+    if (w2_bias_topfed_ready) {
+        // This mainline consumes W2 bias from the top-fed descriptor.
+        selected_topfed_ffn_w2_bias_words = ffn_topfed_handoff_desc.topfed_w2_bias_words;
+        uint32_t selected_valid = topfed_w2_bias_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W2_BIAS_WORDS) {
+            selected_valid = (uint32_t)FFN_W2_BIAS_WORDS;
+        }
+        selected_topfed_ffn_w2_bias_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w2_bias_words = topfed_ffn_w2_bias_words;
+        selected_topfed_ffn_w2_bias_words_valid = (u32_t)w2_bias_words;
+    }
 
     // FFN stage transition: W2 consumes ReLU output and writes FFN output scratch.
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_W2>(
@@ -772,8 +796,17 @@ static inline void TransformerLayer(
     if (w2_weight_words > (uint32_t)FFN_W2_WEIGHT_WORDS) {
         w2_weight_words = (uint32_t)FFN_W2_WEIGHT_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_weight_words; ++i) {
-        topfed_ffn_w2_words[i] = sram[w2_weight_base + i];
+    const uint32_t topfed_w2_weight_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_weight_words_valid.to_uint();
+    // Top decides descriptor readiness; this block only consumes it.
+    const bool w2_weight_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w2_weight_words != 0) &&
+        (topfed_w2_weight_words_valid_raw >= w2_weight_words);
+    if (!w2_weight_topfed_ready) {
+        // This fallback keeps the legacy preload path alive when descriptor data is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_W2_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_weight_words; ++i) {
+            topfed_ffn_w2_words[i] = sram[w2_weight_base + i];
+        }
     }
     u32_t topfed_ffn_w2_bias_words[FFN_W2_BIAS_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_BIAS_WORDS; ++i) {
@@ -783,8 +816,17 @@ static inline void TransformerLayer(
     if (w2_bias_words > (uint32_t)FFN_W2_BIAS_WORDS) {
         w2_bias_words = (uint32_t)FFN_W2_BIAS_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_bias_words; ++i) {
-        topfed_ffn_w2_bias_words[i] = sram[w2_bias_base + i];
+    const uint32_t topfed_w2_bias_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_bias_words_valid.to_uint();
+    // Top decides descriptor readiness; this block only consumes it.
+    const bool w2_bias_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w2_bias_words != 0) &&
+        (topfed_w2_bias_words_valid_raw >= w2_bias_words);
+    if (!w2_bias_topfed_ready) {
+        // This local materialization remains a compatibility path, not a new ownership model.
+        TRANSFORMER_LAYER_FFN_TOPFED_W2_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_bias_words; ++i) {
+            topfed_ffn_w2_bias_words[i] = sram[w2_bias_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_w2_input_words = 0;
     u32_t selected_topfed_ffn_w2_input_words_valid = (u32_t)0u;
@@ -802,26 +844,32 @@ static inline void TransformerLayer(
     }
     const u32_t* selected_topfed_ffn_w2_words = 0;
     u32_t selected_topfed_ffn_w2_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w2_weight_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_weight_words_valid.to_uint(),
-        (uint32_t)FFN_W2_WEIGHT_WORDS,
-        topfed_ffn_w2_words,
-        w2_weight_words,
-        selected_topfed_ffn_w2_words,
-        selected_topfed_ffn_w2_words_valid
-    );
+    if (w2_weight_topfed_ready) {
+        // This mainline consumes W2 weight from the top-fed descriptor.
+        selected_topfed_ffn_w2_words = ffn_topfed_handoff_desc.topfed_w2_weight_words;
+        uint32_t selected_valid = topfed_w2_weight_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W2_WEIGHT_WORDS) {
+            selected_valid = (uint32_t)FFN_W2_WEIGHT_WORDS;
+        }
+        selected_topfed_ffn_w2_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w2_words = topfed_ffn_w2_words;
+        selected_topfed_ffn_w2_words_valid = (u32_t)w2_weight_words;
+    }
     const u32_t* selected_topfed_ffn_w2_bias_words = 0;
     u32_t selected_topfed_ffn_w2_bias_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w2_bias_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_bias_words_valid.to_uint(),
-        (uint32_t)FFN_W2_BIAS_WORDS,
-        topfed_ffn_w2_bias_words,
-        w2_bias_words,
-        selected_topfed_ffn_w2_bias_words,
-        selected_topfed_ffn_w2_bias_words_valid
-    );
+    if (w2_bias_topfed_ready) {
+        // This mainline consumes W2 bias from the top-fed descriptor.
+        selected_topfed_ffn_w2_bias_words = ffn_topfed_handoff_desc.topfed_w2_bias_words;
+        uint32_t selected_valid = topfed_w2_bias_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W2_BIAS_WORDS) {
+            selected_valid = (uint32_t)FFN_W2_BIAS_WORDS;
+        }
+        selected_topfed_ffn_w2_bias_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w2_bias_words = topfed_ffn_w2_bias_words;
+        selected_topfed_ffn_w2_bias_words_valid = (u32_t)w2_bias_words;
+    }
 
     // FFN stage transition: W2.
     FFNLayer0<FFN_STAGE_W2>(
