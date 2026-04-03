@@ -53,6 +53,10 @@ static inline void clear_transformer_layer_contract(TransformerLayerContract& c)
 struct TransformerLayerW2SeamProbe {
     u32_t w1_input_mainline_taken_count;
     u32_t w1_input_fallback_preload_count;
+    u32_t w1_weight_mainline_taken_count;
+    u32_t w1_weight_fallback_preload_count;
+    u32_t w1_bias_mainline_taken_count;
+    u32_t w1_bias_fallback_preload_count;
     u32_t w2_weight_mainline_taken_count;
     u32_t w2_weight_fallback_preload_count;
     u32_t w2_bias_mainline_taken_count;
@@ -62,6 +66,10 @@ struct TransformerLayerW2SeamProbe {
 static inline void clear_transformer_layer_w2_seam_probe(TransformerLayerW2SeamProbe& p) {
     p.w1_input_mainline_taken_count = (u32_t)0u;
     p.w1_input_fallback_preload_count = (u32_t)0u;
+    p.w1_weight_mainline_taken_count = (u32_t)0u;
+    p.w1_weight_fallback_preload_count = (u32_t)0u;
+    p.w1_bias_mainline_taken_count = (u32_t)0u;
+    p.w1_bias_fallback_preload_count = (u32_t)0u;
     p.w2_weight_mainline_taken_count = (u32_t)0u;
     p.w2_weight_fallback_preload_count = (u32_t)0u;
     p.w2_bias_mainline_taken_count = (u32_t)0u;
@@ -362,20 +370,40 @@ static inline void TransformerLayerTopManagedAttnBridge(
     if (w1_weight_words > (uint32_t)FFN_W1_WEIGHT_WORDS) {
         w1_weight_words = (uint32_t)FFN_W1_WEIGHT_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
-        topfed_ffn_w1_words[i] = sram_window[w1_weight_base + i];
+    const uint32_t topfed_w1_weight_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_weight_words_valid.to_uint();
+    // Top decides descriptor readiness here; this block only consumes it.
+    const bool w1_weight_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w1_weight_words != 0) &&
+        (topfed_w1_weight_words_valid_raw >= w1_weight_words);
+    if (!w1_weight_topfed_ready) {
+        // Probe this branch to prove W1 weight compatibility preload fallback.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_weight_fallback_preload_count);
+        }
+        // This fallback keeps the legacy preload path alive when descriptor data is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
+            topfed_ffn_w1_words[i] = sram_window[w1_weight_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_w1_words = 0;
     u32_t selected_topfed_ffn_w1_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w1_weight_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_weight_words_valid.to_uint(),
-        (uint32_t)FFN_W1_WEIGHT_WORDS,
-        topfed_ffn_w1_words,
-        w1_weight_words,
-        selected_topfed_ffn_w1_words,
-        selected_topfed_ffn_w1_words_valid
-    );
+    if (w1_weight_topfed_ready) {
+        // Probe this branch to prove W1 weight mainline descriptor consumption.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_weight_mainline_taken_count);
+        }
+        // This mainline consumes W1 weight directly from the top-fed descriptor.
+        selected_topfed_ffn_w1_words = ffn_topfed_handoff_desc.topfed_w1_weight_words;
+        uint32_t selected_valid = topfed_w1_weight_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W1_WEIGHT_WORDS) {
+            selected_valid = (uint32_t)FFN_W1_WEIGHT_WORDS;
+        }
+        selected_topfed_ffn_w1_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w1_words = topfed_ffn_w1_words;
+        selected_topfed_ffn_w1_words_valid = (u32_t)w1_weight_words;
+    }
     u32_t topfed_ffn_w1_bias_words[FFN_W1_BIAS_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_INIT_BRIDGE_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
         topfed_ffn_w1_bias_words[i] = 0;
@@ -387,20 +415,40 @@ static inline void TransformerLayerTopManagedAttnBridge(
     if (w1_bias_words > (uint32_t)FFN_W1_BIAS_WORDS) {
         w1_bias_words = (uint32_t)FFN_W1_BIAS_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
-        topfed_ffn_w1_bias_words[i] = sram_window[w1_bias_base + i];
+    const uint32_t topfed_w1_bias_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_bias_words_valid.to_uint();
+    // Top decides descriptor readiness here; this block only consumes it.
+    const bool w1_bias_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w1_bias_words != 0) &&
+        (topfed_w1_bias_words_valid_raw >= w1_bias_words);
+    if (!w1_bias_topfed_ready) {
+        // Probe this branch to prove W1 bias compatibility preload fallback.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_bias_fallback_preload_count);
+        }
+        // This local materialization remains a compatibility path, not a new ownership model.
+        TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
+            topfed_ffn_w1_bias_words[i] = sram_window[w1_bias_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_w1_bias_words = 0;
     u32_t selected_topfed_ffn_w1_bias_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w1_bias_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_bias_words_valid.to_uint(),
-        (uint32_t)FFN_W1_BIAS_WORDS,
-        topfed_ffn_w1_bias_words,
-        w1_bias_words,
-        selected_topfed_ffn_w1_bias_words,
-        selected_topfed_ffn_w1_bias_words_valid
-    );
+    if (w1_bias_topfed_ready) {
+        // Probe this branch to prove W1 bias mainline descriptor consumption.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_bias_mainline_taken_count);
+        }
+        // This mainline consumes W1 bias directly from the top-fed descriptor.
+        selected_topfed_ffn_w1_bias_words = ffn_topfed_handoff_desc.topfed_w1_bias_words;
+        uint32_t selected_valid = topfed_w1_bias_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W1_BIAS_WORDS) {
+            selected_valid = (uint32_t)FFN_W1_BIAS_WORDS;
+        }
+        selected_topfed_ffn_w1_bias_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w1_bias_words = topfed_ffn_w1_bias_words;
+        selected_topfed_ffn_w1_bias_words_valid = (u32_t)w1_bias_words;
+    }
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
     // FFN stage transition: W1 consumes selected input/weight/bias payload descriptors.
@@ -770,20 +818,40 @@ static inline void TransformerLayer(
     if (w1_weight_words > (uint32_t)FFN_W1_WEIGHT_WORDS) {
         w1_weight_words = (uint32_t)FFN_W1_WEIGHT_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
-        topfed_ffn_w1_words[i] = sram[w1_weight_base + i];
+    const uint32_t topfed_w1_weight_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_weight_words_valid.to_uint();
+    // Top decides descriptor readiness here; this block only consumes it.
+    const bool w1_weight_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w1_weight_words != 0) &&
+        (topfed_w1_weight_words_valid_raw >= w1_weight_words);
+    if (!w1_weight_topfed_ready) {
+        // Probe this branch to prove W1 weight compatibility preload fallback.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_weight_fallback_preload_count);
+        }
+        // This fallback keeps the legacy preload path alive when descriptor data is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_W1_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_weight_words; ++i) {
+            topfed_ffn_w1_words[i] = sram[w1_weight_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_w1_words = 0;
     u32_t selected_topfed_ffn_w1_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w1_weight_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_weight_words_valid.to_uint(),
-        (uint32_t)FFN_W1_WEIGHT_WORDS,
-        topfed_ffn_w1_words,
-        w1_weight_words,
-        selected_topfed_ffn_w1_words,
-        selected_topfed_ffn_w1_words_valid
-    );
+    if (w1_weight_topfed_ready) {
+        // Probe this branch to prove W1 weight mainline descriptor consumption.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_weight_mainline_taken_count);
+        }
+        // This mainline consumes W1 weight directly from the top-fed descriptor.
+        selected_topfed_ffn_w1_words = ffn_topfed_handoff_desc.topfed_w1_weight_words;
+        uint32_t selected_valid = topfed_w1_weight_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W1_WEIGHT_WORDS) {
+            selected_valid = (uint32_t)FFN_W1_WEIGHT_WORDS;
+        }
+        selected_topfed_ffn_w1_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w1_words = topfed_ffn_w1_words;
+        selected_topfed_ffn_w1_words_valid = (u32_t)w1_weight_words;
+    }
     u32_t topfed_ffn_w1_bias_words[FFN_W1_BIAS_WORDS];
     TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
         topfed_ffn_w1_bias_words[i] = 0;
@@ -795,20 +863,40 @@ static inline void TransformerLayer(
     if (w1_bias_words > (uint32_t)FFN_W1_BIAS_WORDS) {
         w1_bias_words = (uint32_t)FFN_W1_BIAS_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
-        topfed_ffn_w1_bias_words[i] = sram[w1_bias_base + i];
+    const uint32_t topfed_w1_bias_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_bias_words_valid.to_uint();
+    // Top decides descriptor readiness here; this block only consumes it.
+    const bool w1_bias_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w1_bias_words != 0) &&
+        (topfed_w1_bias_words_valid_raw >= w1_bias_words);
+    if (!w1_bias_topfed_ready) {
+        // Probe this branch to prove W1 bias compatibility preload fallback.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_bias_fallback_preload_count);
+        }
+        // This local materialization remains a compatibility path, not a new ownership model.
+        TRANSFORMER_LAYER_FFN_TOPFED_W1_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < w1_bias_words; ++i) {
+            topfed_ffn_w1_bias_words[i] = sram[w1_bias_base + i];
+        }
     }
     const u32_t* selected_topfed_ffn_w1_bias_words = 0;
     u32_t selected_topfed_ffn_w1_bias_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w1_bias_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w1_bias_words_valid.to_uint(),
-        (uint32_t)FFN_W1_BIAS_WORDS,
-        topfed_ffn_w1_bias_words,
-        w1_bias_words,
-        selected_topfed_ffn_w1_bias_words,
-        selected_topfed_ffn_w1_bias_words_valid
-    );
+    if (w1_bias_topfed_ready) {
+        // Probe this branch to prove W1 bias mainline descriptor consumption.
+        if (w2_seam_probe != 0) {
+            transformer_layer_probe_inc(&w2_seam_probe->w1_bias_mainline_taken_count);
+        }
+        // This mainline consumes W1 bias directly from the top-fed descriptor.
+        selected_topfed_ffn_w1_bias_words = ffn_topfed_handoff_desc.topfed_w1_bias_words;
+        uint32_t selected_valid = topfed_w1_bias_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W1_BIAS_WORDS) {
+            selected_valid = (uint32_t)FFN_W1_BIAS_WORDS;
+        }
+        selected_topfed_ffn_w1_bias_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w1_bias_words = topfed_ffn_w1_bias_words;
+        selected_topfed_ffn_w1_bias_words_valid = (u32_t)w1_bias_words;
+    }
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
     // FFN stage transition: W1.
