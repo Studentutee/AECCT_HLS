@@ -401,8 +401,17 @@ static inline void TransformerLayerTopManagedAttnBridge(
     if (w2_input_words > (uint32_t)FFN_W2_INPUT_WORDS) {
         w2_input_words = (uint32_t)FFN_W2_INPUT_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_input_words; ++i) {
-        topfed_ffn_w2_input_words[i] = sram_window[relu_base + i];
+    const uint32_t topfed_w2_input_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_input_words_valid.to_uint();
+    // Top decides descriptor span at dispatch; this block only consumes that policy.
+    const bool w2_input_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w2_input_words != 0) &&
+        (topfed_w2_input_words_valid_raw >= w2_input_words);
+    if (!w2_input_topfed_ready) {
+        // Compatibility fallback: materialize from ReLU scratch only when Top-fed payload is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_PRELOAD_BRIDGE_LOOP: for (uint32_t i = 0u; i < w2_input_words; ++i) {
+            topfed_ffn_w2_input_words[i] = sram_window[relu_base + i];
+        }
     }
     const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
     const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
@@ -432,15 +441,18 @@ static inline void TransformerLayerTopManagedAttnBridge(
     }
     const u32_t* selected_topfed_ffn_w2_input_words = 0;
     u32_t selected_topfed_ffn_w2_input_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w2_input_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_input_words_valid.to_uint(),
-        (uint32_t)FFN_W2_INPUT_WORDS,
-        topfed_ffn_w2_input_words,
-        w2_input_words,
-        selected_topfed_ffn_w2_input_words,
-        selected_topfed_ffn_w2_input_words_valid
-    );
+    if (w2_input_topfed_ready) {
+        // Mainline consumes prebuilt W2 input and skips local materialization.
+        selected_topfed_ffn_w2_input_words = ffn_topfed_handoff_desc.topfed_w2_input_words;
+        uint32_t selected_valid = topfed_w2_input_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W2_INPUT_WORDS) {
+            selected_valid = (uint32_t)FFN_W2_INPUT_WORDS;
+        }
+        selected_topfed_ffn_w2_input_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w2_input_words = topfed_ffn_w2_input_words;
+        selected_topfed_ffn_w2_input_words_valid = (u32_t)w2_input_words;
+    }
     const u32_t* selected_topfed_ffn_w2_words = 0;
     u32_t selected_topfed_ffn_w2_words_valid = (u32_t)0u;
     transformer_layer_select_topfed_words(
@@ -736,8 +748,17 @@ static inline void TransformerLayer(
     if (w2_input_words > (uint32_t)FFN_W2_INPUT_WORDS) {
         w2_input_words = (uint32_t)FFN_W2_INPUT_WORDS;
     }
-    TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_input_words; ++i) {
-        topfed_ffn_w2_input_words[i] = sram[relu_base + i];
+    const uint32_t topfed_w2_input_words_valid_raw =
+        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_input_words_valid.to_uint();
+    // Top decides descriptor span at dispatch; this block only consumes that policy.
+    const bool w2_input_topfed_ready =
+        (ffn_topfed_handoff_desc.topfed_w2_input_words != 0) &&
+        (topfed_w2_input_words_valid_raw >= w2_input_words);
+    if (!w2_input_topfed_ready) {
+        // This fallback keeps the legacy path alive when top-fed payload is absent.
+        TRANSFORMER_LAYER_FFN_TOPFED_W2_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < w2_input_words; ++i) {
+            topfed_ffn_w2_input_words[i] = sram[relu_base + i];
+        }
     }
     const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
     const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
@@ -767,15 +788,18 @@ static inline void TransformerLayer(
     }
     const u32_t* selected_topfed_ffn_w2_input_words = 0;
     u32_t selected_topfed_ffn_w2_input_words_valid = (u32_t)0u;
-    transformer_layer_select_topfed_words(
-        ffn_topfed_handoff_desc.topfed_w2_input_words,
-        (uint32_t)ffn_topfed_handoff_desc.topfed_w2_input_words_valid.to_uint(),
-        (uint32_t)FFN_W2_INPUT_WORDS,
-        topfed_ffn_w2_input_words,
-        w2_input_words,
-        selected_topfed_ffn_w2_input_words,
-        selected_topfed_ffn_w2_input_words_valid
-    );
+    if (w2_input_topfed_ready) {
+        // Mainline consumes prebuilt W2 input and skips local materialization.
+        selected_topfed_ffn_w2_input_words = ffn_topfed_handoff_desc.topfed_w2_input_words;
+        uint32_t selected_valid = topfed_w2_input_words_valid_raw;
+        if (selected_valid > (uint32_t)FFN_W2_INPUT_WORDS) {
+            selected_valid = (uint32_t)FFN_W2_INPUT_WORDS;
+        }
+        selected_topfed_ffn_w2_input_words_valid = (u32_t)selected_valid;
+    } else {
+        selected_topfed_ffn_w2_input_words = topfed_ffn_w2_input_words;
+        selected_topfed_ffn_w2_input_words_valid = (u32_t)w2_input_words;
+    }
     const u32_t* selected_topfed_ffn_w2_words = 0;
     u32_t selected_topfed_ffn_w2_words_valid = (u32_t)0u;
     transformer_layer_select_topfed_words(
