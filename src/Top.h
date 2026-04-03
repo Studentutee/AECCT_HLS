@@ -2195,19 +2195,47 @@ namespace aecct {
 
     // Top owns this policy decision.
     // Downstream blocks consume the flag and must not redefine ownership semantics.
+    static inline bool top_attn_out_topfed_payload_descriptor_ready(
+        bool attn_out_topfed_payload_enable,
+        const u32_t* attn_out_topfed_payload_words,
+        u32_t attn_out_topfed_payload_words_valid
+    ) {
+        // Top decides readiness here; downstream blocks only consume this policy output.
+        if (!attn_out_topfed_payload_enable) {
+            return false;
+        }
+        if (attn_out_topfed_payload_words == 0) {
+            return false;
+        }
+        const uint32_t payload_words_valid =
+            (uint32_t)attn_out_topfed_payload_words_valid.to_uint();
+        return payload_words_valid >= (uint32_t)ATTN_TENSOR_WORDS;
+    }
+
+    // Top owns this policy decision.
+    // Downstream blocks consume the flag and must not redefine ownership semantics.
     static inline bool top_should_enable_attn_compat_shell(
         bool kv_prebuilt_from_top_managed,
         bool q_prebuilt_from_top_managed,
         bool score_prebuilt_from_top_managed,
         bool out_prebuilt_from_top_managed,
-        bool attn_out_topfed_payload_enable
+        bool attn_out_topfed_payload_enable,
+        const u32_t* attn_out_topfed_payload_words,
+        u32_t attn_out_topfed_payload_words_valid
     ) {
         const bool attn_fully_prebuilt_from_top_managed =
             kv_prebuilt_from_top_managed &&
             q_prebuilt_from_top_managed &&
             score_prebuilt_from_top_managed &&
             out_prebuilt_from_top_managed;
-        return (!attn_fully_prebuilt_from_top_managed) || attn_out_topfed_payload_enable;
+        const bool attn_out_topfed_payload_ready =
+            top_attn_out_topfed_payload_descriptor_ready(
+                attn_out_topfed_payload_enable,
+                attn_out_topfed_payload_words,
+                attn_out_topfed_payload_words_valid
+            );
+        // Compatibility shell is needed for incomplete prebuild coverage or ready OUT payload consume.
+        return (!attn_fully_prebuilt_from_top_managed) || attn_out_topfed_payload_ready;
     }
 
     static inline void top_dispatch_transformer_layer(
@@ -2235,7 +2263,9 @@ namespace aecct {
             q_prebuilt_from_top_managed,
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
-            attn_out_topfed_payload_enable
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid
         );
         TransformerLayer(
             sram,
@@ -2284,7 +2314,9 @@ namespace aecct {
             q_prebuilt_from_top_managed,
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
-            attn_out_topfed_payload_enable
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid
         );
         TransformerLayerTopManagedAttnBridge(
             sram,
@@ -2845,13 +2877,13 @@ namespace aecct {
                 regs.p11ax_attn_out_payload_gate_taken_count =
                     regs.p11ax_attn_out_payload_gate_taken_count + (u32_t)1u;
             }
-            const uint32_t attn_out_topfed_payload_words_valid_raw =
-                (uint32_t)attn_out_topfed_payload_words_valid_for_layer.to_uint();
-            // Attn-OUT payload seam: invalid/short descriptors are tracked as compatibility fallback.
+            // Top computes OUT descriptor readiness once; downstream uses this as a consume policy.
             const bool attn_out_topfed_payload_non_empty =
-                attn_out_topfed_payload_enable_for_layer &&
-                (attn_out_topfed_payload_words_for_layer != 0) &&
-                (attn_out_topfed_payload_words_valid_raw >= (uint32_t)ATTN_TENSOR_WORDS);
+                top_attn_out_topfed_payload_descriptor_ready(
+                    attn_out_topfed_payload_enable_for_layer,
+                    attn_out_topfed_payload_words_for_layer,
+                    attn_out_topfed_payload_words_valid_for_layer
+                );
             if (attn_out_topfed_payload_non_empty) {
                 regs.p11ax_attn_out_payload_non_empty_count =
                     regs.p11ax_attn_out_payload_non_empty_count + (u32_t)1u;
@@ -2875,7 +2907,9 @@ namespace aecct {
                 q_prebuilt_from_top_managed,
                 score_prebuilt_from_top_managed,
                 out_prebuilt_from_top_managed,
-                attn_out_topfed_payload_enable_for_layer
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
             );
             if (attn_compat_shell_enable_for_layer) {
                 regs.p11bd_attn_compat_shell_enabled_count =
@@ -3491,13 +3525,13 @@ namespace aecct {
                 regs.p11ax_attn_out_payload_gate_taken_count =
                     regs.p11ax_attn_out_payload_gate_taken_count + (u32_t)1u;
             }
-            const uint32_t attn_out_topfed_payload_words_valid_raw =
-                (uint32_t)attn_out_topfed_payload_words_valid_for_layer.to_uint();
-            // OUT payload descriptors are tracked separately from AE/AF prebuilt flags.
+            // Top computes OUT descriptor readiness once; downstream uses this as a consume policy.
             const bool attn_out_topfed_payload_non_empty =
-                attn_out_topfed_payload_enable_for_layer &&
-                (attn_out_topfed_payload_words_for_layer != 0) &&
-                (attn_out_topfed_payload_words_valid_raw >= (uint32_t)ATTN_TENSOR_WORDS);
+                top_attn_out_topfed_payload_descriptor_ready(
+                    attn_out_topfed_payload_enable_for_layer,
+                    attn_out_topfed_payload_words_for_layer,
+                    attn_out_topfed_payload_words_valid_for_layer
+                );
             if (attn_out_topfed_payload_non_empty) {
                 regs.p11ax_attn_out_payload_non_empty_count =
                     regs.p11ax_attn_out_payload_non_empty_count + (u32_t)1u;
@@ -3520,7 +3554,9 @@ namespace aecct {
                 q_prebuilt_from_top_managed,
                 score_prebuilt_from_top_managed,
                 out_prebuilt_from_top_managed,
-                attn_out_topfed_payload_enable_for_layer
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
             );
             if (attn_compat_shell_enable_for_layer) {
                 regs.p11bd_attn_compat_shell_enabled_count =

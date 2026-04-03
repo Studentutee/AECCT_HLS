@@ -48,6 +48,9 @@ public:
         if (!run_full_loop_mainline()) {
             return 1;
         }
+        if (!run_full_loop_attn_out_payload_descriptor_invalid_shell_cut()) {
+            return 1;
+        }
         if (!run_full_loop_mixed_layer_mainline()) {
             return 1;
         }
@@ -1120,6 +1123,76 @@ private:
         std::printf("FULL_LOOP_MAINLINE_PATH_TAKEN PASS\n");
         std::printf("fallback_taken = false\n");
         std::printf("FULL_LOOP_FALLBACK_NOT_TAKEN PASS\n");
+        return true;
+    }
+
+    bool run_full_loop_attn_out_payload_descriptor_invalid_shell_cut() {
+        std::vector<aecct::u32_t> sram_payload_invalid;
+        seed_full_loop_sram(sram_payload_invalid);
+
+        aecct::TopRegs regs_payload_invalid;
+        init_top_regs_for_layers(regs_payload_invalid, 1u, 0u);
+
+        // Top enables OUT payload seam but marks descriptor invalid for this bounded cut probe.
+        aecct::run_transformer_layer_loop(
+            regs_payload_invalid,
+            sram_payload_invalid.data(),
+            false,
+            true,
+            true,
+            false
+        );
+
+        if (!check_lid0_marker_contract(regs_payload_invalid, "ATTN_OUT_DESC_INVALID_N1", false)) {
+            return false;
+        }
+        if (!check_attn_compat_shell_observability(
+                regs_payload_invalid,
+                "ATTN_OUT_DESC_INVALID_N1",
+                1u,
+                0u)) {
+            return false;
+        }
+        if (!check_handoff_counter_conservation(regs_payload_invalid, "ATTN_OUT_DESC_INVALID_N1")) {
+            return false;
+        }
+
+        const uint32_t payload_gate_count =
+            (uint32_t)regs_payload_invalid.p11ax_attn_out_payload_gate_taken_count.to_uint();
+        const uint32_t payload_non_empty_count =
+            (uint32_t)regs_payload_invalid.p11ax_attn_out_payload_non_empty_count.to_uint();
+        const uint32_t payload_fallback_count =
+            (uint32_t)regs_payload_invalid.p11ax_attn_out_payload_fallback_seen_count.to_uint();
+        if (payload_gate_count != 1u || payload_non_empty_count != 0u || payload_fallback_count != 1u) {
+            std::printf(
+                "[p11aj][FAIL] ATTN_OUT_DESC_INVALID_N1 payload counters mismatch gate=%u non_empty=%u fallback=%u exp=1/0/1\n",
+                (unsigned)payload_gate_count,
+                (unsigned)payload_non_empty_count,
+                (unsigned)payload_fallback_count);
+            return false;
+        }
+
+        const uint32_t shell_enabled_count =
+            (uint32_t)regs_payload_invalid.p11bd_attn_compat_shell_enabled_count.to_uint();
+        const uint32_t shell_disabled_count =
+            (uint32_t)regs_payload_invalid.p11bd_attn_compat_shell_disabled_count.to_uint();
+        if (shell_enabled_count != 0u || shell_disabled_count != 1u) {
+            std::printf(
+                "[p11aj][FAIL] ATTN_OUT_DESC_INVALID_N1 shell counters mismatch enabled=%u disabled=%u exp=0/1\n",
+                (unsigned)shell_enabled_count,
+                (unsigned)shell_disabled_count);
+            return false;
+        }
+
+        std::printf(
+            "CASE_ATTN_OUT_DESC_INVALID_N1_SHELL_POLICY enabled=%u disabled=%u payload_gate=%u payload_non_empty=%u payload_fallback=%u\n",
+            (unsigned)shell_enabled_count,
+            (unsigned)shell_disabled_count,
+            (unsigned)payload_gate_count,
+            (unsigned)payload_non_empty_count,
+            (unsigned)payload_fallback_count);
+        std::printf("CASE_ATTN_OUT_DESC_INVALID_N1_COMPAT_SHELL_REMAINS_DISABLED PASS\n");
+        std::printf("CASE_ATTN_OUT_DESC_INVALID_N1_ACCEPTANCE PASS\n");
         return true;
     }
 

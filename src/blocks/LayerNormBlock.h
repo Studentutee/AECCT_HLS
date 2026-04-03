@@ -63,6 +63,26 @@ struct LayerNormTopManagedTileMeta {
     u16_t tile_valid_words;
 };
 
+// Local-only observability for affine consume seam selection.
+// This does not affect production ownership semantics.
+struct LayerNormAffineConsumeTrace {
+    bool saw_topfed_gamma;
+    bool saw_topfed_beta;
+    bool used_topfed_gamma;
+    bool used_topfed_beta;
+    bool used_fallback_gamma;
+    bool used_fallback_beta;
+};
+
+static inline void clear_layernorm_affine_consume_trace(LayerNormAffineConsumeTrace& t) {
+    t.saw_topfed_gamma = false;
+    t.saw_topfed_beta = false;
+    t.used_topfed_gamma = false;
+    t.used_topfed_beta = false;
+    t.used_fallback_gamma = false;
+    t.used_fallback_beta = false;
+}
+
 static inline bool layernorm_top_managed_tile_meta_ok(
     const LayerNormTopManagedTileMeta& m,
     uint32_t expect_phase_id,
@@ -93,7 +113,8 @@ static inline void LayerNormBlockCoreWindow(
     u32_t x_out_base_word,
     const LayerNormBlockContract& contract,
     const u32_t* topfed_gamma_words = 0,
-    const u32_t* topfed_beta_words = 0
+    const u32_t* topfed_beta_words = 0,
+    LayerNormAffineConsumeTrace* affine_trace = 0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -135,6 +156,13 @@ static inline void LayerNormBlockCoreWindow(
 
     const uint32_t phase_id_u32 = (uint32_t)contract.phase_id;
     const uint32_t subphase_id_u32 = (uint32_t)ATTN_SUBPHASE_OUT;
+    const bool has_topfed_gamma = (topfed_gamma_words != 0);
+    const bool has_topfed_beta = (topfed_beta_words != 0);
+    if (affine_trace != 0) {
+        clear_layernorm_affine_consume_trace(*affine_trace);
+        affine_trace->saw_topfed_gamma = has_topfed_gamma;
+        affine_trace->saw_topfed_beta = has_topfed_beta;
+    }
 
     LAYERNORM_TOP_MANAGED_TOKEN_LOOP: for (uint32_t t = token_begin; t < token_end; ++t) {
         const uint32_t row_in_base = x_in_base + t * d_model;
@@ -277,6 +305,18 @@ static inline void LayerNormBlockCoreWindow(
                     (topfed_gamma_words != 0) ? topfed_gamma_words[c] : sram[gamma_base + c];
                 const u32_t b_bits =
                     (topfed_beta_words != 0) ? topfed_beta_words[c] : sram[beta_base + c];
+                if (affine_trace != 0) {
+                    if (topfed_gamma_words != 0) {
+                        affine_trace->used_topfed_gamma = true;
+                    } else {
+                        affine_trace->used_fallback_gamma = true;
+                    }
+                    if (topfed_beta_words != 0) {
+                        affine_trace->used_topfed_beta = true;
+                    } else {
+                        affine_trace->used_fallback_beta = true;
+                    }
+                }
                 const fp32_t g = fp32_from_bits(g_bits);
                 const fp32_t b = fp32_from_bits(b_bits);
                 const fp32_t y = ((x - mean) * inv_std) * g + b;
