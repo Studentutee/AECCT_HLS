@@ -237,15 +237,25 @@ static inline void TransformerLayerTopManagedAttnBridge(
             attn_out_topfed_payload_words,
             attn_out_topfed_payload_words_valid);
 
-    AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
-        sram_window,
-        attn_cfg,
-        x_in_base_word,
-        sc.attn_out_base_word,
-        sc.attn,
-        (u32_t)0,
-        attn_prebuilt_handoff
-    );
+    const bool attn_fully_prebuilt_from_top_managed =
+        kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        out_prebuilt_from_top_managed;
+    const bool attn_shell_must_run =
+        (!attn_fully_prebuilt_from_top_managed) ||
+        attn_out_topfed_payload_enable;
+    if (attn_shell_must_run) {
+        AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
+            sram_window,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+    }
 
     FfnCfg ffn_cfg;
     ffn_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
@@ -547,16 +557,26 @@ static inline void TransformerLayer(
             attn_out_topfed_payload_words,
             attn_out_topfed_payload_words_valid);
 
-    // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
-    AttnLayer0<ATTN_STAGE_FULL>(
-        sram,
-        attn_cfg,
-        x_in_base_word,
-        sc.attn_out_base_word,
-        sc.attn,
-        (u32_t)0,
-        attn_prebuilt_handoff
-    );
+    const bool attn_fully_prebuilt_from_top_managed =
+        kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        out_prebuilt_from_top_managed;
+    const bool attn_shell_must_run =
+        (!attn_fully_prebuilt_from_top_managed) ||
+        attn_out_topfed_payload_enable;
+    if (attn_shell_must_run) {
+        // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
+        AttnLayer0<ATTN_STAGE_FULL>(
+            sram,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+    }
 
     FfnCfg ffn_cfg;
     ffn_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
