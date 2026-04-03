@@ -47,3 +47,16 @@ Completion reports must include all of the following:
 - Run `powershell -ExecutionPolicy Bypass -File scripts/check_repo_hygiene.ps1 -Phase pre`.
 - If agent tooling files changed, run `powershell -ExecutionPolicy Bypass -File scripts/check_agent_tooling.ps1`.
 - Run the smallest relevant task-local checker/runner for the touched scope.
+
+## Night-Run Automation Skeleton
+- The fixed night-run skeleton assets are:
+  - `docs/night_run/NIGHT_PACK.md`
+  - `docs/night_run/TASK_QUEUE.md`
+  - `docs/night_run/ACCEPTANCE_PACK.md`
+  - `scripts/local/run_night_pack.ps1`
+- Skeleton scope is orchestration and evidence scaffolding, not direct design-mainline advancement.
+- Night-run skeleton outputs must keep closure posture explicit:
+  - `not Catapult closure`
+  - `not SCVerify closure`
+- Night-run smoke validation must emit machine-readable and human-readable evidence under `build/night_run/`.
+- Do not edit attention/design code as part of skeleton-only setup unless explicitly queued as a design task.
