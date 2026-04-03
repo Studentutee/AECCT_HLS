@@ -89,6 +89,39 @@ struct CfgRegs {
     u32_t n_layers;
 };
 
+enum TransformerAttnCompatShellStage {
+    TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED = 0,
+    TRANSFORMER_ATTN_COMPAT_SHELL_FULL = 1,
+    TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY = 2
+};
+
+static inline TransformerAttnCompatShellStage transformer_layer_select_attn_compat_shell_stage(
+    bool attn_compat_shell_enable,
+    bool kv_prebuilt_from_top_managed,
+    bool q_prebuilt_from_top_managed,
+    bool score_prebuilt_from_top_managed,
+    bool out_prebuilt_from_top_managed,
+    bool attn_out_topfed_payload_enable
+) {
+    if (!attn_compat_shell_enable) {
+        return TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED;
+    }
+    const bool attn_fully_prebuilt_from_top_managed =
+        kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        out_prebuilt_from_top_managed;
+    if (attn_fully_prebuilt_from_top_managed) {
+        // Ownership seam: when all upstream stages are prebuilt, keep shell to OUT consume only.
+        if (attn_out_topfed_payload_enable) {
+            return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+        }
+        return TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED;
+    }
+    // Partial-prebuild path keeps the legacy full-shell behavior.
+    return TRANSFORMER_ATTN_COMPAT_SHELL_FULL;
+}
+
 // local-only higher-level ownership seam for FFN W1/W2 payload handoff.
 // Top can optionally provide preloaded FFN payload descriptors.
 struct TransformerLayerFfnTopfedHandoffDesc {
@@ -268,37 +301,45 @@ static inline void TransformerLayerTopManagedAttnBridge(
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
     // Top passes compat-shell policy into this block; this block consumes it only.
-    if (attn_compat_shell_enable) {
-        const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
-            make_attn_layer0_prebuilt_handoff_desc(
-                kv_prebuilt_from_top_managed,
-                q_prebuilt_from_top_managed,
-                score_prebuilt_from_top_managed,
-                out_prebuilt_from_top_managed,
-                attn_out_topfed_payload_enable,
-                attn_out_topfed_payload_words,
-                attn_out_topfed_payload_words_valid);
-
-        const bool attn_fully_prebuilt_from_top_managed =
-            kv_prebuilt_from_top_managed &&
-            q_prebuilt_from_top_managed &&
-            score_prebuilt_from_top_managed &&
-            out_prebuilt_from_top_managed;
-        // Shell runs whenever any attention stage is not prebuilt, or when OUT payload must be consumed.
-        const bool attn_shell_must_run =
-            (!attn_fully_prebuilt_from_top_managed) ||
-            attn_out_topfed_payload_enable;
-        if (attn_shell_must_run) {
-            AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
-                sram_window,
-                attn_cfg,
-                x_in_base_word,
-                sc.attn_out_base_word,
-                sc.attn,
-                (u32_t)0,
-                attn_prebuilt_handoff
-            );
-        }
+    const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
+        make_attn_layer0_prebuilt_handoff_desc(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid);
+    const TransformerAttnCompatShellStage attn_shell_stage =
+        transformer_layer_select_attn_compat_shell_stage(
+            attn_compat_shell_enable,
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable);
+    if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+        // Stage boundary: partial-prebuild keeps full-shell execution.
+        AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
+            sram_window,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+    } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+        // Stage boundary: fully-prebuilt + payload-consume shrinks to OUT-only shell.
+        AttnLayer0TopManagedWindowBridge<ATTN_STAGE_OUT>(
+            sram_window,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
     }
 
     FfnCfg ffn_cfg;
@@ -715,38 +756,45 @@ static inline void TransformerLayer(
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
     // Top-owned compat-shell policy is consumed here in the pointer entry as well.
-    if (attn_compat_shell_enable) {
-        const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
-            make_attn_layer0_prebuilt_handoff_desc(
-                kv_prebuilt_from_top_managed,
-                q_prebuilt_from_top_managed,
-                score_prebuilt_from_top_managed,
-                out_prebuilt_from_top_managed,
-                attn_out_topfed_payload_enable,
-                attn_out_topfed_payload_words,
-                attn_out_topfed_payload_words_valid);
-
-        const bool attn_fully_prebuilt_from_top_managed =
-            kv_prebuilt_from_top_managed &&
-            q_prebuilt_from_top_managed &&
-            score_prebuilt_from_top_managed &&
-            out_prebuilt_from_top_managed;
-        // Execute shell when prebuild coverage is incomplete or OUT top-fed payload is explicitly enabled.
-        const bool attn_shell_must_run =
-            (!attn_fully_prebuilt_from_top_managed) ||
-            attn_out_topfed_payload_enable;
-        if (attn_shell_must_run) {
-            // AttnLayer0 consumes Top-selected boundaries and prebuilt-flag handoff from Top.
-            AttnLayer0<ATTN_STAGE_FULL>(
-                sram,
-                attn_cfg,
-                x_in_base_word,
-                sc.attn_out_base_word,
-                sc.attn,
-                (u32_t)0,
-                attn_prebuilt_handoff
-            );
-        }
+    const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
+        make_attn_layer0_prebuilt_handoff_desc(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid);
+    const TransformerAttnCompatShellStage attn_shell_stage =
+        transformer_layer_select_attn_compat_shell_stage(
+            attn_compat_shell_enable,
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable);
+    if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+        // Stage boundary: partial-prebuild keeps full-shell execution.
+        AttnLayer0<ATTN_STAGE_FULL>(
+            sram,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+    } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+        // Stage boundary: fully-prebuilt + payload-consume shrinks to OUT-only shell.
+        AttnLayer0<ATTN_STAGE_OUT>(
+            sram,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
     }
 
     FfnCfg ffn_cfg;

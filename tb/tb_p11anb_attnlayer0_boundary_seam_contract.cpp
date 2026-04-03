@@ -171,6 +171,7 @@ public:
         if (!run_qkv_descriptor_skip_case()) { return 1; }
         if (!run_out_descriptor_gate_case()) { return 1; }
         if (!run_out_topfed_payload_deeper_consume_case()) { return 1; }
+        if (!run_transformerlayer_attn_shell_shrink_selector_case()) { return 1; }
         if (!run_transformerlayer_out_topfed_mapping_pointer_case()) { return 1; }
         if (!run_transformerlayer_out_topfed_mapping_deep_bridge_case()) { return 1; }
         if (!run_top_caller_out_topfed_mapping_pointer_case()) { return 1; }
@@ -513,6 +514,60 @@ private:
             return false;
         }
         std::printf("P11ANB_ATTNLAYER0_OUT_TOPFED_PAYLOAD_DISABLED_FALLBACK PASS\n");
+        return true;
+    }
+
+    bool run_transformerlayer_attn_shell_shrink_selector_case() {
+        const aecct::TransformerAttnCompatShellStage fully_prebuilt_payload_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                true,
+                true,
+                true,
+                true,
+                true);
+        if (fully_prebuilt_payload_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+            std::printf(
+                "[p11anb][FAIL] fully-prebuilt payload stage mismatch got=%u exp=%u\n",
+                (unsigned)fully_prebuilt_payload_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_FULLY_PREBUILT_OUT_ONLY PASS\n");
+
+        const aecct::TransformerAttnCompatShellStage fully_prebuilt_no_payload_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                true,
+                true,
+                true,
+                true,
+                false);
+        if (fully_prebuilt_no_payload_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
+            std::printf(
+                "[p11anb][FAIL] fully-prebuilt no-payload stage mismatch got=%u exp=%u\n",
+                (unsigned)fully_prebuilt_no_payload_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_FULLY_PREBUILT_NO_PAYLOAD_DISABLED PASS\n");
+
+        const aecct::TransformerAttnCompatShellStage partial_prebuilt_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                true,
+                true,
+                false,
+                false,
+                true);
+        if (partial_prebuilt_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+            std::printf(
+                "[p11anb][FAIL] partial-prebuilt stage mismatch got=%u exp=%u\n",
+                (unsigned)partial_prebuilt_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_PARTIAL_PREBUILT_STILL_FULL PASS\n");
         return true;
     }
 
