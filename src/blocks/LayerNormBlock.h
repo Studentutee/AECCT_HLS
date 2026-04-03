@@ -1,5 +1,8 @@
 #pragma once
 // LayerNorm block with two-pass implementation.
+// Pass 1 accumulates token-wise mean/variance.
+// Pass 2 normalizes, applies gamma/beta, and writes back to the caller-selected window.
+// Ownership boundary: caller/Top selects token/tile ranges and owns shared-SRAM policy.
 
 #include <cstdio>
 #include <cstdint>
@@ -402,6 +405,9 @@ static inline void LayerNormBlockCoreWindowDirect(
     }
 }
 
+// Public LayerNorm entry.
+// Default mainline already uses the Top-managed token/tile core; direct-window access
+// remains only as the worker implementation detail under the caller-owned base words.
 static inline void LayerNormBlock(
     u32_t* sram,
     const LayerNormCfg& cfg,

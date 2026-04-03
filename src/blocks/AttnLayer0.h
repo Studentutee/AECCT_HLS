@@ -121,6 +121,9 @@ static inline AttnLayer0PrebuiltHandoffDesc make_attn_layer0_prebuilt_handoff_de
 template<unsigned STAGE_MODE, typename SramView>
 // AttnLayer0 executes stage-scoped attention work in SRAM windows owned by Top.
 // Ownership boundary: this block only consumes the base offsets provided by Top.
+// Reading rule: start from the stage comments below and do not treat this file as a
+// single straight-line kernel; it is an accepted attention datapath mixed with
+// migration-era prebuilt/top-fed seams.
 // TransformerLayer handoff boundary:
 // - x_in_base_word is the layer input slice selected by TransformerLayer/Top.
 // - attn_out_base_word is the output slice consumed by the downstream FFN stage.
@@ -609,6 +612,10 @@ static inline void AttnLayer0CoreWindow(
 }
 
 template<unsigned STAGE_MODE>
+// Public pointer-based attention entry.
+// This is the compatibility/public wrapper used by TransformerLayer. The real work
+// still lives in AttnLayer0CoreWindow(); this wrapper only forwards the caller-owned
+// SRAM window and optional handoff descriptor.
 static inline void AttnLayer0(
     u32_t* sram,
     const AttnCfg& cfg,
@@ -661,6 +668,9 @@ static inline void AttnLayer0(
 // This keeps the first deep call-site boundary array-shaped for Catapult-facing paths.
 // Internal compute semantics remain the same by forwarding to the accepted AttnLayer0 core.
 template<unsigned STAGE_MODE, uint32_t SRAM_WORDS>
+// Array-shaped bridge for Catapult-facing compile-prep and explicit ownership review.
+// The bridge does not change datapath semantics; it only preserves a fixed-shape
+// window boundary for Top-managed call sites.
 static inline void AttnLayer0TopManagedWindowBridge(
     u32_t (&sram_window)[SRAM_WORDS],
     const AttnCfg& cfg,

@@ -195,6 +195,9 @@ static inline void load_layer_sublayer1_norm_params(
 // P00-011AN/P00-011AO: first deep Attn+FFN boundary bridges for Catapult-facing progress.
 // This variant keeps Attn/FFN first deep entries array-shaped while preserving
 // accepted core compute semantics.
+// Reading rule: this bridge is not a new algorithm. It is a caller-side ownership
+// seam that stages prebuilt/top-fed descriptors before entering the accepted
+// attention + FFN compute blocks.
 template<uint32_t SRAM_WORDS>
 static inline void TransformerLayerTopManagedAttnBridge(
     u32_t (&sram_window)[SRAM_WORDS],
@@ -519,6 +522,11 @@ static inline void TransformerLayerTopManagedAttnBridge(
 // Accepts Top-managed X_WORK/SCRATCH/W_REGION base words and optional prebuilt Q/KV flags.
 // Delegates attention compute to AttnLayer0, then completes FFN + residual + LN handoff.
 // Does not own Top FSM dispatch, global SRAM policy, or fallback-policy definition.
+// Read this function in four chunks:
+// 1) optional attention shell call
+// 2) FFN top-fed descriptor selection / preload fallback
+// 3) residual add write-back into x_out_base_word
+// 4) sublayer-1 LayerNorm handoff
 static inline void TransformerLayer(
     u32_t* sram,
     const CfgRegs& cfg,

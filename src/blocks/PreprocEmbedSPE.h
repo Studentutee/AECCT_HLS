@@ -1,5 +1,9 @@
 #pragma once
 // Preprocess block used by bring-up flow.
+// Input: IO/ingest words staged by Top.
+// Intermediate: token-wise embed/SPE accumulation in the caller-owned working window.
+// Output: X_WORK tensor for downstream TransformerLayer consumption.
+// Ownership boundary: Top owns external sequencing and shared-SRAM policy.
 
 #include <cstdint>
 
@@ -182,6 +186,9 @@ static inline void PreprocEmbedSPECoreWindowDirect(
     }
 }
 
+// Public Preproc entry.
+// Default mainline is the Top-managed token/tile window core; the direct variant is
+// kept only as a compatibility helper under the same caller-owned base words.
 static inline void PreprocEmbedSPE(
     u32_t* sram,
     const PreprocCfg& cfg,

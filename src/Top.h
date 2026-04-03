@@ -2305,6 +2305,10 @@ namespace aecct {
     // Top owns: layer loop scheduling, X_WORK page alternation, mid/end LN insertion,
     // and latching "mainline taken" vs "fallback taken" status for reviewer-visible checks.
     // TransformerLayer owns: per-layer compute under the base words handed in by Top.
+    // Read this function in three passes:
+    // 1) reset/clear reviewer-visible observability counters
+    // 2) per-layer dispatch + seam selection (managed attention / FFN handoff / payload hooks)
+    // 3) mid-LN and end-LN insertion around the layer loop
     static inline void run_transformer_layer_loop(
         TopRegs& regs,
         u32_t* sram,
@@ -3845,6 +3849,10 @@ namespace aecct {
     // Top dispatch entrypoint for the external 4-channel contract.
     // Top accepts commands, validates state/range constraints, and dispatches block execution.
     // Top functional entrypoint for command dispatch and RX-state servicing.
+    // Fast reading order:
+    // 1) ST_IDLE command decode
+    // 2) RX-state payload ingestion (CFG / PARAM / INFER)
+    // 3) HALTED / READ_MEM / debug side paths
     static inline void top(
         ac_channel<ac_int<16, false> >& ctrl_cmd,
         ac_channel<ac_int<16, false> >& ctrl_rsp,

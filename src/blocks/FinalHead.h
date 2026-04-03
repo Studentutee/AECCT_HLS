@@ -1,5 +1,9 @@
 #pragma once
 // Final head: logits and x_pred.
+// Pass A produces the token-wise scalar buffer.
+// Pass B consumes that scalar buffer for OUT_FC reduction and out_mode-dependent streaming.
+// Ownership boundary: Top selects SRAM bases and output mode; FinalHead does not own
+// external sequencing policy.
 
 #include <cstdint>
 #include <cstdio>
@@ -237,6 +241,9 @@ static inline bool FinalHeadCorePassABTopManaged(
     return stream_enabled;
 }
 
+// Public FinalHead entry.
+// Read in two chunks: Pass A writes FINAL_SCALAR_BUF, then Pass B reduces OUT_FC and
+// emits either logits or x_pred according to Top-owned out_mode.
 static inline void FinalHead(
     u32_t* sram,
     const CfgRegs& cfg,

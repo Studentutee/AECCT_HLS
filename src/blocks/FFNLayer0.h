@@ -1,5 +1,10 @@
 #pragma once
-// Layer0 FFN block.
+// Layer0 FFN block for the Transformer feed-forward stage.
+// Input: attention output tensor or caller-fed FFN input payload.
+// Intermediate: W1 MAC -> bias -> ReLU scratch -> W2 MAC -> bias.
+// Output: FFN output tensor write-back to the caller-selected SRAM window.
+// Ownership boundary: caller/Top owns shared-SRAM policy; this block only
+// consumes the payload windows and descriptors passed in at the call boundary.
 
 #include <cstdint>
 
@@ -103,6 +108,13 @@ static inline void ffn_block_relu_tile(
     }
 }
 
+// Core FFN worker.
+// Read in this order:
+// 1) W1 path (input + W1 + optional caller-fed bias)
+// 2) ReLU staging into FFN scratch
+// 3) W2 path (ReLU output + W2 + optional caller-fed bias)
+// Fallback boundary: when caller-fed descriptors are absent or invalid,
+// this worker falls back to local SRAM reads inside the same caller-owned window.
 template<unsigned STAGE_MODE, typename SramView>
 static inline void FFNLayer0CoreWindow(
     SramView& sram,
@@ -473,6 +485,9 @@ static inline void FFNLayer0CoreWindowDirect(
 }
 
 template<unsigned STAGE_MODE>
+// Public FFN entry used by TransformerLayer.
+// Default mainline is still the tile/window core; direct SRAM reads remain only
+// as a compatibility fallback inside the worker when caller-fed payloads are not ready.
 static inline void FFNLayer0(
     u32_t* sram,
     const FfnCfg& cfg,
@@ -528,6 +543,8 @@ static inline void FFNLayer0(
 
 // P00-011AO: first deep FFN boundary bridge.
 // Active chain uses this array-shaped entry as the FFN boundary call edge.
+// This bridge keeps the caller-visible ownership seam explicit for Catapult-facing
+// compile-prep while reusing the same accepted FFN core semantics.
 template<unsigned STAGE_MODE, uint32_t SRAM_WORDS>
 static inline void FFNLayer0TopManagedWindowBridge(
     u32_t (&sram_window)[SRAM_WORDS],
