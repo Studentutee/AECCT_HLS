@@ -163,6 +163,7 @@ static inline bool FinalHeadCorePassABTopManaged(
         sram[final_scalar_base + t] = st_bits;
     }
 
+    // Top-owned outmode is consumed here to choose stream behavior; FinalHead does not define policy.
     const uint32_t outmode = (uint32_t)outmode_word.to_uint();
     const bool stream_logits = (outmode == FINAL_HEAD_OUTMODE_LOGITS);
     const bool stream_xpred = (outmode == FINAL_HEAD_OUTMODE_XPRED);
@@ -219,6 +220,7 @@ static inline bool FinalHeadCorePassABTopManaged(
                 acc += (w * st);
             }
 
+            // Pass-B write-back boundary: commit logits into SRAM, then optional stream.
             const u32_t logits_bits = bits_from_fp32(acc);
             sram[logits_base + c] = logits_bits;
             if (stream_enabled && stream_logits) {
@@ -226,6 +228,7 @@ static inline bool FinalHeadCorePassABTopManaged(
             }
 
             if (c < xpred_words) {
+                // xpred path compares sign with target y and writes binary mismatch flag.
                 const fp32_t y = (y_words != 0) ? fp32_from_bits(y_words[c]) : fp32_one();
                 const fp32_t prod = acc * y;
                 const bool mismatch = (prod < fp32_zero());
@@ -255,6 +258,7 @@ static inline void FinalHead(
     data_ch_t* data_out = 0,
     u32_t outmode_word = (u32_t)FINAL_HEAD_OUTMODE_NONE
 ) {
+    // Public wrapper constructs contract ranges and forwards Top-selected windows into Pass A/B core.
     FinalHeadContract contract;
     clear_final_head_contract(contract);
     contract.start = true;

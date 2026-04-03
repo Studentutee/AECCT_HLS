@@ -54,6 +54,7 @@ static inline bool attn_phaseb_emit_qsrc_tile(
     u32_t tile_valid_words,
     attn_phaseb_q_pkt_ch_t& q_ch
 ) {
+    // Emit QSRC tile packet for one (token, key_token, head_group, d_tile) slice.
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
         return false;
@@ -93,6 +94,7 @@ static inline bool attn_phaseb_emit_kvscan_tile(
     u32_t tile_valid_words,
     attn_phaseb_k_pkt_ch_t& k_ch
 ) {
+    // Emit KVSCAN tile packet that pairs with QSRC in the downstream dot-product worker.
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
         return false;
@@ -130,6 +132,7 @@ static inline bool attn_phaseb_block_qk_dot_consume_emit(
     u32_t tile_end,
     quant_acc_t inv_sqrt_d_head
 ) {
+    // Consume pair stream and emit one SCORE packet per key token after scaled dot reduction.
     const uint32_t t_idx = (uint32_t)token_idx.to_uint();
     const uint32_t k_idx = (uint32_t)key_token_idx.to_uint();
     const uint32_t group_id = (uint32_t)head_group_id.to_uint();
@@ -201,6 +204,7 @@ static inline bool attn_phaseb_top_writeback_score(
     u32_t head_group_id,
     attn_phaseb_qk_pkt_ch_t& out_ch
 ) {
+    // Write-back sink commits SCORE packet payload to the selected score SRAM word.
     AttnTopManagedWorkPacket score_pkt;
     if (!out_ch.nb_read(score_pkt)) {
         return false;
@@ -260,6 +264,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     // W4-B9: family bridge payload stride is promoted to token-domain span.
     static const uint32_t kScoreTileBridgeFamilyStrideWords =
         (uint32_t)ATTN_TOKEN_COUNT;
+    // Mainline posture: fallback remains true until the full validation + score write path succeeds.
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
     if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
@@ -273,6 +278,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
     if (score_tile_bridge_family_consumed_count != 0) { *score_tile_bridge_family_consumed_count = (u32_t)0u; }
     if (score_tile_bridge_family_compare_ok != 0) { *score_tile_bridge_family_compare_ok = (u32_t)1u; }
     if (score_tile_bridge_family_case_mask != 0) { *score_tile_bridge_family_case_mask = (u32_t)0u; }
+    // Validation chain: SRAM view, shape, token/head mapping, and bridge descriptor legality.
     if (!attn_phaseb_sram_view_ok(sram)) {
         return false;
     }
@@ -415,7 +421,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
         const u16_t head_group_id = attn_phaseb_head_group_id_from_head_idx(h);
         (void)attn_phaseb_rule_id_from_head_group(head_group_id);
 
-        // Local-only W4-M1 probe:
+        // Phase-entry probe verifies that Top-fed probe descriptors match SRAM ownership and contents.
         // caller/Top can provide one narrow phase-entry descriptor for ownership visibility.
         if (phase_entry_probe_enabled && h == 0u) {
             const uint32_t expected_q_probe_base = q_row_base;
@@ -507,6 +513,7 @@ static inline bool attn_phaseb_top_managed_qk_score_mainline(
                     }
                 }
             }
+            // Bridge selection seam: family bridge has priority, then single bridge, else local computed score.
             const bool score_tile_bridge_selected =
                 score_tile_bridge_enabled &&
                 (h == score_tile_bridge_head_idx_u32) &&

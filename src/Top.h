@@ -1246,6 +1246,7 @@ namespace aecct {
         contract.token_range = regs.infer_ingest_contract.token_range;
         contract.tile_range = regs.infer_ingest_contract.tile_range;
 
+        // Preproc top-fed preload is a compatibility bridge; Top still owns ingest policy.
         u32_t topfed_in_payload[PREPROC_IN_WORDS_EXPECTED];
         PREPROC_TOPFED_INPUT_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)PREPROC_IN_WORDS_EXPECTED; ++i) {
             topfed_in_payload[i] = 0;
@@ -1295,6 +1296,7 @@ namespace aecct {
         contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
         contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
 
+        // Affine preload is a local bridge from Top-owned SRAM into LN call arguments.
         u32_t topfed_gamma_words[LN_D_MODEL];
         u32_t topfed_beta_words[LN_D_MODEL];
         TOPFED_LN_AFFINE_INIT_LOOP: for (uint32_t c = 0u; c < (uint32_t)LN_D_MODEL; ++c) {
@@ -2191,6 +2193,8 @@ namespace aecct {
         phase_entry_probe_words_valid = (u32_t)probe_words_valid;
     }
 
+    // Top owns this policy decision.
+    // Downstream blocks consume the flag and must not redefine ownership semantics.
     static inline bool top_should_enable_attn_compat_shell(
         bool kv_prebuilt_from_top_managed,
         bool q_prebuilt_from_top_managed,
@@ -2225,6 +2229,7 @@ namespace aecct {
         const u32_t* attn_out_topfed_payload_words = 0,
         u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
+        // Resolve compatibility shell policy at Top before dispatch.
         const bool attn_compat_shell_enable = top_should_enable_attn_compat_shell(
             kv_prebuilt_from_top_managed,
             q_prebuilt_from_top_managed,
@@ -2273,6 +2278,7 @@ namespace aecct {
         const u32_t* attn_out_topfed_payload_words = 0,
         u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
+        // Same policy seam for the array-window bridge entry.
         const bool attn_compat_shell_enable = top_should_enable_attn_compat_shell(
             kv_prebuilt_from_top_managed,
             q_prebuilt_from_top_managed,
@@ -2398,6 +2404,7 @@ namespace aecct {
         regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
         regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
 
+        // Top-layer loop is the ownership seam: Top decides layer policy, blocks consume it.
         TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             if (lid0_local_only_qkscore_mask_handoff_enable) {
                 regs.p11ay_qkscore_mask_handoff_gate_taken_count =
@@ -2415,6 +2422,7 @@ namespace aecct {
                 regs.p11bb_qkscore_wq_handoff_gate_taken_count =
                     regs.p11bb_qkscore_wq_handoff_gate_taken_count + (u32_t)1u;
             }
+            // Prebuilt flags are per-layer Top decisions, not block-local policy.
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
             bool q_prebuilt_from_top_managed = false;
@@ -2465,11 +2473,13 @@ namespace aecct {
                 bool qkscore_qsrc_handoff_applied_for_layer = false;
                 bool qkscore_wq_handoff_non_empty_for_layer = false;
                 bool qkscore_wq_handoff_applied_for_layer = false;
+                // AE/AF mainline is only legal after both AD(Q) and AC(KV) prebuilds succeed.
                 if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
                     const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
                     TOP_P11AEAF_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
                         bool score_fallback_taken = true;
                         bool score_mainline_taken = false;
+                        // Compatibility handoff priority for AE: mask family -> WQ probe -> QSRC probe -> KVSCAN probe.
                         if (lid0_local_only_qkscore_mask_handoff_enable && is_managed_attention_layer) {
                             bool warmup_fallback_taken = true;
                             const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
@@ -2546,6 +2556,7 @@ namespace aecct {
                                 0,
                                 0
                             );
+                        // WQ probe bridge is a compatibility branch when mask-family handoff is not selected.
                         } else if (lid0_local_only_qkscore_wq_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
@@ -2585,6 +2596,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
+                        // QSRC probe bridge keeps descriptor ownership observable at AE entry.
                         } else if (lid0_local_only_qkscore_qsrc_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
@@ -2624,6 +2636,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
+                        // KVSCAN probe bridge is the last compatibility branch before plain AE mainline.
                         } else if (lid0_local_only_qkscore_kvscan_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
@@ -2697,6 +2710,7 @@ namespace aecct {
                     af_mainline_softmax_output_path_taken = false;
                 }
 
+                // Fallback counters increment when a handoff is enabled but not consumed as a valid non-empty bridge.
                 if (lid0_local_only_qkscore_mask_handoff_enable) {
                     if (qkscore_mask_handoff_applied_for_layer &&
                         qkscore_mask_handoff_non_empty_for_layer &&
@@ -2800,6 +2814,7 @@ namespace aecct {
                 regs.p11av_ffn_handoff_gate_taken_count =
                     regs.p11av_ffn_handoff_gate_taken_count + (u32_t)1u;
             }
+            // FFN handoff seam: non-empty descriptor means Top-fed payload was accepted by policy.
             const bool ffn_topfed_handoff_non_empty =
                 transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
             if (ffn_topfed_handoff_non_empty) {
@@ -2832,6 +2847,7 @@ namespace aecct {
             }
             const uint32_t attn_out_topfed_payload_words_valid_raw =
                 (uint32_t)attn_out_topfed_payload_words_valid_for_layer.to_uint();
+            // Attn-OUT payload seam: invalid/short descriptors are tracked as compatibility fallback.
             const bool attn_out_topfed_payload_non_empty =
                 attn_out_topfed_payload_enable_for_layer &&
                 (attn_out_topfed_payload_words_for_layer != 0) &&
@@ -2853,6 +2869,7 @@ namespace aecct {
             }
 
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
+            // Top computes shell policy once per layer and passes it through dispatch.
             const bool attn_compat_shell_enable_for_layer = top_should_enable_attn_compat_shell(
                 kv_prebuilt_from_top_managed,
                 q_prebuilt_from_top_managed,
@@ -2877,6 +2894,7 @@ namespace aecct {
                         regs.p11bd_target_layer_attn_compat_shell_disabled_count + (u32_t)1u;
                 }
             }
+            // Dispatch boundary: policy and handoff descriptors are handed off, not reinterpreted.
             top_dispatch_transformer_layer(
                 sram,
                 cfg,
@@ -3036,6 +3054,7 @@ namespace aecct {
         regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
         regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
 
+        // AN runloop keeps the same ownership seam: Top selects policy, blocks consume descriptors.
         TOP_LAYER_ORCHESTRATION_AN_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
             if (lid0_local_only_qkscore_mask_handoff_enable) {
                 regs.p11ay_qkscore_mask_handoff_gate_taken_count =
@@ -3053,6 +3072,7 @@ namespace aecct {
                 regs.p11bb_qkscore_wq_handoff_gate_taken_count =
                     regs.p11bb_qkscore_wq_handoff_gate_taken_count + (u32_t)1u;
             }
+            // These flags are Top-managed decisions for this layer dispatch only.
             LayerScratch sc = make_layer_scratch(x_in_base);
             LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
             bool q_prebuilt_from_top_managed = false;
@@ -3099,11 +3119,13 @@ namespace aecct {
                 bool qkscore_qsrc_handoff_applied_for_layer = false;
                 bool qkscore_wq_handoff_non_empty_for_layer = false;
                 bool qkscore_wq_handoff_applied_for_layer = false;
+                // Score/softmax mainline is entered only when both Q and KV prebuilds are valid.
                 if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
                     const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
                     TOP_P11AEAF_AN_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
                         bool score_fallback_taken = true;
                         bool score_mainline_taken = false;
+                        // Compatibility handoff selection order is intentional for AE ownership visibility.
                         if (lid0_local_only_qkscore_mask_handoff_enable && is_managed_attention_layer) {
                             bool warmup_fallback_taken = true;
                             const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
@@ -3180,6 +3202,7 @@ namespace aecct {
                                 0,
                                 0
                             );
+                        // WQ probe bridge path.
                         } else if (lid0_local_only_qkscore_wq_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
@@ -3219,6 +3242,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
+                        // QSRC probe bridge path.
                         } else if (lid0_local_only_qkscore_qsrc_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
@@ -3258,6 +3282,7 @@ namespace aecct {
                                 phase_entry_probe_k_words,
                                 phase_entry_probe_words_valid
                             );
+                        // KVSCAN probe bridge path.
                         } else if (lid0_local_only_qkscore_kvscan_handoff_enable && is_managed_attention_layer) {
                             u32_t phase_entry_probe_q_base_word = (u32_t)0u;
                             u32_t phase_entry_probe_k_base_word = (u32_t)0u;
@@ -3331,6 +3356,7 @@ namespace aecct {
                     af_mainline_softmax_output_path_taken = false;
                 }
 
+                // Enabled-but-unconsumed bridges are recorded as fallback evidence.
                 if (lid0_local_only_qkscore_mask_handoff_enable) {
                     if (qkscore_mask_handoff_applied_for_layer &&
                         qkscore_mask_handoff_non_empty_for_layer &&
@@ -3434,6 +3460,7 @@ namespace aecct {
                 regs.p11av_ffn_handoff_gate_taken_count =
                     regs.p11av_ffn_handoff_gate_taken_count + (u32_t)1u;
             }
+            // FFN handoff descriptors are accepted only when payload spans are non-empty.
             const bool ffn_topfed_handoff_non_empty =
                 transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
             if (ffn_topfed_handoff_non_empty) {
@@ -3466,6 +3493,7 @@ namespace aecct {
             }
             const uint32_t attn_out_topfed_payload_words_valid_raw =
                 (uint32_t)attn_out_topfed_payload_words_valid_for_layer.to_uint();
+            // OUT payload descriptors are tracked separately from AE/AF prebuilt flags.
             const bool attn_out_topfed_payload_non_empty =
                 attn_out_topfed_payload_enable_for_layer &&
                 (attn_out_topfed_payload_words_for_layer != 0) &&
@@ -3486,6 +3514,7 @@ namespace aecct {
                 }
             }
 
+            // Top computes compatibility shell policy once and forwards it to TransformerLayer.
             const bool attn_compat_shell_enable_for_layer = top_should_enable_attn_compat_shell(
                 kv_prebuilt_from_top_managed,
                 q_prebuilt_from_top_managed,
@@ -3510,6 +3539,7 @@ namespace aecct {
                         regs.p11bd_target_layer_attn_compat_shell_disabled_count + (u32_t)1u;
                 }
             }
+            // Dispatch boundary: pass policy and descriptors through without changing ownership rules.
             top_dispatch_transformer_layer_top_managed_attn_bridge(
                 sram,
                 cfg,
@@ -4059,5 +4089,3 @@ namespace aecct {
     }
 
 } // namespace aecct
-
-

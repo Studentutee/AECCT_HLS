@@ -115,6 +115,7 @@ static inline void LayerNormBlockCoreWindow(
         return;
     }
 
+    // Contract clipping keeps execution inside Top-selected token boundaries.
     uint32_t token_begin = (uint32_t)contract.token_range.begin.to_uint();
     uint32_t token_end = (uint32_t)contract.token_range.end.to_uint();
     if (token_begin > token_count) { token_begin = token_count; }
@@ -123,6 +124,7 @@ static inline void LayerNormBlockCoreWindow(
         return;
     }
 
+    // Contract clipping keeps execution inside Top-selected tile boundaries.
     uint32_t tile_begin = (uint32_t)contract.tile_range.begin.to_uint();
     uint32_t tile_end = (uint32_t)contract.tile_range.end.to_uint();
     if (tile_begin > d_model_tile_count) { tile_begin = d_model_tile_count; }
@@ -270,6 +272,7 @@ static inline void LayerNormBlockCoreWindow(
             LAYERNORM_TOP_MANAGED_PASS2_TILE_STORE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                 const uint32_t c = tile_offset + i;
                 const fp32_t x = fp32_from_bits(sram[row_in_base + c]);
+                // Affine consume seam: prefer Top-fed gamma/beta words, otherwise read caller SRAM.
                 const u32_t g_bits =
                     (topfed_gamma_words != 0) ? topfed_gamma_words[c] : sram[gamma_base + c];
                 const u32_t b_bits =
@@ -416,6 +419,7 @@ static inline void LayerNormBlock(
     u32_t gamma_base_word,
     u32_t beta_base_word
 ) {
+    // Public wrapper builds the contract that carries Top-owned range policy into the core.
     LayerNormBlockContract contract;
     clear_layernorm_contract(contract);
     contract.start = true;
@@ -433,7 +437,7 @@ static inline void LayerNormBlock(
     contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
     contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
 
-    // Mainline migration: default LN entry now consumes Top-managed token/tile range metadata.
+    // Mainline migration: default LN entry consumes Top-managed token/tile range metadata.
     LayerNormBlockCoreWindow<u32_t*>(
         sram,
         cfg,

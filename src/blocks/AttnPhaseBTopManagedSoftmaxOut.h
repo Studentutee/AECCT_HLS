@@ -40,6 +40,7 @@ static inline bool attn_phaseb_emit_mask_score_word(
     u32_t head_group_id,
     attn_phaseb_softmax_score_ch_t& score_ch
 ) {
+    // Emit SCORE packet for one (token, key_token, head_group) mask lane.
     AttnTopManagedWorkPacket pkt;
     attn_work_packet_clear(pkt);
     pkt.kind = (u16_t)ATTN_PKT_SCORE;
@@ -72,6 +73,7 @@ static inline bool attn_phaseb_emit_v_tile(
     u32_t tile_valid_words,
     attn_phaseb_softmax_v_ch_t& v_ch
 ) {
+    // Emit V tile packet that pairs with SCORE stream for online softmax accumulation.
     const uint32_t valid = (uint32_t)tile_valid_words.to_uint();
     if (valid == 0u || valid > (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS) {
         return false;
@@ -109,6 +111,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
     u32_t tile_begin,
     u32_t tile_end
 ) {
+    // Consume SCORE/V streams and emit OUT tiles using single-pass online softmax state updates.
     const uint32_t t_idx = (uint32_t)token_idx.to_uint();
     const uint32_t group_id = (uint32_t)head_group_id.to_uint();
     const uint32_t n_tokens = (uint32_t)token_count.to_uint();
@@ -146,6 +149,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
         const softmax_score_t score =
             score_fp.template convert_to_ac_fixed<18, 6, true, AC_RND, AC_SAT>(false);
 
+        // First key token initializes running max/sum and accumulator state.
         if (!have_state) {
             running_max = score;
             running_l = softmax_sum_t(1);
@@ -176,6 +180,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
             continue;
         }
 
+        // Renorm branch: new max rescales previous accumulator state.
         if (score > running_max) {
             const softmax_x_t old_minus_new = softmax_x_t(running_max - score);
             const softmax_exp_t alpha = softmax_exp_lut(old_minus_new);
@@ -206,6 +211,7 @@ static inline bool attn_phaseb_block_softmax_out_consume_emit(
             }
             running_max = score;
         } else {
+            // Accumulate branch: score stays under current max, update with beta weight.
             const softmax_x_t score_minus_old = softmax_x_t(score - running_max);
             const softmax_exp_t beta = softmax_exp_lut(score_minus_old);
             running_l += softmax_sum_t(beta);
@@ -279,6 +285,7 @@ static inline bool attn_phaseb_top_writeback_out_tile(
     u32_t tile_end,
     attn_phaseb_softmax_pkt_ch_t& out_ch
 ) {
+    // Write-back boundary: mirror OUT payload into pre/post/out SRAM windows for compatibility.
     AttnTopManagedWorkPacket pkt;
     if (!out_ch.nb_read(pkt)) {
         return false;
@@ -368,6 +375,7 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     static const uint32_t kPhaseTileBridgeFamilyStrideWords =
         (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
     static const uint32_t kPhaseTileBridgeWritebackFamilyMaxCases = 4u;
+    // Mainline posture: fallback remains set until every phase entry, bridge, and write-back check passes.
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) { *phase_entry_probe_visible = (u32_t)0u; }
     if (phase_entry_probe_owner_ok != 0) { *phase_entry_probe_owner_ok = (u32_t)0u; }
@@ -391,6 +399,7 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
     if (phase_tile_bridge_family_writeback_selected_consumed_count != 0) { *phase_tile_bridge_family_writeback_selected_consumed_count = (u32_t)0u; }
     if (phase_tile_bridge_family_writeback_selected_owner_ok != 0) { *phase_tile_bridge_family_writeback_selected_owner_ok = (u32_t)0u; }
     if (phase_tile_bridge_family_writeback_selected_compare_ok != 0) { *phase_tile_bridge_family_writeback_selected_compare_ok = (u32_t)0u; }
+    // Validation chain: SRAM view, shape, bridge descriptors, and probe legality.
     if (!attn_phaseb_softmax_sram_view_ok(sram)) {
         return false;
     }
@@ -639,7 +648,7 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
         const u16_t head_group_id = attn_phaseb_head_group_id_from_head_idx(h);
         (void)attn_phaseb_rule_id_from_head_group(head_group_id);
 
-        // Local-only W4-M2 probe:
+        // Phase-entry probe verifies Top-owned V descriptor base and visible SRAM content.
         // caller/Top can provide one V-tile descriptor probe at SoftmaxOut phase entry.
         if (phase_entry_probe_enabled && h == 0u) {
             const uint32_t expected_v_probe_base = v_base;
@@ -717,7 +726,7 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
                         attn_top_managed_tile_valid_words(d_head, tile_words, dt);
                     if (valid == 0u || valid > tile_words) { return false; }
                     if ((tile_offset + valid) > d_head) { return false; }
-                    // Local-only W4-B1/W4-C0 bounded tile bridge:
+                    // Bridge selection seam at init-acc: family bridge first, then single bridge, else local SRAM.
                     // consume caller-fed V tile descriptors at phase-B init-acc entry only.
                     int32_t phase_tile_bridge_family_case_idx = -1;
                     if (phase_tile_bridge_family_enabled) {
@@ -1098,9 +1107,9 @@ static inline bool attn_phaseb_top_managed_softmax_out_mainline(
             if ((tile_offset + valid) > d_head) { return false; }
             int32_t phase_tile_bridge_family_writeback_case_idx = -1;
             if (phase_tile_bridge_family_enabled) {
-                // WRITEBACK selected descriptor on one later-token (head,d_tile):
-                // always keeps selector observability, and can enable selected consume
-                // when caller provides a writeback payload bridge.
+            // Write-back selection seam for compatibility descriptors on later-token branches.
+            // always keeps selector observability, and can enable selected consume
+            // when caller provides a writeback payload bridge.
                 ATTN_P11AF_TILE_BRIDGE_FAMILY_WRITEBACK_CASE_LOOP: for (uint32_t c = 0u;
                      c < phase_tile_bridge_family_case_count_u32; ++c) {
                     const bool writeback_selected =

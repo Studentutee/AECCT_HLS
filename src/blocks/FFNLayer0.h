@@ -215,6 +215,7 @@ static inline void FFNLayer0CoreWindow(
     const uint32_t expected_w1_x_words = token_count * d_model;
     const uint32_t expected_w1_weight_words = d_ffn * d_model;
     const uint32_t expected_w1_bias_words = d_ffn;
+    // Descriptor readiness checks are Top-to-block handoff gates, not ownership decisions.
     const bool w1_input_descriptor_ready =
         (topfed_x_words != 0) && (topfed_x_raw_valid >= expected_w1_x_words);
     const bool w1_weight_descriptor_ready =
@@ -227,8 +228,10 @@ static inline void FFNLayer0CoreWindow(
         (topfed_w2_weight_words != 0) && (topfed_w2_weight_raw_valid >= expected_w2_weight_words);
     const bool w2_bias_descriptor_ready =
         (topfed_w2_bias_words != 0) && (topfed_w2_bias_raw_valid >= expected_w2_bias_words);
+    // Policy bits can require full Top-fed coverage and reject legacy fallback for this stage.
     const bool require_w1_topfed =
         (((uint32_t)fallback_policy_flags.to_uint() & (uint32_t)FFN_POLICY_REQUIRE_W1_TOPFED) != 0u);
+    // Same policy gate for W2 descriptors.
     const bool require_w2_topfed =
         (((uint32_t)fallback_policy_flags.to_uint() & (uint32_t)FFN_POLICY_REQUIRE_W2_TOPFED) != 0u);
 
@@ -251,6 +254,7 @@ static inline void FFNLayer0CoreWindow(
             }
             return;
         }
+        // Stage W1: MAC over input tile + W1 tile + bias.
         FFN_TOP_MANAGED_W1_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
             const uint32_t x_row = x_in_base + t * d_model;
             const uint32_t h_row = w1_base + t * d_ffn;
@@ -309,6 +313,7 @@ static inline void FFNLayer0CoreWindow(
     }
 
     if constexpr (STAGE_MODE == FFN_STAGE_RELU || STAGE_MODE == FFN_STAGE_FULL) {
+        // Stage ReLU: apply activation on W1 output scratch.
         FFN_TOP_MANAGED_RELU_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
             const uint32_t h_row = w1_base + t * d_ffn;
             const uint32_t a_row = relu_base + t * d_ffn;
@@ -354,6 +359,7 @@ static inline void FFNLayer0CoreWindow(
             }
             return;
         }
+        // Stage W2: MAC over ReLU scratch + W2 tile + bias.
         FFN_TOP_MANAGED_W2_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
             const uint32_t a_row = relu_base + t * d_ffn;
             const uint32_t y_row = w2_base + t * d_model;

@@ -157,6 +157,7 @@ static inline void transformer_layer_select_topfed_words(
     const u32_t*& selected_words,
     u32_t& selected_words_valid
 ) {
+    // Selection seam: prefer Top-fed payload when descriptor is valid, else keep local materialization.
     selected_words = local_words;
     selected_words_valid = (u32_t)local_words_valid;
     if (handoff_words == 0) {
@@ -231,6 +232,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
     attn_cfg.d_model = (u32_t)d_model;
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
+    // Top passes compat-shell policy into this block; this block consumes it only.
     if (attn_compat_shell_enable) {
         const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
             make_attn_layer0_prebuilt_handoff_desc(
@@ -247,6 +249,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             q_prebuilt_from_top_managed &&
             score_prebuilt_from_top_managed &&
             out_prebuilt_from_top_managed;
+        // Shell runs whenever any attention stage is not prebuilt, or when OUT payload must be consumed.
         const bool attn_shell_must_run =
             (!attn_fully_prebuilt_from_top_managed) ||
             attn_out_topfed_payload_enable;
@@ -353,6 +356,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
     );
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
+    // FFN stage transition: W1 consumes selected input/weight/bias payload descriptors.
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_W1>(
         sram_window,
         ffn_cfg,
@@ -376,6 +380,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
         selected_topfed_ffn_w1_bias_words,
         selected_topfed_ffn_w1_bias_words_valid
     );
+    // FFN stage transition: ReLU consumes W1 output scratch.
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_RELU>(
         sram_window,
         ffn_cfg,
@@ -459,6 +464,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
         selected_topfed_ffn_w2_bias_words_valid
     );
 
+    // FFN stage transition: W2 consumes ReLU output and writes FFN output scratch.
     FFNLayer0TopManagedWindowBridge<FFN_STAGE_W2>(
         sram_window,
         ffn_cfg,
@@ -482,6 +488,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
     uint32_t w2_base = (uint32_t)sc.ffn.w2_out_base_word.to_uint();
     uint32_t add2_base = (uint32_t)sc.ffn.add2_base_word.to_uint();
     uint32_t words = (uint32_t)FFN_X_WORDS;
+    // Write-back boundary: residual add commits to add2 scratch before LayerNorm.
     TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_BRIDGE_LOOP: for (uint32_t i = 0; i < words; ++i) {
         fp32_t x = fp32_from_bits(sram_window[residual_base + i]);
         fp32_t y = fp32_from_bits(sram_window[w2_base + i]);
@@ -559,6 +566,7 @@ static inline void TransformerLayer(
     attn_cfg.d_model = (u32_t)d_model;
     attn_cfg.n_heads = (u32_t)n_heads;
     attn_cfg.d_head = (u32_t)(d_model / n_heads);
+    // Top-owned compat-shell policy is consumed here in the pointer entry as well.
     if (attn_compat_shell_enable) {
         const AttnLayer0PrebuiltHandoffDesc attn_prebuilt_handoff =
             make_attn_layer0_prebuilt_handoff_desc(
@@ -575,6 +583,7 @@ static inline void TransformerLayer(
             q_prebuilt_from_top_managed &&
             score_prebuilt_from_top_managed &&
             out_prebuilt_from_top_managed;
+        // Execute shell when prebuild coverage is incomplete or OUT top-fed payload is explicitly enabled.
         const bool attn_shell_must_run =
             (!attn_fully_prebuilt_from_top_managed) ||
             attn_out_topfed_payload_enable;
@@ -682,6 +691,7 @@ static inline void TransformerLayer(
     );
 
     // Stage-split FFN dispatch keeps caller ownership explicit for payload descriptors.
+    // FFN stage transition: W1.
     FFNLayer0<FFN_STAGE_W1>(
         sram,
         ffn_cfg,
@@ -705,6 +715,7 @@ static inline void TransformerLayer(
         selected_topfed_ffn_w1_bias_words,
         selected_topfed_ffn_w1_bias_words_valid
     );
+    // FFN stage transition: ReLU.
     FFNLayer0<FFN_STAGE_RELU>(
         sram,
         ffn_cfg,
@@ -788,6 +799,7 @@ static inline void TransformerLayer(
         selected_topfed_ffn_w2_bias_words_valid
     );
 
+    // FFN stage transition: W2.
     FFNLayer0<FFN_STAGE_W2>(
         sram,
         ffn_cfg,
@@ -811,6 +823,7 @@ static inline void TransformerLayer(
     uint32_t w2_base = (uint32_t)sc.ffn.w2_out_base_word.to_uint();
     uint32_t add2_base = (uint32_t)sc.ffn.add2_base_word.to_uint();
     uint32_t words = (uint32_t)FFN_X_WORDS;
+    // Write-back boundary: residual output becomes LayerNorm input.
     TRANSFORMER_LAYER_FFN_RESIDUAL_ADD_LOOP: for (uint32_t i = 0; i < words; ++i) {
         fp32_t x = fp32_from_bits(sram[residual_base + i]);
         fp32_t y = fp32_from_bits(sram[w2_base + i]);

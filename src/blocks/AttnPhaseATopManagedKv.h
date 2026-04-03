@@ -48,6 +48,7 @@ static inline bool attn_top_emit_phasea_kv_work_unit(
     attn_wk_pkt_ch_t& wk_ch,
     attn_wv_pkt_ch_t& wv_ch
 ) {
+    // Emit triplet: X payload plus WK/WV descriptors for one (token, d_tile) unit.
     AttnTopManagedPacket x_pkt;
     attn_packet_clear(x_pkt);
     x_pkt.kind = (u16_t)ATTN_PKT_X;
@@ -86,6 +87,7 @@ static inline bool attn_block_phasea_kv_consume_emit(
     const u32_t wv_payload_words[kTernaryLiveL0WvPayloadWords],
     u32_t wv_inv_sw_bits
 ) {
+    // Consume triplet: require lockstep X/WK/WV packets before materializing K/V outputs.
     AttnTopManagedPacket x_pkt;
     AttnTopManagedPacket wk_pkt;
     AttnTopManagedPacket wv_pkt;
@@ -159,6 +161,7 @@ static inline bool attn_top_writeback_phasea_kv_work_unit(
     attn_k_pkt_ch_t& k_ch,
     attn_v_pkt_ch_t& v_ch
 ) {
+    // Write-back triplet sink: commit K/V packets into caller-provided scratch rows.
     AttnTopManagedPacket k_pkt;
     AttnTopManagedPacket v_pkt;
     if (!k_ch.nb_read(k_pkt) || !v_ch.nb_read(v_pkt)) {
@@ -268,6 +271,7 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
     u32_t tile_end,
     u32_t row_words
 ) {
+    // Tile worker keeps packet phase/subphase checks explicit before any compute.
     const uint32_t t_idx = (uint32_t)token_idx.to_uint();
     const uint32_t t_begin = (uint32_t)token_begin.to_uint();
     const uint32_t t_end = (uint32_t)token_end.to_uint();
@@ -287,6 +291,7 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
         x_row[i] = (u32_t)0u;
     }
 
+    // Consume all tiles first so ownership/descriptor checks fail fast before kernel execution.
     ATTN_P11AC_TILE_CONSUME_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
         AttnTopManagedWorkPacket x_pkt;
         AttnTopManagedWorkPacket wk_pkt;
@@ -348,6 +353,7 @@ static inline bool attn_block_phasea_kv_consume_emit_token_work_tiles(
         return false;
     }
 
+    // Emit converted K/V tiles with preserved token/tile metadata for Top write-back.
     ATTN_P11AC_TILE_EMIT_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
         const uint32_t tile_offset = dt * tile_words;
         const uint32_t valid = attn_top_managed_tile_valid_words(words, tile_words, dt);
@@ -406,6 +412,7 @@ static inline bool attn_top_writeback_phasea_kv_work_tile(
     attn_k_work_pkt_ch_t& k_ch,
     attn_v_work_pkt_ch_t& v_ch
 ) {
+    // Tile write-back sink mirrors packet payload into K/V SRAM windows for later AE/AF stages.
     AttnTopManagedWorkPacket k_pkt;
     AttnTopManagedWorkPacket v_pkt;
     if (!k_ch.nb_read(k_pkt) || !v_ch.nb_read(v_pkt)) {
@@ -494,6 +501,7 @@ static inline bool attn_phasea_top_managed_kv_mainline(
     u32_t* phase_entry_probe_owner_ok = 0,
     u32_t* phase_entry_probe_compare_ok = 0
 ) {
+    // Mainline posture: start in fallback state and clear probe outputs until validation succeeds.
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) {
         *phase_entry_probe_visible = (u32_t)0u;
@@ -504,6 +512,7 @@ static inline bool attn_phasea_top_managed_kv_mainline(
     if (phase_entry_probe_compare_ok != 0) {
         *phase_entry_probe_compare_ok = (u32_t)0u;
     }
+    // Validation chain: SRAM view, shape, param span, then payload descriptor legality.
     if (!attn_phasea_kv_sram_view_ok(sram)) {
         return false;
     }
@@ -579,6 +588,7 @@ static inline bool attn_phasea_top_managed_kv_mainline(
         d_model > (uint32_t)kTernaryLiveL0WvCols) {
         return false;
     }
+    // Optional probe is a compatibility seam for Top-owned descriptor/owner observability.
     const bool phase_entry_probe_enabled =
         (phase_entry_probe_x_words != 0) &&
         ((uint32_t)phase_entry_probe_x_words_valid.to_uint() != 0u);

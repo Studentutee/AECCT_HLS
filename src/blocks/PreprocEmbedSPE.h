@@ -110,6 +110,7 @@ static inline void PreprocEmbedSPECoreWindow(
         return;
     }
 
+    // Clip to Top-selected token window before any tile walk.
     uint32_t token_begin = (uint32_t)contract.token_range.begin.to_uint();
     uint32_t token_end = (uint32_t)contract.token_range.end.to_uint();
     if (token_begin > token_count) { token_begin = token_count; }
@@ -118,6 +119,7 @@ static inline void PreprocEmbedSPECoreWindow(
         return;
     }
 
+    // Clip to Top-selected tile window before touching SRAM.
     uint32_t tile_begin = (uint32_t)contract.tile_range.begin.to_uint();
     uint32_t tile_end = (uint32_t)contract.tile_range.end.to_uint();
     if (tile_begin > tile_count) { tile_begin = tile_count; }
@@ -144,6 +146,7 @@ static inline void PreprocEmbedSPECoreWindow(
             meta.tile_end = (u16_t)tile_end;
             meta.tile_idx = (u16_t)dt;
             meta.tile_valid_words = (u16_t)valid;
+            // Metadata gate is the compatibility seam for token/tile ownership visibility.
             if (!preproc_top_managed_window_meta_ok(meta, phase_id_u32, t, dt)) {
                 continue;
             }
@@ -154,10 +157,12 @@ static inline void PreprocEmbedSPECoreWindow(
                     continue;
                 }
                 if (linear_idx < infer_in_words) {
+                    // Input consume priority: Top-fed payload first, local SRAM read as compatibility fallback.
                     const u32_t in_bits =
                         (topfed_in_words != 0) ? topfed_in_words[linear_idx] : sram[in_base + linear_idx];
                     sram[x_base + linear_idx] = in_bits;
                 } else {
+                    // Tail beyond infer payload is explicitly zero-filled into X_WORK.
                     sram[x_base + linear_idx] = (u32_t)0u;
                 }
             }
@@ -195,6 +200,7 @@ static inline void PreprocEmbedSPE(
     u32_t in_base_word,
     u32_t x_out_base_word
 ) {
+    // Public wrapper builds contract metadata and forwards Top-owned windows to the core worker.
     PreprocBlockContract contract;
     clear_preproc_contract(contract);
     contract.start = true;

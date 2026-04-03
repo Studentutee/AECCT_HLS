@@ -179,8 +179,10 @@ static inline void AttnLayer0CoreWindow(
         bool live_v_ok = live_v_enabled;
         u32_t live_q_inv_sw_bits = (u32_t)0u;
         // P11AD mainline hook: Top-owned Q prebuild bypasses only Q generation.
+        // Top may mark Q as prebuilt; this block then consumes Q SRAM as-is.
         const bool skip_q_materialization = prebuilt_handoff.q_prebuilt_from_top_managed;
         // P11AC mainline hook: Top-owned K/V prebuild bypasses only K/V generation.
+        // Top may mark K/V as prebuilt; this block then skips local KV materialization only.
         const bool skip_kv_materialization = prebuilt_handoff.kv_prebuilt_from_top_managed;
 
         if (!skip_kv_materialization) {
@@ -514,6 +516,7 @@ static inline void AttnLayer0CoreWindow(
     }
 
     if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
+        // Stage ownership seam: prebuilt score means AE already committed score rows for AF consumption.
         if (prebuilt_handoff.score_prebuilt_from_top_managed) {
             // Top-managed AE/AF path already produced score/pre/post for this layer invocation.
             // Keep existing AC/AD hooks untouched and skip duplicate score/softmax execution only.
@@ -582,6 +585,7 @@ static inline void AttnLayer0CoreWindow(
             (prebuilt_handoff.out_topfed_payload_words != 0) &&
             (out_topfed_valid >= tensor_words);
 
+        // OUT priority 1: consume full Top-fed payload when descriptor coverage is complete.
         if (out_topfed_ready) {
             // Deeper consume site:
             // when caller-fed payload is valid, OUT stage consumes it before local scratch fallback.
@@ -591,6 +595,7 @@ static inline void AttnLayer0CoreWindow(
             return;
         }
 
+        // OUT priority 2: descriptor was enabled but not complete, so copy local post-concat as fallback.
         if (prebuilt_handoff.out_topfed_payload_enable) {
             // Invalid/short top-fed payload falls back to local post-concat consume path.
             ATTN_OUT_TOPFED_INVALID_FALLBACK_LOOP: for (uint32_t i = 0; i < tensor_words; ++i) {
@@ -599,6 +604,7 @@ static inline void AttnLayer0CoreWindow(
             return;
         }
 
+        // OUT priority 3: prebuilt output already committed by Top-managed AF path.
         if (prebuilt_handoff.out_prebuilt_from_top_managed) {
             // Top-managed AF path already wrote final output for this layer invocation.
             return;

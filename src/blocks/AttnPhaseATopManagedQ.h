@@ -44,6 +44,7 @@ static inline bool attn_top_emit_phasea_q_work_unit(
     attn_q_x_pkt_ch_t& x_ch,
     attn_q_wq_pkt_ch_t& wq_ch
 ) {
+    // Emit pair: X payload plus WQ descriptor for one (token, d_tile) work unit.
     AttnTopManagedPacket x_pkt;
     attn_packet_clear(x_pkt);
     x_pkt.kind = (u16_t)ATTN_PKT_X;
@@ -70,6 +71,7 @@ static inline bool attn_block_phasea_q_consume_emit(
     const u32_t wq_payload_words[kTernaryLiveL0WqPayloadWords],
     u32_t wq_inv_sw_bits
 ) {
+    // Consume pair: require lockstep X/WQ packets before materializing Q output packet.
     AttnTopManagedPacket x_pkt;
     AttnTopManagedPacket wq_pkt;
     if (!x_ch.nb_read(x_pkt) || !wq_ch.nb_read(wq_pkt)) {
@@ -116,6 +118,7 @@ static inline bool attn_top_writeback_phasea_q_work_unit(
     u32_t d_tile_idx,
     attn_q_pkt_ch_t& out_ch
 ) {
+    // Write-back sink: commit Q packet into Q/Q_act_q rows and latch q_sx.
     AttnTopManagedPacket q_pkt;
     if (!out_ch.nb_read(q_pkt)) {
         return false;
@@ -199,6 +202,7 @@ static inline bool attn_block_phasea_q_consume_emit_token_work_tiles(
     u32_t tile_end,
     u32_t row_words
 ) {
+    // Tile worker enforces phase/subphase/token/tile metadata before compute.
     const uint32_t t_idx = (uint32_t)token_idx.to_uint();
     const uint32_t t_begin = (uint32_t)token_begin.to_uint();
     const uint32_t t_end = (uint32_t)token_end.to_uint();
@@ -216,6 +220,7 @@ static inline bool attn_block_phasea_q_consume_emit_token_work_tiles(
         x_row[i] = (u32_t)0u;
     }
 
+    // Consume all tiles first to validate descriptor coverage before kernel execution.
     ATTN_P11AD_TILE_CONSUME_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
         AttnTopManagedWorkPacket x_pkt;
         AttnTopManagedWorkPacket wq_pkt;
@@ -255,6 +260,7 @@ static inline bool attn_block_phasea_q_consume_emit_token_work_tiles(
         return false;
     }
 
+    // Emit Q tiles with preserved token/tile metadata for Top write-back.
     ATTN_P11AD_TILE_EMIT_LOOP: for (uint32_t dt = dt_begin; dt < dt_end; ++dt) {
         const uint32_t tile_offset = dt * tile_words;
         const uint32_t valid =
@@ -294,6 +300,7 @@ static inline bool attn_top_writeback_phasea_q_work_tile(
     u32_t tile_end,
     attn_q_work_pkt_ch_t& out_ch
 ) {
+    // Tile write-back sink mirrors payload into Q/Q_act_q windows and updates scale word.
     AttnTopManagedWorkPacket q_pkt;
     if (!out_ch.nb_read(q_pkt)) {
         return false;
@@ -369,6 +376,7 @@ static inline bool attn_phasea_top_managed_q_mainline(
     u32_t* phase_entry_probe_owner_ok = 0,
     u32_t* phase_entry_probe_compare_ok = 0
 ) {
+    // Mainline posture: fallback is true until every validation and write-back step succeeds.
     fallback_taken = true;
     if (phase_entry_probe_visible != 0) {
         *phase_entry_probe_visible = (u32_t)0u;
@@ -379,6 +387,7 @@ static inline bool attn_phasea_top_managed_q_mainline(
     if (phase_entry_probe_compare_ok != 0) {
         *phase_entry_probe_compare_ok = (u32_t)0u;
     }
+    // Validation chain: SRAM view, shape, parameter spans, and descriptor legality.
     if (!attn_phasea_q_sram_view_ok(sram)) {
         return false;
     }
@@ -439,6 +448,7 @@ static inline bool attn_phasea_top_managed_q_mainline(
     if (d_model > (uint32_t)kTernaryLiveL0WqCols) {
         return false;
     }
+    // Optional phase-entry probe verifies Top-owned descriptor base and visible data.
     const bool phase_entry_probe_enabled =
         (phase_entry_probe_x_words != 0) &&
         ((uint32_t)phase_entry_probe_x_words_valid.to_uint() != 0u);
