@@ -364,6 +364,12 @@ namespace aecct {
         u32_t p11bc_managed_attention_target_layer_id;
         u32_t p11bc_managed_attention_gate_taken_count;
         u32_t p11bc_managed_attention_last_layer_id;
+        u32_t p11bd_attn_compat_shell_enabled_count;
+        u32_t p11bd_attn_compat_shell_disabled_count;
+        u32_t p11bd_attn_compat_shell_enabled_last_layer_id;
+        u32_t p11bd_attn_compat_shell_disabled_last_layer_id;
+        u32_t p11bd_target_layer_attn_compat_shell_disabled_count;
+        u32_t p11bd_non_target_layer_attn_compat_shell_enabled_count;
         bool p11av_lid0_ffn_handoff_enable;
         bool p11av_lid0_ffn_handoff_descriptor_valid;
         u32_t p11av_ffn_handoff_gate_taken_count;
@@ -476,6 +482,12 @@ namespace aecct {
             p11bc_managed_attention_target_layer_id = 0;
             p11bc_managed_attention_gate_taken_count = 0;
             p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
+            p11bd_attn_compat_shell_enabled_count = 0;
+            p11bd_attn_compat_shell_disabled_count = 0;
+            p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+            p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+            p11bd_target_layer_attn_compat_shell_disabled_count = 0;
+            p11bd_non_target_layer_attn_compat_shell_enabled_count = 0;
             p11av_lid0_ffn_handoff_enable = false;
             p11av_lid0_ffn_handoff_descriptor_valid = false;
             p11av_ffn_handoff_gate_taken_count = 0;
@@ -674,6 +686,24 @@ namespace aecct {
     }
     static inline u32_t top_peek_p11bc_managed_attention_last_layer_id() {
         return top_regs().p11bc_managed_attention_last_layer_id;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_enabled_count() {
+        return top_regs().p11bd_attn_compat_shell_enabled_count;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_disabled_count() {
+        return top_regs().p11bd_attn_compat_shell_disabled_count;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_enabled_last_layer_id() {
+        return top_regs().p11bd_attn_compat_shell_enabled_last_layer_id;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_disabled_last_layer_id() {
+        return top_regs().p11bd_attn_compat_shell_disabled_last_layer_id;
+    }
+    static inline u32_t top_peek_p11bd_target_layer_attn_compat_shell_disabled_count() {
+        return top_regs().p11bd_target_layer_attn_compat_shell_disabled_count;
+    }
+    static inline u32_t top_peek_p11bd_non_target_layer_attn_compat_shell_enabled_count() {
+        return top_regs().p11bd_non_target_layer_attn_compat_shell_enabled_count;
     }
     static inline bool top_peek_p11ax_lid0_attn_out_payload_enable() { return top_regs().p11ax_lid0_attn_out_payload_enable; }
     static inline bool top_peek_p11ax_lid0_attn_out_payload_descriptor_valid() { return top_regs().p11ax_lid0_attn_out_payload_descriptor_valid; }
@@ -2161,6 +2191,21 @@ namespace aecct {
         phase_entry_probe_words_valid = (u32_t)probe_words_valid;
     }
 
+    static inline bool top_should_enable_attn_compat_shell(
+        bool kv_prebuilt_from_top_managed,
+        bool q_prebuilt_from_top_managed,
+        bool score_prebuilt_from_top_managed,
+        bool out_prebuilt_from_top_managed,
+        bool attn_out_topfed_payload_enable
+    ) {
+        const bool attn_fully_prebuilt_from_top_managed =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            out_prebuilt_from_top_managed;
+        return (!attn_fully_prebuilt_from_top_managed) || attn_out_topfed_payload_enable;
+    }
+
     static inline void top_dispatch_transformer_layer(
         u32_t* sram,
         const CfgRegs& cfg,
@@ -2180,14 +2225,13 @@ namespace aecct {
         const u32_t* attn_out_topfed_payload_words = 0,
         u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
-        const bool attn_fully_prebuilt_from_top_managed =
-            kv_prebuilt_from_top_managed &&
-            q_prebuilt_from_top_managed &&
-            score_prebuilt_from_top_managed &&
-            out_prebuilt_from_top_managed;
-        const bool attn_compat_shell_enable =
-            (!attn_fully_prebuilt_from_top_managed) ||
-            attn_out_topfed_payload_enable;
+        const bool attn_compat_shell_enable = top_should_enable_attn_compat_shell(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable
+        );
         TransformerLayer(
             sram,
             cfg,
@@ -2229,14 +2273,13 @@ namespace aecct {
         const u32_t* attn_out_topfed_payload_words = 0,
         u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
     ) {
-        const bool attn_fully_prebuilt_from_top_managed =
-            kv_prebuilt_from_top_managed &&
-            q_prebuilt_from_top_managed &&
-            score_prebuilt_from_top_managed &&
-            out_prebuilt_from_top_managed;
-        const bool attn_compat_shell_enable =
-            (!attn_fully_prebuilt_from_top_managed) ||
-            attn_out_topfed_payload_enable;
+        const bool attn_compat_shell_enable = top_should_enable_attn_compat_shell(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable
+        );
         TransformerLayerTopManagedAttnBridge(
             sram,
             cfg,
@@ -2303,6 +2346,12 @@ namespace aecct {
         regs.p11bc_managed_attention_target_layer_id = (u32_t)managed_attn_target_layer;
         regs.p11bc_managed_attention_gate_taken_count = 0;
         regs.p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_enabled_count = 0;
+        regs.p11bd_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_target_layer_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count = 0;
         regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
         regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
         regs.p11av_ffn_handoff_gate_taken_count = 0;
@@ -2800,6 +2849,30 @@ namespace aecct {
             }
 
             // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
+            const bool attn_compat_shell_enable_for_layer = top_should_enable_attn_compat_shell(
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                attn_out_topfed_payload_enable_for_layer
+            );
+            if (attn_compat_shell_enable_for_layer) {
+                regs.p11bd_attn_compat_shell_enabled_count =
+                    regs.p11bd_attn_compat_shell_enabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)lid;
+                if (!is_managed_attention_layer) {
+                    regs.p11bd_non_target_layer_attn_compat_shell_enabled_count =
+                        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count + (u32_t)1u;
+                }
+            } else {
+                regs.p11bd_attn_compat_shell_disabled_count =
+                    regs.p11bd_attn_compat_shell_disabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)lid;
+                if (is_managed_attention_layer) {
+                    regs.p11bd_target_layer_attn_compat_shell_disabled_count =
+                        regs.p11bd_target_layer_attn_compat_shell_disabled_count + (u32_t)1u;
+                }
+            }
             top_dispatch_transformer_layer(
                 sram,
                 cfg,
@@ -2911,6 +2984,12 @@ namespace aecct {
         regs.p11bc_managed_attention_target_layer_id = (u32_t)managed_attn_target_layer;
         regs.p11bc_managed_attention_gate_taken_count = 0;
         regs.p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_enabled_count = 0;
+        regs.p11bd_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_target_layer_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count = 0;
         regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
         regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
         regs.p11av_ffn_handoff_gate_taken_count = 0;
@@ -3403,6 +3482,30 @@ namespace aecct {
                 }
             }
 
+            const bool attn_compat_shell_enable_for_layer = top_should_enable_attn_compat_shell(
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                attn_out_topfed_payload_enable_for_layer
+            );
+            if (attn_compat_shell_enable_for_layer) {
+                regs.p11bd_attn_compat_shell_enabled_count =
+                    regs.p11bd_attn_compat_shell_enabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)lid;
+                if (!is_managed_attention_layer) {
+                    regs.p11bd_non_target_layer_attn_compat_shell_enabled_count =
+                        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count + (u32_t)1u;
+                }
+            } else {
+                regs.p11bd_attn_compat_shell_disabled_count =
+                    regs.p11bd_attn_compat_shell_disabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)lid;
+                if (is_managed_attention_layer) {
+                    regs.p11bd_target_layer_attn_compat_shell_disabled_count =
+                        regs.p11bd_target_layer_attn_compat_shell_disabled_count + (u32_t)1u;
+                }
+            }
             top_dispatch_transformer_layer_top_managed_attn_bridge(
                 sram,
                 cfg,

@@ -445,6 +445,86 @@ private:
         return true;
     }
 
+    bool check_attn_compat_shell_observability(
+        const aecct::TopRegs& regs,
+        const char* case_tag,
+        uint32_t n_layers,
+        uint32_t expected_target_layer_id
+    ) const {
+        const uint32_t shell_enabled_count =
+            (uint32_t)regs.p11bd_attn_compat_shell_enabled_count.to_uint();
+        const uint32_t shell_disabled_count =
+            (uint32_t)regs.p11bd_attn_compat_shell_disabled_count.to_uint();
+        const uint32_t shell_enabled_last_layer_id =
+            (uint32_t)regs.p11bd_attn_compat_shell_enabled_last_layer_id.to_uint();
+        const uint32_t shell_disabled_last_layer_id =
+            (uint32_t)regs.p11bd_attn_compat_shell_disabled_last_layer_id.to_uint();
+        const uint32_t target_shell_disabled_count =
+            (uint32_t)regs.p11bd_target_layer_attn_compat_shell_disabled_count.to_uint();
+        const uint32_t non_target_shell_enabled_count =
+            (uint32_t)regs.p11bd_non_target_layer_attn_compat_shell_enabled_count.to_uint();
+
+        const uint32_t expected_shell_disabled_count = (n_layers > 0u) ? 1u : 0u;
+        const uint32_t expected_shell_enabled_count = (n_layers > 0u) ? (n_layers - 1u) : 0u;
+        uint32_t expected_shell_enabled_last_layer_id = 0xFFFFFFFFu;
+        if (expected_shell_enabled_count > 0u) {
+            expected_shell_enabled_last_layer_id =
+                (expected_target_layer_id + 1u < n_layers) ? (n_layers - 1u) : (n_layers - 2u);
+        }
+
+        std::printf(
+            "CASE_%s_ATTN_COMPAT_SHELL_OBSERVABILITY target_layer_id=%u n_layers=%u shell_enabled_count=%u shell_disabled_count=%u shell_enabled_last_layer_id=%u shell_disabled_last_layer_id=%u target_shell_disabled_count=%u non_target_shell_enabled_count=%u\n",
+            case_tag,
+            (unsigned)expected_target_layer_id,
+            (unsigned)n_layers,
+            (unsigned)shell_enabled_count,
+            (unsigned)shell_disabled_count,
+            (unsigned)shell_enabled_last_layer_id,
+            (unsigned)shell_disabled_last_layer_id,
+            (unsigned)target_shell_disabled_count,
+            (unsigned)non_target_shell_enabled_count);
+
+        if (shell_disabled_count != expected_shell_disabled_count ||
+            shell_enabled_count != expected_shell_enabled_count ||
+            target_shell_disabled_count != expected_shell_disabled_count ||
+            non_target_shell_enabled_count != expected_shell_enabled_count) {
+            std::printf(
+                "[p11aj][FAIL] %s shell count mismatch enabled=%u disabled=%u target_disabled=%u non_target_enabled=%u exp_enabled=%u exp_disabled=%u\n",
+                case_tag,
+                (unsigned)shell_enabled_count,
+                (unsigned)shell_disabled_count,
+                (unsigned)target_shell_disabled_count,
+                (unsigned)non_target_shell_enabled_count,
+                (unsigned)expected_shell_enabled_count,
+                (unsigned)expected_shell_disabled_count);
+            return false;
+        }
+        if (shell_disabled_last_layer_id != expected_target_layer_id) {
+            std::printf(
+                "[p11aj][FAIL] %s shell disabled last layer mismatch got=%u exp=%u\n",
+                case_tag,
+                (unsigned)shell_disabled_last_layer_id,
+                (unsigned)expected_target_layer_id);
+            return false;
+        }
+        if (shell_enabled_last_layer_id != expected_shell_enabled_last_layer_id) {
+            std::printf(
+                "[p11aj][FAIL] %s shell enabled last layer mismatch got=%u exp=%u\n",
+                case_tag,
+                (unsigned)shell_enabled_last_layer_id,
+                (unsigned)expected_shell_enabled_last_layer_id);
+            return false;
+        }
+
+        std::printf("CASE_%s_ATTN_COMPAT_SHELL_DISABLED PASS\n", case_tag);
+        if (expected_shell_enabled_count > 0u) {
+            std::printf("CASE_%s_NON_TARGET_ATTN_COMPAT_SHELL_RETAINS_LEGACY PASS\n", case_tag);
+        } else {
+            std::printf("CASE_%s_ATTN_COMPAT_SHELL_NO_NON_TARGET_LAYERS PASS\n", case_tag);
+        }
+        return true;
+    }
+
     bool check_handoff_counter_conservation(
         const aecct::TopRegs& regs,
         const char* case_tag
@@ -1031,6 +1111,9 @@ private:
         if (!check_managed_target_selection_observability(regs_full_, "BASELINE_N1_TARGET0", 0u)) {
             return false;
         }
+        if (!check_attn_compat_shell_observability(regs_full_, "BASELINE_N1", 1u, 0u)) {
+            return false;
+        }
         if (!check_handoff_counter_conservation(regs_full_, "BASELINE_N1")) {
             return false;
         }
@@ -1063,6 +1146,9 @@ private:
         if (!check_managed_target_selection_observability(regs_mixed_a, "TARGET0_N3", 0u)) {
             return false;
         }
+        if (!check_attn_compat_shell_observability(regs_mixed_a, "TARGET0_N3", 3u, 0u)) {
+            return false;
+        }
         if (!check_handoff_counter_conservation(regs_mixed_a, "MIXED_N3")) {
             return false;
         }
@@ -1087,7 +1173,13 @@ private:
             regs_mixed_a.p11ad_q_fallback_taken != regs_mixed_b.p11ad_q_fallback_taken ||
             regs_mixed_a.p11ac_fallback_taken != regs_mixed_b.p11ac_fallback_taken ||
             regs_mixed_a.p11ae_score_fallback_taken != regs_mixed_b.p11ae_score_fallback_taken ||
-            regs_mixed_a.p11af_softmax_output_fallback_taken != regs_mixed_b.p11af_softmax_output_fallback_taken) {
+            regs_mixed_a.p11af_softmax_output_fallback_taken != regs_mixed_b.p11af_softmax_output_fallback_taken ||
+            regs_mixed_a.p11bd_attn_compat_shell_enabled_count != regs_mixed_b.p11bd_attn_compat_shell_enabled_count ||
+            regs_mixed_a.p11bd_attn_compat_shell_disabled_count != regs_mixed_b.p11bd_attn_compat_shell_disabled_count ||
+            regs_mixed_a.p11bd_attn_compat_shell_enabled_last_layer_id != regs_mixed_b.p11bd_attn_compat_shell_enabled_last_layer_id ||
+            regs_mixed_a.p11bd_attn_compat_shell_disabled_last_layer_id != regs_mixed_b.p11bd_attn_compat_shell_disabled_last_layer_id ||
+            regs_mixed_a.p11bd_target_layer_attn_compat_shell_disabled_count != regs_mixed_b.p11bd_target_layer_attn_compat_shell_disabled_count ||
+            regs_mixed_a.p11bd_non_target_layer_attn_compat_shell_enabled_count != regs_mixed_b.p11bd_non_target_layer_attn_compat_shell_enabled_count) {
             std::printf("[p11aj][FAIL] mixed n_layers=3 lid0 marker mismatch between repeated runs\n");
             return false;
         }
@@ -1170,6 +1262,9 @@ private:
         if (!check_managed_target_selection_observability(regs_target1_a, "TARGET1_N3", 1u)) {
             return false;
         }
+        if (!check_attn_compat_shell_observability(regs_target1_a, "TARGET1_N3", 3u, 1u)) {
+            return false;
+        }
         if (!check_handoff_counter_conservation(regs_target1_a, "TARGET1_N3")) {
             return false;
         }
@@ -1183,7 +1278,13 @@ private:
             regs_target1_a.p11ae_score_fallback_taken != regs_target1_b.p11ae_score_fallback_taken ||
             regs_target1_a.p11af_softmax_output_fallback_taken != regs_target1_b.p11af_softmax_output_fallback_taken ||
             regs_target1_a.p11bc_managed_attention_gate_taken_count != regs_target1_b.p11bc_managed_attention_gate_taken_count ||
-            regs_target1_a.p11bc_managed_attention_last_layer_id != regs_target1_b.p11bc_managed_attention_last_layer_id) {
+            regs_target1_a.p11bc_managed_attention_last_layer_id != regs_target1_b.p11bc_managed_attention_last_layer_id ||
+            regs_target1_a.p11bd_attn_compat_shell_enabled_count != regs_target1_b.p11bd_attn_compat_shell_enabled_count ||
+            regs_target1_a.p11bd_attn_compat_shell_disabled_count != regs_target1_b.p11bd_attn_compat_shell_disabled_count ||
+            regs_target1_a.p11bd_attn_compat_shell_enabled_last_layer_id != regs_target1_b.p11bd_attn_compat_shell_enabled_last_layer_id ||
+            regs_target1_a.p11bd_attn_compat_shell_disabled_last_layer_id != regs_target1_b.p11bd_attn_compat_shell_disabled_last_layer_id ||
+            regs_target1_a.p11bd_target_layer_attn_compat_shell_disabled_count != regs_target1_b.p11bd_target_layer_attn_compat_shell_disabled_count ||
+            regs_target1_a.p11bd_non_target_layer_attn_compat_shell_enabled_count != regs_target1_b.p11bd_non_target_layer_attn_compat_shell_enabled_count) {
             std::printf("[p11aj][FAIL] target1 n_layers=3 marker/selection mismatch between repeated runs\n");
             return false;
         }
