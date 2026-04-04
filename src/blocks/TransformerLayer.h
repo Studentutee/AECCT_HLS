@@ -152,6 +152,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         // Fallback boundary: this keeps direct SRAM fallback policy unchanged outside this exact bucket.
         return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
     }
+    const bool attn_qkv_not_prebuilt_score_ready_partial_out_stage_shell_safe =
+        !kv_prebuilt_from_top_managed &&
+        !q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        !attn_out_topfed_payload_enable;
+    if (attn_qkv_not_prebuilt_score_ready_partial_out_stage_shell_safe) {
+        // Stage boundary: score-ready bucket can consume OUT when both Q and KV are already committed upstream.
+        // Ownership seam: this path is stage-dispatch narrowing only and does not alter shared-SRAM ownership.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+    }
     const bool attn_qkv_ready_partial_score_stage_shell_safe =
         kv_prebuilt_from_top_managed &&
         q_prebuilt_from_top_managed &&
@@ -171,6 +182,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
     if (attn_q_ready_kv_not_prebuilt_qkv_scores_stage_shell_safe) {
         // Stage boundary: q-ready/kv-missing bucket composes QKV + SCORES stages to avoid FULL shell.
         // Ownership seam: this branch keeps Top-owned SRAM policy unchanged and only narrows stage dispatch.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
+    }
+    const bool attn_kv_ready_q_not_prebuilt_qkv_scores_stage_shell_safe =
+        kv_prebuilt_from_top_managed &&
+        !q_prebuilt_from_top_managed &&
+        !score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        !attn_out_topfed_payload_enable;
+    if (attn_kv_ready_q_not_prebuilt_qkv_scores_stage_shell_safe) {
+        // Stage boundary: kv-ready/q-missing bucket composes QKV + SCORES stages to avoid FULL shell.
+        // Ownership seam: reuse existing stage surface only; no new shared-SRAM arbitration semantics.
         return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
     }
     // Fallback boundary: other partial-prebuild buckets stay on legacy full-shell behavior.
