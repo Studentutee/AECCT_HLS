@@ -19,6 +19,13 @@ Use this template to record each night-run execution result.
 - evidence_1:
 - evidence_2:
 
+## 4a. Per-task execution evidence
+- task_id:
+- lane:
+- runner:
+- task_status:
+- task_log_excerpt:
+
 ## 5. Repo-tracked artifacts
 - artifact_1:
 - artifact_2:

@@ -1,7 +1,7 @@
 # NIGHT_PACK
 
 ## Purpose
-- Define the minimal nightly automation skeleton for multi-round local task execution.
+- Define the minimal nightly automation dispatch v1 for multi-round local task execution.
 - Standardize fixed inputs and fixed evidence outputs for reproducible handoff.
 - Keep scope local-only unless explicitly expanded by a dedicated task.
 
@@ -11,6 +11,15 @@
 
 ## Canonical Entry
 - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local/run_night_pack.ps1 -BuildDir build/night_run -Smoke`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local/run_night_pack.ps1 -BuildDir build/night_run`
+
+## Queue Dispatch v1
+- `run_night_pack.ps1` reads `TASK_QUEUE.md` and picks rows with `status=ready`.
+- v1 supports bounded task mapping only:
+  - `checker.design_purity`
+  - `runner.init_agent_state`
+- Dispatch order follows queue row order and honors `depends_on` and `stop_on_fail`.
+- Per-task outputs are written to `build/night_run/<run_id>/tasks/<task_id>/`.
 
 ## Required Output Contract
 Each run must create a run folder under `build/night_run/<run_id>/` and include:
@@ -19,6 +28,8 @@ Each run must create a run folder under `build/night_run/<run_id>/` and include:
 - `NIGHT_PACK_VERDICT.json`
 - `NIGHT_PACK_MANIFEST.txt`
 - `ACCEPTANCE_PACK_FILLED.md`
+- `tasks/<task_id>/task_execution.log`
+- `tasks/<task_id>/task_summary.txt`
 
 ## Governance Posture
 - Local evidence is local-only evidence.
@@ -36,3 +47,9 @@ Each run must create a run folder under `build/night_run/<run_id>/` and include:
   - Script exits with code 0.
   - Stdout includes `PASS: run_night_pack`.
   - Required output contract files exist in the generated run folder.
+
+## Dispatch Gate
+- A minimal dispatch run is valid when:
+  - At least one `checker` task and one `runner` task are executed from queue.
+  - Each executed task has local evidence under `tasks/<task_id>/`.
+  - `NIGHT_PACK_VERDICT.json` includes per-task PASS/FAIL and overall verdict.
