@@ -20,6 +20,7 @@
   - `checker.design_purity`
   - `runner.init_agent_state`
   - `runner.local.p11aj` (compile-backed local runner)
+  - `runner.local.p11anb` (compile-backed local runner)
 - Dispatch order follows queue row order and honors `depends_on` and `stop_on_fail`.
 - Per-task outputs are written to `build/night_run/<run_id>/tasks/<task_id>/`.
 - Compile-backed runner may require `VsDevCmd`/`cl`; task summary must record toolchain note and evidence source.

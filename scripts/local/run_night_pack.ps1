@@ -319,6 +319,26 @@ function Resolve-RunnerSpec {
                 )
             }
         }
+        "runner.local.p11anb" {
+            $runnerBuildDir = Join-Path $TaskDirAbs "p11anb_runner_build"
+            return [pscustomobject]@{
+                command = "powershell"
+                args = @(
+                    "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", "scripts/local/run_p11anb_attnlayer0_boundary_seam_contract.ps1",
+                    "-BuildDir", $runnerBuildDir
+                )
+                required_pass = "PASS: run_p11anb_attnlayer0_boundary_seam_contract"
+                toolchain_note = "requires cl via VsDevCmd (MSVC x64 host/toolchain)"
+                requires_vsdevcmd = $true
+                expected_artifacts = @(
+                    (Join-Path $runnerBuildDir "build.log"),
+                    (Join-Path $runnerBuildDir "run.log"),
+                    (Join-Path $runnerBuildDir "verdict.txt"),
+                    (Join-Path $runnerBuildDir "file_manifest.txt")
+                )
+            }
+        }
         default {
             throw "unsupported runner key in v1.1: $RunnerKey"
         }
@@ -736,7 +756,7 @@ try {
     $acceptanceLines.Add("- local_only_marking: runtime outputs under build/night_run")
     $acceptanceLines.Add("")
     $acceptanceLines.Add("## 8. Residual risks")
-    $acceptanceLines.Add("- risk_1: v1.1 supports only bounded runner keys (checker.design_purity, runner.init_agent_state, runner.local.p11aj)")
+    $acceptanceLines.Add("- risk_1: v1.1 supports only bounded runner keys (checker.design_purity, runner.init_agent_state, runner.local.p11aj, runner.local.p11anb)")
     $acceptanceLines.Add("- mitigation_or_watchpoint: expand mapping by explicit review per additional task type")
     $acceptanceLines.Add("")
     $acceptanceLines.Add("## 9. Recommended next step")

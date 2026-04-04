@@ -552,7 +552,24 @@ private:
         }
         std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_FULLY_PREBUILT_NO_PAYLOAD_DISABLED PASS\n");
 
-        const aecct::TransformerAttnCompatShellStage partial_prebuilt_stage =
+        const aecct::TransformerAttnCompatShellStage selected_partial_prebuilt_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                true,
+                true,
+                true,
+                false,
+                false);
+        if (selected_partial_prebuilt_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+            std::printf(
+                "[p11anb][FAIL] selected partial-prebuilt stage mismatch got=%u exp=%u\n",
+                (unsigned)selected_partial_prebuilt_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_OUT_ONLY PASS\n");
+
+        const aecct::TransformerAttnCompatShellStage other_partial_prebuilt_stage =
             aecct::transformer_layer_select_attn_compat_shell_stage(
                 true,
                 true,
@@ -560,14 +577,14 @@ private:
                 false,
                 false,
                 true);
-        if (partial_prebuilt_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+        if (other_partial_prebuilt_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
             std::printf(
-                "[p11anb][FAIL] partial-prebuilt stage mismatch got=%u exp=%u\n",
-                (unsigned)partial_prebuilt_stage,
+                "[p11anb][FAIL] other partial-prebuilt stage mismatch got=%u exp=%u\n",
+                (unsigned)other_partial_prebuilt_stage,
                 (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL);
             return false;
         }
-        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_PARTIAL_PREBUILT_STILL_FULL PASS\n");
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_OTHER_PARTIAL_STILL_FULL PASS\n");
         return true;
     }
 
