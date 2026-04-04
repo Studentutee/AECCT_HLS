@@ -118,7 +118,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         }
         return TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED;
     }
-    // Partial-prebuild path keeps the legacy full-shell behavior.
+    const bool attn_score_ready_partial_out_stage_shell_safe =
+        kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        !attn_out_topfed_payload_enable;
+    if (attn_score_ready_partial_out_stage_shell_safe) {
+        // local-only bounded cut: score-ready partial-prebuild can shrink to OUT stage shell.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+    }
+    // Fallback boundary: other partial-prebuild buckets stay on legacy full-shell behavior.
     return TRANSFORMER_ATTN_COMPAT_SHELL_FULL;
 }
 
@@ -319,7 +329,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             out_prebuilt_from_top_managed,
             attn_out_topfed_payload_enable);
     if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
-        // Stage boundary: partial-prebuild keeps full-shell execution.
+        // Stage boundary: non-selected partial-prebuild buckets keep full-shell execution.
         AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
             sram_window,
             attn_cfg,
@@ -330,7 +340,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             attn_prebuilt_handoff
         );
     } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
-        // Stage boundary: fully-prebuilt + payload-consume shrinks to OUT-only shell.
+        // Stage boundary: OUT-stage shell for fully-prebuilt payload consume and selected score-ready partial bucket.
         AttnLayer0TopManagedWindowBridge<ATTN_STAGE_OUT>(
             sram_window,
             attn_cfg,
@@ -774,7 +784,7 @@ static inline void TransformerLayer(
             out_prebuilt_from_top_managed,
             attn_out_topfed_payload_enable);
     if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
-        // Stage boundary: partial-prebuild keeps full-shell execution.
+        // Stage boundary: non-selected partial-prebuild buckets keep full-shell execution.
         AttnLayer0<ATTN_STAGE_FULL>(
             sram,
             attn_cfg,
@@ -785,7 +795,7 @@ static inline void TransformerLayer(
             attn_prebuilt_handoff
         );
     } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
-        // Stage boundary: fully-prebuilt + payload-consume shrinks to OUT-only shell.
+        // Stage boundary: OUT-stage shell for fully-prebuilt payload consume and selected score-ready partial bucket.
         AttnLayer0<ATTN_STAGE_OUT>(
             sram,
             attn_cfg,

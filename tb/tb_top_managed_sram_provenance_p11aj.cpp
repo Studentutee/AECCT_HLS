@@ -36,6 +36,9 @@ public:
         if (!init_state()) {
             return 1;
         }
+        if (!run_attn_compat_shell_selector_truth_table_audit()) {
+            return 1;
+        }
         if (!run_staged_provenance_chain()) {
             return 1;
         }
@@ -110,6 +113,50 @@ private:
 
     static bool is_nonfinite_bits(uint32_t bits) {
         return ((bits & 0x7F800000u) == 0x7F800000u);
+    }
+
+    static const char* attn_shell_stage_name(aecct::TransformerAttnCompatShellStage stage) {
+        if (stage == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
+            return "DISABLED";
+        }
+        if (stage == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+            return "FULL";
+        }
+        return "OUT_ONLY";
+    }
+
+    static aecct::TransformerAttnCompatShellStage attn_shell_stage_reference_model(
+        bool attn_compat_shell_enable,
+        bool kv_prebuilt_from_top_managed,
+        bool q_prebuilt_from_top_managed,
+        bool score_prebuilt_from_top_managed,
+        bool out_prebuilt_from_top_managed,
+        bool attn_out_topfed_payload_enable
+    ) {
+        if (!attn_compat_shell_enable) {
+            return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED;
+        }
+        const bool fully_prebuilt =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            out_prebuilt_from_top_managed;
+        if (fully_prebuilt) {
+            if (attn_out_topfed_payload_enable) {
+                return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+            }
+            return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED;
+        }
+        const bool selected_partial_out_stage_bucket =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            !out_prebuilt_from_top_managed &&
+            !attn_out_topfed_payload_enable;
+        if (selected_partial_out_stage_bucket) {
+            return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+        }
+        return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL;
     }
 
     void apply_bridge_probe_norm_params(std::vector<aecct::u32_t>& sram_vec) const {
@@ -525,6 +572,114 @@ private:
         } else {
             std::printf("CASE_%s_ATTN_COMPAT_SHELL_NO_NON_TARGET_LAYERS PASS\n", case_tag);
         }
+        return true;
+    }
+
+    bool run_attn_compat_shell_selector_truth_table_audit() const {
+        const aecct::TransformerAttnCompatShellStage shell_disabled_actual =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                false, true, true, true, true, true);
+        if (shell_disabled_actual != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
+            std::printf(
+                "[p11aj][FAIL] selector shell-disable mismatch got=%s exp=DISABLED\n",
+                attn_shell_stage_name(shell_disabled_actual));
+            return false;
+        }
+
+        bool selected_partial_bucket_ok = false;
+        bool fully_prebuilt_no_payload_ok = false;
+        bool fully_prebuilt_payload_ok = false;
+        bool other_partial_buckets_ok = true;
+        uint32_t combos_checked = 0u;
+
+        for (uint32_t bits = 0u; bits < 16u; ++bits) {
+            const bool kv_prebuilt = ((bits >> 0u) & 1u) != 0u;
+            const bool q_prebuilt = ((bits >> 1u) & 1u) != 0u;
+            const bool score_prebuilt = ((bits >> 2u) & 1u) != 0u;
+            const bool out_prebuilt = ((bits >> 3u) & 1u) != 0u;
+            const bool fully_prebuilt =
+                kv_prebuilt && q_prebuilt && score_prebuilt && out_prebuilt;
+
+            for (uint32_t payload = 0u; payload < 2u; ++payload) {
+                const bool payload_enable = (payload != 0u);
+                const bool selected_partial_bucket =
+                    kv_prebuilt &&
+                    q_prebuilt &&
+                    score_prebuilt &&
+                    !out_prebuilt &&
+                    !payload_enable;
+
+                const aecct::TransformerAttnCompatShellStage got =
+                    aecct::transformer_layer_select_attn_compat_shell_stage(
+                        true,
+                        kv_prebuilt,
+                        q_prebuilt,
+                        score_prebuilt,
+                        out_prebuilt,
+                        payload_enable);
+                const aecct::TransformerAttnCompatShellStage exp =
+                    attn_shell_stage_reference_model(
+                        true,
+                        kv_prebuilt,
+                        q_prebuilt,
+                        score_prebuilt,
+                        out_prebuilt,
+                        payload_enable);
+
+                ++combos_checked;
+                if (got != exp) {
+                    std::printf(
+                        "[p11aj][FAIL] selector mismatch kv=%u q=%u score=%u out=%u payload=%u got=%s exp=%s\n",
+                        kv_prebuilt ? 1u : 0u,
+                        q_prebuilt ? 1u : 0u,
+                        score_prebuilt ? 1u : 0u,
+                        out_prebuilt ? 1u : 0u,
+                        payload_enable ? 1u : 0u,
+                        attn_shell_stage_name(got),
+                        attn_shell_stage_name(exp));
+                    return false;
+                }
+
+                if (selected_partial_bucket && got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+                    selected_partial_bucket_ok = true;
+                }
+                if (fully_prebuilt && !payload_enable &&
+                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
+                    fully_prebuilt_no_payload_ok = true;
+                }
+                if (fully_prebuilt && payload_enable &&
+                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+                    fully_prebuilt_payload_ok = true;
+                }
+                if (!fully_prebuilt && !selected_partial_bucket &&
+                    got != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+                    other_partial_buckets_ok = false;
+                }
+            }
+        }
+
+        if (!selected_partial_bucket_ok) {
+            std::printf("[p11aj][FAIL] selected partial bucket did not converge to OUT_ONLY\n");
+            return false;
+        }
+        if (!fully_prebuilt_no_payload_ok) {
+            std::printf("[p11aj][FAIL] fully-prebuilt no-payload did not stay DISABLED\n");
+            return false;
+        }
+        if (!fully_prebuilt_payload_ok) {
+            std::printf("[p11aj][FAIL] fully-prebuilt payload did not stay OUT_ONLY\n");
+            return false;
+        }
+        if (!other_partial_buckets_ok) {
+            std::printf("[p11aj][FAIL] non-selected partial bucket changed stage unexpectedly\n");
+            return false;
+        }
+
+        std::printf("SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_TO_OUT_STAGE PASS\n");
+        std::printf("FULLY_PREBUILT_NO_PAYLOAD_DISABLED PASS\n");
+        std::printf("FULLY_PREBUILT_PAYLOAD_OUT_ONLY PASS\n");
+        std::printf("OTHER_PARTIAL_BUCKETS_REMAIN_FULL PASS\n");
+        std::printf("ATTN_COMPAT_SHELL_TRUTH_TABLE_AUDIT PASS combos=%u\n", (unsigned)combos_checked);
         return true;
     }
 
