@@ -1,7 +1,7 @@
 # NIGHT_PACK
 
 ## Purpose
-- Define the minimal nightly automation dispatch v1 for multi-round local task execution.
+- Define the minimal nightly automation dispatch v1.1 for multi-round local task execution.
 - Standardize fixed inputs and fixed evidence outputs for reproducible handoff.
 - Keep scope local-only unless explicitly expanded by a dedicated task.
 
@@ -12,14 +12,17 @@
 ## Canonical Entry
 - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local/run_night_pack.ps1 -BuildDir build/night_run -Smoke`
 - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local/run_night_pack.ps1 -BuildDir build/night_run`
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/local/run_night_pack.ps1 -BuildDir build/night_run -MaxReadyTasks 3`
 
-## Queue Dispatch v1
+## Queue Dispatch v1.1
 - `run_night_pack.ps1` reads `TASK_QUEUE.md` and picks rows with `status=ready`.
-- v1 supports bounded task mapping only:
+- v1.1 supports bounded task mapping only:
   - `checker.design_purity`
   - `runner.init_agent_state`
+  - `runner.local.p11aj` (compile-backed local runner)
 - Dispatch order follows queue row order and honors `depends_on` and `stop_on_fail`.
 - Per-task outputs are written to `build/night_run/<run_id>/tasks/<task_id>/`.
+- Compile-backed runner may require `VsDevCmd`/`cl`; task summary must record toolchain note and evidence source.
 
 ## Required Output Contract
 Each run must create a run folder under `build/night_run/<run_id>/` and include:

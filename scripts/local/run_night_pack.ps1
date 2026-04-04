@@ -190,11 +190,82 @@ function Get-SafeName {
     return $safe
 }
 
+function Find-VsDevCmdPath {
+    $candidates = @()
+    if ($env:ProgramFiles) {
+        $candidates += (Join-Path $env:ProgramFiles "Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\VsDevCmd.bat")
+        $candidates += (Join-Path $env:ProgramFiles "Microsoft Visual Studio\\18\\Community\\Common7\\Tools\\VsDevCmd.bat")
+    }
+
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+        $vswherePath = Join-Path $programFilesX86 "Microsoft Visual Studio\\Installer\\vswhere.exe"
+        if (Test-Path -LiteralPath $vswherePath) {
+            try {
+                $installPath = & $vswherePath -latest -products * -property installationPath
+                if (-not [string]::IsNullOrWhiteSpace($installPath)) {
+                    $candidates = @((Join-Path $installPath "Common7\\Tools\\VsDevCmd.bat")) + $candidates
+                }
+            }
+            catch {
+                # Keep fallback candidates when vswhere probing fails.
+            }
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if ((-not [string]::IsNullOrWhiteSpace($candidate)) -and (Test-Path -LiteralPath $candidate)) {
+            return $candidate
+        }
+    }
+    return $null
+}
+
+function Import-VsDevCmdEnvironment {
+    param(
+        [string]$VsDevCmdPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($VsDevCmdPath)) {
+        throw "VsDevCmd path is empty"
+    }
+
+    $envLines = cmd /c "call `"$VsDevCmdPath`" -no_logo -arch=x64 -host_arch=x64 >nul && set"
+    if ($LASTEXITCODE -ne 0) {
+        throw "failed to import VsDevCmd environment (exit=$LASTEXITCODE): $VsDevCmdPath"
+    }
+
+    foreach ($line in $envLines) {
+        if ($line -match '^(.*?)=(.*)$') {
+            [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2])
+        }
+    }
+}
+
+function Get-FirstMatchingLine {
+    param(
+        [string]$Path,
+        [string[]]$Needles
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return ""
+    }
+    foreach ($needle in $Needles) {
+        $match = Select-String -Path $Path -SimpleMatch -Pattern $needle | Select-Object -First 1
+        if ($null -ne $match) {
+            return $match.Line.Trim()
+        }
+    }
+    return ""
+}
+
 function Resolve-RunnerSpec {
     param(
         [string]$RunnerKey,
         [string]$RunId,
-        [string]$TaskId
+        [string]$TaskId,
+        [string]$TaskDirAbs
     )
 
     switch ($RunnerKey) {
@@ -206,6 +277,9 @@ function Resolve-RunnerSpec {
                     "-File", "scripts/check_design_purity.ps1"
                 )
                 required_pass = "PASS: check_design_purity"
+                toolchain_note = "none"
+                requires_vsdevcmd = $false
+                expected_artifacts = @()
             }
         }
         "runner.init_agent_state" {
@@ -220,10 +294,33 @@ function Resolve-RunnerSpec {
                     "-SessionTag", $sessionTag
                 )
                 required_pass = "PASS: init_agent_state"
+                toolchain_note = "none"
+                requires_vsdevcmd = $false
+                expected_artifacts = @()
+            }
+        }
+        "runner.local.p11aj" {
+            $runnerBuildDir = Join-Path $TaskDirAbs "p11aj_runner_build"
+            return [pscustomobject]@{
+                command = "powershell"
+                args = @(
+                    "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-File", "scripts/local/run_p11aj_top_managed_sram_provenance.ps1",
+                    "-BuildDir", $runnerBuildDir
+                )
+                required_pass = "PASS: run_p11aj_top_managed_sram_provenance"
+                toolchain_note = "requires cl via VsDevCmd (MSVC x64 host/toolchain)"
+                requires_vsdevcmd = $true
+                expected_artifacts = @(
+                    (Join-Path $runnerBuildDir "build.log"),
+                    (Join-Path $runnerBuildDir "run.log"),
+                    (Join-Path $runnerBuildDir "verdict.txt"),
+                    (Join-Path $runnerBuildDir "file_manifest.txt")
+                )
             }
         }
         default {
-            throw "unsupported runner key in v1: $RunnerKey"
+            throw "unsupported runner key in v1.1: $RunnerKey"
         }
     }
 }
@@ -317,6 +414,10 @@ try {
             $requiredPass = ""
             $requiredPassFound = $false
             $taskMessage = ""
+            $toolchainNote = ""
+            $evidenceExcerpt = ""
+            $runnerArtifactRels = @()
+            $vsDevCmdPathUsed = ""
 
             if ($stopDispatch) {
                 $taskResultStatus = "SKIPPED_STOP_ON_FAIL"
@@ -330,9 +431,19 @@ try {
             }
             else {
                 try {
-                    $runnerSpec = Resolve-RunnerSpec -RunnerKey $task.runner.Trim() -RunId $runId -TaskId $taskId
+                    $runnerSpec = Resolve-RunnerSpec -RunnerKey $task.runner.Trim() -RunId $runId -TaskId $taskId -TaskDirAbs $taskDirAbs
                     $taskCommandString = "$($runnerSpec.command) $($runnerSpec.args -join ' ')"
+                    $toolchainNote = $runnerSpec.toolchain_note
                     Set-Content -Path $taskCommandPathAbs -Encoding UTF8 -Value $taskCommandString
+
+                    if ($runnerSpec.requires_vsdevcmd) {
+                        $vsDevCmdPath = Find-VsDevCmdPath
+                        if ([string]::IsNullOrWhiteSpace($vsDevCmdPath)) {
+                            throw "runner requires VsDevCmd but no VsDevCmd.bat was found"
+                        }
+                        Import-VsDevCmdEnvironment -VsDevCmdPath $vsDevCmdPath
+                        $vsDevCmdPathUsed = $vsDevCmdPath
+                    }
 
                     & $runnerSpec.command @($runnerSpec.args) *> $taskLogPathAbs
                     $taskExitCode = $LASTEXITCODE
@@ -340,6 +451,12 @@ try {
                     $requiredPassFound = $true
                     if (-not [string]::IsNullOrWhiteSpace($requiredPass)) {
                         $requiredPassFound = Select-String -Path $taskLogPathAbs -SimpleMatch -Quiet $requiredPass
+                    }
+
+                    foreach ($artifactPath in $runnerSpec.expected_artifacts) {
+                        if (Test-Path -LiteralPath $artifactPath) {
+                            $runnerArtifactRels += (Get-RepoRelativePath -BasePath $repoRoot -TargetPath $artifactPath)
+                        }
                     }
 
                     if (($taskExitCode -eq 0) -and $requiredPassFound) {
@@ -369,18 +486,45 @@ try {
                 $executedReadyCount++
             }
 
+            if (-not [string]::IsNullOrWhiteSpace($requiredPass)) {
+                $evidenceExcerpt = Get-FirstMatchingLine -Path $taskLogPathAbs -Needles @($requiredPass)
+            }
+            if ([string]::IsNullOrWhiteSpace($evidenceExcerpt)) {
+                foreach ($runnerArtifactRel in $runnerArtifactRels) {
+                    $runnerArtifactAbs = Join-RepoPath -RepoRootPath $repoRoot -Path $runnerArtifactRel
+                    $candidate = Get-FirstMatchingLine -Path $runnerArtifactAbs -Needles @("PASS:", "status: PASS", "PASS")
+                    if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+                        $evidenceExcerpt = $candidate
+                        break
+                    }
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($evidenceExcerpt)) {
+                $evidenceExcerpt = "no evidence excerpt matched"
+            }
+
             @(
                 "task_id: $taskId",
                 "lane: $($task.lane)",
                 "runner: $($task.runner)",
+                "command: $taskCommandString",
                 "status: $taskResultStatus",
                 "exit_code: $taskExitCode",
                 "stop_on_fail: $stopOnFail",
                 "depends_on: $($task.depends_on)",
+                "toolchain_note: $toolchainNote",
+                "vsdevcmd_path: $vsDevCmdPathUsed",
                 "required_pass: $requiredPass",
                 "required_pass_found: $requiredPassFound",
+                "evidence_excerpt: $evidenceExcerpt",
                 "message: $taskMessage"
             ) | Set-Content -Path $taskSummaryPathAbs -Encoding UTF8
+            if ($runnerArtifactRels.Count -gt 0) {
+                Add-Content -Path $taskSummaryPathAbs -Encoding UTF8 -Value "runner_artifacts:"
+                foreach ($runnerArtifactRel in $runnerArtifactRels) {
+                    Add-Content -Path $taskSummaryPathAbs -Encoding UTF8 -Value ("- {0}" -f $runnerArtifactRel)
+                }
+            }
 
             $taskResults.Add([pscustomobject]@{
                 task_id = $taskId
@@ -393,8 +537,12 @@ try {
                 depends_on = $task.depends_on
                 command = $taskCommandString
                 message = $taskMessage
+                toolchain_note = $toolchainNote
+                vsdevcmd_path = $vsDevCmdPathUsed
+                evidence_excerpt = $evidenceExcerpt
                 required_pass = $requiredPass
                 required_pass_found = $requiredPassFound
+                runner_artifacts = $runnerArtifactRels
                 artifacts = [ordered]@{
                     task_dir = $taskDirRel
                     command = (Get-RepoRelativePath -BasePath $repoRoot -TargetPath $taskCommandPathAbs)
@@ -429,7 +577,7 @@ try {
 
     @(
         "status: $overallStatus",
-        "scope: local-only night-run v1",
+        "scope: local-only night-run v1.1",
         "mode: $mode",
         "queue_rows: $queueRowCount",
         "queue_ready_rows: $queueReadyCount",
@@ -447,7 +595,7 @@ try {
     $executionLines.Add("- run_id: $runId")
     $executionLines.Add("- run_dir: $runDirRel")
     $executionLines.Add("- mode: $mode")
-    $executionLines.Add("- scope: local-only night-run v1")
+    $executionLines.Add("- scope: local-only night-run v1.1")
     $executionLines.Add("- queue_rows: $queueRowCount")
     $executionLines.Add("- queue_ready_rows: $queueReadyCount")
     $executionLines.Add("- executed_ready_rows: $executedReadyCount")
@@ -467,8 +615,17 @@ try {
             $executionLines.Add("- $($taskResult.task_id) [$($taskResult.lane)] => $($taskResult.result)")
             $executionLines.Add("  runner: $($taskResult.runner)")
             $executionLines.Add("  log: $($taskResult.artifacts.log)")
+            $executionLines.Add("  evidence: $($taskResult.evidence_excerpt)")
+            if (-not [string]::IsNullOrWhiteSpace($taskResult.toolchain_note)) {
+                $executionLines.Add("  toolchain: $($taskResult.toolchain_note)")
+            }
             if (-not [string]::IsNullOrWhiteSpace($taskResult.message)) {
                 $executionLines.Add("  message: $($taskResult.message)")
+            }
+            if ($taskResult.runner_artifacts.Count -gt 0) {
+                foreach ($runnerArtifact in $taskResult.runner_artifacts) {
+                    $executionLines.Add("  runner_artifact: $runnerArtifact")
+                }
             }
         }
     }
@@ -485,7 +642,7 @@ try {
         run_id = $runId
         status = $overallStatus
         mode = $mode
-        scope = "local-only night-run v1"
+        scope = "local-only night-run v1.1"
         queue = [ordered]@{
             rows = $queueRowCount
             ready_rows = $queueReadyCount
@@ -523,7 +680,7 @@ try {
     $acceptanceLines.Add("# ACCEPTANCE_PACK_FILLED")
     $acceptanceLines.Add("")
     $acceptanceLines.Add("## 1. Summary")
-    $acceptanceLines.Add("- scope: night-run automation dispatch v1")
+    $acceptanceLines.Add("- scope: night-run automation dispatch v1.1")
     $acceptanceLines.Add("- key outcome: queue-driven task dispatch with per-task evidence artifacts")
     $acceptanceLines.Add("- boundary note: no attention/design code changed by this script")
     $acceptanceLines.Add("")
@@ -550,6 +707,12 @@ try {
             $acceptanceLines.Add("- runner: $($taskResult.runner)")
             $acceptanceLines.Add("- task_status: $($taskResult.result)")
             $acceptanceLines.Add("- task_log_excerpt: $($taskResult.artifacts.log)")
+            $acceptanceLines.Add("- evidence_excerpt: $($taskResult.evidence_excerpt)")
+            if ($taskResult.runner_artifacts.Count -gt 0) {
+                foreach ($runnerArtifact in $taskResult.runner_artifacts) {
+                    $acceptanceLines.Add("- runner_artifact: $runnerArtifact")
+                }
+            }
         }
     }
     $acceptanceLines.Add("")
@@ -573,7 +736,7 @@ try {
     $acceptanceLines.Add("- local_only_marking: runtime outputs under build/night_run")
     $acceptanceLines.Add("")
     $acceptanceLines.Add("## 8. Residual risks")
-    $acceptanceLines.Add("- risk_1: v1 supports only bounded runner keys (checker.design_purity, runner.init_agent_state)")
+    $acceptanceLines.Add("- risk_1: v1.1 supports only bounded runner keys (checker.design_purity, runner.init_agent_state, runner.local.p11aj)")
     $acceptanceLines.Add("- mitigation_or_watchpoint: expand mapping by explicit review per additional task type")
     $acceptanceLines.Add("")
     $acceptanceLines.Add("## 9. Recommended next step")
@@ -591,6 +754,9 @@ try {
         $manifestEntries.Add($taskResult.artifacts.command)
         $manifestEntries.Add($taskResult.artifacts.log)
         $manifestEntries.Add($taskResult.artifacts.summary)
+        foreach ($runnerArtifact in $taskResult.runner_artifacts) {
+            $manifestEntries.Add($runnerArtifact)
+        }
     }
     $manifestEntries | Set-Content -Path $manifestPathAbs -Encoding UTF8
 

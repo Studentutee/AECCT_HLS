@@ -25,6 +25,8 @@ Use this template to record each night-run execution result.
 - runner:
 - task_status:
 - task_log_excerpt:
+- toolchain_note:
+- runner_artifact:
 
 ## 5. Repo-tracked artifacts
 - artifact_1:
