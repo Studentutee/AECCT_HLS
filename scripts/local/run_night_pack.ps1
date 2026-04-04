@@ -3,7 +3,7 @@ param(
     [string]$NightPackDoc = "docs/night_run/NIGHT_PACK.md",
     [string]$TaskQueueDoc = "docs/night_run/TASK_QUEUE.md",
     [string]$AcceptancePackDoc = "docs/night_run/ACCEPTANCE_PACK.md",
-    [int]$MaxReadyTasks = 2,
+    [int]$MaxReadyTasks = 3,
     [switch]$Smoke
 )
 
