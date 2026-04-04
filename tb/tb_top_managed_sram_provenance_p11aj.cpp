@@ -125,6 +125,9 @@ private:
         if (stage == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY) {
             return "SCORES_ONLY";
         }
+        if (stage == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+            return "QKV_SCORES_ONLY";
+        }
         return "OUT_ONLY";
     }
 
@@ -176,6 +179,15 @@ private:
             !attn_out_topfed_payload_enable;
         if (selected_partial_scores_stage_bucket) {
             return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY;
+        }
+        const bool selected_partial_qkv_scores_stage_bucket =
+            !kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            !score_prebuilt_from_top_managed &&
+            !out_prebuilt_from_top_managed &&
+            !attn_out_topfed_payload_enable;
+        if (selected_partial_qkv_scores_stage_bucket) {
+            return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
         }
         return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL;
     }
@@ -609,7 +621,7 @@ private:
 
         bool selected_partial_bucket_ok = false;
         bool qkv_ready_score_not_prebuilt_to_scores_stage_ok = false;
-        bool q_ready_kv_not_prebuilt_still_full_ok = false;
+        bool q_ready_kv_not_prebuilt_to_qkv_scores_stage_ok = false;
         bool q_ready_kv_not_prebuilt_score_ready_to_out_stage_ok = false;
         bool fully_prebuilt_no_payload_ok = false;
         bool fully_prebuilt_payload_ok = false;
@@ -700,8 +712,8 @@ private:
                     qkv_ready_score_not_prebuilt_to_scores_stage_ok = true;
                 }
                 if (q_ready_kv_not_prebuilt_bucket &&
-                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
-                    q_ready_kv_not_prebuilt_still_full_ok = true;
+                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+                    q_ready_kv_not_prebuilt_to_qkv_scores_stage_ok = true;
                 }
                 if (q_ready_kv_not_prebuilt_score_ready_bucket &&
                     got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
@@ -718,6 +730,7 @@ private:
                 if (!fully_prebuilt && !selected_partial_bucket &&
                     !qkv_ready_score_not_prebuilt_bucket &&
                     !q_ready_kv_not_prebuilt_score_ready_bucket &&
+                    !q_ready_kv_not_prebuilt_bucket &&
                     got != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
                     other_partial_buckets_ok = false;
                 }
@@ -744,8 +757,8 @@ private:
             std::printf("[p11aj][FAIL] qkv-ready score-not-prebuilt bucket did not map to SCORES_ONLY\n");
             return false;
         }
-        if (!q_ready_kv_not_prebuilt_still_full_ok) {
-            std::printf("[p11aj][FAIL] q-ready kv-not-prebuilt bucket no longer maps to FULL\n");
+        if (!q_ready_kv_not_prebuilt_to_qkv_scores_stage_ok) {
+            std::printf("[p11aj][FAIL] q-ready kv-not-prebuilt bucket did not map to QKV_SCORES_ONLY\n");
             return false;
         }
         if (!q_ready_kv_not_prebuilt_score_ready_to_out_stage_ok) {
@@ -759,8 +772,8 @@ private:
 
         std::printf("SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_TO_OUT_STAGE PASS\n");
         std::printf("QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS\n");
-        std::printf("Q_READY_KV_NOT_PREBUILT_REMAINS_FULL PASS\n");
-        std::printf("Q_READY_KV_NOT_PREBUILT_QKV_STAGE_FEASIBILITY_BLOCKED PASS\n");
+        std::printf("Q_READY_KV_NOT_PREBUILT_TO_QKV_SCORES_STAGE PASS\n");
+        std::printf("Q_READY_KV_NOT_PREBUILT_QKV_SCORES_STAGE_MIGRATION PASS\n");
         std::printf("Q_READY_KV_NOT_PREBUILT_SCORE_READY_TO_OUT_STAGE PASS\n");
         std::printf("Q_READY_KV_NOT_PREBUILT_SCORE_READY_OUT_STAGE_MIGRATION PASS\n");
         std::printf("FULLY_PREBUILT_NO_PAYLOAD_DISABLED PASS\n");

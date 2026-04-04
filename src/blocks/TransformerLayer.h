@@ -93,7 +93,8 @@ enum TransformerAttnCompatShellStage {
     TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED = 0,
     TRANSFORMER_ATTN_COMPAT_SHELL_FULL = 1,
     TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY = 2,
-    TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY = 3
+    TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY = 3,
+    TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY = 4
 };
 
 static inline TransformerAttnCompatShellStage transformer_layer_select_attn_compat_shell_stage(
@@ -149,6 +150,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
     if (attn_qkv_ready_partial_score_stage_shell_safe) {
         // local-only bounded cut: q/kv-ready partial-prebuild can shrink to SCORES stage shell.
         return TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY;
+    }
+    const bool attn_q_ready_kv_not_prebuilt_qkv_scores_stage_shell_safe =
+        !kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        !score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        !attn_out_topfed_payload_enable;
+    if (attn_q_ready_kv_not_prebuilt_qkv_scores_stage_shell_safe) {
+        // Stage boundary: q-ready/kv-missing bucket composes QKV + SCORES stages to avoid FULL shell.
+        // Ownership seam: this branch keeps Top-owned SRAM policy unchanged and only narrows stage dispatch.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
     }
     // Fallback boundary: other partial-prebuild buckets stay on legacy full-shell behavior.
     return TRANSFORMER_ATTN_COMPAT_SHELL_FULL;
@@ -393,6 +405,38 @@ static inline void TransformerLayerTopManagedAttnBridge(
         const uint32_t post_base = (uint32_t)sc.attn.post_concat_base_word.to_uint();
         const uint32_t out_base = (uint32_t)sc.attn_out_base_word.to_uint();
         TRANSFORMER_ATTN_SCORES_ONLY_OUT_WRITEBACK_BRIDGE_LOOP: for (uint32_t i = 0u; i < attn_tensor_words; ++i) {
+            sram_window[out_base + i] = sram_window[post_base + i];
+        }
+    } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+        // Stage boundary: q-ready/kv-not-prebuilt bucket composes QKV then SCORES stages.
+        AttnLayer0TopManagedWindowBridge<ATTN_STAGE_QKV>(
+            sram_window,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+        AttnLayer0TopManagedWindowBridge<ATTN_STAGE_SCORES>(
+            sram_window,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+        // Ownership seam: composed stages still commit explicit post->attn_out writeback for downstream FFN input.
+        const uint32_t token_count = (uint32_t)attn_cfg.token_count.to_uint();
+        const uint32_t attn_d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t attn_tensor_words = token_count * attn_d_model;
+        if (attn_tensor_words == 0u) {
+            attn_tensor_words = (uint32_t)ATTN_TENSOR_WORDS;
+        }
+        const uint32_t post_base = (uint32_t)sc.attn.post_concat_base_word.to_uint();
+        const uint32_t out_base = (uint32_t)sc.attn_out_base_word.to_uint();
+        TRANSFORMER_ATTN_QKV_SCORES_ONLY_OUT_WRITEBACK_BRIDGE_LOOP: for (uint32_t i = 0u; i < attn_tensor_words; ++i) {
             sram_window[out_base + i] = sram_window[post_base + i];
         }
     }
@@ -871,6 +915,38 @@ static inline void TransformerLayer(
         const uint32_t post_base = (uint32_t)sc.attn.post_concat_base_word.to_uint();
         const uint32_t out_base = (uint32_t)sc.attn_out_base_word.to_uint();
         TRANSFORMER_ATTN_SCORES_ONLY_OUT_WRITEBACK_LOOP: for (uint32_t i = 0u; i < attn_tensor_words; ++i) {
+            sram[out_base + i] = sram[post_base + i];
+        }
+    } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+        // Stage boundary: q-ready/kv-not-prebuilt bucket composes QKV then SCORES stages.
+        AttnLayer0<ATTN_STAGE_QKV>(
+            sram,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+        AttnLayer0<ATTN_STAGE_SCORES>(
+            sram,
+            attn_cfg,
+            x_in_base_word,
+            sc.attn_out_base_word,
+            sc.attn,
+            (u32_t)0,
+            attn_prebuilt_handoff
+        );
+        // Ownership seam: composed stages still commit explicit post->attn_out writeback for downstream FFN input.
+        const uint32_t token_count = (uint32_t)attn_cfg.token_count.to_uint();
+        const uint32_t attn_d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t attn_tensor_words = token_count * attn_d_model;
+        if (attn_tensor_words == 0u) {
+            attn_tensor_words = (uint32_t)ATTN_TENSOR_WORDS;
+        }
+        const uint32_t post_base = (uint32_t)sc.attn.post_concat_base_word.to_uint();
+        const uint32_t out_base = (uint32_t)sc.attn_out_base_word.to_uint();
+        TRANSFORMER_ATTN_QKV_SCORES_ONLY_OUT_WRITEBACK_LOOP: for (uint32_t i = 0u; i < attn_tensor_words; ++i) {
             sram[out_base + i] = sram[post_base + i];
         }
     }
