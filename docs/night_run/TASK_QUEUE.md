@@ -3,6 +3,8 @@
 ## Purpose
 - Provide the executable queue source for night-run dispatch mode v1.1.
 - Keep v1.1 bounded to local-only checker/runner tasks with explicit evidence links.
+- Keep this file focused on **active** items only; completed history is archived in
+  `docs/night_run/TASK_QUEUE_DONE_ARCHIVE.md`.
 
 ## Status Vocabulary
 - `queued`
@@ -29,21 +31,14 @@
 ## Queue Table
 | task_id | status | lane | depends_on | runner | stop_on_fail | objective | acceptance |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| NR-CHECK-DESIGN-PURITY-001 | done | checker | - | checker.design_purity | true | Run design purity checker before any runner dispatch. | Run 20260404_125258 task log contains `PASS: check_design_purity`; exit code = 0. |
-| NR-RUNNER-INIT-AGENT-STATE-001 | done | runner | NR-CHECK-DESIGN-PURITY-001 | runner.init_agent_state | true | Execute one local-only runner task after checker passes. | Run 20260404_125258 task log contains `PASS: init_agent_state`; exit code = 0. |
-| NR-RUNNER-LOCAL-P11AJ-001 | done | runner | NR-RUNNER-INIT-AGENT-STATE-001 | runner.local.p11aj | true | Execute first compile-backed local runner in night-run queue. | Run 20260404_125258 runner `run.log` contains `PASS: tb_top_managed_sram_provenance_p11aj` and `SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_TO_OUT_STAGE PASS`. |
-| NR-RUNNER-LOCAL-P11ANB-001 | done | runner | NR-RUNNER-LOCAL-P11AJ-001 | runner.local.p11anb | true | Execute selected partial-bucket attn seam regression in compile-backed night-run chain. | Run 20260404_125258 runner `run.log` contains `P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_OUT_ONLY PASS` and `PASS: tb_p11anb_attnlayer0_boundary_seam_contract`. |
-| NR-RUNNER-AUDIT-NEXT-PARTIAL-BUCKET-001 | done | runner | NR-RUNNER-LOCAL-P11ANB-001 | runner.local.p11aj | true | Audit next partial bucket (`q=1, kv=1, score=0`) and gate feasibility into selector truth-table chain. | Run `build/p11aj/p11aj/run.log` contains `QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS` and `ATTN_COMPAT_SHELL_TRUTH_TABLE_AUDIT PASS combos=32`. |
-| NR-BLOCKER-SCORE-STAGE-SHELL-001 | done | runner | NR-RUNNER-AUDIT-NEXT-PARTIAL-BUCKET-001 | runner.local.p11aj | true | Resolve score-stage shell blocker via bounded enum+selector+call-site+writeback cut. | Blocker package `docs/night_run/BLOCKER_P11BD_SCORE_STAGE_FEASIBILITY.md` records status `resolved` with compile-backed p11aj/p11anb evidence. |
-| NR-RUNNER-P11ANB-SCORE-FEASIBILITY-PROBE-001 | done | runner | NR-BLOCKER-SCORE-STAGE-SHELL-001 | runner.local.p11anb | true | Harden p11anb selector probe for explicit `q=1,kv=1,score=0` score-stage contraction banner. | Run `build/p11anb/attnlayer0_boundary_seam_contract/run.log` contains `P11ANB_TRANSFORMER_ATTN_SHELL_QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS` and `PASS: tb_p11anb_attnlayer0_boundary_seam_contract`. |
-| NR-RUNNER-SCORE-STAGE-SHELL-MINCUT-PREP-001 | done | runner | NR-BLOCKER-SCORE-STAGE-SHELL-001,NR-RUNNER-P11ANB-SCORE-FEASIBILITY-PROBE-001 | runner.local.p11aj | true | Deliver bounded score-stage shell mincut (`enum + selector + call-site + post->out writeback seam`). | `src/blocks/TransformerLayer.h` includes `TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY` and `AttnLayer0<ATTN_STAGE_SCORES>` dispatch branches; p11aj/p11anb runners PASS. |
-| NR-RUNNER-LOCAL-P11AJ-SCORES-SHELL-VERIFY-002 | done | runner | NR-RUNNER-SCORE-STAGE-SHELL-MINCUT-PREP-001 | runner.local.p11aj | true | Re-verify score-stage shell cut in queue-driven compile-backed chain. | Run 20260404_160344 runner `run.log` contains `QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS` and `PASS: tb_top_managed_sram_provenance_p11aj`. |
-| NR-RUNNER-LOCAL-P11ANB-SCORES-SHELL-VERIFY-002 | done | runner | NR-RUNNER-LOCAL-P11AJ-SCORES-SHELL-VERIFY-002 | runner.local.p11anb | true | Re-verify p11anb selector boundary seam for score-stage shell in queue-driven chain. | Run 20260404_160344 runner `run.log` contains `P11ANB_TRANSFORMER_ATTN_SHELL_QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS` and `PASS: tb_p11anb_attnlayer0_boundary_seam_contract`. |
-| NR-CHECK-DESIGN-PURITY-002 | done | checker | - | checker.design_purity | true | Re-run design purity checker before score-shell verify rows in this dispatch round. | Run 20260404_160344 task log contains `PASS: check_design_purity`; exit code = 0. |
-| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-002 | ready | runner | NR-RUNNER-LOCAL-P11ANB-SCORES-SHELL-VERIFY-002 | runner.local.p11aj | true | Audit next safest partial bucket after score-stage shell cut without broad refactor. | Must emit compile-backed truth-table evidence and leave non-selected buckets unchanged. |
+| NR-CHECK-DESIGN-PURITY-ACTIVE-003 | ready | checker | - | checker.design_purity | true | Active dispatch precheck for the next queue round after archive rollover. | Task log must contain `PASS: check_design_purity`; exit code = 0. |
+| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-004 | ready | runner | NR-CHECK-DESIGN-PURITY-ACTIVE-003 | runner.local.p11aj | true | Continue next safest partial-bucket audit after q-ready/kv-not-prebuilt blocker verification. | Must emit compile-backed truth-table evidence and keep non-selected buckets unchanged. |
+| NR-BLOCKER-QKV-STAGE-SHELL-001 | blocked | runner | - | runner.local.p11aj | true | Hold q-ready/kv-not-prebuilt shell contraction until bounded KV-materialization-compatible shell contract exists. | Blocker package tracked at `docs/night_run/BLOCKER_P11BE_QKV_STAGE_FEASIBILITY.md` with compile-backed p11aj/p11anb evidence. |
+| NR-RUNNER-QKV-STAGE-MINCUT-PREP-001 | queued | runner | NR-BLOCKER-QKV-STAGE-SHELL-001 | runner.local.p11aj | true | Prepare bounded prework for next shell candidate after blocker clearance (no broad refactor). | Must preserve Top-owned shared-SRAM semantics and show compile-backed non-regression in p11aj/p11anb before selector remap. |
 
 ## Notes
 - Keep one row per executable task.
+- Keep completed rows in `TASK_QUEUE_DONE_ARCHIVE.md` (do not delete historical evidence).
 - v1 dispatch supports only known runner keys; unknown key is fail-fast.
 - v1.1 compile-backed keys currently include `runner.local.p11aj` and `runner.local.p11anb`.
 - Do not claim Catapult/SCVerify closure from night-run v1.1 outputs.

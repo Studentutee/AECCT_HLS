@@ -7,6 +7,7 @@
 
 ## Fixed Inputs
 - `docs/night_run/TASK_QUEUE.md`
+- `docs/night_run/TASK_QUEUE_DONE_ARCHIVE.md` (history only; not parsed for dispatch)
 - `docs/night_run/ACCEPTANCE_PACK.md`
 
 ## Canonical Entry
@@ -16,6 +17,8 @@
 
 ## Queue Dispatch v1.1
 - `run_night_pack.ps1` reads `TASK_QUEUE.md` and picks rows with `status=ready`.
+- Keep `TASK_QUEUE.md` as active queue (`ready/queued/blocked/in_progress`).
+- Move stable `done` rows to `TASK_QUEUE_DONE_ARCHIVE.md` to avoid active/history mixing.
 - v1.1 supports bounded task mapping only:
   - `checker.design_purity`
   - `runner.init_agent_state`

@@ -600,6 +600,7 @@ private:
 
         bool selected_partial_bucket_ok = false;
         bool qkv_ready_score_not_prebuilt_to_scores_stage_ok = false;
+        bool q_ready_kv_not_prebuilt_still_full_ok = false;
         bool fully_prebuilt_no_payload_ok = false;
         bool fully_prebuilt_payload_ok = false;
         bool other_partial_buckets_ok = true;
@@ -626,6 +627,12 @@ private:
                     !payload_enable;
                 const bool qkv_ready_score_not_prebuilt_bucket =
                     kv_prebuilt &&
+                    q_prebuilt &&
+                    !score_prebuilt &&
+                    !out_prebuilt &&
+                    !payload_enable;
+                const bool q_ready_kv_not_prebuilt_bucket =
+                    !kv_prebuilt &&
                     q_prebuilt &&
                     !score_prebuilt &&
                     !out_prebuilt &&
@@ -676,6 +683,10 @@ private:
                     got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY) {
                     qkv_ready_score_not_prebuilt_to_scores_stage_ok = true;
                 }
+                if (q_ready_kv_not_prebuilt_bucket &&
+                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+                    q_ready_kv_not_prebuilt_still_full_ok = true;
+                }
                 if (fully_prebuilt && !payload_enable &&
                     got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
                     fully_prebuilt_no_payload_ok = true;
@@ -712,6 +723,10 @@ private:
             std::printf("[p11aj][FAIL] qkv-ready score-not-prebuilt bucket did not map to SCORES_ONLY\n");
             return false;
         }
+        if (!q_ready_kv_not_prebuilt_still_full_ok) {
+            std::printf("[p11aj][FAIL] q-ready kv-not-prebuilt bucket no longer maps to FULL\n");
+            return false;
+        }
         if (!(saw_shell_disabled && saw_shell_full && saw_shell_out_only)) {
             std::printf("[p11aj][FAIL] shell stage surface is incomplete for feasibility audit\n");
             return false;
@@ -719,6 +734,8 @@ private:
 
         std::printf("SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_TO_OUT_STAGE PASS\n");
         std::printf("QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS\n");
+        std::printf("Q_READY_KV_NOT_PREBUILT_REMAINS_FULL PASS\n");
+        std::printf("Q_READY_KV_NOT_PREBUILT_QKV_STAGE_FEASIBILITY_BLOCKED PASS\n");
         std::printf("FULLY_PREBUILT_NO_PAYLOAD_DISABLED PASS\n");
         std::printf("FULLY_PREBUILT_PAYLOAD_OUT_ONLY PASS\n");
         std::printf("OTHER_PARTIAL_BUCKETS_REMAIN_FULL PASS\n");
