@@ -122,6 +122,9 @@ private:
         if (stage == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
             return "FULL";
         }
+        if (stage == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY) {
+            return "SCORES_ONLY";
+        }
         return "OUT_ONLY";
     }
 
@@ -155,6 +158,15 @@ private:
             !attn_out_topfed_payload_enable;
         if (selected_partial_out_stage_bucket) {
             return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+        }
+        const bool selected_partial_scores_stage_bucket =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            !score_prebuilt_from_top_managed &&
+            !out_prebuilt_from_top_managed &&
+            !attn_out_topfed_payload_enable;
+        if (selected_partial_scores_stage_bucket) {
+            return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY;
         }
         return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL;
     }
@@ -587,7 +599,7 @@ private:
         }
 
         bool selected_partial_bucket_ok = false;
-        bool qkv_ready_score_not_prebuilt_still_full_ok = false;
+        bool qkv_ready_score_not_prebuilt_to_scores_stage_ok = false;
         bool fully_prebuilt_no_payload_ok = false;
         bool fully_prebuilt_payload_ok = false;
         bool other_partial_buckets_ok = true;
@@ -610,6 +622,12 @@ private:
                     kv_prebuilt &&
                     q_prebuilt &&
                     score_prebuilt &&
+                    !out_prebuilt &&
+                    !payload_enable;
+                const bool qkv_ready_score_not_prebuilt_bucket =
+                    kv_prebuilt &&
+                    q_prebuilt &&
+                    !score_prebuilt &&
                     !out_prebuilt &&
                     !payload_enable;
 
@@ -654,15 +672,9 @@ private:
                 if (selected_partial_bucket && got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
                     selected_partial_bucket_ok = true;
                 }
-                const bool qkv_ready_score_not_prebuilt_bucket =
-                    kv_prebuilt &&
-                    q_prebuilt &&
-                    !score_prebuilt &&
-                    !out_prebuilt &&
-                    !payload_enable;
                 if (qkv_ready_score_not_prebuilt_bucket &&
-                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
-                    qkv_ready_score_not_prebuilt_still_full_ok = true;
+                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY) {
+                    qkv_ready_score_not_prebuilt_to_scores_stage_ok = true;
                 }
                 if (fully_prebuilt && !payload_enable &&
                     got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
@@ -673,6 +685,7 @@ private:
                     fully_prebuilt_payload_ok = true;
                 }
                 if (!fully_prebuilt && !selected_partial_bucket &&
+                    !qkv_ready_score_not_prebuilt_bucket &&
                     got != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
                     other_partial_buckets_ok = false;
                 }
@@ -695,8 +708,8 @@ private:
             std::printf("[p11aj][FAIL] non-selected partial bucket changed stage unexpectedly\n");
             return false;
         }
-        if (!qkv_ready_score_not_prebuilt_still_full_ok) {
-            std::printf("[p11aj][FAIL] qkv-ready score-not-prebuilt bucket no longer maps to FULL\n");
+        if (!qkv_ready_score_not_prebuilt_to_scores_stage_ok) {
+            std::printf("[p11aj][FAIL] qkv-ready score-not-prebuilt bucket did not map to SCORES_ONLY\n");
             return false;
         }
         if (!(saw_shell_disabled && saw_shell_full && saw_shell_out_only)) {
@@ -705,8 +718,7 @@ private:
         }
 
         std::printf("SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_TO_OUT_STAGE PASS\n");
-        std::printf("QKV_READY_SCORE_NOT_PREBUILT_REMAINS_FULL PASS\n");
-        std::printf("QKV_READY_SCORE_NOT_PREBUILT_SCORE_STAGE_FEASIBILITY_BLOCKED_ENUM_SURFACE PASS\n");
+        std::printf("QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS\n");
         std::printf("FULLY_PREBUILT_NO_PAYLOAD_DISABLED PASS\n");
         std::printf("FULLY_PREBUILT_PAYLOAD_OUT_ONLY PASS\n");
         std::printf("OTHER_PARTIAL_BUCKETS_REMAIN_FULL PASS\n");
