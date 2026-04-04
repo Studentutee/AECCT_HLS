@@ -587,9 +587,13 @@ private:
         }
 
         bool selected_partial_bucket_ok = false;
+        bool qkv_ready_score_not_prebuilt_still_full_ok = false;
         bool fully_prebuilt_no_payload_ok = false;
         bool fully_prebuilt_payload_ok = false;
         bool other_partial_buckets_ok = true;
+        bool saw_shell_disabled = false;
+        bool saw_shell_full = false;
+        bool saw_shell_out_only = false;
         uint32_t combos_checked = 0u;
 
         for (uint32_t bits = 0u; bits < 16u; ++bits) {
@@ -639,9 +643,26 @@ private:
                         attn_shell_stage_name(exp));
                     return false;
                 }
+                if (got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
+                    saw_shell_disabled = true;
+                } else if (got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+                    saw_shell_full = true;
+                } else if (got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+                    saw_shell_out_only = true;
+                }
 
                 if (selected_partial_bucket && got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
                     selected_partial_bucket_ok = true;
+                }
+                const bool qkv_ready_score_not_prebuilt_bucket =
+                    kv_prebuilt &&
+                    q_prebuilt &&
+                    !score_prebuilt &&
+                    !out_prebuilt &&
+                    !payload_enable;
+                if (qkv_ready_score_not_prebuilt_bucket &&
+                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
+                    qkv_ready_score_not_prebuilt_still_full_ok = true;
                 }
                 if (fully_prebuilt && !payload_enable &&
                     got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_DISABLED) {
@@ -674,8 +695,18 @@ private:
             std::printf("[p11aj][FAIL] non-selected partial bucket changed stage unexpectedly\n");
             return false;
         }
+        if (!qkv_ready_score_not_prebuilt_still_full_ok) {
+            std::printf("[p11aj][FAIL] qkv-ready score-not-prebuilt bucket no longer maps to FULL\n");
+            return false;
+        }
+        if (!(saw_shell_disabled && saw_shell_full && saw_shell_out_only)) {
+            std::printf("[p11aj][FAIL] shell stage surface is incomplete for feasibility audit\n");
+            return false;
+        }
 
         std::printf("SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_TO_OUT_STAGE PASS\n");
+        std::printf("QKV_READY_SCORE_NOT_PREBUILT_REMAINS_FULL PASS\n");
+        std::printf("QKV_READY_SCORE_NOT_PREBUILT_SCORE_STAGE_FEASIBILITY_BLOCKED_ENUM_SURFACE PASS\n");
         std::printf("FULLY_PREBUILT_NO_PAYLOAD_DISABLED PASS\n");
         std::printf("FULLY_PREBUILT_PAYLOAD_OUT_ONLY PASS\n");
         std::printf("OTHER_PARTIAL_BUCKETS_REMAIN_FULL PASS\n");
