@@ -129,6 +129,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         // local-only bounded cut: score-ready partial-prebuild can shrink to OUT stage shell.
         return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
     }
+    const bool attn_q_ready_kv_not_prebuilt_score_ready_partial_out_stage_shell_safe =
+        !kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        !attn_out_topfed_payload_enable;
+    if (attn_q_ready_kv_not_prebuilt_score_ready_partial_out_stage_shell_safe) {
+        // Stage boundary: score-ready bucket can consume OUT without requiring local KV materialization.
+        // Ownership seam: this shell only consumes already committed post-concat payload for attn_out writeback.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+    }
     const bool attn_qkv_ready_partial_score_stage_shell_safe =
         kv_prebuilt_from_top_managed &&
         q_prebuilt_from_top_managed &&

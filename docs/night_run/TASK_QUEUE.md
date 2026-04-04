@@ -31,10 +31,12 @@
 ## Queue Table
 | task_id | status | lane | depends_on | runner | stop_on_fail | objective | acceptance |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| NR-CHECK-DESIGN-PURITY-ACTIVE-003 | ready | checker | - | checker.design_purity | true | Active dispatch precheck for the next queue round after archive rollover. | Task log must contain `PASS: check_design_purity`; exit code = 0. |
-| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-004 | ready | runner | NR-CHECK-DESIGN-PURITY-ACTIVE-003 | runner.local.p11aj | true | Continue next safest partial-bucket audit after q-ready/kv-not-prebuilt blocker verification. | Must emit compile-backed truth-table evidence and keep non-selected buckets unchanged. |
+| NR-CHECK-DESIGN-PURITY-ACTIVE-003 | done | checker | - | checker.design_purity | true | Active dispatch precheck for the next queue round after archive rollover. | Run 20260404_170432 task log contains `PASS: check_design_purity`; exit code = 0. |
+| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-004 | done | runner | NR-CHECK-DESIGN-PURITY-ACTIVE-003 | runner.local.p11aj | true | Continue next safest partial-bucket audit after q-ready/kv-not-prebuilt blocker verification. | Run 20260404_170432 runner `run.log` contains `Q_READY_KV_NOT_PREBUILT_SCORE_READY_TO_OUT_STAGE PASS` and `Q_READY_KV_NOT_PREBUILT_SCORE_READY_OUT_STAGE_MIGRATION PASS`. |
 | NR-BLOCKER-QKV-STAGE-SHELL-001 | blocked | runner | - | runner.local.p11aj | true | Hold q-ready/kv-not-prebuilt shell contraction until bounded KV-materialization-compatible shell contract exists. | Blocker package tracked at `docs/night_run/BLOCKER_P11BE_QKV_STAGE_FEASIBILITY.md` with compile-backed p11aj/p11anb evidence. |
 | NR-RUNNER-QKV-STAGE-MINCUT-PREP-001 | queued | runner | NR-BLOCKER-QKV-STAGE-SHELL-001 | runner.local.p11aj | true | Prepare bounded prework for next shell candidate after blocker clearance (no broad refactor). | Must preserve Top-owned shared-SRAM semantics and show compile-backed non-regression in p11aj/p11anb before selector remap. |
+| NR-CHECK-DESIGN-PURITY-ACTIVE-004 | ready | checker | - | checker.design_purity | true | Active dispatch precheck for the next partial-bucket audit round. | Task log must contain `PASS: check_design_purity`; exit code = 0. |
+| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-005 | queued | runner | NR-CHECK-DESIGN-PURITY-ACTIVE-004 | runner.local.p11aj | true | Select next safest partial bucket after score-ready OUT-stage cut and audit via compile-backed truth-table. | Must emit case-specific PASS banner and preserve fully-prebuilt/scores-only/non-selected-bucket behavior. |
 
 ## Notes
 - Keep one row per executable task.
