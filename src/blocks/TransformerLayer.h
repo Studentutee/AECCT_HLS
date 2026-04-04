@@ -141,6 +141,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         // Ownership seam: this shell only consumes already committed post-concat payload for attn_out writeback.
         return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
     }
+    const bool attn_kv_ready_q_not_prebuilt_score_ready_partial_out_stage_shell_safe =
+        kv_prebuilt_from_top_managed &&
+        !q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        !attn_out_topfed_payload_enable;
+    if (attn_kv_ready_q_not_prebuilt_score_ready_partial_out_stage_shell_safe) {
+        // Stage boundary: score-ready bucket can consume OUT without requiring local Q materialization.
+        // Fallback boundary: this keeps direct SRAM fallback policy unchanged outside this exact bucket.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+    }
     const bool attn_qkv_ready_partial_score_stage_shell_safe =
         kv_prebuilt_from_top_managed &&
         q_prebuilt_from_top_managed &&
