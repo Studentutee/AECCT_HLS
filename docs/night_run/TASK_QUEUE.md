@@ -31,8 +31,8 @@
 ## Queue Table
 | task_id | status | lane | depends_on | runner | stop_on_fail | objective | acceptance |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| NR-CHECK-DESIGN-PURITY-ACTIVE-010 | ready | checker | - | checker.design_purity | true | Active dispatch precheck for the next partial-bucket audit round after payload-enabled `10101` OUT-only shrink. | Task log must contain `PASS: check_design_purity`; exit code = 0. |
-| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-011 | queued | runner | NR-CHECK-DESIGN-PURITY-ACTIVE-010 | runner.local.p11aj | true | Select next safest partial bucket after payload-enabled `10101` OUT-only shrink. | Must emit case-specific PASS/blocked banner and preserve already-converged bucket behavior. |
+| NR-CHECK-DESIGN-PURITY-ACTIVE-011 | ready | checker | - | checker.design_purity | true | Active dispatch precheck for the next partial-bucket audit round after staged payload-enabled bucket sweep. | Task log must contain `PASS: check_design_purity`; exit code = 0. |
+| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-012 | queued | runner | NR-CHECK-DESIGN-PURITY-ACTIVE-011 | runner.local.p11aj | true | Select next safest partial bucket after `01101`/`00101`/`11001` staged shrink. | Must emit case-specific PASS/blocked banner and preserve already-converged bucket behavior. |
 
 ## Notes
 - Keep one row per executable task.
