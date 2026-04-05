@@ -31,8 +31,6 @@
 ## Queue Table
 | task_id | status | lane | depends_on | runner | stop_on_fail | objective | acceptance |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| NR-CHECK-DESIGN-PURITY-ACTIVE-012 | ready | checker | - | checker.design_purity | true | Active dispatch precheck before the `out=1` family audit after `10001`/`01001`/`00001` staged shrink. | Task log must contain `PASS: check_design_purity`; exit code = 0. |
-| NR-RUNNER-NEXT-PARTIAL-BUCKET-AUDIT-013 | queued | runner | NR-CHECK-DESIGN-PURITY-ACTIVE-012 | runner.local.p11aj | true | Start `out=1` family feasibility and closure-planning audit after completing remaining `out=0,payload=1,score=0` buckets. | Must emit case-specific PASS/blocked banner and preserve all converged `out=0` bucket behavior. |
 
 ## Notes
 - Keep one row per executable task.
