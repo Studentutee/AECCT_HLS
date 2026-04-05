@@ -163,6 +163,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         // Fallback boundary: this keeps direct SRAM fallback policy unchanged outside this exact bucket.
         return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
     }
+    const bool attn_kv_ready_q_not_prebuilt_score_ready_partial_out_stage_shell_payload_enabled_safe =
+        kv_prebuilt_from_top_managed &&
+        !q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        attn_out_topfed_payload_enable;
+    if (attn_kv_ready_q_not_prebuilt_score_ready_partial_out_stage_shell_payload_enabled_safe) {
+        // Stage boundary: payload-enabled score-ready bucket still reuses existing OUT consume/fallback seam.
+        // Ownership seam: selector narrowing only; shared SRAM ownership/arbitration remains Top-managed.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+    }
     const bool attn_qkv_not_prebuilt_score_ready_partial_out_stage_shell_safe =
         !kv_prebuilt_from_top_managed &&
         !q_prebuilt_from_top_managed &&
