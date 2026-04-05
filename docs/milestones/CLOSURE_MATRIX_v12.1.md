@@ -56,44 +56,8 @@ ternary 主線已完成 Phase A/B/C 的 non-live 收斂，並進一步把 L0_WQ/
 2. 等累積到一個值得一起驗的批次後，再一次性做 Catapult / SCVerify bring-up，避免為單一小修反覆切環境。  
 3. 補齊 task-local report / evidence 索引，讓 local acceptance 與 deferred closure 在 repo 內可追溯。  
 
-## P00-011Z Addendum (2026-03-17)
-| Milestone | Scope | Status | Evidence | Primary Files | Notes |
-|---|---|---|---|---|---|
-| QKV Local Runtime-Consume Probe (Z) | Read-only runtime-facing consume probe for `L0_WQ/L0_WK/L0_WV`, consuming accepted authority-chain metadata and mapping continuity. | NON-LIVE-VALIDATED | `P00-011Z_report.md` + `build\p11z\run_p11z_runtime_probe.log` + `build\p11z\run_p11l_regression.log` | `tb/tb_ternary_qkv_runtime_probe_p11z.cpp`<br>`scripts/local/run_p11z_runtime_probe.ps1`<br>`scripts/local/run_p11l_local_regression.ps1`<br>`gen/ternary_p11c_export.json`<br>`gen/include/WeightStreamOrder.h` | local-only; not Catapult closure; not SCVerify closure; `P00-011Q` remains authoritative; `P00-011R/S/T/U/V/W/X/Y` remain valid baselines. |
-
-## P00-011AA Addendum (2026-03-17)
-| Milestone | Scope | Status | Evidence | Primary Files | Notes |
-|---|---|---|---|---|---|
-| QKV Formal LOAD_W Bridge + READ_MEM Roundtrip (AA) | Formal runtime-path bridge probe for `L0_WQ/L0_WK/L0_WV` over `SET_W_BASE -> LOAD_W -> READ_MEM`, with formal-path negatives and probe-side semantic validation-only negatives explicitly separated. | NON-LIVE-VALIDATED | `P00-011AA_report.md` + `build\p11aa\p11aa\run.log` + `build\p11aa\wrappers\run_p11aa_wrapper.log` + `build\p11aa\wrappers\run_p11l_regression.log` | `tb/tb_qkv_formal_loadw_bridge_p11aa.cpp`<br>`scripts/local/run_p11aa_qkv_loadw_bridge.ps1`<br>`scripts/local/run_p11l_local_regression.ps1`<br>`gen/ternary_p11c_export.json`<br>`gen/include/WeightStreamOrder.h` | local-only; not Catapult closure; not SCVerify closure; Top formal loader remains transport-only for PARAM ingest in this milestone; `P00-011Q` remains authoritative; `P00-011R/S/T/U/V/W/X/Y/Z` remain valid baselines. |
-
-## P00-011AB Addendum (2026-03-18)
-| Milestone | Scope | Status | Evidence | Primary Files | Notes |
-|---|---|---|---|---|---|
-| Phase-A K/V Materialization Staging Proof (AB) | Phase-A `X_WORK + Wk/Wv -> SCR_K/SCR_V` staging proof with strict stream order, strict memory-access order, single-read X reuse, exact span compare, `X_WORK` unchanged, and no-spurious-write guards. | NON-LIVE-VALIDATED | `P00-011AB_report.md` + `build\p11ab\p11ab\run.log` + `build\p11ab\wrappers\run_p11ab_wrapper.log` + `build\p11ab\wrappers\run_p11l_regression.log` | `tb/tb_kv_build_stream_stage_p11ab.cpp`<br>`scripts/local/run_p11ab_kv_build_stage.ps1`<br>`scripts/local/run_p11l_local_regression.ps1`<br>`gen/include/WeightStreamOrder.h`<br>`data/weights/weights.h` | local-only; not Catapult closure; not SCVerify closure; Phase-A K/V materialization staging proof only; not Q / not QK / not softmax / not attention output / not full runtime closure; `P00-011Q` remains authoritative; `P00-011R/S/T/U/V/W/X/Y/Z/AA` remain valid baselines. |
-
-## P00-011AC Addendum (2026-03-18)
-| Milestone | Scope | Status | Evidence | Primary Files | Notes |
-|---|---|---|---|---|---|
-| Phase-A Top-Managed K/V Design-Mainline Wiring Finalize (AC) | Wire the landed AC helper/provisional packet flow into real design-side mainline call path, with minimal `Top.h` + `TransformerLayer` + `AttnLayer0` integration, and explicit anti-fallback completion acceptance. | NON-LIVE-VALIDATED | `P00-011AC_report.md` + `build\p11ac_final\check_p11ac_phasea_surface.log` + `build\p11ac_final\p11ac\run.log` + `build\p11ac_final\wrappers\p11l\EVIDENCE_SUMMARY_p11p.md` | `src/Top.h`<br>`src/blocks/TransformerLayer.h`<br>`src/blocks/AttnLayer0.h`<br>`src/blocks/AttnPhaseATopManagedKv.h`<br>`tb/tb_kv_build_stream_stage_p11ac.cpp`<br>`scripts/check_p11ac_phasea_surface.ps1`<br>`scripts/local/run_p11ac_phasea_top_managed.ps1` | local-only; not Catapult closure; not SCVerify closure; helper callsite presence alone is not sufficient; completion acceptance requires `MAINLINE_PATH_TAKEN PASS` + `FALLBACK_NOT_TAKEN PASS` + `fallback_taken = false`; `P00-011Q` remains authoritative; `P00-011R/S/T/U/V/W/X/Y/Z/AA/AB` remain valid baselines. |
-
-## P00-011AD Addendum (2026-03-18)
-| Milestone | Scope | Status | Evidence | Primary Files | Notes |
-|---|---|---|---|---|---|
-| Q Path Mainline Wiring (AD) | Wire the landed AD helper/provisional packet flow into real design-side mainline call path, with minimal `Top.h` + `TransformerLayer` + `AttnLayer0` integration, and explicit anti-fallback completion acceptance. | NON-LIVE-VALIDATED | `P00-011AD_report.md` + `build\p11ad_impl\check_p11ad_impl_surface.log` + `build\p11ad_impl\p11ad\run.log` + local wrapper non-regression logs | `include/AttnTopManagedPackets.h`<br>`src/Top.h`<br>`src/blocks/TransformerLayer.h`<br>`src/blocks/AttnLayer0.h`<br>`src/blocks/AttnPhaseATopManagedQ.h`<br>`tb/tb_q_path_impl_p11ad.cpp`<br>`scripts/check_p11ad_impl_surface.ps1`<br>`scripts/local/run_p11ad_impl_q_path.ps1` | local-only; not Catapult closure; not SCVerify closure; helper/scaffold-only presence is not sufficient; completion acceptance requires `MAINLINE_Q_PATH_TAKEN PASS` + `FALLBACK_NOT_TAKEN PASS` + `fallback_taken = false`; `P00-011Q` remains authoritative; `P00-011R/S/T/U/V/W/X/Y/Z/AA/AB/AC` remain valid baselines. |
-| Corrected-Chain Catapult Launch-Pack / Compile-First Transcript Refresh (AS) | corrected-chain launch-pack、class-level top target、reserved-macro policy 與 latest compile-first transcript posture | PARTIAL | `P00-011AS_report.md` + user-shared 2026-03-24 compile transcript excerpt | `docs/milestones/P00-011AS_report.md`<br>`docs/handoff/P11_CORRECTED_CHAIN_CATAPULT_LAUNCH_NOTE.md`<br>`docs/reference/Catapult_Tcl_Writing_Note_zhTW.md`<br>`scripts/catapult/p11as_corrected_chain_project.tcl`<br>`scripts/check_p11as_corrected_chain_launch_pack.ps1` | AS 為 2026-03-24 transcript posture；`CIN-63` cleanup 與 compile 後 blocker 以 P00-011AT addendum 為最新 authority；not Catapult closure；not SCVerify closure。 |
-
-
-## P00-011AS Addendum (2026-03-24)
-| Item | Intent | Evidence | Primary Files | Evidence Type | Notes |
-|---|---|---|---|---|---|
-| Corrected-chain Catapult launch-pack / compile-first transcript refresh (AS) | Consolidate launch-pack corrections from real-tool transcript: class-level top target, reserved-macro-forbidden policy, historical blocker ordering, and latest compile-first transcript posture. | `docs/milestones/P00-011AS_report.md` + user-shared 2026-03-24 compile transcript excerpt | `docs/milestones/P00-011AS_report.md`<br>`docs/handoff/P11_CORRECTED_CHAIN_CATAPULT_LAUNCH_NOTE.md`<br>`docs/reference/Catapult_Tcl_Writing_Note_zhTW.md`<br>`scripts/catapult/p11as_corrected_chain_project.tcl`<br>`scripts/check_p11as_corrected_chain_launch_pack.ps1` | real-tool compile-first transcript refresh evidence | latest shared excerpt keyword-scan未見 `# Error` / `Compilation aborted`；目前可見輸出主要為 `CRD-549/111/68/1/186` 與 `CIN-63` warning；not Catapult closure；not SCVerify closure。 |
-
-## P00-011AT Addendum (2026-03-27)
-| Item | Intent | Evidence | Primary Files | Evidence Type | Notes |
-|---|---|---|---|---|---|
-| Corrected-chain CIN-63 cleanup evidence sync + next-stage run-only audit (AT) | Lock in minimal contamination cleanup evidence (`CIN-63 7 -> 0`) and run one compile-after next-stage (`go libraries`) run-only audit to capture the first real blocker beyond compile-first. | `docs/milestones/P00-011AT_report.md` + `/home/peter/AECCT/AECCT_HLS-master/build/catapult/p11as_runonly_cin63fix2_20260327_020941/run_meta.txt` + `/home/peter/AECCT/AECCT_HLS-master/build/catapult/p11as_runonly_libraries_20260327_035155/run_meta.txt` | `docs/milestones/P00-011AT_report.md`<br>`src/blocks/AttnLayer0.h`<br>`src/blocks/AttnPhaseATopManagedQ.h`<br>`src/blocks/AttnPhaseATopManagedKv.h`<br>`scripts/catapult/p11as_corrected_chain_project.tcl` | real-tool compile-first rerun + next-stage run-only evidence | compile-first rerun: `# Error=0`, `Compilation aborted=0`, `Completed transformation 'compile'=1`, `CIN-63=0`, `CRD-549=12`, Catapult exit code `0`; next-stage (`go libraries`) run-only first blocker: `LIB-220` + `Error: Unable to load techlibs`, Catapult exit code `2`; compile-first scope and next-stage audit scope only；not Catapult closure；not SCVerify closure。 |
-
-## Post-Attention Transition Addendum (2026-04-05)
-| Area | Scope | Current Status | Latest Evidence / Patch | Key Files / Artifacts | Notes |
-|---|---|---|---|---|---|
-| Attention Mainline Local Closure Mapping | Map accepted attention no-direct-SRAM closure into broader closure/traceability view and define post-attention transition outputs. | NON-LIVE-VALIDATED | local rerun bundle (`check_design_purity`, `check_repo_hygiene -Phase pre`, `p11aj`, `p11anb`) + post-attention reports | `docs/night_run/REPORT_P11ATTN_MAINLINE_NO_DIRECT_SRAM_CLOSURE_STATEMENT.md`<br>`docs/night_run/REPORT_P11OUT1_MAINLINE_CLASSIFICATION_AND_CLOSURE_PLAN.md`<br>`docs/night_run/REPORT_P11ATTN_CLOSURE_BUNDLE_GUIDE_zhTW.md`<br>`docs/night_run/REPORT_POST_ATTN_SCVERIFY_CATAPULT_READINESS_GAP_MAP.md`<br>`docs/night_run/REPORT_POST_ATTN_NEXT_SCOPE_CANDIDATE_AUDIT.md` | local-only accepted progress; compile-first/evidence-first; not Catapult closure; not SCVerify closure. |
+## 6. Addenda Archive
+- Addendum details were consolidated for readability.
+- Main table/current-readout remains the primary fast path.
+- Historical addenda are archived at:
+  - `docs/milestones/archive/CLOSURE_MATRIX_v12.1_ADDENDA.md`

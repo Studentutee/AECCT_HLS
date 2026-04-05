@@ -72,3 +72,12 @@ Scope: post-attention non-attention bounded-candidate audit (read-only planning)
 - Do not change external 4-channel contract.
 - No FFN/LayerNorm broad refactor; only bounded seam tightening.
 - Keep claims local-only and compile-first unless real tool evidence is added.
+
+## 5) 2026-04-06 Follow-Up Audit Result
+- Candidate A (`FFN handoff fallback tightening`) was re-audited with compile-backed evidence and is currently blocked for immediate bounded cut.
+- Blocking reason:
+  - `FFNLayer0` strict policy/reject-stage gates already exist.
+  - `TransformerLayer` still keeps descriptor-miss compatibility fallback preload behavior by design.
+  - Immediate tightening would change accepted fallback semantics without a new explicit seam contract.
+- Blocker report:
+  - `docs/night_run/BLOCKER_POST_ATTN_FFN_HANDOFF_FALLBACK_TIGHTENING.md`
