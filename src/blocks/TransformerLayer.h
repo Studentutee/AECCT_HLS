@@ -239,6 +239,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         // Ownership seam: this branch keeps Top-owned SRAM policy unchanged and only narrows stage dispatch.
         return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
     }
+    const bool attn_q_ready_kv_not_prebuilt_qkv_scores_stage_shell_payload_enabled_safe =
+        !kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        !score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        attn_out_topfed_payload_enable;
+    if (attn_q_ready_kv_not_prebuilt_qkv_scores_stage_shell_payload_enabled_safe) {
+        // Stage boundary: payload-enabled q-ready/kv-missing bucket reuses the existing QKV+SCORES seam.
+        // Ownership seam: selector narrowing only; shared SRAM ownership/arbitration remains Top-managed.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
+    }
     const bool attn_kv_ready_q_not_prebuilt_qkv_scores_stage_shell_safe =
         kv_prebuilt_from_top_managed &&
         !q_prebuilt_from_top_managed &&
@@ -250,6 +261,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         // Ownership seam: reuse existing stage surface only; no new shared-SRAM arbitration semantics.
         return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
     }
+    const bool attn_kv_ready_q_not_prebuilt_qkv_scores_stage_shell_payload_enabled_safe =
+        kv_prebuilt_from_top_managed &&
+        !q_prebuilt_from_top_managed &&
+        !score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        attn_out_topfed_payload_enable;
+    if (attn_kv_ready_q_not_prebuilt_qkv_scores_stage_shell_payload_enabled_safe) {
+        // Stage boundary: payload-enabled kv-ready/q-missing bucket reuses the existing QKV+SCORES seam.
+        // Ownership seam: selector narrowing only; shared SRAM ownership/arbitration remains Top-managed.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
+    }
     const bool attn_qkv_not_prebuilt_qkv_scores_stage_shell_safe =
         !kv_prebuilt_from_top_managed &&
         !q_prebuilt_from_top_managed &&
@@ -259,6 +281,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
     if (attn_qkv_not_prebuilt_qkv_scores_stage_shell_safe) {
         // Stage boundary: non-prebuilt bucket composes QKV + SCORES stages to avoid FULL shell.
         // Fallback boundary: this keeps all non-selected buckets on legacy FULL behavior.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
+    }
+    const bool attn_qkv_not_prebuilt_qkv_scores_stage_shell_payload_enabled_safe =
+        !kv_prebuilt_from_top_managed &&
+        !q_prebuilt_from_top_managed &&
+        !score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        attn_out_topfed_payload_enable;
+    if (attn_qkv_not_prebuilt_qkv_scores_stage_shell_payload_enabled_safe) {
+        // Stage boundary: payload-enabled non-prebuilt bucket reuses the existing QKV+SCORES seam.
+        // Ownership seam: selector narrowing only; shared SRAM ownership/arbitration remains Top-managed.
         return TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY;
     }
     // Fallback boundary: other partial-prebuild buckets stay on legacy full-shell behavior.

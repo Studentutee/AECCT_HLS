@@ -591,8 +591,8 @@ private:
                 true,
                 true,
                 false,
-                false,
-                false,
+                true,
+                true,
                 true);
         if (other_partial_prebuilt_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
             std::printf(
@@ -637,6 +637,23 @@ private:
         }
         std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_Q_READY_KV_NOT_PREBUILT_TO_QKV_SCORES_STAGE PASS\n");
 
+        const aecct::TransformerAttnCompatShellStage q_ready_kv_not_prebuilt_payload_enabled_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                false,
+                true,
+                false,
+                false,
+                true);
+        if (q_ready_kv_not_prebuilt_payload_enabled_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+            std::printf(
+                "[p11anb][FAIL] q-ready kv-not-prebuilt payload-enabled stage mismatch got=%u exp=%u\n",
+                (unsigned)q_ready_kv_not_prebuilt_payload_enabled_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_Q_READY_KV_NOT_PREBUILT_PAYLOAD_ENABLED_TO_QKV_SCORES_STAGE PASS\n");
+
         const aecct::TransformerAttnCompatShellStage kv_ready_q_not_prebuilt_stage =
             aecct::transformer_layer_select_attn_compat_shell_stage(
                 true,
@@ -654,6 +671,23 @@ private:
         }
         std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_KV_READY_Q_NOT_PREBUILT_TO_QKV_SCORES_STAGE PASS\n");
 
+        const aecct::TransformerAttnCompatShellStage kv_ready_q_not_prebuilt_payload_enabled_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                true,
+                false,
+                false,
+                false,
+                true);
+        if (kv_ready_q_not_prebuilt_payload_enabled_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+            std::printf(
+                "[p11anb][FAIL] kv-ready q-not-prebuilt payload-enabled stage mismatch got=%u exp=%u\n",
+                (unsigned)kv_ready_q_not_prebuilt_payload_enabled_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_KV_READY_Q_NOT_PREBUILT_PAYLOAD_ENABLED_TO_QKV_SCORES_STAGE PASS\n");
+
         const aecct::TransformerAttnCompatShellStage qkv_not_prebuilt_stage =
             aecct::transformer_layer_select_attn_compat_shell_stage(
                 true,
@@ -670,6 +704,23 @@ private:
             return false;
         }
         std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_QKV_NOT_PREBUILT_TO_QKV_SCORES_STAGE PASS\n");
+
+        const aecct::TransformerAttnCompatShellStage qkv_not_prebuilt_payload_enabled_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                false,
+                false,
+                false,
+                false,
+                true);
+        if (qkv_not_prebuilt_payload_enabled_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+            std::printf(
+                "[p11anb][FAIL] q-not-prebuilt kv-not-prebuilt payload-enabled stage mismatch got=%u exp=%u\n",
+                (unsigned)qkv_not_prebuilt_payload_enabled_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_QKV_NOT_PREBUILT_PAYLOAD_ENABLED_TO_QKV_SCORES_STAGE PASS\n");
 
         const aecct::TransformerAttnCompatShellStage q_ready_kv_not_prebuilt_score_ready_stage =
             aecct::transformer_layer_select_attn_compat_shell_stage(
@@ -1176,7 +1227,22 @@ private:
             sram_baseline,
             final_base_baseline,
             compare_words);
-        if (diff_count == 0u) {
+        const bool valid_kv_prebuilt = u32_bits(regs_valid.p11ac_mainline_path_taken) != 0u;
+        const bool valid_q_prebuilt = u32_bits(regs_valid.p11ad_mainline_q_path_taken) != 0u;
+        const bool valid_score_prebuilt = u32_bits(regs_valid.p11ae_mainline_score_path_taken) != 0u;
+        const bool valid_out_prebuilt = u32_bits(regs_valid.p11af_mainline_softmax_output_path_taken) != 0u;
+        const aecct::TransformerAttnCompatShellStage valid_shell =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                valid_kv_prebuilt,
+                valid_q_prebuilt,
+                valid_score_prebuilt,
+                valid_out_prebuilt,
+                true);
+        const bool valid_shell_can_consume_out_payload =
+            (valid_shell == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_FULL) ||
+            (valid_shell == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY);
+        if (diff_count == 0u && valid_shell_can_consume_out_payload) {
             std::printf("[p11anb][FAIL] top loop caller expected compare unchanged at final X first=%u words\n",
                 (unsigned)compare_words);
             return false;
