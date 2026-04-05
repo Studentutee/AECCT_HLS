@@ -59,6 +59,8 @@ Version: 2026-03-27
 - P00-011AT corrected-chain CIN-63 cleanup + next-stage run-only audit remains valid baseline.
 - Attention mainline no-direct-SRAM closure statement is now published as local-only accepted progress with compile-backed evidence (`docs/night_run/REPORT_P11ATTN_MAINLINE_NO_DIRECT_SRAM_CLOSURE_STATEMENT.md`); this scope explicitly excludes Catapult closure and SCVerify closure.
 - Reviewer-facing closure bundle guide is available at `docs/night_run/REPORT_P11ATTN_CLOSURE_BUNDLE_GUIDE_zhTW.md` to map evidence vs inference boundaries and avoid over-reading residual fallback buckets.
+- Post-attention transition gap map is published at `docs/night_run/REPORT_POST_ATTN_SCVERIFY_CATAPULT_READINESS_GAP_MAP.md` to separate hard blockers vs recommended prep for Catapult/SCVerify readiness planning.
+- Post-attention non-attention bounded candidate audit is published at `docs/night_run/REPORT_POST_ATTN_NEXT_SCOPE_CANDIDATE_AUDIT.md`, with FFN handoff fallback tightening ranked as the next recommended bounded candidate.
 - Catapult / SCVerify 驗證刻意 deferred，將與後續同 family 項目一起做批次驗證；因此目前不等同 full Catapult closure。
 - global/repo-wide governance open items 仍存在，尚未等同全域 closure。
 

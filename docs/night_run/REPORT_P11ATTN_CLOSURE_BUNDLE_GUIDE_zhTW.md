@@ -54,3 +54,10 @@ Scope: attention mainline closure bundle guide (reviewer-facing, local-only)
 - compile-first / evidence-first
 - not Catapult closure
 - not SCVerify closure
+
+## Post-Attention Transition Reports (2026-04-05)
+- Readiness gap map:
+  - `docs/night_run/REPORT_POST_ATTN_SCVERIFY_CATAPULT_READINESS_GAP_MAP.md`
+- Next-scope candidate audit:
+  - `docs/night_run/REPORT_POST_ATTN_NEXT_SCOPE_CANDIDATE_AUDIT.md`
+- These two reports are planning/transition artifacts only and do not claim Catapult or SCVerify closure.
