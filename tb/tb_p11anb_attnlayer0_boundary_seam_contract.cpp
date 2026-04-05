@@ -569,6 +569,23 @@ private:
         }
         std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_OUT_ONLY PASS\n");
 
+        const aecct::TransformerAttnCompatShellStage selected_partial_prebuilt_payload_enabled_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                true,
+                true,
+                true,
+                false,
+                true);
+        if (selected_partial_prebuilt_payload_enabled_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+            std::printf(
+                "[p11anb][FAIL] selected partial-prebuilt payload-enabled stage mismatch got=%u exp=%u\n",
+                (unsigned)selected_partial_prebuilt_payload_enabled_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_SHRINK_SELECTED_PARTIAL_QKV_SCORE_PAYLOAD_ENABLED_OUT_ONLY PASS\n");
+
         const aecct::TransformerAttnCompatShellStage other_partial_prebuilt_stage =
             aecct::transformer_layer_select_attn_compat_shell_stage(
                 true,

@@ -162,6 +162,15 @@ private:
         if (selected_partial_out_stage_bucket) {
             return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
         }
+        const bool selected_partial_out_stage_payload_enabled_bucket =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            !out_prebuilt_from_top_managed &&
+            attn_out_topfed_payload_enable;
+        if (selected_partial_out_stage_payload_enabled_bucket) {
+            return aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+        }
         const bool q_ready_kv_not_prebuilt_score_ready_partial_out_stage_bucket =
             !kv_prebuilt_from_top_managed &&
             q_prebuilt_from_top_managed &&
@@ -656,6 +665,7 @@ private:
         }
 
         bool selected_partial_bucket_ok = false;
+        bool selected_partial_payload_enabled_bucket_ok = false;
         bool qkv_ready_score_not_prebuilt_to_scores_stage_ok = false;
         bool q_ready_kv_not_prebuilt_to_qkv_scores_stage_ok = false;
         bool kv_ready_q_not_prebuilt_to_qkv_scores_stage_ok = false;
@@ -687,6 +697,12 @@ private:
                     score_prebuilt &&
                     !out_prebuilt &&
                     !payload_enable;
+                const bool selected_partial_payload_enabled_bucket =
+                    kv_prebuilt &&
+                    q_prebuilt &&
+                    score_prebuilt &&
+                    !out_prebuilt &&
+                    payload_enable;
                 const bool qkv_ready_score_not_prebuilt_bucket =
                     kv_prebuilt &&
                     q_prebuilt &&
@@ -771,6 +787,10 @@ private:
                 if (selected_partial_bucket && got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
                     selected_partial_bucket_ok = true;
                 }
+                if (selected_partial_payload_enabled_bucket &&
+                    got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
+                    selected_partial_payload_enabled_bucket_ok = true;
+                }
                 if (qkv_ready_score_not_prebuilt_bucket &&
                     got == aecct::TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY) {
                     qkv_ready_score_not_prebuilt_to_scores_stage_ok = true;
@@ -808,6 +828,7 @@ private:
                     fully_prebuilt_payload_ok = true;
                 }
                 if (!fully_prebuilt && !selected_partial_bucket &&
+                    !selected_partial_payload_enabled_bucket &&
                     !qkv_ready_score_not_prebuilt_bucket &&
                     !q_ready_kv_not_prebuilt_score_ready_bucket &&
                     !kv_ready_q_not_prebuilt_score_ready_bucket &&
@@ -823,6 +844,10 @@ private:
 
         if (!selected_partial_bucket_ok) {
             std::printf("[p11aj][FAIL] selected partial bucket did not converge to OUT_ONLY\n");
+            return false;
+        }
+        if (!selected_partial_payload_enabled_bucket_ok) {
+            std::printf("[p11aj][FAIL] selected partial payload-enabled bucket did not converge to OUT_ONLY\n");
             return false;
         }
         if (!fully_prebuilt_no_payload_ok) {
@@ -871,6 +896,8 @@ private:
         }
 
         std::printf("SELECTED_PARTIAL_QKV_SCORE_NO_PAYLOAD_TO_OUT_STAGE PASS\n");
+        std::printf("SELECTED_PARTIAL_QKV_SCORE_PAYLOAD_ENABLED_TO_OUT_STAGE PASS\n");
+        std::printf("SELECTED_PARTIAL_QKV_SCORE_PAYLOAD_ENABLED_OUT_STAGE_MIGRATION PASS\n");
         std::printf("QKV_READY_SCORE_NOT_PREBUILT_TO_SCORES_STAGE PASS\n");
         std::printf("Q_READY_KV_NOT_PREBUILT_TO_QKV_SCORES_STAGE PASS\n");
         std::printf("Q_READY_KV_NOT_PREBUILT_QKV_SCORES_STAGE_MIGRATION PASS\n");

@@ -130,6 +130,17 @@ static inline TransformerAttnCompatShellStage transformer_layer_select_attn_comp
         // local-only bounded cut: score-ready partial-prebuild can shrink to OUT stage shell.
         return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
     }
+    const bool attn_score_ready_partial_out_stage_shell_payload_enabled_safe =
+        kv_prebuilt_from_top_managed &&
+        q_prebuilt_from_top_managed &&
+        score_prebuilt_from_top_managed &&
+        !out_prebuilt_from_top_managed &&
+        attn_out_topfed_payload_enable;
+    if (attn_score_ready_partial_out_stage_shell_payload_enabled_safe) {
+        // Stage boundary: payload-enabled score-ready bucket reuses existing OUT consume/fallback seam.
+        // Ownership seam: no new SRAM owner/arbitration semantics; selector only narrows to OUT stage.
+        return TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY;
+    }
     const bool attn_q_ready_kv_not_prebuilt_score_ready_partial_out_stage_shell_safe =
         !kv_prebuilt_from_top_managed &&
         q_prebuilt_from_top_managed &&
