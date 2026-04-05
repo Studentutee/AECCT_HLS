@@ -3,6 +3,9 @@
 Date: 2026-04-05  
 Scope: attention mainline `out=1` family classification + closure planning (local-only)
 
+Related closure statement:
+- `docs/night_run/REPORT_P11ATTN_MAINLINE_NO_DIRECT_SRAM_CLOSURE_STATEMENT.md`
+
 ## 1) Compile-backed audit basis
 - `scripts/check_design_purity.ps1` -> `PASS: check_design_purity`
 - `scripts/check_repo_hygiene.ps1 -Phase pre` -> `PASS: check_repo_hygiene`
