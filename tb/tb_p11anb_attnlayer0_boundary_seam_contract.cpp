@@ -637,6 +637,23 @@ private:
         }
         std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_KV_READY_Q_NOT_PREBUILT_TO_QKV_SCORES_STAGE PASS\n");
 
+        const aecct::TransformerAttnCompatShellStage qkv_not_prebuilt_stage =
+            aecct::transformer_layer_select_attn_compat_shell_stage(
+                true,
+                false,
+                false,
+                false,
+                false,
+                false);
+        if (qkv_not_prebuilt_stage != aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY) {
+            std::printf(
+                "[p11anb][FAIL] q-not-prebuilt kv-not-prebuilt stage mismatch got=%u exp=%u\n",
+                (unsigned)qkv_not_prebuilt_stage,
+                (unsigned)aecct::TRANSFORMER_ATTN_COMPAT_SHELL_QKV_SCORES_ONLY);
+            return false;
+        }
+        std::printf("P11ANB_TRANSFORMER_ATTN_SHELL_QKV_NOT_PREBUILT_TO_QKV_SCORES_STAGE PASS\n");
+
         const aecct::TransformerAttnCompatShellStage q_ready_kv_not_prebuilt_score_ready_stage =
             aecct::transformer_layer_select_attn_compat_shell_stage(
                 true,
