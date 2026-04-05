@@ -5,6 +5,7 @@ Scope: attention mainline `out=1` family classification + closure planning (loca
 
 Related closure statement:
 - `docs/night_run/REPORT_P11ATTN_MAINLINE_NO_DIRECT_SRAM_CLOSURE_STATEMENT.md`
+- `docs/night_run/REPORT_P11ATTN_CLOSURE_BUNDLE_GUIDE_zhTW.md`
 
 ## 1) Compile-backed audit basis
 - `scripts/check_design_purity.ps1` -> `PASS: check_design_purity`

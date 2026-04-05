@@ -3,6 +3,9 @@
 Date: 2026-04-05  
 Scope: attention mainline closure statement (local-only)
 
+Bundle guide:
+- `docs/night_run/REPORT_P11ATTN_CLOSURE_BUNDLE_GUIDE_zhTW.md`
+
 ## What is closed in this round
 - Closure target: attention mainline no-direct-SRAM-fallback posture.
 - This is a local closure statement for current mainline scope.
