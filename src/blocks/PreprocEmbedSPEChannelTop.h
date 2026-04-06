@@ -87,6 +87,8 @@ static inline bool preproc_embed_spe_channel_top(
     u32_t check_tiles[PREPROC_PILOT_CHECK_TILE_COUNT][PREPROC_PILOT_CHECK_PARITY_TILE_WORDS];
     bool tile_loaded[PREPROC_PILOT_CHECK_TILE_COUNT];
     bool tile_dirty[PREPROC_PILOT_CHECK_TILE_COUNT];
+    bool var_seen[PREPROC_PILOT_VAR_TOKENS];
+    bool check_seen[PREPROC_PILOT_CHECK_TOKENS];
 
     PREPROC_CHECK_TILE_INIT_LOOP: for (uint32_t t = 0u; t < PREPROC_PILOT_CHECK_TILE_COUNT; ++t) {
         tile_loaded[t] = false;
@@ -95,33 +97,47 @@ static inline bool preproc_embed_spe_channel_top(
             check_tiles[t][w] = (u32_t)0u;
         }
     }
+    PREPROC_VAR_SEEN_INIT_LOOP: for (uint32_t i = 0u; i < PREPROC_PILOT_VAR_TOKENS; ++i) {
+        var_seen[i] = false;
+    }
+    PREPROC_CHECK_SEEN_INIT_LOOP: for (uint32_t i = 0u; i < PREPROC_PILOT_CHECK_TOKENS; ++i) {
+        check_seen[i] = false;
+    }
 
-    PREPROC_VAR_TOKEN_LOOP: for (uint32_t v = 0u; v < PREPROC_PILOT_VAR_TOKENS; ++v) {
+    // var_iter is bounded iteration only; formal var identity comes from packet metadata.
+    PREPROC_VAR_TOKEN_LOOP: for (uint32_t var_iter = 0u; var_iter < PREPROC_PILOT_VAR_TOKENS; ++var_iter) {
         const PreprocYInPacket y_pkt = y_in_ch.read();
         const PreprocHByVarAdjPacket adj_pkt = h_by_var_adj_ch.read();
         const PreprocEmbedParamPacket embed_pkt = embed_param_ch.read();
         const PreprocLpeTokenPacket lpe_pkt = lpe_token_ch.read();
 
-        if ((uint32_t)y_pkt.var_idx.to_uint() != v) {
+        const uint32_t pkt_var_idx = (uint32_t)y_pkt.var_idx.to_uint();
+        if (pkt_var_idx >= PREPROC_PILOT_VAR_TOKENS) {
             local_stats.metadata_error = true;
             if (out_stats != 0) { *out_stats = local_stats; }
             return false;
         }
-        if (!preproc_adj_packet_meta_ok(adj_pkt, v)) {
+        if (var_seen[pkt_var_idx]) {
             local_stats.metadata_error = true;
             if (out_stats != 0) { *out_stats = local_stats; }
             return false;
         }
-        if (!preproc_embed_packet_meta_ok(embed_pkt, (uint32_t)PREPROC_PILOT_TOKEN_VAR, v)) {
+        if (!preproc_adj_packet_meta_ok(adj_pkt, pkt_var_idx)) {
             local_stats.metadata_error = true;
             if (out_stats != 0) { *out_stats = local_stats; }
             return false;
         }
-        if (!preproc_lpe_packet_meta_ok(lpe_pkt, (uint32_t)PREPROC_PILOT_TOKEN_VAR, v)) {
+        if (!preproc_embed_packet_meta_ok(embed_pkt, (uint32_t)PREPROC_PILOT_TOKEN_VAR, pkt_var_idx)) {
             local_stats.metadata_error = true;
             if (out_stats != 0) { *out_stats = local_stats; }
             return false;
         }
+        if (!preproc_lpe_packet_meta_ok(lpe_pkt, (uint32_t)PREPROC_PILOT_TOKEN_VAR, pkt_var_idx)) {
+            local_stats.metadata_error = true;
+            if (out_stats != 0) { *out_stats = local_stats; }
+            return false;
+        }
+        var_seen[pkt_var_idx] = true;
 
         const uint32_t hard_bit = ((uint32_t)y_pkt.y_bits.to_uint() >> 31u) & 1u;
         const uint32_t adj_count = (uint32_t)adj_pkt.adj_count.to_uint();
@@ -180,20 +196,33 @@ static inline bool preproc_embed_spe_channel_top(
         local_stats.check_tiles_written = local_stats.check_tiles_written + 1u;
     }
 
-    PREPROC_CHECK_TOKEN_LOOP: for (uint32_t c = 0u; c < PREPROC_PILOT_CHECK_TOKENS; ++c) {
+    // check_iter is bounded iteration only; formal check identity comes from packet metadata.
+    PREPROC_CHECK_TOKEN_LOOP: for (uint32_t check_iter = 0u; check_iter < PREPROC_PILOT_CHECK_TOKENS; ++check_iter) {
         const PreprocEmbedParamPacket embed_pkt = embed_param_ch.read();
         const PreprocLpeTokenPacket lpe_pkt = lpe_token_ch.read();
+        const uint32_t pkt_check_idx = (uint32_t)embed_pkt.token_idx.to_uint();
 
-        if (!preproc_embed_packet_meta_ok(embed_pkt, (uint32_t)PREPROC_PILOT_TOKEN_CHECK, c)) {
+        if (pkt_check_idx >= PREPROC_PILOT_CHECK_TOKENS) {
             local_stats.metadata_error = true;
             if (out_stats != 0) { *out_stats = local_stats; }
             return false;
         }
-        if (!preproc_lpe_packet_meta_ok(lpe_pkt, (uint32_t)PREPROC_PILOT_TOKEN_CHECK, c)) {
+        if (check_seen[pkt_check_idx]) {
             local_stats.metadata_error = true;
             if (out_stats != 0) { *out_stats = local_stats; }
             return false;
         }
+        if (!preproc_embed_packet_meta_ok(embed_pkt, (uint32_t)PREPROC_PILOT_TOKEN_CHECK, pkt_check_idx)) {
+            local_stats.metadata_error = true;
+            if (out_stats != 0) { *out_stats = local_stats; }
+            return false;
+        }
+        if (!preproc_lpe_packet_meta_ok(lpe_pkt, (uint32_t)PREPROC_PILOT_TOKEN_CHECK, pkt_check_idx)) {
+            local_stats.metadata_error = true;
+            if (out_stats != 0) { *out_stats = local_stats; }
+            return false;
+        }
+        check_seen[pkt_check_idx] = true;
 
         PreprocXOutPacket out_pkt;
         preproc_compose_x_packet(embed_pkt, lpe_pkt, out_pkt);
