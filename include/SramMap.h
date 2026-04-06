@@ -25,7 +25,13 @@
 // - [legacy] Separate BIAS/WEIGHT regions are still exposed for compatibility.
 // ============================================================
 
-static const uint32_t ALIGN_WORDS = 16; // 64B alignment (16 words * 4B)
+static const uint32_t SRAM_WORD_BYTES = BYTES_PER_WORD;
+static const uint32_t SRAM_WORD_LANES = W_LANES;
+static_assert(SRAM_WORD_BYTES == 16u, "Backup profile SRAM word must be 16 bytes");
+static_assert(SRAM_WORD_LANES == 8u, "Backup profile SRAM word must be 8 lanes");
+
+// Alignment unit remains "word addressed" in this map.
+static const uint32_t ALIGN_WORDS = 16;
 static_assert((ALIGN_WORDS % W_LANES) == 0, "ALIGN_WORDS must be a multiple of W_LANES");
 
 constexpr uint32_t align_up_words(uint32_t x, uint32_t a) {

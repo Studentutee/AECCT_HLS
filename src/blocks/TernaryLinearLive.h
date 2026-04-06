@@ -95,7 +95,22 @@ static inline bool ternary_linear_live_decode_weight(
     return false;
 }
 
-static inline bool ternary_linear_live_compute_q_elem(
+static inline bool ternary_linear_live_decode_weight_i8(
+    const u32_t* sram,
+    u32_t param_base_word,
+    QuantLinearMatrixId matrix_id,
+    uint32_t out_idx,
+    uint32_t in_idx,
+    quant_w_i8_t& out_w
+) {
+    uint32_t code = 0u;
+    if (!ternary_linear_live_decode_code(sram, param_base_word, matrix_id, out_idx, in_idx, code)) {
+        return false;
+    }
+    return quant_decode_ternary_weight_i8(code, out_w);
+}
+
+static inline bool ternary_linear_live_compute_q_elem_i8_acc16(
     const u32_t* sram,
     u32_t param_base_word,
     QuantLinearMatrixId matrix_id,
@@ -112,25 +127,32 @@ static inline bool ternary_linear_live_compute_q_elem(
         return false;
     }
 
-    fp32_t inv_sw_fp = fp32_from_bits(out_inv_sw_bits);
-    quant_acc_t inv_sw = inv_sw_fp.template convert_to_ac_fixed<32, 12, true, AC_RND, AC_SAT>(false);
-    if (inv_sw == quant_acc_t(0)) {
-        return false;
-    }
-
     const uint32_t x_base = (uint32_t)x_row_base_word.to_uint();
-    quant_acc_t acc = 0;
-    for (uint32_t in = 0; in < meta.cols; ++in) {
-        quant_w_t w = 0;
-        if (!ternary_linear_live_decode_weight(sram, param_base_word, matrix_id, out_idx, in, w)) {
+    quant_acc_i16_t acc = 0;
+    TERNARY_LINEAR_LIVE_I8ACC16_COL_LOOP: for (uint32_t in = 0u; in < meta.cols; ++in) {
+        quant_w_i8_t w = 0;
+        if (!ternary_linear_live_decode_weight_i8(sram, param_base_word, matrix_id, out_idx, in, w)) {
             return false;
         }
-        quant_act_t x = quant_act_from_bits(sram[x_base + in]);
-        acc += quant_acc_t(x) * quant_acc_t(w);
+        const quant_act_i8_t x = quant_act_i8_from_word(sram[x_base + in]);
+        acc = quant_acc_i16_saturating_madd(acc, x, w);
     }
 
-    out_q_bits = quant_bits_from_acc(acc / inv_sw);
+    out_q_bits = quant_word_from_acc_i16(acc);
     return true;
+}
+
+static inline bool ternary_linear_live_compute_q_elem(
+    const u32_t* sram,
+    u32_t param_base_word,
+    QuantLinearMatrixId matrix_id,
+    u32_t x_row_base_word,
+    uint32_t out_idx,
+    u32_t& out_q_bits,
+    u32_t& out_inv_sw_bits
+) {
+    return ternary_linear_live_compute_q_elem_i8_acc16(
+        sram, param_base_word, matrix_id, x_row_base_word, out_idx, out_q_bits, out_inv_sw_bits);
 }
 
 static inline QuantLinearMeta ternary_linear_live_l0_wq_meta() {

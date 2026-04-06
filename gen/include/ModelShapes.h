@@ -19,19 +19,29 @@
 //     行(Colume) = second dimension
 // ============================================================
 
-static const uint32_t BYTES_PER_WORD = 4;
+static const uint32_t SRAM_LANE_BITS = 16;
+static const uint32_t W_LANES = 8;  // backup profile: 8 lanes * 16 bits
+static const uint32_t BYTES_PER_WORD = (SRAM_LANE_BITS * W_LANES) / 8u; // 16 bytes
+static const uint32_t LEGACY_U32_WORD_BYTES = 4;
+static const uint32_t SRAM_WORD_BITS = SRAM_LANE_BITS * W_LANES;
 
-// W_REGION wide-port lanes (each lane = 1 u32 word).
-static const uint32_t W_LANES = 8;  // W_LANES=8 => 256-bit wide word
+static_assert(BYTES_PER_WORD == 16u, "Backup profile expects 128-bit SRAM words");
+static_assert(SRAM_WORD_BITS == 128u, "Backup profile expects 8x16-bit SRAM words");
 
 constexpr uint32_t ceil_div_u32(uint32_t a, uint32_t b) { return (a + b - 1u) / b; }
 constexpr uint32_t align_up_u32(uint32_t x, uint32_t a) { return ((x + a - 1u) / a) * a; }
 
-// FP32 payload in v8: TB sends fp32 as raw u32 words => 1 elem = 1 word.
+// Legacy transport helper:
+// Existing bring-up flow still carries fp32 as raw u32 words.
 constexpr uint32_t words_fp32(uint32_t elems) { return elems; }
 
 // Bit-packed payload: 1 word carries 32 bits.
 constexpr uint32_t words_bits(uint32_t bits) { return ceil_div_u32(bits, 32u); }
+
+// Backup profile payload helpers.
+constexpr uint32_t words_fp16_lanes(uint32_t elems) { return ceil_div_u32(elems, W_LANES); }
+constexpr uint32_t bytes_fp16_lanes(uint32_t elems) { return elems * 2u; }
+constexpr uint32_t sram_words_from_bytes(uint32_t bytes) { return ceil_div_u32(bytes, BYTES_PER_WORD); }
 
 // ----------------------------
 // BCH code parameters

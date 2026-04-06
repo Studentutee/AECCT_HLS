@@ -588,6 +588,114 @@ namespace aecct {
         return in_fifo;
     }
 
+    // Backup profile IO8 bridge staging FIFOs.
+    static inline data_ch_t& top_io8_in_words_fifo() {
+        static data_ch_t in_words_fifo;
+        return in_words_fifo;
+    }
+
+    static inline data_ch_t& top_io8_out_words_fifo() {
+        static data_ch_t out_words_fifo;
+        return out_words_fifo;
+    }
+
+    struct TopIo8DeserializerState {
+        u32_t staged_word;
+        uint8_t byte_count;
+
+        void clear() {
+            staged_word = 0;
+            byte_count = 0u;
+        }
+    };
+
+    struct TopIo8SerializerState {
+        u32_t staged_word;
+        uint8_t byte_count;
+        bool valid;
+
+        void clear() {
+            staged_word = 0;
+            byte_count = 0u;
+            valid = false;
+        }
+    };
+
+    static inline TopIo8DeserializerState& top_io8_deser_state() {
+        static TopIo8DeserializerState s = { (u32_t)0u, 0u };
+        return s;
+    }
+
+    static inline TopIo8SerializerState& top_io8_ser_state() {
+        static TopIo8SerializerState s = { (u32_t)0u, 0u, false };
+        return s;
+    }
+
+    // Top-local helper: fp16 lane <-> 2-byte serialization (little-endian byte order).
+    static inline u16_t top_io8_deserialize_fp16_lane(u8_t byte0, u8_t byte1) {
+        return backup_pack_lane_from_bytes(byte0, byte1);
+    }
+
+    static inline void top_io8_serialize_fp16_lane(u16_t lane, u8_t& byte0, u8_t& byte1) {
+        backup_unpack_lane_to_bytes(lane, byte0, byte1);
+    }
+
+    // Top-local helper: one backup SRAM word (16 bytes) <-> four u32 transport words.
+    static inline void top_io8_deserialize_sram_word(
+        const u8_t bytes_in[BACKUP_WORD_BYTES],
+        u32_t words_out[BACKUP_WORD_U32S]
+    ) {
+        backup_pack_word_u32x4_from_bytes(bytes_in, words_out);
+    }
+
+    static inline void top_io8_serialize_sram_word(
+        const u32_t words_in[BACKUP_WORD_U32S],
+        u8_t bytes_out[BACKUP_WORD_BYTES]
+    ) {
+        backup_unpack_word_u32x4_to_bytes(words_in, bytes_out);
+    }
+
+    static inline void top_io8_ingest_bytes_to_word_fifo(
+        data8_ch_t& data_in_bytes,
+        data_ch_t& out_words
+    ) {
+        TopIo8DeserializerState& st = top_io8_deser_state();
+        u8_t b;
+        TOP_IO8_INGEST_BYTES_LOOP: while (data_in_bytes.nb_read(b)) {
+            st.staged_word.set_slc((int)(st.byte_count * 8u), b);
+            st.byte_count = (uint8_t)(st.byte_count + 1u);
+            if (st.byte_count == 4u) {
+                out_words.write(st.staged_word);
+                st.staged_word = 0;
+                st.byte_count = 0u;
+            }
+        }
+    }
+
+    static inline void top_io8_emit_bytes_from_word_fifo(
+        data_ch_t& in_words,
+        data8_ch_t& data_out_bytes
+    ) {
+        TopIo8SerializerState& st = top_io8_ser_state();
+        TOP_IO8_EMIT_BYTES_LOOP: while (true) {
+            if (!st.valid) {
+                if (!in_words.nb_read(st.staged_word)) {
+                    break;
+                }
+                st.byte_count = 0u;
+                st.valid = true;
+            }
+            const u8_t b = st.staged_word.template slc<8>((int)(st.byte_count * 8u));
+            data_out_bytes.write(b);
+            st.byte_count = (uint8_t)(st.byte_count + 1u);
+            if (st.byte_count == 4u) {
+                st.valid = false;
+                st.staged_word = 0;
+                st.byte_count = 0u;
+            }
+        }
+    }
+
     static inline bool top_data_nb_read(data_ch_t& data_in, u32_t& word) {
         if (top_in_fifo().nb_read(word)) {
             return true;
@@ -4122,6 +4230,23 @@ namespace aecct {
             }
         }
         refresh_receiver_state(regs);
+    }
+
+    // Backup profile external boundary:
+    // - data_in/data_out are serialized IO8 channels
+    // - internal Top/shared-SRAM ownership and word-path behavior remain unchanged
+    static inline void top(
+        ac_channel<ac_int<16, false> >& ctrl_cmd,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<8, false> >& data_in,
+        ac_channel<ac_int<8, false> >& data_out
+    ) {
+        data_ch_t& io8_in_words = top_io8_in_words_fifo();
+        data_ch_t& io8_out_words = top_io8_out_words_fifo();
+
+        top_io8_ingest_bytes_to_word_fifo(data_in, io8_in_words);
+        top(ctrl_cmd, ctrl_rsp, io8_in_words, io8_out_words);
+        top_io8_emit_bytes_from_word_fifo(io8_out_words, data_out);
     }
 
 } // namespace aecct
