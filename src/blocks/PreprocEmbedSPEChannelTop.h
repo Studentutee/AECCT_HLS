@@ -1,9 +1,12 @@
 ﻿#pragma once
-// Preproc channelized pilot wrapper and Top-side stream adapters (local-only pilot).
+// Preproc pilot numeric wrapper + Top-side stream adapters (local-only).
+// This file implements channel transport and step0 numeric composition only.
+// It does not change Top SRAM ownership or external Top contracts.
 
 #include <cstdint>
 #include <cstdio>
 
+#include "AecctUtil.h"
 #include "PreprocTransportTypes.h"
 
 namespace aecct {
@@ -61,6 +64,56 @@ static inline bool preproc_adj_packet_meta_ok(
     return true;
 }
 
+// FP32-domain helpers for pilot numeric composition.
+static inline fp32_t preproc_fp32_abs(fp32_t v) {
+    if (v < fp32_zero()) {
+        return fp32_zero() - v;
+    }
+    return v;
+}
+
+static inline fp32_t preproc_fp32_minus_one() {
+    return fp32_from_bits((u32_t)0xBF800000u);
+}
+
+// Compose one token by ref-model step0 semantics:
+// x[0:embed_words) = node_feature * src_embed, x[embed_words:embed_words+lpe_words) = lpe_token.
+static inline void preproc_compose_x_packet_with_feature(
+    const PreprocEmbedParamPacket& embed_pkt,
+    const PreprocLpeTokenPacket& lpe_pkt,
+    const fp32_t& node_feature,
+    PreprocXOutPacket& out_pkt
+) {
+    preproc_x_out_packet_clear(out_pkt);
+    out_pkt.token_kind = embed_pkt.token_kind;
+    out_pkt.token_idx = embed_pkt.token_idx;
+
+    const uint32_t embed_words = (uint32_t)embed_pkt.embed_word_count.to_uint();
+    const uint32_t lpe_words = (uint32_t)lpe_pkt.lpe_word_count.to_uint();
+
+    PREPROC_X_COMPOSE_LOOP: for (uint32_t d = 0u; d < PREPROC_PILOT_X_WORDS; ++d) {
+        if (d < embed_words) {
+            const fp32_t embed_fp = fp32_from_bits(embed_pkt.embed_words[d]);
+            out_pkt.x_words[d] = bits_from_fp32(node_feature * embed_fp);
+        } else {
+            const uint32_t lpe_idx = d - embed_words;
+            if (lpe_idx < lpe_words) {
+                out_pkt.x_words[d] = lpe_pkt.lpe_words[lpe_idx];
+            } else {
+                out_pkt.x_words[d] = (u32_t)0u;
+            }
+        }
+    }
+
+    uint32_t word_count = embed_words + lpe_words;
+    if (word_count > PREPROC_PILOT_X_WORDS) {
+        word_count = PREPROC_PILOT_X_WORDS;
+    }
+    out_pkt.word_count = (u16_t)word_count;
+}
+
+// Legacy pack helper kept for bounded pilot compatibility; numeric path uses
+// preproc_compose_x_packet_with_feature().
 static inline void preproc_compose_x_packet(
     const PreprocEmbedParamPacket& embed_pkt,
     const PreprocLpeTokenPacket& lpe_pkt,
@@ -102,6 +155,10 @@ static inline bool preproc_embed_spe_channel_top(
     PreprocChannelPilotStats local_stats;
     preproc_channel_pilot_stats_clear(local_stats);
 
+    // This wrapper is a pilot-local numeric path for Preproc step0.
+    // It keeps Top-managed backing ownership and packet metadata authority.
+    // It is not a closure path and does not change external Top contracts.
+
     u32_t check_tiles[PREPROC_PILOT_CHECK_TILE_COUNT][PREPROC_PILOT_CHECK_PARITY_TILE_WORDS];
     bool tile_loaded[PREPROC_PILOT_CHECK_TILE_COUNT];
     bool tile_dirty[PREPROC_PILOT_CHECK_TILE_COUNT];
@@ -126,6 +183,8 @@ static inline bool preproc_embed_spe_channel_top(
         check_seen[i] = false;
     }
 
+    // Variable-side consume stage:
+    // consume y/adj/embed/lpe, update check parity accumulator, then compose variable token.
     // var_iter is bounded iteration only; formal var identity comes from packet metadata.
     PREPROC_VAR_TOKEN_LOOP: for (uint32_t var_iter = 0u; var_iter < PREPROC_PILOT_VAR_TOKENS; ++var_iter) {
         const PreprocYInPacket y_pkt = y_in_ch.read();
@@ -161,9 +220,12 @@ static inline bool preproc_embed_spe_channel_top(
         }
         var_seen[pkt_var_idx] = true;
 
+        const fp32_t var_feature = preproc_fp32_abs(fp32_from_bits(y_pkt.y_bits));
+        const uint32_t var_feature_bits = (uint32_t)bits_from_fp32(var_feature).to_uint();
         const uint32_t hard_bit = ((uint32_t)y_pkt.y_bits.to_uint() >> 31u) & 1u;
         const uint32_t adj_count = (uint32_t)adj_pkt.adj_count.to_uint();
 
+        // Check-accumulator update stage (Top-backed parity tiles, local-only buffering).
         PREPROC_VAR_ADJ_LOOP: for (uint32_t i = 0u; i < adj_count; ++i) {
             const uint32_t check_idx = (uint32_t)adj_pkt.check_idx_list[i].to_uint();
             const uint32_t tile_id = check_idx / PREPROC_PILOT_CHECK_PARITY_TILE_WORDS;
@@ -214,8 +276,9 @@ static inline bool preproc_embed_spe_channel_top(
             }
         }
 
+        // Compose variable token by ref-model step0 semantics.
         PreprocXOutPacket out_pkt;
-        preproc_compose_x_packet(embed_pkt, lpe_pkt, out_pkt);
+        preproc_compose_x_packet_with_feature(embed_pkt, lpe_pkt, var_feature, out_pkt);
 #ifndef __SYNTHESIS__
         if (debug_sample0 && pkt_var_idx == 0u && !debug_first_token_ingredient_dumped) {
             PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT_LOOP: for (uint32_t d = 0u; d < 8u; ++d) {
@@ -226,22 +289,26 @@ static inline bool preproc_embed_spe_channel_top(
                     const uint32_t embed_bits = (uint32_t)embed_pkt.embed_words[d].to_uint();
                     const uint32_t lpe_bits = (d < lpe_words) ? (uint32_t)lpe_pkt.lpe_words[d].to_uint() : 0u;
                     std::printf(
-                        "PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT d=%u embed_u32=%u(0x%08X) lpe_u32=%u(0x%08X) varf=NA checkf=NA out_u32=%u(0x%08X)\n",
+                        "PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT d=%u embed_u32=%u(0x%08X) lpe_u32=%u(0x%08X) varf_u32=%u(0x%08X) checkf=NA out_u32=%u(0x%08X)\n",
                         (unsigned)d,
                         (unsigned)embed_bits,
                         (unsigned)embed_bits,
                         (unsigned)lpe_bits,
                         (unsigned)lpe_bits,
+                        (unsigned)var_feature_bits,
+                        (unsigned)var_feature_bits,
                         (unsigned)out_bits,
                         (unsigned)out_bits);
                 } else {
                     const uint32_t lpe_src = d - embed_words;
                     const uint32_t lpe_bits = (lpe_src < lpe_words) ? (uint32_t)lpe_pkt.lpe_words[lpe_src].to_uint() : 0u;
                     std::printf(
-                        "PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT d=%u embed=NA lpe_u32=%u(0x%08X) varf=NA checkf=NA out_u32=%u(0x%08X)\n",
+                        "PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT d=%u embed=NA lpe_u32=%u(0x%08X) varf_u32=%u(0x%08X) checkf=NA out_u32=%u(0x%08X)\n",
                         (unsigned)d,
                         (unsigned)lpe_bits,
                         (unsigned)lpe_bits,
+                        (unsigned)var_feature_bits,
+                        (unsigned)var_feature_bits,
                         (unsigned)out_bits,
                         (unsigned)out_bits);
                 }
@@ -255,10 +322,13 @@ static inline bool preproc_embed_spe_channel_top(
                 const uint32_t lpe_words = (uint32_t)lpe_pkt.lpe_word_count.to_uint();
                 const uint32_t out_bits = (uint32_t)out_pkt.x_words[d].to_uint();
                 if (d < embed_words) {
+                    const uint32_t embed_bits = (uint32_t)embed_pkt.embed_words[d].to_uint();
                     std::printf(
-                        "PREPROC_DEBUG_FIRST_OUT_SOURCE d=%u source=embed src_idx=%u out_u32=%u out_bits=0x%08X\n",
+                        "PREPROC_DEBUG_FIRST_OUT_SOURCE d=%u source=var_feature src_idx=%u varf_bits=0x%08X embed_bits=0x%08X out_u32=%u out_bits=0x%08X\n",
                         (unsigned)d,
                         (unsigned)d,
+                        (unsigned)var_feature_bits,
+                        (unsigned)embed_bits,
                         (unsigned)out_bits,
                         (unsigned)out_bits);
                 } else {
@@ -309,6 +379,8 @@ static inline bool preproc_embed_spe_channel_top(
         local_stats.check_tiles_written = local_stats.check_tiles_written + 1u;
     }
 
+    // Check-side finalize stage:
+    // after all y consumption, derive check_feature from parity tiles, then compose check token.
     // check_iter is bounded iteration only; formal check identity comes from packet metadata.
     PREPROC_CHECK_TOKEN_LOOP: for (uint32_t check_iter = 0u; check_iter < PREPROC_PILOT_CHECK_TOKENS; ++check_iter) {
         const PreprocEmbedParamPacket embed_pkt = embed_param_ch.read();
@@ -337,8 +409,33 @@ static inline bool preproc_embed_spe_channel_top(
         }
         check_seen[pkt_check_idx] = true;
 
+        const uint32_t tile_id = pkt_check_idx / PREPROC_PILOT_CHECK_PARITY_TILE_WORDS;
+        const uint32_t lane = pkt_check_idx % PREPROC_PILOT_CHECK_PARITY_TILE_WORDS;
+        if (tile_id >= PREPROC_PILOT_CHECK_TILE_COUNT) {
+            local_stats.metadata_error = true;
+            if (out_stats != 0) { *out_stats = local_stats; }
+            return false;
+        }
+        if (!tile_loaded[tile_id]) {
+            const PreprocCheckAccReadPacket rd_pkt = check_acc_rd_ch.read();
+            const uint32_t rd_tile_id = (uint32_t)rd_pkt.tile_id.to_uint();
+            const uint32_t rd_word_count = (uint32_t)rd_pkt.word_count.to_uint();
+            if (rd_tile_id != tile_id || rd_word_count > PREPROC_PILOT_CHECK_PARITY_TILE_WORDS) {
+                local_stats.metadata_error = true;
+                if (out_stats != 0) { *out_stats = local_stats; }
+                return false;
+            }
+            PREPROC_CHECK_FINALIZE_TILE_RD_COPY_LOOP: for (uint32_t w = 0u; w < rd_word_count; ++w) {
+                check_tiles[tile_id][w] = rd_pkt.acc_words[w];
+            }
+            tile_loaded[tile_id] = true;
+            local_stats.check_tiles_loaded = local_stats.check_tiles_loaded + 1u;
+        }
+        const uint32_t parity_bit = (uint32_t)check_tiles[tile_id][lane].to_uint() & 1u;
+        const fp32_t check_feature = (parity_bit == 0u) ? fp32_one() : preproc_fp32_minus_one();
+
         PreprocXOutPacket out_pkt;
-        preproc_compose_x_packet(embed_pkt, lpe_pkt, out_pkt);
+        preproc_compose_x_packet_with_feature(embed_pkt, lpe_pkt, check_feature, out_pkt);
         preproc_x_out_ch.write(out_pkt);
         local_stats.check_tokens_emitted = local_stats.check_tokens_emitted + 1u;
     }

@@ -116,11 +116,13 @@ static int run_one_sample(
     if (sample_idx == 0u) {
         const uint32_t y_bits = (uint32_t)input_y_words[0].to_uint();
         const float y_float = bits_to_f32(y_bits);
+        const float y_abs = (y_float < 0.0f) ? -y_float : y_float;
         const uint32_t adj_count = count_h_adj_for_var(0u);
         std::printf(
-            "PREPROC_DEBUG_FIRST_VAR_PACKET sample=0 var_idx=0 y_bits=0x%08X y_float=%.9g adj_count=%u embed_token_kind=%u embed_token_idx=%u lpe_token_kind=%u lpe_token_idx=%u\n",
+            "PREPROC_DEBUG_FIRST_VAR_PACKET sample=0 var_idx=0 y_bits=0x%08X y_float=%.9g y_abs=%.9g adj_count=%u embed_token_kind=%u embed_token_idx=%u lpe_token_kind=%u lpe_token_idx=%u\n",
             (unsigned)y_bits,
             (double)y_float,
+            (double)y_abs,
             (unsigned)adj_count,
             (unsigned)aecct::PREPROC_PILOT_TOKEN_VAR,
             0u,
@@ -129,13 +131,20 @@ static int run_one_sample(
         PREPROC_DEBUG_FIRST_VAR_DIM_LOOP: for (uint32_t d = 0u; d < 8u; ++d) {
             const uint32_t embed_bits = (uint32_t)embed_words_token_major[d].to_uint();
             const uint32_t lpe_bits = (uint32_t)lpe_words_token_major[d].to_uint();
+            const float embed_f = bits_to_f32(embed_bits);
+            const float composed_f = y_abs * embed_f;
+            const uint32_t composed_bits = f32_to_bits(composed_f);
             std::printf(
-                "PREPROC_DEBUG_FIRST_VAR_PACKET_DIM d=%u embed=%.9g(0x%08X) lpe=%.9g(0x%08X)\n",
+                "PREPROC_DEBUG_FIRST_VAR_PACKET_DIM d=%u embed=%.9g(0x%08X) lpe=%.9g(0x%08X) varf=%.9g(0x%08X) varf_mul_embed=%.9g(0x%08X)\n",
                 (unsigned)d,
-                (double)bits_to_f32(embed_bits),
+                (double)embed_f,
                 (unsigned)embed_bits,
                 (double)bits_to_f32(lpe_bits),
-                (unsigned)lpe_bits);
+                (unsigned)lpe_bits,
+                (double)y_abs,
+                (unsigned)f32_to_bits(y_abs),
+                (double)composed_f,
+                (unsigned)composed_bits);
         }
     }
 
