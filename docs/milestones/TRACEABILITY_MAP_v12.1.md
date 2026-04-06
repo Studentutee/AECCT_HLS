@@ -17,6 +17,11 @@
 |---|---|---|---|---|---|
 | Governance entry / authority | `docs/process/GOVERNANCE_ENTRYPOINT_zhTW.txt` 已作為 repo 治理入口並定義 authority order。 | `docs/process/GOVERNANCE_ENTRYPOINT_zhTW.txt` | `docs/process/GOVERNANCE_ENTRYPOINT_zhTW.txt` | governance entry | P00-012 以工作項名稱追蹤；repo 無同名正式 report。 |
 | Current project progress | 專案目前狀態已有單點摘要，可快速判讀主線進度與 open items。 | `docs/process/PROJECT_STATUS_zhTW.txt` | `docs/process/PROJECT_STATUS_zhTW.txt` | status summary | 2026-03-27 已補記 P00-011AT：corrected-chain `CIN-63` cleanup（`7 -> 0`）compile-first rerun evidence sync + compile 後 `go libraries` run-only blocker capture（`LIB-220` / `Unable to load techlibs`）；仍維持 not Catapult closure / not SCVerify closure。 |
+| Attention mainline local closure statement | attention mainline no-direct-SRAM fallback 已在 local scope 宣告收口。 | `docs/night_run/REPORT_P11ATTN_MAINLINE_NO_DIRECT_SRAM_CLOSURE_STATEMENT.md` + p11aj/p11anb run logs | `docs/night_run/REPORT_P11ATTN_MAINLINE_NO_DIRECT_SRAM_CLOSURE_STATEMENT.md`<br>`build/p11aj/p11aj/run.log`<br>`build/p11anb/attnlayer0_boundary_seam_contract/run.log` | local run evidence + code-path inference | 明確標示 local-only、compile-first、evidence-first；not Catapult closure；not SCVerify closure。 |
+| Attention `out=1` residual classification | remaining `out=1` unresolved buckets 已做 Class 1/2/3 分類，Class 1 為空。 | `docs/night_run/REPORT_P11OUT1_MAINLINE_CLASSIFICATION_AND_CLOSURE_PLAN.md` | `docs/night_run/REPORT_P11OUT1_MAINLINE_CLASSIFICATION_AND_CLOSURE_PLAN.md` | compile-backed audit + inference | Class 2 為 fallback/safety-net；Class 3 為 likely unreachable；不應視為 mainline closure 缺口。 |
+| Attention closure bundle guide | reviewer 可直接查「哪個 claim 應看哪份文件」。 | `docs/night_run/REPORT_P11ATTN_CLOSURE_BUNDLE_GUIDE_zhTW.md` | `docs/night_run/REPORT_P11ATTN_CLOSURE_BUNDLE_GUIDE_zhTW.md` | reviewer-facing index | 這份 guide 負責切分「實跑證據」與「路徑推論」。 |
+| Post-attention readiness gap map | attention local closure 到 Catapult/SCVerify closure 之間的差距已盤點。 | `docs/night_run/REPORT_POST_ATTN_SCVERIFY_CATAPULT_READINESS_GAP_MAP.md` | `docs/night_run/REPORT_POST_ATTN_SCVERIFY_CATAPULT_READINESS_GAP_MAP.md`<br>`docs/milestones/P00-011AT_report.md` | transition gap checklist | 紀錄 hard blockers（例如 `LIB-220` techlib gate）與 recommended prep；不宣稱 tool closure。 |
+| Post-attention next-scope candidate audit | non-attention 候選已排序，並有後續 compile-backed blocker 結果。 | `docs/night_run/REPORT_POST_ATTN_NEXT_SCOPE_CANDIDATE_AUDIT.md` + follow-up section | `docs/night_run/REPORT_POST_ATTN_NEXT_SCOPE_CANDIDATE_AUDIT.md`<br>`docs/night_run/BLOCKER_POST_ATTN_FFN_HANDOFF_FALLBACK_TIGHTENING.md` | audit report + blocker report | 推薦候選 A（FFN handoff fallback tightening）目前為 blocker，下一輪需先解前置條件。 |
 | v12.1 docs baseline freeze | v12.1 文件基線已完成 docs-only freeze。 | `docs/milestones/P00-008_report.md` + `docs/milestones/P00-008_artifacts/verdict.txt` | `docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`<br>`docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt` | milestone report | 屬 `FROZEN-DOCS`，非 implementation closure。 |
 | M0 closure | M0 formal closure 已完成，且明確區分 M0 與全域治理 open items。 | `docs/milestones/M0_report.md` + `docs/milestones/M0_artifacts/verdict.txt` | `docs/milestones/M0_report.md`<br>`docs/milestones/M0_artifacts/closure_checklist.txt` | milestone report | M0 scope 已關閉。 |
 | Pragma hygiene cleanup | project pragma 已收斂為合法 top/interface 形態。 | 現況程式碼檢查（pragma scan） | `design/AecctTop.h` | source implementation | P00-010 以工作項名稱追蹤；無同名正式 report。 |
@@ -60,7 +65,7 @@
 - global governance open items 仍需後續 cleanup/waiver resolution。  
 
 ## 6. Addenda Archive
-- Addendum details were consolidated for readability.
-- Main traceability map + fast path + known gaps remain the primary navigation surface.
+- Main traceability map (`## 3`) now includes active closure claims and their current source-of-truth links.
+- Archive keeps historical timeline context only and should not be used as the primary claim surface.
 - Historical addenda are archived at:
   - `docs/milestones/archive/TRACEABILITY_MAP_v12.1_ADDENDA.md`

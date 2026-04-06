@@ -18,6 +18,11 @@
 |---|---|---|---|---|---|
 | Governance Entrypoint | 治理入口與 authority 順序 | PASS | P00-012（工作項名稱） | `docs/process/GOVERNANCE_ENTRYPOINT_zhTW.txt` | repo 已存在治理入口文件。 |
 | Project Status Summary | 專案主線狀態摘要 | PASS | `P00-009_report.md` + 2026-03-27 status refresh | `docs/process/PROJECT_STATUS_zhTW.txt` | 已補記 P00-011F~P00-011AD、P00-011AS 與 P00-011AT 的 accepted / deferred 狀態，並把 reviewer-facing understanding debt / readability backfill 列為後續 open item。 |
+| Attention Mainline Local Closure (No Direct SRAM Fallback) | attention 主線在 local scope 的 no-direct-SRAM fallback 收口聲明 | LOCAL-CLOSED (MAINLINE) | 2026-04-05 closure statement + p11aj/p11anb rerun evidence | `docs/night_run/REPORT_P11ATTN_MAINLINE_NO_DIRECT_SRAM_CLOSURE_STATEMENT.md`<br>`scripts/local/run_p11aj_top_managed_sram_provenance.ps1`<br>`scripts/local/run_p11anb_attnlayer0_boundary_seam_contract.ps1`<br>`build/p11aj/p11aj/run.log`<br>`build/p11anb/attnlayer0_boundary_seam_contract/run.log` | 僅代表 local-only compile-backed 主線收口；not Catapult closure；not SCVerify closure。 |
+| Attention `out=1` Residual Classification | `out=1` family 是否仍屬主線缺口 | CLASSIFIED (NO CLASS 1) | 2026-04-05 classification + closure planning | `docs/night_run/REPORT_P11OUT1_MAINLINE_CLASSIFICATION_AND_CLOSURE_PLAN.md` | Class 1 為空；殘留 buckets 主要是 Class 2 fallback/safety-net 與 Class 3 likely unreachable，不應誤讀為 mainline gap。 |
+| Attention Closure Bundle Guide | reviewer-facing 導覽（問題 -> 文件 -> 證據/推論邊界） | PASS | 2026-04-05 bundle guide | `docs/night_run/REPORT_P11ATTN_CLOSURE_BUNDLE_GUIDE_zhTW.md` | 主動區分「實跑證據」與「code-path inference」，避免 overclaim。 |
+| Post-Attention SCVerify/Catapult Readiness Gap Map | attention local closure 到 tool closure 的缺口盤點 | GAP-MAPPED | 2026-04-05 readiness gap report | `docs/night_run/REPORT_POST_ATTN_SCVERIFY_CATAPULT_READINESS_GAP_MAP.md`<br>`docs/milestones/P00-011AT_report.md` | 已標示 hard blockers（含 `LIB-220` techlib gate）與 prep checklist；仍非 Catapult/SCVerify closure。 |
+| Post-Attention Next-Scope Candidate Audit | non-attention 下一個 bounded 候選排序與可行性盤點 | AUDITED | 2026-04-05 audit + 2026-04-06 follow-up | `docs/night_run/REPORT_POST_ATTN_NEXT_SCOPE_CANDIDATE_AUDIT.md`<br>`docs/night_run/BLOCKER_POST_ATTN_FFN_HANDOFF_FALLBACK_TIGHTENING.md` | Candidate A（FFN handoff fallback tightening）有 compile-backed follow-up，但目前屬 blocker，不可硬推 shrink。 |
 | v12.1 Docs Baseline | v12.1 文件基線收斂（docs-only） | FROZEN-DOCS | `P00-008_report.md` + `P00-008_artifacts/verdict.txt` | `docs/spec/AECCT_HLS_Spec_v12.1_zhTW.txt`<br>`docs/architecture/AECCT_HLS_Architecture_Guide_v12.1_zhTW.txt` | 文件凍結不等於 live implementation closure。 |
 | M0 Formal Closure | M0 skeleton/contract/smoke baseline | PASS | `M0_report.md` + `M0_artifacts/verdict.txt` | `docs/milestones/M0_report.md`<br>`docs/milestones/M0_artifacts/closure_checklist.txt` | M0 範圍明確，global open items 已分離追蹤。 |
 | Pragma Hygiene | project code pragma 清理 | PASS | P00-010（工作項名稱） | `design/AecctTop.h` | 現況檢查僅保留合法 `#pragma hls_design top/interface`。 |
@@ -57,7 +62,7 @@ ternary 主線已完成 Phase A/B/C 的 non-live 收斂，並進一步把 L0_WQ/
 3. 補齊 task-local report / evidence 索引，讓 local acceptance 與 deferred closure 在 repo 內可追溯。  
 
 ## 6. Addenda Archive
-- Addendum details were consolidated for readability.
-- Main table/current-readout remains the primary fast path.
+- Main table (`## 3`) now absorbs current-state closure/navigation facts that used to be scattered in addenda.
+- Archive keeps timeline/back-reference details only; it is not the primary navigation surface.
 - Historical addenda are archived at:
   - `docs/milestones/archive/CLOSURE_MATRIX_v12.1_ADDENDA.md`
