@@ -150,6 +150,7 @@ static int run_one_sample(
 
     aecct::PreprocChannelPilotStats pilot_stats;
     aecct::preproc_channel_pilot_stats_clear(pilot_stats);
+    aecct::preproc_channel_pilot_set_debug_context(true, sample_idx);
     const bool ok = aecct::preproc_embed_spe_channel_top(
         y_in_ch,
         h_by_var_adj_ch,
@@ -159,6 +160,7 @@ static int run_one_sample(
         check_acc_wr_ch,
         preproc_x_out_ch,
         &pilot_stats);
+    aecct::preproc_channel_pilot_set_debug_context(false, 0u);
     if (!ok || pilot_stats.metadata_error) {
         std::printf(
             "TRACE_CHANNEL_RUN_ERROR sample=%u metadata_error=%u\n",
@@ -218,6 +220,15 @@ static int run_one_sample(
             (unsigned)out_kind,
             (unsigned)out_idx,
             (unsigned)out_words);
+        PREPROC_DEBUG_REF_FIRST_TOKEN_LOOP: for (uint32_t d = 0u; d < 8u; ++d) {
+            const float ref_f = (float)trace_embed_plus_SPE_step0_tensor[d];
+            const uint32_t ref_bits = f32_to_bits(ref_f);
+            std::printf(
+                "PREPROC_DEBUG_REF_FIRST_TOKEN d=%u ref=%.9g ref_bits=0x%08X\n",
+                (unsigned)d,
+                (double)ref_f,
+                (unsigned)ref_bits);
+        }
         PREPROC_DEBUG_FIRST_OUT_COMPARE_LOOP: for (uint32_t d = 0u; d < 8u; ++d) {
             const uint32_t got_bits = (uint32_t)first_out_pkt.x_words[d].to_uint();
             const float ref_f = (float)trace_embed_plus_SPE_step0_tensor[d];

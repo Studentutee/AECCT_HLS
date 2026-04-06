@@ -2,10 +2,28 @@
 // Preproc channelized pilot wrapper and Top-side stream adapters (local-only pilot).
 
 #include <cstdint>
+#include <cstdio>
 
 #include "PreprocTransportTypes.h"
 
 namespace aecct {
+
+struct PreprocChannelPilotDebugControl {
+    bool enable;
+    u32_t sample_idx;
+};
+
+static PreprocChannelPilotDebugControl g_preproc_channel_pilot_debug_control = { false, (u32_t)0u };
+
+static inline void preproc_channel_pilot_set_debug_context(bool enable, uint32_t sample_idx) {
+    g_preproc_channel_pilot_debug_control.enable = enable;
+    g_preproc_channel_pilot_debug_control.sample_idx = (u32_t)sample_idx;
+}
+
+static inline bool preproc_channel_pilot_debug_sample0_enabled() {
+    return g_preproc_channel_pilot_debug_control.enable &&
+           ((uint32_t)g_preproc_channel_pilot_debug_control.sample_idx.to_uint() == 0u);
+}
 
 static inline bool preproc_embed_packet_meta_ok(
     const PreprocEmbedParamPacket& p,
@@ -89,6 +107,10 @@ static inline bool preproc_embed_spe_channel_top(
     bool tile_dirty[PREPROC_PILOT_CHECK_TILE_COUNT];
     bool var_seen[PREPROC_PILOT_VAR_TOKENS];
     bool check_seen[PREPROC_PILOT_CHECK_TOKENS];
+    bool debug_first_out_source_dumped = false;
+    bool debug_first_token_ingredient_dumped = false;
+    bool debug_first_check_update_dumped = false;
+    const bool debug_sample0 = preproc_channel_pilot_debug_sample0_enabled();
 
     PREPROC_CHECK_TILE_INIT_LOOP: for (uint32_t t = 0u; t < PREPROC_PILOT_CHECK_TILE_COUNT; ++t) {
         tile_loaded[t] = false;
@@ -172,14 +194,105 @@ static inline bool preproc_embed_spe_channel_top(
                 const uint32_t curr = (uint32_t)check_tiles[tile_id][lane].to_uint();
                 check_tiles[tile_id][lane] = (u32_t)(curr ^ 1u);
                 tile_dirty[tile_id] = true;
+#ifndef __SYNTHESIS__
+                if (debug_sample0 && !debug_first_check_update_dumped) {
+                    const uint32_t next = (uint32_t)check_tiles[tile_id][lane].to_uint();
+                    std::printf(
+                        "PREPROC_DEBUG_FIRST_CHECK_UPDATE var_idx=%u check_idx=%u tile_id=%u lane=%u hard_bit=%u\n",
+                        (unsigned)pkt_var_idx,
+                        (unsigned)check_idx,
+                        (unsigned)tile_id,
+                        (unsigned)lane,
+                        (unsigned)hard_bit);
+                    std::printf(
+                        "PREPROC_DEBUG_FIRST_CHECK_UPDATE_VALUE before=0x%08X after=0x%08X\n",
+                        (unsigned)curr,
+                        (unsigned)next);
+                    debug_first_check_update_dumped = true;
+                }
+#endif
             }
         }
 
         PreprocXOutPacket out_pkt;
         preproc_compose_x_packet(embed_pkt, lpe_pkt, out_pkt);
+#ifndef __SYNTHESIS__
+        if (debug_sample0 && pkt_var_idx == 0u && !debug_first_token_ingredient_dumped) {
+            PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT_LOOP: for (uint32_t d = 0u; d < 8u; ++d) {
+                const uint32_t embed_words = (uint32_t)embed_pkt.embed_word_count.to_uint();
+                const uint32_t lpe_words = (uint32_t)lpe_pkt.lpe_word_count.to_uint();
+                const uint32_t out_bits = (uint32_t)out_pkt.x_words[d].to_uint();
+                if (d < embed_words) {
+                    const uint32_t embed_bits = (uint32_t)embed_pkt.embed_words[d].to_uint();
+                    const uint32_t lpe_bits = (d < lpe_words) ? (uint32_t)lpe_pkt.lpe_words[d].to_uint() : 0u;
+                    std::printf(
+                        "PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT d=%u embed_u32=%u(0x%08X) lpe_u32=%u(0x%08X) varf=NA checkf=NA out_u32=%u(0x%08X)\n",
+                        (unsigned)d,
+                        (unsigned)embed_bits,
+                        (unsigned)embed_bits,
+                        (unsigned)lpe_bits,
+                        (unsigned)lpe_bits,
+                        (unsigned)out_bits,
+                        (unsigned)out_bits);
+                } else {
+                    const uint32_t lpe_src = d - embed_words;
+                    const uint32_t lpe_bits = (lpe_src < lpe_words) ? (uint32_t)lpe_pkt.lpe_words[lpe_src].to_uint() : 0u;
+                    std::printf(
+                        "PREPROC_DEBUG_FIRST_TOKEN_INGREDIENT d=%u embed=NA lpe_u32=%u(0x%08X) varf=NA checkf=NA out_u32=%u(0x%08X)\n",
+                        (unsigned)d,
+                        (unsigned)lpe_bits,
+                        (unsigned)lpe_bits,
+                        (unsigned)out_bits,
+                        (unsigned)out_bits);
+                }
+            }
+            debug_first_token_ingredient_dumped = true;
+        }
+
+        if (debug_sample0 && !debug_first_out_source_dumped) {
+            PREPROC_DEBUG_FIRST_OUT_SOURCE_LOOP: for (uint32_t d = 0u; d < 8u; ++d) {
+                const uint32_t embed_words = (uint32_t)embed_pkt.embed_word_count.to_uint();
+                const uint32_t lpe_words = (uint32_t)lpe_pkt.lpe_word_count.to_uint();
+                const uint32_t out_bits = (uint32_t)out_pkt.x_words[d].to_uint();
+                if (d < embed_words) {
+                    std::printf(
+                        "PREPROC_DEBUG_FIRST_OUT_SOURCE d=%u source=embed src_idx=%u out_u32=%u out_bits=0x%08X\n",
+                        (unsigned)d,
+                        (unsigned)d,
+                        (unsigned)out_bits,
+                        (unsigned)out_bits);
+                } else {
+                    const uint32_t lpe_src = d - embed_words;
+                    if (lpe_src < lpe_words) {
+                        std::printf(
+                            "PREPROC_DEBUG_FIRST_OUT_SOURCE d=%u source=lpe src_idx=%u out_u32=%u out_bits=0x%08X\n",
+                            (unsigned)d,
+                            (unsigned)lpe_src,
+                            (unsigned)out_bits,
+                            (unsigned)out_bits);
+                    } else {
+                        std::printf(
+                            "PREPROC_DEBUG_FIRST_OUT_SOURCE d=%u source=other src_idx=NA out_u32=%u out_bits=0x%08X\n",
+                            (unsigned)d,
+                            (unsigned)out_bits,
+                            (unsigned)out_bits);
+                    }
+                }
+            }
+            debug_first_out_source_dumped = true;
+        }
+#endif
         preproc_x_out_ch.write(out_pkt);
         local_stats.var_tokens_consumed = local_stats.var_tokens_consumed + 1u;
     }
+
+#ifndef __SYNTHESIS__
+    if (debug_sample0 && !debug_first_check_update_dumped) {
+        std::printf(
+            "PREPROC_DEBUG_FIRST_CHECK_UPDATE var_idx=NA check_idx=NA tile_id=NA lane=NA hard_bit=0 note=no_update_observed\n");
+        std::printf("PREPROC_DEBUG_FIRST_CHECK_UPDATE_VALUE before=NA after=NA\n");
+    }
+#endif
 
     PREPROC_CHECK_TILE_WRITEBACK_LOOP: for (uint32_t tile_id = 0u; tile_id < PREPROC_PILOT_CHECK_TILE_COUNT; ++tile_id) {
         if (!tile_loaded[tile_id] || !tile_dirty[tile_id]) {
