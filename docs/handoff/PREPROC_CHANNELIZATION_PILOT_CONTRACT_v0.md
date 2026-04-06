@@ -166,28 +166,67 @@
 
 ---
 
-## 5. Packet / Payload 最小欄位
+## 5. Packet / Payload 預設欄位（pilot 預設全部帶 formal metadata）
 
-本版先採「最小必要欄位」，避免把控制語意藏進 sequence order 之外的隱含規則。
+### 5.0 預設政策
+本 pilot 預設：**所有正式 channel packet 都攜帶 formal metadata**。
+
+目的不是把所有 block-local loop counter 都搬進 transport，而是避免：
+- Top 與 block 各自重建正式順序 / 身分語意
+- 把 payload 解讀綁死在隱含 consume 次數
+- 讓 token / var / tile / boundary 的正式語意只存在於某一側的 local counter
+
+### 5.0.1 本文件中的 formal metadata 是什麼
+本文件中的 formal metadata，指的是會影響 payload 正式語意的欄位，例如：
+- `var_idx`
+- `check_idx` / `check_idx_list[]`
+- `token_kind`
+- `token_idx`
+- `tile_id`
+- `adj_count`
+- `word_count`
+- `is_last_y` / `end_of_*` 類 boundary 欄位
+
+### 5.0.2 不屬 formal metadata 的東西
+下列項目屬 block-local / tile-local implementation detail，不進正式 transport packet：
+- 向量內 `dim` 掃描 index
+- MAC / reduce loop 的 local index
+- local FIFO / local buffer 的內部步數
+- 純 block 內部暫存器輪轉次序
+
+### 5.0.3 後續優化原則
+本版先採「全部 packet 都帶 formal metadata」，之後若要省欄位，必須先證明：
+- channel identity + phase/window + fixed sequence order 已足以唯一推出 payload 語意
+- 不會讓 Top 與 block 各自維護第二套正式 counter / boundary 規則
+- checker / trace compare / reviewer 導讀不會因此退化
+
+本版先不做此類省欄位優化。
 
 ## 5.1 `y_in_ch` payload
-建議最小欄位：
+pilot 預設欄位：
 - `var_idx`
+- `is_last_y`
 - `y_value`
 
+說明：
+- 雖然 variable-major 順序理論上可由 consume 次數推出 `var_idx`，但本 pilot 不依賴 block 端 local counter 來重建正式 variable identity。
+- `is_last_y` 作為 boundary metadata，供 block / checker / Top hook 共用。
+
 ## 5.2 `h_by_var_adj_ch` payload
-建議最小欄位：
+pilot 預設欄位：
 - `var_idx`
 - `adj_count`
 - `check_idx_list[]`
 
 說明：
-- `adj_count` 表示有效 adjacency 項數
-- 對齊而多出的 padding / 無效位元，由 Top 在送入 channel 前丟掉
-- Preproc 只 consume `adj_count` 內有效項
+- 本版以 `adj_count + check_idx_list[]` 表示有效 adjacency 範圍。
+- `adj_count` 表示有效 adjacency 項數。
+- 對齊而多出的 padding / 無效位元，由 Top 在送入 channel 前丟掉。
+- Preproc 只 consume `adj_count` 內有效項。
+- 若後續要改為逐 adjacency item packet，再另行定義 `adj_idx` / `is_last_adj_for_var`；本版先不展開。
 
 ## 5.3 `embed_param_ch` payload
-建議最小欄位：
+pilot 預設欄位：
 - `token_kind`
 - `token_idx`
 - `embed_word_count`
@@ -199,30 +238,36 @@
   - `CHECK_TOKEN`
 
 ## 5.4 `lpe_token_ch` payload
-建議最小欄位：
+pilot 預設欄位：
 - `token_kind`
 - `token_idx`
 - `lpe_word_count`
 - `lpe_words[]`
 
+說明：
+- 即使 `lpe_token_ch` 在固定順序下理論上可由 Top / block 雙邊 counter 推出 `token_idx`，本 pilot 仍預設顯式攜帶，避免雙邊各算一份正式 token counter。
+
 ## 5.5 `check_acc_rd_ch` payload
-建議最小欄位：
+pilot 預設欄位：
 - `tile_id`
 - `word_count`
 - `acc_words[]`
 
 ## 5.6 `check_acc_wr_ch` payload
-建議最小欄位：
+pilot 預設欄位：
 - `tile_id`
 - `word_count`
 - `acc_words[]`
 
 ## 5.7 `preproc_x_out_ch` payload
-建議最小欄位：
+pilot 預設欄位：
 - `token_kind`
 - `token_idx`
 - `word_count`
 - `x_words[]`
+
+說明：
+- 雖然輸出順序固定為「先 variable-side、再 check-side」，本 pilot 仍保留 `token_kind + token_idx`，避免 Top / downstream / checker 依賴隱含 consume 次數來重建輸出 identity。
 
 ---
 
