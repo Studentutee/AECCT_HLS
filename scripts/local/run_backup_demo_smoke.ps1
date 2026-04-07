@@ -98,7 +98,7 @@ try {
         Require-PassString -LogPath $runLog -Needle $case.pass
 
         if ($case.key -eq 'io8_loadw_infer') {
-            Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_fixed_case_compare'
+            Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_external_golden_compare'
         }
     }
 
@@ -108,7 +108,7 @@ try {
         'PASS: backup_demo_wave2_quant_linear',
         'PASS: backup_demo_wave3_io8_boundary',
         'PASS: backup_demo_io8_loadw_infer',
-        'PASS: backup_demo_fixed_case_expected_compare',
+        'PASS: backup_demo_external_golden_compare',
         'PASS: run_backup_demo_smoke'
     ) | Set-Content -Path $summaryLog -Encoding UTF8
 

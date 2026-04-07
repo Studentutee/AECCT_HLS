@@ -1,0 +1,8 @@
+# External golden for tb_backup_io8_loadw_infer_smoke fixed-case compare.
+# Scope: local backup demo smoke only (not Catapult closure / not SCVerify closure).
+# Provenance (fixed-case contract):
+# 1) tb uses minimal LOAD_W payload where ternary-packed weights are zero-filled.
+# 2) per-matrix inv_s_w is forced to 1.0 to keep quant metadata valid.
+# 3) OUT_MODE is x_pred words; with zero logits in this fixed case, expected x_pred bytes are all zero.
+# 4) This file is repo-tracked external golden material for exact byte compare.
+repeat 252 00

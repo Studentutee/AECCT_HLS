@@ -7,6 +7,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 #include "AecctProtocol.h"
@@ -268,6 +271,122 @@ static uint32_t fnv1a_u32(const std::vector<uint8_t>& bytes) {
     return h;
 }
 
+static bool parse_hex_byte_token(const std::string& tok, uint8_t& out_byte) {
+    std::string t = tok;
+    if (t.size() >= 2u && t[0] == '0' && (t[1] == 'x' || t[1] == 'X')) {
+        t = t.substr(2u);
+    }
+    if (t.empty() || t.size() > 2u) {
+        return false;
+    }
+    uint32_t v = 0u;
+    HEX_PARSE_LOOP: for (uint32_t i = 0u; i < (uint32_t)t.size(); ++i) {
+        const char c = t[(size_t)i];
+        uint32_t d = 0u;
+        if (c >= '0' && c <= '9') {
+            d = (uint32_t)(c - '0');
+        } else if (c >= 'a' && c <= 'f') {
+            d = (uint32_t)(10 + (c - 'a'));
+        } else if (c >= 'A' && c <= 'F') {
+            d = (uint32_t)(10 + (c - 'A'));
+        } else {
+            return false;
+        }
+        v = (v << 4) | d;
+    }
+    out_byte = (uint8_t)v;
+    return true;
+}
+
+static bool load_external_golden_bytes(
+    const char* path,
+    std::vector<uint8_t>& out_expected_bytes
+) {
+    std::ifstream ifs(path);
+    if (!ifs.is_open()) {
+        std::printf("[backup_io8][FAIL] cannot open external golden: %s\n", path);
+        return false;
+    }
+
+    out_expected_bytes.clear();
+    std::string line;
+    uint32_t line_no = 0u;
+    while (std::getline(ifs, line)) {
+        ++line_no;
+        const std::size_t cpos = line.find('#');
+        if (cpos != std::string::npos) {
+            line.erase(cpos);
+        }
+        std::stringstream ss(line);
+        std::string tok0;
+        if (!(ss >> tok0)) {
+            continue;
+        }
+
+        if (tok0 == "repeat") {
+            std::string count_tok;
+            std::string byte_tok;
+            if (!(ss >> count_tok >> byte_tok)) {
+                std::printf(
+                    "[backup_io8][FAIL] external golden parse error at line %u: malformed repeat\n",
+                    (unsigned)line_no);
+                return false;
+            }
+
+            char* endp = nullptr;
+            const unsigned long count_ul = std::strtoul(count_tok.c_str(), &endp, 10);
+            if (endp == nullptr || *endp != '\0') {
+                std::printf(
+                    "[backup_io8][FAIL] external golden parse error at line %u: bad repeat count\n",
+                    (unsigned)line_no);
+                return false;
+            }
+            uint8_t b = 0u;
+            if (!parse_hex_byte_token(byte_tok, b)) {
+                std::printf(
+                    "[backup_io8][FAIL] external golden parse error at line %u: bad repeat byte token '%s'\n",
+                    (unsigned)line_no,
+                    byte_tok.c_str());
+                return false;
+            }
+
+            REPEAT_APPEND_LOOP: for (unsigned long i = 0ul; i < count_ul; ++i) {
+                out_expected_bytes.push_back(b);
+            }
+            continue;
+        }
+
+        uint8_t b0 = 0u;
+        if (!parse_hex_byte_token(tok0, b0)) {
+            std::printf(
+                "[backup_io8][FAIL] external golden parse error at line %u: bad byte token '%s'\n",
+                (unsigned)line_no,
+                tok0.c_str());
+            return false;
+        }
+        out_expected_bytes.push_back(b0);
+
+        std::string tok;
+        while (ss >> tok) {
+            uint8_t b = 0u;
+            if (!parse_hex_byte_token(tok, b)) {
+                std::printf(
+                    "[backup_io8][FAIL] external golden parse error at line %u: bad byte token '%s'\n",
+                    (unsigned)line_no,
+                    tok.c_str());
+                return false;
+            }
+            out_expected_bytes.push_back(b);
+        }
+    }
+
+    if (out_expected_bytes.empty()) {
+        std::printf("[backup_io8][FAIL] external golden file has no bytes: %s\n", path);
+        return false;
+    }
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -286,36 +405,52 @@ int main() {
     }
 
     const uint32_t out_hash = fnv1a_u32(out_a);
-    static const uint32_t kExpectedOutBytes = 252u;
-    static const uint8_t kExpectedPrefix[4] = { 0x00u, 0x00u, 0x00u, 0x00u };
-    static const uint32_t kExpectedHash = 0x5D470F75u;
-
-    if ((uint32_t)out_a.size() != kExpectedOutBytes) {
-        std::printf(
-            "[backup_io8][FAIL] fixed-case expected bytes mismatch got=%u expect=%u\n",
-            (unsigned)out_a.size(),
-            (unsigned)kExpectedOutBytes);
+    static const char* kExternalGoldenPath =
+        "tb/golden/backup_io8_loadw_infer_fixed_case_xpred.hex";
+    std::vector<uint8_t> expected_bytes;
+    if (!load_external_golden_bytes(kExternalGoldenPath, expected_bytes)) {
         return 1;
     }
-    for (uint32_t i = 0u; i < 4u; ++i) {
-        if (out_a[i] != kExpectedPrefix[i]) {
-            std::printf(
-                "[backup_io8][FAIL] fixed-case expected prefix mismatch idx=%u got=0x%02X expect=0x%02X\n",
-                (unsigned)i,
-                (unsigned)out_a[i],
-                (unsigned)kExpectedPrefix[i]);
-            return 1;
+
+    if (out_a.size() != expected_bytes.size()) {
+        std::printf(
+            "[backup_io8][FAIL] external golden byte-count mismatch got=%u expect=%u\n",
+            (unsigned)out_a.size(),
+            (unsigned)expected_bytes.size());
+        return 1;
+    }
+
+    uint32_t first_mismatch_idx = 0u;
+    bool has_mismatch = false;
+    COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)out_a.size(); ++i) {
+        if (out_a[i] != expected_bytes[i]) {
+            first_mismatch_idx = i;
+            has_mismatch = true;
+            break;
         }
     }
-    if (out_hash != kExpectedHash) {
+
+    if (has_mismatch) {
+        const uint32_t i = first_mismatch_idx;
         std::printf(
-            "[backup_io8][FAIL] fixed-case expected hash mismatch got=0x%08X expect=0x%08X\n",
+            "[backup_io8][FAIL] external golden byte mismatch idx=%u got=0x%02X expect=0x%02X\n",
+            (unsigned)i,
+            (unsigned)out_a[i],
+            (unsigned)expected_bytes[i]);
+        return 1;
+    }
+
+    const uint32_t exp_hash = fnv1a_u32(expected_bytes);
+    if (out_hash != exp_hash) {
+            std::printf(
+            "[backup_io8][FAIL] external golden hash mismatch got=0x%08X expect=0x%08X\n",
             (unsigned)out_hash,
-            (unsigned)kExpectedHash);
+            (unsigned)exp_hash);
         return 1;
     }
     std::printf(
-        "PASS: tb_backup_io8_loadw_infer_fixed_case_compare bytes=%u hash=0x%08X\n",
+        "PASS: tb_backup_io8_loadw_infer_external_golden_compare path=%s bytes=%u hash=0x%08X\n",
+        kExternalGoldenPath,
         (unsigned)out_a.size(),
         (unsigned)out_hash);
 
