@@ -1909,6 +1909,15 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer1_ffn2,
               layer1_ffn_ln_out);
 
+    if (io.out_layer1_attn_input != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_attn_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(mid_norm[t][d].to_float());
+        }
+      }
+    }
+
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_q", layer1_q);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_k", layer1_k);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_v", layer1_v);

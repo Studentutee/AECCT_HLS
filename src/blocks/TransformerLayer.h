@@ -86,6 +86,7 @@ static inline void transformer_layer_probe_inc(u32_t* counter) {
 // local-only debug taps for layer1 producer binary-cut.
 // These shadows are sampled at producer/consumer boundaries and are not part of production ownership.
 static u32_t g_layer1_attn_out_shadow[FFN_X_WORDS];
+static u32_t g_layer1_attn_input_shadow[FFN_X_WORDS];
 static u32_t g_layer1_post_concat_shadow[FFN_X_WORDS];
 static u32_t g_layer1_q_shadow[FFN_X_WORDS];
 static u32_t g_layer1_pre_ln_input_shadow[FFN_X_WORDS];
@@ -94,6 +95,7 @@ static u32_t g_layer1_ffn1_out_shadow[FFN_W1_OUT_WORDS];
 static u32_t g_layer1_relu_out_shadow[FFN_W1_OUT_WORDS];
 static u32_t g_layer1_ffn2_out_shadow[FFN_X_WORDS];
 static bool g_layer1_attn_out_valid = false;
+static bool g_layer1_attn_input_valid = false;
 static bool g_layer1_post_concat_valid = false;
 static bool g_layer1_q_valid = false;
 static bool g_layer1_pre_ln_input_valid = false;
@@ -106,6 +108,7 @@ static u32_t g_layer1_ff_words_valid = (u32_t)0u;
 
 static inline void transformer_layer_debug_clear_layer1_stage_valid() {
     g_layer1_attn_out_valid = false;
+    g_layer1_attn_input_valid = false;
     g_layer1_post_concat_valid = false;
     g_layer1_q_valid = false;
     g_layer1_pre_ln_input_valid = false;
@@ -128,6 +131,7 @@ static inline void transformer_layer_debug_copy_words(
 }
 
 static inline bool transformer_layer_debug_layer1_attn_out_valid() { return g_layer1_attn_out_valid; }
+static inline bool transformer_layer_debug_layer1_attn_input_valid() { return g_layer1_attn_input_valid; }
 static inline bool transformer_layer_debug_layer1_post_concat_valid() { return g_layer1_post_concat_valid; }
 static inline bool transformer_layer_debug_layer1_q_valid() { return g_layer1_q_valid; }
 static inline bool transformer_layer_debug_layer1_pre_ln_input_valid() { return g_layer1_pre_ln_input_valid; }
@@ -141,6 +145,11 @@ static inline u32_t transformer_layer_debug_layer1_ff_words_valid() { return g_l
 static inline u32_t transformer_layer_debug_peek_layer1_attn_out_word(u32_t idx) {
     const uint32_t i = (uint32_t)idx.to_uint();
     if (i < (uint32_t)FFN_X_WORDS) { return g_layer1_attn_out_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer1_attn_input_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer1_attn_input_shadow[i]; }
     return (u32_t)0u;
 }
 static inline u32_t transformer_layer_debug_peek_layer1_post_concat_word(u32_t idx) {
@@ -181,6 +190,7 @@ static inline u32_t transformer_layer_debug_peek_layer1_ffn2_out_word(u32_t idx)
 #else
 static inline void transformer_layer_debug_clear_layer1_stage_valid() {}
 static inline bool transformer_layer_debug_layer1_attn_out_valid() { return false; }
+static inline bool transformer_layer_debug_layer1_attn_input_valid() { return false; }
 static inline bool transformer_layer_debug_layer1_post_concat_valid() { return false; }
 static inline bool transformer_layer_debug_layer1_q_valid() { return false; }
 static inline bool transformer_layer_debug_layer1_pre_ln_input_valid() { return false; }
@@ -191,6 +201,7 @@ static inline bool transformer_layer_debug_layer1_ffn2_out_valid() { return fals
 static inline u32_t transformer_layer_debug_layer1_x_words_valid() { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_layer1_ff_words_valid() { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_attn_out_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer1_attn_input_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_post_concat_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_q_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_pre_ln_input_word(u32_t) { return (u32_t)0u; }
@@ -1215,6 +1226,17 @@ static inline void TransformerLayer(
     TRANSFORMER_LAYER_SUBLAYER0_RESIDUAL_SNAPSHOT_LOOP: for (uint32_t i = 0u; i < layer_words; ++i) {
         sram[pre_ln_residual_base + i] = sram[x_in_base + i];
     }
+#ifndef __SYNTHESIS__
+    if (layer1_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer1_attn_input_shadow,
+            &sram[x_in_base],
+            layer_words
+        );
+        g_layer1_attn_input_valid = true;
+        g_layer1_x_words_valid = (u32_t)layer_words;
+    }
+#endif
     if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
         // Stage boundary: non-selected partial-prebuild buckets keep full-shell execution.
         AttnLayer0<ATTN_STAGE_FULL>(
