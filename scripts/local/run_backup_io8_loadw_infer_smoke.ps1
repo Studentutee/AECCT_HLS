@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 function Invoke-ClBuild {
     param(
-        [string]$Source,
+        [string[]]$Sources,
         [string]$ExeOut,
         [string]$LogOut
     )
@@ -25,12 +25,16 @@ function Invoke-ClBuild {
         '/Ithird_party\ac_types',
         '/Idata\weights',
         '/Idata\trace',
-        $Source,
+        '/IAECCT_ac_ref\include',
+        '/IAECCT_ac_ref\src'
+    )
+    $args += $Sources
+    $args += @(
         "/Fe:$ExeOut"
     )
     & cl @args *> $LogOut
     if ($LASTEXITCODE -ne 0) {
-        throw "build failed ($Source), exit=$LASTEXITCODE"
+        throw "build failed ($($Sources -join ', ')), exit=$LASTEXITCODE"
     }
 }
 
@@ -66,11 +70,15 @@ try {
     $buildLog = Join-Path $BuildDir 'build_backup_io8_loadw_infer.log'
     $runLog = Join-Path $BuildDir 'run_backup_io8_loadw_infer.log'
 
-    Invoke-ClBuild -Source 'tb\tb_backup_io8_loadw_infer_smoke.cpp' -ExeOut $exePath -LogOut $buildLog
+    Invoke-ClBuild -Sources @(
+        'tb\tb_backup_io8_loadw_infer_smoke.cpp',
+        'AECCT_ac_ref\src\RefModel.cpp'
+    ) -ExeOut $exePath -LogOut $buildLog
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
     Require-PassString -LogPath $runLog -Needle 'DIAG: tb_backup_io8_loadw_infer_trace_compare'
     Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_local_ref_compare'
+    Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_ref_model_stage_probe'
     Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_xpred1_debug_bridge'
     Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_smoke'
 

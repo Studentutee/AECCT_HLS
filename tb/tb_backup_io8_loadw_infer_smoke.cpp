@@ -17,6 +17,7 @@
 #include "input_y_step0.h"
 #include "output_x_pred_step0.h"
 #include "output_logits_step0.h"
+#include "RefModel.h"
 
 namespace {
 
@@ -102,6 +103,25 @@ struct LocalContractResult {
     bool local_ref_ok;
     bool trace_mismatch;
     bool dut_bug_candidate;
+};
+
+struct RefModelStageCompareResult {
+    uint32_t sample_idx;
+    uint32_t focused_idx;
+    bool st_exact;
+    bool logit_exact;
+    bool xpred_exact;
+    bool all_exact;
+    uint32_t st_first_mismatch_idx;
+    uint32_t st_dut_bits;
+    uint32_t st_ref_bits;
+    uint32_t logit_first_mismatch_idx;
+    uint32_t logit_dut_bits;
+    uint32_t logit_ref_bits;
+    uint32_t xpred_first_mismatch_idx;
+    uint32_t xpred_dut_bits;
+    uint32_t xpred_ref_bits;
+    uint32_t boundary_bucket; // A=1, B=2, C=3, D=4
 };
 
 static_assert(
@@ -1001,6 +1021,209 @@ static LocalContractResult run_one_local_contract_focus_sample(
     return r;
 }
 
+static uint32_t ref_xpred_bit_to_word_bits(const aecct_ref::bit1_t& bit) {
+    return (bit.to_uint() != 0u) ? f32_to_bits(1.0f) : f32_to_bits(0.0f);
+}
+
+static RefModelStageCompareResult run_one_ref_model_stage_probe(
+    Io8Top& io,
+    uint32_t sample_idx,
+    uint32_t focused_idx
+) {
+    RefModelStageCompareResult r;
+    r.sample_idx = sample_idx;
+    r.focused_idx = focused_idx;
+    r.st_exact = true;
+    r.logit_exact = true;
+    r.xpred_exact = true;
+    r.all_exact = true;
+    r.st_first_mismatch_idx = 0u;
+    r.st_dut_bits = 0u;
+    r.st_ref_bits = 0u;
+    r.logit_first_mismatch_idx = 0u;
+    r.logit_dut_bits = 0u;
+    r.logit_ref_bits = 0u;
+    r.xpred_first_mismatch_idx = 0u;
+    r.xpred_dut_bits = 0u;
+    r.xpred_ref_bits = 0u;
+    r.boundary_bucket = 4u;
+
+    std::vector<uint32_t> infer_words;
+    std::vector<uint32_t> trace_logits_words;
+    std::vector<uint32_t> trace_xpred_words;
+    std::vector<uint8_t> out_bytes;
+    std::vector<uint32_t> got_words;
+    build_trace_infer_words(sample_idx, infer_words);
+    build_trace_logits_words(sample_idx, trace_logits_words);
+    build_trace_xpred_words(sample_idx, trace_xpred_words);
+
+    if (focused_idx >= (uint32_t)EXP_LEN_OUT_XPRED_WORDS ||
+        focused_idx >= (uint32_t)EXP_LEN_OUT_LOGITS_WORDS ||
+        focused_idx >= (uint32_t)N_NODES ||
+        focused_idx >= (uint32_t)infer_words.size()) {
+        fail("ref model probe focused idx out of range");
+    }
+
+    send_cmd(io, (uint8_t)aecct::OP_INFER);
+    expect_rsp(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_INFER, "infer_begin_ref_model_probe");
+    REF_MODEL_PROBE_INGEST_LOOP: for (uint32_t i = 0u; i < (uint32_t)infer_words.size(); ++i) {
+        push_u32_le(io, infer_words[i]);
+        top_tick(io);
+        if (i + 1u < (uint32_t)infer_words.size()) {
+            expect_no_rsp(io, "infer_ingest_ref_model_probe");
+        } else {
+            expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_INFER, "infer_done_ref_model_probe");
+        }
+    }
+
+    const uint32_t expected_bytes_len = (uint32_t)EXP_LEN_OUT_XPRED_WORDS * 4u;
+    collect_out_bytes(io, expected_bytes_len, out_bytes);
+    bytes_to_words_le(out_bytes, got_words);
+    if ((uint32_t)got_words.size() != (uint32_t)EXP_LEN_OUT_XPRED_WORDS) {
+        fail("ref model probe output words mismatch EXP_LEN_OUT_XPRED_WORDS");
+    }
+
+    std::vector<double> ref_input_fp32((uint32_t)EXP_LEN_INFER_IN_WORDS, 0.0);
+    REF_INPUT_CONVERT_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_INFER_IN_WORDS; ++i) {
+        ref_input_fp32[i] = (double)bits_to_f32(infer_words[i]);
+    }
+    std::vector<double> ref_logits((uint32_t)EXP_LEN_OUT_LOGITS_WORDS, 0.0);
+    std::vector<aecct_ref::bit1_t> ref_xpred((uint32_t)EXP_LEN_OUT_XPRED_WORDS);
+    std::vector<double> ref_st((uint32_t)N_NODES, 0.0);
+
+    aecct_ref::RefModel ref_model;
+    aecct_ref::RefModelIO ref_io;
+    ref_io.input_y = 0;
+    ref_io.input_y_fp32 = ref_input_fp32.data();
+    ref_io.out_logits = ref_logits.data();
+    ref_io.out_x_pred = ref_xpred.data();
+    ref_io.out_finalhead_s_t = ref_st.data();
+    ref_io.B = 1;
+    ref_io.N = (int)EXP_LEN_OUT_XPRED_WORDS;
+    ref_model.infer_step0(ref_io);
+
+    const aecct::u32_t* sram = aecct::top_sram();
+    const uint32_t final_scalar_base = (uint32_t)sram_map::SCR_FINAL_SCALAR_BASE_W;
+    const uint32_t logits_base = (uint32_t)aecct::top_peek_infer_logits_base_word().to_uint();
+
+    REF_ST_COMPARE_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t dut_bits = (uint32_t)sram[final_scalar_base + t].to_uint();
+        const uint32_t ref_bits = f32_to_bits((float)ref_st[t]);
+        if (dut_bits != ref_bits) {
+            r.st_exact = false;
+            r.st_first_mismatch_idx = t;
+            r.st_dut_bits = dut_bits;
+            r.st_ref_bits = ref_bits;
+            break;
+        }
+    }
+    if (r.st_exact) {
+        r.st_dut_bits = (uint32_t)sram[final_scalar_base + focused_idx].to_uint();
+        r.st_ref_bits = f32_to_bits((float)ref_st[focused_idx]);
+    }
+
+    REF_LOGIT_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_OUT_LOGITS_WORDS; ++i) {
+        const uint32_t dut_bits = (uint32_t)sram[logits_base + i].to_uint();
+        const uint32_t ref_bits = f32_to_bits((float)ref_logits[i]);
+        if (dut_bits != ref_bits) {
+            r.logit_exact = false;
+            r.logit_first_mismatch_idx = i;
+            r.logit_dut_bits = dut_bits;
+            r.logit_ref_bits = ref_bits;
+            break;
+        }
+    }
+    if (r.logit_exact) {
+        r.logit_dut_bits = (uint32_t)sram[logits_base + focused_idx].to_uint();
+        r.logit_ref_bits = f32_to_bits((float)ref_logits[focused_idx]);
+    }
+
+    REF_XPRED_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_OUT_XPRED_WORDS; ++i) {
+        const uint32_t dut_bits = got_words[i];
+        const uint32_t ref_bits = ref_xpred_bit_to_word_bits(ref_xpred[i]);
+        if (dut_bits != ref_bits) {
+            r.xpred_exact = false;
+            r.xpred_first_mismatch_idx = i;
+            r.xpred_dut_bits = dut_bits;
+            r.xpred_ref_bits = ref_bits;
+            break;
+        }
+    }
+    if (r.xpred_exact) {
+        r.xpred_dut_bits = got_words[focused_idx];
+        r.xpred_ref_bits = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
+    }
+
+    r.all_exact = r.st_exact && r.logit_exact && r.xpred_exact;
+    if (!r.st_exact) {
+        r.boundary_bucket = 1u;
+    } else if (!r.logit_exact) {
+        r.boundary_bucket = 2u;
+    } else if (!r.xpred_exact) {
+        r.boundary_bucket = 3u;
+    } else {
+        r.boundary_bucket = 4u;
+    }
+
+    const uint32_t focused_dut_st = (uint32_t)sram[final_scalar_base + focused_idx].to_uint();
+    const uint32_t focused_ref_st = f32_to_bits((float)ref_st[focused_idx]);
+    const uint32_t focused_dut_logit = (uint32_t)sram[logits_base + focused_idx].to_uint();
+    const uint32_t focused_ref_logit = f32_to_bits((float)ref_logits[focused_idx]);
+    const uint32_t focused_trace_logit = trace_logits_words[focused_idx];
+    const uint32_t focused_dut_xpred = got_words[focused_idx];
+    const uint32_t focused_ref_xpred = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
+    const uint32_t focused_trace_xpred = trace_xpred_words[focused_idx];
+    std::printf(
+        "[backup_io8][ref_model_probe] sample=%u idx=%u dut_st=0x%08X ref_model_st=0x%08X dut_logit=0x%08X ref_model_logit=0x%08X trace_logit=0x%08X dut_xpred=0x%08X ref_model_xpred=0x%08X trace_xpred=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)focused_idx,
+        (unsigned)focused_dut_st,
+        (unsigned)focused_ref_st,
+        (unsigned)focused_dut_logit,
+        (unsigned)focused_ref_logit,
+        (unsigned)focused_trace_logit,
+        (unsigned)focused_dut_xpred,
+        (unsigned)focused_ref_xpred,
+        (unsigned)focused_trace_xpred);
+    std::printf(
+        "[backup_io8][ref_model_probe] sample=%u st_exact=%u logit_exact=%u xpred_exact=%u first_st_mismatch_idx=%u first_logit_mismatch_idx=%u first_xpred_mismatch_idx=%u boundary_class=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.st_exact ? 1u : 0u),
+        (unsigned)(r.logit_exact ? 1u : 0u),
+        (unsigned)(r.xpred_exact ? 1u : 0u),
+        (unsigned)r.st_first_mismatch_idx,
+        (unsigned)r.logit_first_mismatch_idx,
+        (unsigned)r.xpred_first_mismatch_idx,
+        (unsigned)r.boundary_bucket);
+    if (!r.all_exact) {
+        if (r.boundary_bucket == 1u) {
+            std::printf(
+                "[backup_io8][ref_model_probe] first_divergence=final_embedding_or_upstream idx=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)r.st_first_mismatch_idx,
+                (unsigned)r.st_dut_bits,
+                (unsigned)r.st_ref_bits);
+        } else if (r.boundary_bucket == 2u) {
+            std::printf(
+                "[backup_io8][ref_model_probe] first_divergence=out_fc_consume idx=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)r.logit_first_mismatch_idx,
+                (unsigned)r.logit_dut_bits,
+                (unsigned)r.logit_ref_bits);
+        } else {
+            std::printf(
+                "[backup_io8][ref_model_probe] first_divergence=xpred_decision idx=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)r.xpred_first_mismatch_idx,
+                (unsigned)r.xpred_dut_bits,
+                (unsigned)r.xpred_ref_bits);
+        }
+    } else {
+        std::printf(
+            "[backup_io8][ref_model_probe] first_divergence=none sample=%u all_stages_exact=1\n",
+            (unsigned)sample_idx);
+    }
+
+    return r;
+}
+
 static DebugCompareResult run_one_xpred_one_debug_sample(
     Io8Top& io,
     const XpredOneSample& pick
@@ -1494,6 +1717,12 @@ int main() {
         run_one_local_contract_focus_sample(io_debug, kDebugPreferredSampleId, kDebugFocusedIdx);
     const LocalContractResult triage_s0 =
         run_one_local_contract_focus_sample(io_debug, kContractSample0, kContractIdx0);
+    const RefModelStageCompareResult ref_probe_s5 =
+        run_one_ref_model_stage_probe(io_debug, kDebugPreferredSampleId, kDebugFocusedIdx);
+    RefModelStageCompareResult ref_probe = ref_probe_s5;
+    if (ref_probe_s5.all_exact) {
+        ref_probe = run_one_ref_model_stage_probe(io_debug, kContractSample0, kContractIdx0);
+    }
     const bool local_ref_gate_ok = triage_s5.local_ref_ok && triage_s0.local_ref_ok;
     std::printf(
         "[backup_io8][contract_gate] local_ref_gate_ok=%u sample5_local_ref_ok=%u sample0_local_ref_ok=%u sample0_trace_mismatch=%u\n",
@@ -1501,6 +1730,11 @@ int main() {
         (unsigned)(triage_s5.local_ref_ok ? 1u : 0u),
         (unsigned)(triage_s0.local_ref_ok ? 1u : 0u),
         (unsigned)(triage_s0.trace_mismatch ? 1u : 0u));
+    std::printf(
+        "[backup_io8][ref_model_gate] sample=%u all_exact=%u boundary_class=%u\n",
+        (unsigned)ref_probe.sample_idx,
+        (unsigned)(ref_probe.all_exact ? 1u : 0u),
+        (unsigned)ref_probe.boundary_bucket);
 
     std::vector<uint32_t> readmem_payload_prefix_post;
     std::vector<uint32_t> direct_payload_prefix_post;
@@ -1635,6 +1869,7 @@ int main() {
     }
 
     std::printf("PASS: tb_backup_io8_loadw_infer_local_ref_compare\n");
+    std::printf("PASS: tb_backup_io8_loadw_infer_ref_model_stage_probe\n");
     std::printf("PASS: tb_backup_io8_loadw_infer_xpred1_debug_bridge\n");
     std::printf("PASS: tb_backup_io8_loadw_infer_smoke\n");
     return 0;
