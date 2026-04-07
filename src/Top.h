@@ -3812,21 +3812,6 @@ namespace aecct {
         );
         contract.tile_range = make_tile_range((u32_t)0u, (u32_t)class_tile_count);
 
-        u32_t topfed_final_scalar_words[N_NODES];
-        TOPFED_FINAL_SCALAR_INIT_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
-            topfed_final_scalar_words[t] = 0;
-        }
-        uint32_t token_begin = (uint32_t)contract.token_range.begin.to_uint();
-        uint32_t token_end = (uint32_t)contract.token_range.end.to_uint();
-        if (token_begin > (uint32_t)N_NODES) { token_begin = (uint32_t)N_NODES; }
-        if (token_end > (uint32_t)N_NODES) { token_end = (uint32_t)N_NODES; }
-        uint32_t d_model = (uint32_t)layer_cfg.d_model.to_uint();
-        if (d_model == 0u) { d_model = (uint32_t)D_MODEL; }
-        const uint32_t x_base = (uint32_t)regs.infer_final_x_base_word.to_uint();
-        TOPFED_FINAL_SCALAR_PRELOAD_LOOP: for (uint32_t t = token_begin; t < token_end; ++t) {
-            topfed_final_scalar_words[t] = sram[x_base + t * d_model];
-        }
-
         (void)FinalHeadCorePassABTopManaged<u32_t*>(
             sram,
             layer_cfg,
@@ -3838,7 +3823,7 @@ namespace aecct {
             contract,
             &data_out,
             outmode,
-            topfed_final_scalar_words
+            0
         );
         contract.done = true;
         const uint32_t mode = (uint32_t)outmode.to_uint();

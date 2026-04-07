@@ -127,6 +127,8 @@ static inline bool FinalHeadCorePassABTopManaged(
     const uint32_t logits_base = (uint32_t)logits_base_word.to_uint();
     const uint32_t xpred_base = (uint32_t)xpred_base_word.to_uint();
     const uint32_t final_scalar_base = (uint32_t)contract.final_scalar_base_word.to_uint();
+    const uint32_t ffn1_w_base = (uint32_t)hp.ffn1_w_base_word.to_uint();
+    const uint32_t ffn1_b_base = (uint32_t)hp.ffn1_b_base_word.to_uint();
     const uint32_t out_fc_w_base = (uint32_t)hp.out_fc_w_base_word.to_uint();
     const uint32_t out_fc_b_base = (uint32_t)hp.out_fc_b_base_word.to_uint();
 
@@ -157,8 +159,14 @@ static inline bool FinalHeadCorePassABTopManaged(
             // Top-fed scalar payload path: Top provides token scalars, FinalHead consumes.
             st_bits = topfed_final_scalar_words[t];
         } else {
-            const uint32_t x_word = x_end_base + t * d_model;
-            st_bits = sram[x_word];
+            const uint32_t x_row_base = x_end_base + t * d_model;
+            fp32_t st_acc = fp32_from_bits(sram[ffn1_b_base + 0u]);
+            FINAL_HEAD_PASSA_DOT_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
+                const fp32_t xv = fp32_from_bits(sram[x_row_base + i]);
+                const fp32_t wv = fp32_from_bits(sram[ffn1_w_base + i]);
+                st_acc += (xv * wv);
+            }
+            st_bits = bits_from_fp32(st_acc);
         }
         sram[final_scalar_base + t] = st_bits;
     }
