@@ -24,6 +24,7 @@ function Invoke-ClBuild {
         '/Igen\include',
         '/Ithird_party\ac_types',
         '/Idata\weights',
+        '/Idata\trace',
         $Source,
         "/Fe:$ExeOut"
     )
@@ -68,7 +69,7 @@ try {
     Invoke-ClBuild -Source 'tb\tb_backup_io8_loadw_infer_smoke.cpp' -ExeOut $exePath -LogOut $buildLog
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
-    Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_external_golden_compare'
+    Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_trace_aligned_xpred_compare'
     Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_smoke'
 
     Write-Host 'PASS: run_backup_io8_loadw_infer_smoke'

@@ -98,7 +98,8 @@ static inline const double* tb_lookup_weight_fp64(const WeightId id, uint32_t &o
   switch (id) {
     case BCH_H_BITPACK: out_numel = 0u; return (const double*)0;
     case SRC_EMBED: out_numel = (uint32_t)w_src_embed_numel; return w_src_embed;
-    case SRC_MASK: out_numel = (uint32_t)w_src_mask_numel; return w_src_mask;
+    // SRC_MASK is bitpack payload and must be consumed through tb_lookup_weight_bits.
+    case SRC_MASK: out_numel = 0u; return (const double*)0;
     case QUANT_SX_8: out_numel = 8u; return tb_quant_sx_8;
     case DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_WEIGHT: out_numel = (uint32_t)w_decoder_layers_0_self_attn_linears_0_weight_numel; return w_decoder_layers_0_self_attn_linears_0_weight;
     case DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_DELTA: out_numel = (uint32_t)w_decoder_layers_0_self_attn_linears_0_delta_numel; return w_decoder_layers_0_self_attn_linears_0_delta;
