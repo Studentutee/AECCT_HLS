@@ -429,12 +429,19 @@ static void words_to_bytes_le(const std::vector<uint32_t>& words, std::vector<ui
     }
 }
 
-static void run_setup_cfg_loadw(Io8Top& io, const std::vector<uint32_t>& param_words) {
+static void run_setup_cfg_loadw(
+    Io8Top& io,
+    const std::vector<uint32_t>& param_words,
+    const char* session_tag
+) {
+    const char* tag = (session_tag != 0) ? session_tag : "session";
+    std::printf("[backup_io8][session] %s session begin\n", tag);
     uint32_t cfg_words[EXP_LEN_CFG_WORDS];
     build_cfg_words(cfg_words);
 
     send_cmd(io, (uint8_t)aecct::OP_SOFT_RESET);
     expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET, "soft_reset");
+    std::printf("[backup_io8][session] %s setup_soft_reset_done=1\n", tag);
 
     send_cmd(io, (uint8_t)aecct::OP_CFG_BEGIN);
     expect_rsp(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN, "cfg_begin");
@@ -450,6 +457,7 @@ static void run_setup_cfg_loadw(Io8Top& io, const std::vector<uint32_t>& param_w
         (uint8_t)aecct::RSP_DONE,
         (uint8_t)aecct::OP_CFG_COMMIT,
         "cfg_commit");
+    std::printf("[backup_io8][session] %s setup_cfg_done=1\n", tag);
 
     push_u32_le(io, (uint32_t)sram_map::PARAM_BASE_DEFAULT);
     io.ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_SET_W_BASE));
@@ -460,6 +468,7 @@ static void run_setup_cfg_loadw(Io8Top& io, const std::vector<uint32_t>& param_w
         (uint8_t)aecct::RSP_DONE,
         (uint8_t)aecct::OP_SET_W_BASE,
         "set_w_base");
+    std::printf("[backup_io8][session] %s setup_set_w_base_done=1\n", tag);
 
     send_cmd(io, (uint8_t)aecct::OP_LOAD_W);
     expect_rsp(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_LOAD_W, "load_w_begin");
@@ -472,11 +481,16 @@ static void run_setup_cfg_loadw(Io8Top& io, const std::vector<uint32_t>& param_w
             expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_LOAD_W, "load_w_done");
         }
     }
+    std::printf("[backup_io8][session] %s setup_load_w_done=1\n", tag);
 
     push_u32_le(io, 0u);
     io.ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_SET_OUTMODE));
     top_tick(io);
     expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_OUTMODE, "set_outmode_xpred");
+    std::printf("[backup_io8][session] %s setup_set_outmode_done=1\n", tag);
+    std::printf(
+        "[backup_io8][session] %s setup_complete soft_reset=1 cfg=1 load_w=1 set_outmode=1\n",
+        tag);
 }
 
 static uint32_t clip_words_to_check(
@@ -1117,8 +1131,8 @@ int main() {
         return 1;
     }
 
-    Io8Top io;
-    run_setup_cfg_loadw(io, param_words);
+    Io8Top io_debug;
+    run_setup_cfg_loadw(io_debug, param_words, "debug");
 
     const uint32_t infer_input_base_dbg = (uint32_t)aecct::top_peek_infer_input_base_word().to_uint();
     const uint32_t infer_logits_base_dbg = (uint32_t)aecct::top_peek_infer_logits_base_word().to_uint();
@@ -1141,7 +1155,7 @@ int main() {
         param_words.begin() + (size_t)payload_words_to_check);
     std::vector<uint32_t> readmem_payload_prefix;
     std::vector<uint32_t> direct_payload_prefix;
-    read_mem_words(io, (uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, readmem_payload_prefix);
+    read_mem_words(io_debug, (uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, readmem_payload_prefix);
     read_sram_words_direct((uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, direct_payload_prefix);
 
     uint32_t payload_readmem_bad_idx = 0u;
@@ -1286,7 +1300,7 @@ int main() {
     DebugCompareResult mismatch_ret;
     DEBUG_SAMPLE_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)xpred_one_samples.size(); ++i) {
         const XpredOneSample& pick = xpred_one_samples[i];
-        DebugCompareResult r = run_one_xpred_one_debug_sample(io, pick);
+        DebugCompareResult r = run_one_xpred_one_debug_sample(io_debug, pick);
         if (!r.exact) {
             mismatch_found = true;
             mismatch_sample = pick.sample_id;
@@ -1307,7 +1321,7 @@ int main() {
 
     std::vector<uint32_t> readmem_payload_prefix_post;
     std::vector<uint32_t> direct_payload_prefix_post;
-    read_mem_words(io, (uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, readmem_payload_prefix_post);
+    read_mem_words(io_debug, (uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, readmem_payload_prefix_post);
     read_sram_words_direct((uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, direct_payload_prefix_post);
 
     uint32_t payload_readmem_bad_idx_post = 0u;
@@ -1379,9 +1393,11 @@ int main() {
         std::printf("[backup_io8][debug_boundary] earliest_boundary=none (selected x_pred=1 samples all exact)\n");
     }
 
+    Io8Top io_trace;
+    run_setup_cfg_loadw(io_trace, param_words, "trace");
     TRACE_PATTERN_LOOP: for (uint32_t pattern_idx = 0u; pattern_idx < kTracePatternCount; ++pattern_idx) {
         const uint32_t sample_idx = kTraceSampleIds[pattern_idx];
-        if (!run_one_trace_sample_and_compare(io, sample_idx)) {
+        if (!run_one_trace_sample_and_compare(io_trace, sample_idx)) {
             return 1;
         }
     }
