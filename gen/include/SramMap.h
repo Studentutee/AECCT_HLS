@@ -159,6 +159,14 @@ static const uint32_t PARAM_BASE_DEFAULT = W_REGION_BASE;
 // ----------------------------
 static const uint32_t END_W = BASE_W_W + SIZE_W_W;
 
+// ----------------------------
+// backup profile runtime scratch extension (local-only)
+// ----------------------------
+// This window is reserved for bring-up runtime intermediates so they do not
+// alias unified PARAM / W_REGION.
+static const uint32_t BACKUP_RUNTIME_SCRATCH_BASE_W = align_up_words(END_W, ALIGN_WORDS);
+static const uint32_t BACKUP_RUNTIME_SCRATCH_WORDS = align_up_words(65536u, ALIGN_WORDS);
+
 // IO_REGION is channel-oriented in current bring-up path, so SRAM window is
 // kept as an empty placeholder for taxonomy completeness.
 static const uint32_t IO_REGION_BASE_W = END_W;
@@ -169,7 +177,8 @@ static const uint32_t SRAM_WORDS_MIN_REQUIRED = END_W;
 
 // NOTE: Your actual SRAM depth may be larger.
 // For TB bring-up, you may set SRAM_WORDS_TOTAL = SRAM_WORDS_MIN_REQUIRED.
-static const uint32_t SRAM_WORDS_TOTAL = SRAM_WORDS_MIN_REQUIRED;
+static const uint32_t SRAM_WORDS_TOTAL =
+  BACKUP_RUNTIME_SCRATCH_BASE_W + BACKUP_RUNTIME_SCRATCH_WORDS;
 
 // ------------------------------------------------------------
 // Region decode helpers (purely by addr_word range)
@@ -182,6 +191,7 @@ static inline SramRegion region_of_addr(uint32_t addr_w) {
   if (in_range(addr_w, X_PAGE0_BASE_W, X_PAGE0_WORDS)) return REG_X_PAGE0;
   if (in_range(addr_w, X_PAGE1_BASE_W, X_PAGE1_WORDS)) return REG_X_PAGE1;
   if (in_range(addr_w, BASE_SCRATCH_W, SIZE_SCRATCH_W)) return REG_SCRATCH;
+  if (in_range(addr_w, BACKUP_RUNTIME_SCRATCH_BASE_W, BACKUP_RUNTIME_SCRATCH_WORDS)) return REG_SCRATCH;
   if (in_range(addr_w, W_REGION_BASE, W_REGION_WORDS)) return REG_W_REGION;
   return REG_INVALID;
 }
@@ -189,6 +199,7 @@ static inline SramRegion region_of_addr(uint32_t addr_w) {
 static inline StorageClass storage_class_of_addr(uint32_t addr_w) {
   if (in_range(addr_w, BASE_X_WORK_W, SIZE_X_WORK_W)) return CLASS_X_WORK;
   if (in_range(addr_w, BASE_SCRATCH_W, SIZE_SCRATCH_W)) return CLASS_SCRATCH;
+  if (in_range(addr_w, BACKUP_RUNTIME_SCRATCH_BASE_W, BACKUP_RUNTIME_SCRATCH_WORDS)) return CLASS_SCRATCH;
   if (in_range(addr_w, W_REGION_BASE, W_REGION_WORDS)) return CLASS_W_REGION;
   if (in_range(addr_w, IO_REGION_BASE_W, IO_REGION_WORDS)) return CLASS_IO_REGION;
   return CLASS_INVALID;

@@ -49,19 +49,30 @@ namespace aecct {
     static const unsigned ATTN_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::X_PAGE0_BASE_W;
 
     // Q/K 優先放 SCRATCH，其他暫存放 W_REGION（M9 bring-up 先對齊 checkpoint）
-    static const unsigned ATTN_Q_BASE_WORD_DEFAULT = (unsigned)sram_map::BASE_SCR_K_W;
-    static const unsigned ATTN_K_BASE_WORD_DEFAULT = (unsigned)sram_map::BASE_SCR_V_W;
-    static const unsigned ATTN_V_BASE_WORD_DEFAULT = (unsigned)sram_map::W_REGION_BASE;
+    static const unsigned ATTN_RUNTIME_BASE_WORD_DEFAULT = (unsigned)sram_map::BACKUP_RUNTIME_SCRATCH_BASE_W;
+    static const unsigned ATTN_Q_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 0u);
+    static const unsigned ATTN_K_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 1u);
+    static const unsigned ATTN_V_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 2u);
 
-    static const unsigned ATTN_SCORE_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 1u);
-    static const unsigned ATTN_SOFTMAX_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 2u);
-    static const unsigned ATTN_PRE_CONCAT_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 3u);
-    static const unsigned ATTN_POST_CONCAT_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 4u);
+    static const unsigned ATTN_SCORE_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 3u);
+    static const unsigned ATTN_SOFTMAX_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 4u);
+    static const unsigned ATTN_PRE_CONCAT_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 5u);
+    static const unsigned ATTN_POST_CONCAT_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 6u);
 
-    static const unsigned ATTN_Q_ACT_Q_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 5u);
-    static const unsigned ATTN_K_ACT_Q_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 6u);
-    static const unsigned ATTN_V_ACT_Q_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 7u);
-    static const unsigned ATTN_Q_SX_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + ATTN_TENSOR_WORDS * 8u);
+    static const unsigned ATTN_Q_ACT_Q_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 7u);
+    static const unsigned ATTN_K_ACT_Q_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 8u);
+    static const unsigned ATTN_V_ACT_Q_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 9u);
+    static const unsigned ATTN_Q_SX_BASE_WORD_DEFAULT = (unsigned)(ATTN_RUNTIME_BASE_WORD_DEFAULT + ATTN_TENSOR_WORDS * 10u);
+    static const unsigned ATTN_RUNTIME_END_EXCL_WORD_DEFAULT = (unsigned)(ATTN_Q_SX_BASE_WORD_DEFAULT + 1u);
+
+    static_assert(
+        (uint32_t)ATTN_RUNTIME_BASE_WORD_DEFAULT >=
+            ((uint32_t)sram_map::W_REGION_BASE + (uint32_t)sram_map::W_REGION_WORDS),
+        "ATTN runtime scratch base must not overlap W_REGION/PARAM");
+    static_assert(
+        (uint32_t)ATTN_RUNTIME_END_EXCL_WORD_DEFAULT <=
+            ((uint32_t)sram_map::BACKUP_RUNTIME_SCRATCH_BASE_W + (uint32_t)sram_map::BACKUP_RUNTIME_SCRATCH_WORDS),
+        "ATTN runtime scratch window exceeds backup runtime scratch region");
 
     static inline AttnScratch default_attn_scratch() {
         AttnScratch sc;

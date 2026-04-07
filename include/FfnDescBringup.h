@@ -61,14 +61,26 @@ namespace aecct {
     static const unsigned FFN_X_IN_BASE_WORD_DEFAULT = (unsigned)ATTN_OUT_BASE_WORD_DEFAULT;
 
     // W1/relu ?閬?9600 words嚗??W_REGION嚗2/add2 ?曉 SCRATCH嚗N output ??X_PAGE1
-    static const unsigned FFN_W1_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::W_REGION_BASE;
-    static const unsigned FFN_RELU_OUT_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + FFN_W1_OUT_WORDS);
-    static const unsigned FFN_W2_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::BASE_SCR_K_W;
-    static const unsigned FFN_ADD2_BASE_WORD_DEFAULT = (unsigned)sram_map::BASE_SCR_V_W;
-    static const unsigned FFN_LN_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::X_PAGE1_BASE_W;
+    static const unsigned FFN_RUNTIME_BASE_WORD_DEFAULT =
+        (unsigned)align_up_words((uint32_t)ATTN_RUNTIME_END_EXCL_WORD_DEFAULT, (uint32_t)ALIGN_WORDS);
+    static const unsigned FFN_W1_OUT_BASE_WORD_DEFAULT = (unsigned)FFN_RUNTIME_BASE_WORD_DEFAULT;
+    static const unsigned FFN_RELU_OUT_BASE_WORD_DEFAULT = (unsigned)(FFN_W1_OUT_BASE_WORD_DEFAULT + FFN_W1_OUT_WORDS);
+    static const unsigned FFN_W2_OUT_BASE_WORD_DEFAULT = (unsigned)(FFN_RELU_OUT_BASE_WORD_DEFAULT + FFN_W1_OUT_WORDS);
+    static const unsigned FFN_ADD2_BASE_WORD_DEFAULT = (unsigned)(FFN_W2_OUT_BASE_WORD_DEFAULT + FFN_W2_OUT_WORDS);
+    static const unsigned FFN_LN_OUT_BASE_WORD_DEFAULT = (unsigned)FFN_ADD2_BASE_WORD_DEFAULT;
 
-    static const unsigned FFN_LN_GAMMA_BASE_WORD_DEFAULT = (unsigned)(sram_map::W_REGION_BASE + FFN_W1_OUT_WORDS + FFN_W1_OUT_WORDS);
+    static const unsigned FFN_LN_GAMMA_BASE_WORD_DEFAULT = (unsigned)(FFN_ADD2_BASE_WORD_DEFAULT + FFN_W2_OUT_WORDS);
     static const unsigned FFN_LN_BETA_BASE_WORD_DEFAULT = (unsigned)(FFN_LN_GAMMA_BASE_WORD_DEFAULT + FFN_D_MODEL);
+    static const unsigned FFN_RUNTIME_END_EXCL_WORD_DEFAULT = (unsigned)(FFN_LN_BETA_BASE_WORD_DEFAULT + FFN_D_MODEL);
+
+    static_assert(
+        (uint32_t)FFN_RUNTIME_BASE_WORD_DEFAULT >=
+            ((uint32_t)sram_map::W_REGION_BASE + (uint32_t)sram_map::W_REGION_WORDS),
+        "FFN runtime scratch base must not overlap W_REGION/PARAM");
+    static_assert(
+        (uint32_t)FFN_RUNTIME_END_EXCL_WORD_DEFAULT <=
+            ((uint32_t)sram_map::BACKUP_RUNTIME_SCRATCH_BASE_W + (uint32_t)sram_map::BACKUP_RUNTIME_SCRATCH_WORDS),
+        "FFN runtime scratch window exceeds backup runtime scratch region");
 
     static inline FfnScratch default_ffn_scratch() {
         FfnScratch sc;
