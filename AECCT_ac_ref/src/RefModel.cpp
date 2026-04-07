@@ -1418,6 +1418,7 @@ static void run_layer(const int layer_idx,
                       fp32_ref_t attn_scores[HEADS][TOKENS_T][TOKENS_T],
                       fp32_ref_t attn_probs[HEADS][TOKENS_T][TOKENS_T],
                       fp32_ref_t ctx[HEADS][TOKENS_T][D_HEAD],
+                      fp32_ref_t (*post_concat_out)[D_MODEL],
                       fp32_ref_t attn_out[TOKENS_T][D_MODEL],
                       fp32_ref_t ln_in[TOKENS_T][D_MODEL],
                       fp32_ref_t ln_out[TOKENS_T][D_MODEL],
@@ -1544,6 +1545,13 @@ static void run_layer(const int layer_idx,
                   attn_probs,
                   ctx,
                   post_concat);
+  if (post_concat_out != nullptr) {
+    RUN_LAYER_POST_CONCAT_COPY_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
+      RUN_LAYER_POST_CONCAT_COPY_DIM_LOOP: for (int d = 0; d < D_MODEL; ++d) {
+        post_concat_out[t][d] = post_concat[t][d];
+      }
+    }
+  }
 
   quant_linear_75x32_to32(post_concat,
                           w_o,
@@ -1797,6 +1805,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer0_scores[HEADS][TOKENS_T][TOKENS_T];
     static fp32_ref_t layer0_probs[HEADS][TOKENS_T][TOKENS_T];
     static fp32_ref_t layer0_ctx[HEADS][TOKENS_T][D_HEAD];
+    static fp32_ref_t layer0_post_concat[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_attn_out[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ln_in[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ln_out[TOKENS_T][D_MODEL];
@@ -1818,6 +1827,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer0_scores,
               layer0_probs,
               layer0_ctx,
+              layer0_post_concat,
               layer0_attn_out,
               layer0_ln_in,
               layer0_ln_out,
@@ -1868,6 +1878,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer1_scores[HEADS][TOKENS_T][TOKENS_T];
     static fp32_ref_t layer1_probs[HEADS][TOKENS_T][TOKENS_T];
     static fp32_ref_t layer1_ctx[HEADS][TOKENS_T][D_HEAD];
+    static fp32_ref_t layer1_post_concat[TOKENS_T][D_MODEL];
     static fp32_ref_t layer1_attn_out[TOKENS_T][D_MODEL];
     static fp32_ref_t layer1_ln_in[TOKENS_T][D_MODEL];
     static fp32_ref_t layer1_ln_out[TOKENS_T][D_MODEL];
@@ -1889,6 +1900,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer1_scores,
               layer1_probs,
               layer1_ctx,
+              layer1_post_concat,
               layer1_attn_out,
               layer1_ln_in,
               layer1_ln_out,
@@ -1903,6 +1915,23 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_3d<HEADS, TOKENS_T, TOKENS_T>(dump, "layer1_attn_scores", layer1_scores);
     dump_3d<HEADS, TOKENS_T, TOKENS_T>(dump, "layer1_attn_probs", layer1_probs);
     dump_3d<HEADS, TOKENS_T, D_HEAD>(dump, "layer1_ctx", layer1_ctx);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_post_concat", layer1_post_concat);
+    if (io.out_layer1_post_concat != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_post_concat[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_post_concat[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer1_q != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_q[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_q[t][d].to_float());
+        }
+      }
+    }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_attn_out", layer1_attn_out);
     if (io.out_layer1_attn_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {

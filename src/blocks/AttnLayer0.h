@@ -67,6 +67,18 @@ static inline bool attn_live_qkv_gate_ok(
     return true;
 }
 
+static inline QuantLinearMatrixId attn_q_matrix_id_for_layer(uint32_t layer_id) {
+    return (layer_id == 0u) ? QLM_L0_WQ : QLM_L1_WQ;
+}
+
+static inline QuantLinearMatrixId attn_k_matrix_id_for_layer(uint32_t layer_id) {
+    return (layer_id == 0u) ? QLM_L0_WK : QLM_L1_WK;
+}
+
+static inline QuantLinearMatrixId attn_v_matrix_id_for_layer(uint32_t layer_id) {
+    return (layer_id == 0u) ? QLM_L0_WV : QLM_L1_WV;
+}
+
 // local-only boundary descriptor for Top-fed prebuilt handoff flags.
 // This keeps the AttnLayer0 seam contractized without changing Top ownership policy.
 struct AttnLayer0PrebuiltHandoffDesc {
@@ -140,7 +152,8 @@ static inline void AttnLayer0CoreWindow(
     u32_t attn_out_base_word,
     const AttnScratch& sc,
     u32_t param_base_word = (u32_t)0,
-    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff = make_attn_layer0_prebuilt_handoff_desc()
+    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff = make_attn_layer0_prebuilt_handoff_desc(),
+    u32_t layer_id_word = (u32_t)0
 ) {
     uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
     uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
@@ -157,6 +170,7 @@ static inline void AttnLayer0CoreWindow(
     uint32_t out_base = (uint32_t)attn_out_base_word.to_uint();
     uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
     uint32_t d_head = (uint32_t)cfg.d_head.to_uint();
+    const uint32_t layer_id = (uint32_t)layer_id_word.to_uint();
     if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
     if (d_head == 0u) { d_head = d_model / n_heads; }
     quant_acc_t inv_sqrt_d_head = attn_inv_sqrt_d_head(d_head);
@@ -166,15 +180,18 @@ static inline void AttnLayer0CoreWindow(
     // C++20 compatibility: keep stage gating runtime-form while STAGE_MODE stays compile-time constant.
     if (STAGE_MODE == ATTN_STAGE_QKV || STAGE_MODE == ATTN_STAGE_FULL) {
         const uint32_t param_base = (uint32_t)param_base_word.to_uint();
-        const QuantLinearMeta live_q_meta = ternary_linear_live_l0_wq_meta();
-        const QuantLinearMeta live_k_meta = ternary_linear_live_l0_wk_meta();
-        const QuantLinearMeta live_v_meta = ternary_linear_live_l0_wv_meta();
+        const QuantLinearMatrixId q_matrix_id = attn_q_matrix_id_for_layer(layer_id);
+        const QuantLinearMatrixId k_matrix_id = attn_k_matrix_id_for_layer(layer_id);
+        const QuantLinearMatrixId v_matrix_id = attn_v_matrix_id_for_layer(layer_id);
+        const QuantLinearMeta live_q_meta = ternary_linear_live_meta(q_matrix_id);
+        const QuantLinearMeta live_k_meta = ternary_linear_live_meta(k_matrix_id);
+        const QuantLinearMeta live_v_meta = ternary_linear_live_meta(v_matrix_id);
         const bool live_q_enabled =
-            attn_live_qkv_gate_ok(live_q_meta, QLM_L0_WQ, param_base, token_count, d_model);
+            attn_live_qkv_gate_ok(live_q_meta, q_matrix_id, param_base, token_count, d_model);
         const bool live_k_enabled =
-            attn_live_qkv_gate_ok(live_k_meta, QLM_L0_WK, param_base, token_count, d_model);
+            attn_live_qkv_gate_ok(live_k_meta, k_matrix_id, param_base, token_count, d_model);
         const bool live_v_enabled =
-            attn_live_qkv_gate_ok(live_v_meta, QLM_L0_WV, param_base, token_count, d_model);
+            attn_live_qkv_gate_ok(live_v_meta, v_matrix_id, param_base, token_count, d_model);
         bool live_q_ok = live_q_enabled;
         bool live_k_ok = live_k_enabled;
         bool live_v_ok = live_v_enabled;
@@ -199,81 +216,88 @@ static inline void AttnLayer0CoreWindow(
 
         if (!skip_q_materialization && live_q_enabled) {
             const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
+            bool use_q_split_top = (layer_id == 0u);
 #if defined(AECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE)
             // Preferred Q path: fixed-shape split-kernel call over ternary leaf kernel.
-            const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
-            const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
-            if (live_q_meta.rows != kQkvCtSupportedL0WqRows ||
-                live_q_meta.cols != kQkvCtSupportedL0WqCols ||
-                live_q_meta.payload_words_2b != kQkvCtExpectedL0WqPayloadWords ||
-                live_q_payload_meta.len_w < kQkvCtExpectedL0WqPayloadWords ||
-                live_q_inv_meta.len_w == 0u) {
-                live_q_ok = false;
-            }
-            u32_t payload_words[kTernaryLiveL0WqPayloadWords];
-            u32_t x_row[kTernaryLiveL0WqCols];
-            u32_t out_row[kTernaryLiveL0WqRows];
-            u32_t out_act_q_row[kTernaryLiveL0WqRows];
-            if (live_q_ok) {
-                const uint32_t payload_base = param_base + live_q_payload_meta.offset_w;
-                ATTN_Q_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WqPayloadWords; ++i) {
-                    payload_words[i] = sram[payload_base + i];
+            if (use_q_split_top) {
+                const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
+                const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
+                if (live_q_meta.rows != kQkvCtSupportedL0WqRows ||
+                    live_q_meta.cols != kQkvCtSupportedL0WqCols ||
+                    live_q_meta.payload_words_2b != kQkvCtExpectedL0WqPayloadWords ||
+                    live_q_payload_meta.len_w < kQkvCtExpectedL0WqPayloadWords ||
+                    live_q_inv_meta.len_w == 0u) {
+                    live_q_ok = false;
                 }
-                const uint32_t inv_sw_addr = param_base + live_q_inv_meta.offset_w;
-                const u32_t live_q_inv_sw_input = sram[inv_sw_addr];
-                ATTN_Q_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
-                    const uint32_t x_row_base = x_in_base + t * d_model;
-                    const uint32_t q_row_base = q_base + t * d_model;
-                    const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
-                    ATTN_Q_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
-                        x_row[in] = sram[x_row_base + in];
+                u32_t payload_words[kTernaryLiveL0WqPayloadWords];
+                u32_t x_row[kTernaryLiveL0WqCols];
+                u32_t out_row[kTernaryLiveL0WqRows];
+                u32_t out_act_q_row[kTernaryLiveL0WqRows];
+                if (live_q_ok) {
+                    const uint32_t payload_base = param_base + live_q_payload_meta.offset_w;
+                    ATTN_Q_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WqPayloadWords; ++i) {
+                        payload_words[i] = sram[payload_base + i];
                     }
-                    u32_t out_inv_sw_bits = (u32_t)0u;
-                    if (!ternary_live_l0_wq_materialize_row_kernel_split(
-                            x_row,
-                            payload_words,
-                            live_q_inv_sw_input,
-                            out_row,
-                            out_act_q_row,
-                            out_inv_sw_bits)) {
-                        live_q_ok = false;
-                        break;
+                    const uint32_t inv_sw_addr = param_base + live_q_inv_meta.offset_w;
+                    const u32_t live_q_inv_sw_input = sram[inv_sw_addr];
+                    ATTN_Q_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+                        const uint32_t x_row_base = x_in_base + t * d_model;
+                        const uint32_t q_row_base = q_base + t * d_model;
+                        const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
+                        ATTN_Q_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
+                            x_row[in] = sram[x_row_base + in];
+                        }
+                        u32_t out_inv_sw_bits = (u32_t)0u;
+                        if (!ternary_live_l0_wq_materialize_row_kernel_split(
+                                x_row,
+                                payload_words,
+                                live_q_inv_sw_input,
+                                out_row,
+                                out_act_q_row,
+                                out_inv_sw_bits)) {
+                            live_q_ok = false;
+                            break;
+                        }
+                        if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_q_inv_sw_input.to_uint()) {
+                            live_q_ok = false;
+                            break;
+                        }
+                        ATTN_Q_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
+                            sram[q_row_base + out] = out_row[out];
+                            sram[q_act_q_row_base + out] = out_act_q_row[out];
+                        }
+                        live_q_inv_sw_bits = out_inv_sw_bits;
                     }
-                    if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_q_inv_sw_input.to_uint()) {
-                        live_q_ok = false;
-                        break;
-                    }
-                    ATTN_Q_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
-                        sram[q_row_base + out] = out_row[out];
-                        sram[q_act_q_row_base + out] = out_act_q_row[out];
-                    }
-                    live_q_inv_sw_bits = out_inv_sw_bits;
                 }
             }
 #else
-            ATTN_Q_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
-                const uint32_t x_row_base = x_in_base + t * d_model;
-                const uint32_t q_row_base = q_base + t * d_model;
-                const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
-                ATTN_Q_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_q_meta.rows; ++out) {
-                    u32_t q_bits = 0;
-                    u32_t inv_sw_bits = 0;
-                    if (!ternary_linear_live_l0_wq_compute_q_elem(
-                            sram,
-                            param_base_word,
-                            (u32_t)x_row_base,
-                            out,
-                            q_bits,
-                            inv_sw_bits)) {
-                        live_q_ok = false;
-                        break;
+            use_q_split_top = false;
+#endif
+            if (!use_q_split_top) {
+                ATTN_Q_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+                    const uint32_t x_row_base = x_in_base + t * d_model;
+                    const uint32_t q_row_base = q_base + t * d_model;
+                    const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
+                    ATTN_Q_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_q_meta.rows; ++out) {
+                        u32_t q_bits = 0;
+                        u32_t inv_sw_bits = 0;
+                        if (!ternary_linear_live_compute_q_elem(
+                                sram,
+                                param_base_word,
+                                q_matrix_id,
+                                (u32_t)x_row_base,
+                                out,
+                                q_bits,
+                                inv_sw_bits)) {
+                            live_q_ok = false;
+                            break;
+                        }
+                        sram[q_row_base + out] = q_bits;
+                        sram[q_act_q_row_base + out] = q_bits;
+                        live_q_inv_sw_bits = inv_sw_bits;
                     }
-                    sram[q_row_base + out] = q_bits;
-                    sram[q_act_q_row_base + out] = q_bits;
-                    live_q_inv_sw_bits = inv_sw_bits;
                 }
             }
-#endif
         }
 
         if (!skip_q_materialization) {
@@ -295,7 +319,7 @@ static inline void AttnLayer0CoreWindow(
             const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
             // Preferred K path: fixed-shape split-kernel call over ternary leaf kernel.
-            bool use_k_split_top = true;
+            bool use_k_split_top = (layer_id == 0u);
             const ParamMeta live_k_payload_meta = kParamMeta[live_k_meta.weight_param_id];
             const ParamMeta live_k_inv_meta = kParamMeta[live_k_meta.inv_sw_param_id];
             if (live_k_meta.rows != kQkvCtSupportedL0WkRows ||
@@ -354,9 +378,10 @@ static inline void AttnLayer0CoreWindow(
                     ATTN_K_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
                         u32_t k_bits = 0;
                         u32_t k_inv_sw_bits = 0;
-                        if (!ternary_linear_live_l0_wk_compute_q_elem(
+                        if (!ternary_linear_live_compute_q_elem(
                                 sram,
                                 param_base_word,
+                                k_matrix_id,
                                 (u32_t)x_row_base,
                                 out,
                                 k_bits,
@@ -377,9 +402,10 @@ static inline void AttnLayer0CoreWindow(
                 ATTN_K_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
                     u32_t k_bits = 0;
                     u32_t k_inv_sw_bits = 0;
-                    if (!ternary_linear_live_l0_wk_compute_q_elem(
+                    if (!ternary_linear_live_compute_q_elem(
                             sram,
                             param_base_word,
+                            k_matrix_id,
                             (u32_t)x_row_base,
                             out,
                             k_bits,
@@ -407,7 +433,7 @@ static inline void AttnLayer0CoreWindow(
             const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
             // Preferred V path: fixed-shape split-kernel call over ternary leaf kernel.
-            bool use_v_split_top = true;
+            bool use_v_split_top = (layer_id == 0u);
             const ParamMeta live_v_payload_meta = kParamMeta[live_v_meta.weight_param_id];
             const ParamMeta live_v_inv_meta = kParamMeta[live_v_meta.inv_sw_param_id];
             if (live_v_meta.rows != kQkvCtSupportedL0WvRows ||
@@ -466,9 +492,10 @@ static inline void AttnLayer0CoreWindow(
                     ATTN_V_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
                         u32_t v_bits = 0;
                         u32_t v_inv_sw_bits = 0;
-                        if (!ternary_linear_live_l0_wv_compute_q_elem(
+                        if (!ternary_linear_live_compute_q_elem(
                                 sram,
                                 param_base_word,
+                                v_matrix_id,
                                 (u32_t)x_row_base,
                                 out,
                                 v_bits,
@@ -489,9 +516,10 @@ static inline void AttnLayer0CoreWindow(
                 ATTN_V_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
                     u32_t v_bits = 0;
                     u32_t v_inv_sw_bits = 0;
-                    if (!ternary_linear_live_l0_wv_compute_q_elem(
+                    if (!ternary_linear_live_compute_q_elem(
                             sram,
                             param_base_word,
+                            v_matrix_id,
                             (u32_t)x_row_base,
                             out,
                             v_bits,
@@ -631,7 +659,8 @@ static inline void AttnLayer0(
     u32_t attn_out_base_word,
     const AttnScratch& sc,
     u32_t param_base_word,
-    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff
+    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff,
+    u32_t layer_id_word = (u32_t)0
 ) {
     AttnLayer0CoreWindow<STAGE_MODE, u32_t*>(
         sram,
@@ -640,7 +669,8 @@ static inline void AttnLayer0(
         attn_out_base_word,
         sc,
         param_base_word,
-        prebuilt_handoff
+        prebuilt_handoff,
+        layer_id_word
     );
 }
 
@@ -655,7 +685,8 @@ static inline void AttnLayer0(
     bool kv_prebuilt_from_top_managed = false,
     bool q_prebuilt_from_top_managed = false,
     bool score_prebuilt_from_top_managed = false,
-    bool out_prebuilt_from_top_managed = false
+    bool out_prebuilt_from_top_managed = false,
+    u32_t layer_id_word = (u32_t)0
 ) {
     AttnLayer0CoreWindow<STAGE_MODE, u32_t*>(
         sram,
@@ -668,7 +699,8 @@ static inline void AttnLayer0(
             kv_prebuilt_from_top_managed,
             q_prebuilt_from_top_managed,
             score_prebuilt_from_top_managed,
-            out_prebuilt_from_top_managed)
+            out_prebuilt_from_top_managed),
+        layer_id_word
     );
 }
 
@@ -686,7 +718,8 @@ static inline void AttnLayer0TopManagedWindowBridge(
     u32_t attn_out_base_word,
     const AttnScratch& sc,
     u32_t param_base_word,
-    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff
+    AttnLayer0PrebuiltHandoffDesc prebuilt_handoff,
+    u32_t layer_id_word = (u32_t)0
 ) {
     AttnLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
@@ -695,7 +728,8 @@ static inline void AttnLayer0TopManagedWindowBridge(
         attn_out_base_word,
         sc,
         param_base_word,
-        prebuilt_handoff
+        prebuilt_handoff,
+        layer_id_word
     );
 }
 
@@ -710,7 +744,8 @@ static inline void AttnLayer0TopManagedWindowBridge(
     bool kv_prebuilt_from_top_managed = false,
     bool q_prebuilt_from_top_managed = false,
     bool score_prebuilt_from_top_managed = false,
-    bool out_prebuilt_from_top_managed = false
+    bool out_prebuilt_from_top_managed = false,
+    u32_t layer_id_word = (u32_t)0
 ) {
     AttnLayer0CoreWindow<STAGE_MODE, u32_t (&)[SRAM_WORDS]>(
         sram_window,
@@ -723,7 +758,8 @@ static inline void AttnLayer0TopManagedWindowBridge(
             kv_prebuilt_from_top_managed,
             q_prebuilt_from_top_managed,
             score_prebuilt_from_top_managed,
-            out_prebuilt_from_top_managed)
+            out_prebuilt_from_top_managed),
+        layer_id_word
     );
 }
 
