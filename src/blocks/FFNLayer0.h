@@ -242,7 +242,7 @@ static inline void FFNLayer0CoreWindow(
         return;
     }
 
-    if constexpr (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
+    if (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
         // Tightened fallback policy: caller can require fully ready W1 descriptors.
         if (require_w1_topfed &&
             !(w1_input_descriptor_ready && w1_weight_descriptor_ready && w1_bias_descriptor_ready)) {
@@ -312,7 +312,7 @@ static inline void FFNLayer0CoreWindow(
         }
     }
 
-    if constexpr (STAGE_MODE == FFN_STAGE_RELU || STAGE_MODE == FFN_STAGE_FULL) {
+    if (STAGE_MODE == FFN_STAGE_RELU || STAGE_MODE == FFN_STAGE_FULL) {
         // Stage ReLU: apply activation on W1 output scratch.
         FFN_TOP_MANAGED_RELU_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
             const uint32_t h_row = w1_base + t * d_ffn;
@@ -348,7 +348,7 @@ static inline void FFNLayer0CoreWindow(
         }
     }
 
-    if constexpr (STAGE_MODE == FFN_STAGE_W2 || STAGE_MODE == FFN_STAGE_FULL) {
+    if (STAGE_MODE == FFN_STAGE_W2 || STAGE_MODE == FFN_STAGE_FULL) {
         // Tightened fallback policy: caller can require fully ready W2 descriptors.
         if (require_w2_topfed && !(w2_input_descriptor_ready && w2_weight_descriptor_ready && w2_bias_descriptor_ready)) {
             if (fallback_policy_reject_flag != 0) {
@@ -443,7 +443,7 @@ static inline void FFNLayer0CoreWindowDirect(
     const uint32_t w2_bias_id = use_layer1 ? 13u : 5u;
     const uint32_t w2_weight_id = use_layer1 ? 59u : 39u;
 
-    if constexpr (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
+    if (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
         for (uint32_t t = 0; t < token_count; ++t) {
             uint32_t x_row = x_in_base + t * d_model;
             uint32_t h_row = w1_base + t * d_ffn;
@@ -460,7 +460,7 @@ static inline void FFNLayer0CoreWindowDirect(
         }
     }
 
-    if constexpr (STAGE_MODE == FFN_STAGE_RELU || STAGE_MODE == FFN_STAGE_FULL) {
+    if (STAGE_MODE == FFN_STAGE_RELU || STAGE_MODE == FFN_STAGE_FULL) {
         for (uint32_t t = 0; t < token_count; ++t) {
             uint32_t h_row = w1_base + t * d_ffn;
             uint32_t a_row = relu_base + t * d_ffn;
@@ -472,7 +472,7 @@ static inline void FFNLayer0CoreWindowDirect(
         }
     }
 
-    if constexpr (STAGE_MODE == FFN_STAGE_W2 || STAGE_MODE == FFN_STAGE_FULL) {
+    if (STAGE_MODE == FFN_STAGE_W2 || STAGE_MODE == FFN_STAGE_FULL) {
         for (uint32_t t = 0; t < token_count; ++t) {
             uint32_t a_row = relu_base + t * d_ffn;
             uint32_t y_row = w2_base + t * d_model;

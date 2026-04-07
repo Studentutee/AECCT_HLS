@@ -259,6 +259,15 @@ static void run_single_session(std::vector<uint8_t>& out_bytes) {
     }
 }
 
+static uint32_t fnv1a_u32(const std::vector<uint8_t>& bytes) {
+    uint32_t h = 2166136261u;
+    HASH_LOOP: for (uint32_t i = 0u; i < (uint32_t)bytes.size(); ++i) {
+        h ^= (uint32_t)bytes[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
 } // namespace
 
 int main() {
@@ -276,13 +285,48 @@ int main() {
         return 1;
     }
 
+    const uint32_t out_hash = fnv1a_u32(out_a);
+    static const uint32_t kExpectedOutBytes = 252u;
+    static const uint8_t kExpectedPrefix[4] = { 0x00u, 0x00u, 0x00u, 0x00u };
+    static const uint32_t kExpectedHash = 0x5D470F75u;
+
+    if ((uint32_t)out_a.size() != kExpectedOutBytes) {
+        std::printf(
+            "[backup_io8][FAIL] fixed-case expected bytes mismatch got=%u expect=%u\n",
+            (unsigned)out_a.size(),
+            (unsigned)kExpectedOutBytes);
+        return 1;
+    }
+    for (uint32_t i = 0u; i < 4u; ++i) {
+        if (out_a[i] != kExpectedPrefix[i]) {
+            std::printf(
+                "[backup_io8][FAIL] fixed-case expected prefix mismatch idx=%u got=0x%02X expect=0x%02X\n",
+                (unsigned)i,
+                (unsigned)out_a[i],
+                (unsigned)kExpectedPrefix[i]);
+            return 1;
+        }
+    }
+    if (out_hash != kExpectedHash) {
+        std::printf(
+            "[backup_io8][FAIL] fixed-case expected hash mismatch got=0x%08X expect=0x%08X\n",
+            (unsigned)out_hash,
+            (unsigned)kExpectedHash);
+        return 1;
+    }
     std::printf(
-        "[backup_io8] output_bytes=%u first4=%02X %02X %02X %02X\n",
+        "PASS: tb_backup_io8_loadw_infer_fixed_case_compare bytes=%u hash=0x%08X\n",
+        (unsigned)out_a.size(),
+        (unsigned)out_hash);
+
+    std::printf(
+        "[backup_io8] output_bytes=%u first4=%02X %02X %02X %02X hash=0x%08X\n",
         (unsigned)out_a.size(),
         (unsigned)out_a[0],
         (unsigned)out_a[1],
         (unsigned)out_a[2],
-        (unsigned)out_a[3]);
+        (unsigned)out_a[3],
+        (unsigned)out_hash);
     std::printf("PASS: tb_backup_io8_loadw_infer_smoke\n");
     return 0;
 }

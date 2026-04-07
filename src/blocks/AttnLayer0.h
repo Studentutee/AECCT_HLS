@@ -163,7 +163,8 @@ static inline void AttnLayer0CoreWindow(
 
     // QKV stage:
     // X_WORK + W_REGION metadata/payload -> Q/K/V (plus act_q mirrors) in attention scratch windows.
-    if constexpr (STAGE_MODE == ATTN_STAGE_QKV || STAGE_MODE == ATTN_STAGE_FULL) {
+    // C++20 compatibility: keep stage gating runtime-form while STAGE_MODE stays compile-time constant.
+    if (STAGE_MODE == ATTN_STAGE_QKV || STAGE_MODE == ATTN_STAGE_FULL) {
         const uint32_t param_base = (uint32_t)param_base_word.to_uint();
         const QuantLinearMeta live_q_meta = ternary_linear_live_l0_wq_meta();
         const QuantLinearMeta live_k_meta = ternary_linear_live_l0_wk_meta();
@@ -515,7 +516,7 @@ static inline void AttnLayer0CoreWindow(
         }
     }
 
-    if constexpr (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
+    if (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
         // Stage ownership seam: prebuilt score means AE already committed score rows for AF consumption.
         if (prebuilt_handoff.score_prebuilt_from_top_managed) {
             // Top-managed AE/AF path already produced score/pre/post for this layer invocation.
@@ -573,7 +574,7 @@ static inline void AttnLayer0CoreWindow(
         }
     }
 
-    if constexpr (STAGE_MODE == ATTN_STAGE_OUT || STAGE_MODE == ATTN_STAGE_FULL) {
+    if (STAGE_MODE == ATTN_STAGE_OUT || STAGE_MODE == ATTN_STAGE_FULL) {
         const uint32_t out_topfed_valid_raw =
             (uint32_t)prebuilt_handoff.out_topfed_payload_words_valid.to_uint();
         uint32_t out_topfed_valid = out_topfed_valid_raw;

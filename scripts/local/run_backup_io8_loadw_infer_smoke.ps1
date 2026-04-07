@@ -14,7 +14,8 @@ function Invoke-ClBuild {
 
     $args = @(
         '/nologo',
-        '/std:c++14',
+        '/std:c++20',
+        '/Zc:gotoScope-',
         '/EHsc',
         '/utf-8',
         '/I.',

@@ -1,5 +1,5 @@
 param(
-    [string]$BuildDir = "build\backup_wave1_wave3"
+    [string]$BuildDir = "build\backup_demo"
 )
 
 Set-StrictMode -Version Latest
@@ -79,6 +79,12 @@ try {
             exe = 'tb_backup_wave3_io8_boundary_smoke.exe'
             pass = 'PASS: tb_backup_wave3_io8_boundary_smoke'
             key = 'wave3'
+        },
+        @{
+            source = 'tb\tb_backup_io8_loadw_infer_smoke.cpp'
+            exe = 'tb_backup_io8_loadw_infer_smoke.exe'
+            pass = 'PASS: tb_backup_io8_loadw_infer_smoke'
+            key = 'io8_loadw_infer'
         }
     )
 
@@ -90,9 +96,23 @@ try {
         Invoke-ClBuild -Source $case.source -ExeOut $exePath -LogOut $buildLog
         Invoke-ExeRun -ExePath $exePath -LogOut $runLog
         Require-PassString -LogPath $runLog -Needle $case.pass
+
+        if ($case.key -eq 'io8_loadw_infer') {
+            Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_fixed_case_compare'
+        }
     }
 
-    Write-Host 'PASS: run_backup_wave1_wave3_smoke'
+    $summaryLog = Join-Path $BuildDir 'run_backup_demo_summary.log'
+    @(
+        'PASS: backup_demo_wave1_packing',
+        'PASS: backup_demo_wave2_quant_linear',
+        'PASS: backup_demo_wave3_io8_boundary',
+        'PASS: backup_demo_io8_loadw_infer',
+        'PASS: backup_demo_fixed_case_expected_compare',
+        'PASS: run_backup_demo_smoke'
+    ) | Set-Content -Path $summaryLog -Encoding UTF8
+
+    Write-Host 'PASS: run_backup_demo_smoke'
     exit 0
 }
 catch {
