@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -179,6 +180,14 @@ struct RefModelStageCompareResult {
     uint32_t layer1_attn_input_readback_dut_bits;
     uint32_t layer1_attn_input_readback_ref_bits;
     uint32_t bounded_first_divergence_bucket; // 0=none,1=A(layer0_ffn_ln_out_writeback),2=B(mid_norm_output_writeback),3=C(layer1_attn_input_readback)
+    uint32_t layer0_recursive_round1_bucket;  // 0=none,1=ffn2_out,2=residual_add_out,3=sublayer1_ln_in,4=sublayer1_ln_out_writeback
+    uint32_t layer0_recursive_round2_bucket;  // branch-local secondary split bucket
+    uint32_t layer0_recursive_round3_bucket;  // branch-local tertiary split bucket
+    uint32_t layer0_recursive_first_divergence_bucket; // 0=none,5+=leaf stage
+    uint32_t layer0_recursive_first_mismatch_token;
+    uint32_t layer0_recursive_first_mismatch_dim;
+    uint32_t layer0_recursive_first_mismatch_dut_bits;
+    uint32_t layer0_recursive_first_mismatch_ref_bits;
     uint32_t end_norm_first_mismatch_token;
     uint32_t end_norm_first_mismatch_dim;
     uint32_t end_norm_dut_bits;
@@ -1175,6 +1184,14 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer1_attn_input_readback_dut_bits = 0u;
     r.layer1_attn_input_readback_ref_bits = 0u;
     r.bounded_first_divergence_bucket = 0u;
+    r.layer0_recursive_round1_bucket = 0u;
+    r.layer0_recursive_round2_bucket = 0u;
+    r.layer0_recursive_round3_bucket = 0u;
+    r.layer0_recursive_first_divergence_bucket = 0u;
+    r.layer0_recursive_first_mismatch_token = 0u;
+    r.layer0_recursive_first_mismatch_dim = 0u;
+    r.layer0_recursive_first_mismatch_dut_bits = 0u;
+    r.layer0_recursive_first_mismatch_ref_bits = 0u;
     r.end_norm_first_mismatch_token = 0u;
     r.end_norm_first_mismatch_dim = 0u;
     r.end_norm_dut_bits = 0u;
@@ -1233,6 +1250,12 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<aecct_ref::bit1_t> ref_xpred((uint32_t)EXP_LEN_OUT_XPRED_WORDS);
     std::vector<double> ref_st((uint32_t)N_NODES, 0.0);
     std::vector<double> ref_layer0_ffn_ln_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_ffn1_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
+    std::vector<double> ref_layer0_relu_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
+    std::vector<double> ref_layer0_ffn2_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_ln_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_residual_add_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_sublayer1_ln_in((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_attn_input((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_post_concat((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_q((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
@@ -1253,6 +1276,12 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_x_pred = ref_xpred.data();
     ref_io.out_finalhead_s_t = ref_st.data();
     ref_io.out_layer0_ffn_ln_out = ref_layer0_ffn_ln_out.data();
+    ref_io.out_layer0_ffn1_out = ref_layer0_ffn1_out.data();
+    ref_io.out_layer0_relu_out = ref_layer0_relu_out.data();
+    ref_io.out_layer0_ffn2_out = ref_layer0_ffn2_out.data();
+    ref_io.out_layer0_ln_out = ref_layer0_ln_out.data();
+    ref_io.out_layer0_residual_add_out = ref_layer0_residual_add_out.data();
+    ref_io.out_layer0_sublayer1_ln_in = ref_layer0_sublayer1_ln_in.data();
     ref_io.out_layer1_attn_input = ref_layer1_attn_input.data();
     ref_io.out_layer1_post_concat = ref_layer1_post_concat.data();
     ref_io.out_layer1_q = ref_layer1_q.data();
@@ -1279,13 +1308,23 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     const uint32_t d_model = (uint32_t)D_MODEL;
     const uint32_t d_ffn = (uint32_t)D_FFN;
     const uint32_t layer0_x_words = (uint32_t)aecct::transformer_layer_debug_layer0_x_words_valid().to_uint();
+    const uint32_t layer0_ff_words = (uint32_t)aecct::transformer_layer_debug_layer0_ff_words_valid().to_uint();
     const uint32_t layer1_x_words = (uint32_t)aecct::transformer_layer_debug_layer1_x_words_valid().to_uint();
     const uint32_t layer1_ff_words = (uint32_t)aecct::transformer_layer_debug_layer1_ff_words_valid().to_uint();
     const bool mid_norm_output_writeback_valid = aecct::top_peek_infer_mid_norm_output_valid();
     const uint32_t x_mid_norm_output_base =
         (uint32_t)aecct::top_peek_infer_mid_norm_output_base_word().to_uint();
 
-    if (!aecct::transformer_layer_debug_layer0_ffn_ln_out_writeback_valid() ||
+    if (!aecct::transformer_layer_debug_layer0_ffn1_out_valid() ||
+        !aecct::transformer_layer_debug_layer0_relu_out_valid() ||
+        !aecct::transformer_layer_debug_layer0_w2_out_valid() ||
+        !aecct::transformer_layer_debug_layer0_ffn2_out_valid() ||
+        !aecct::transformer_layer_debug_layer0_residual_lhs_valid() ||
+        !aecct::transformer_layer_debug_layer0_residual_rhs_valid() ||
+        !aecct::transformer_layer_debug_layer0_residual_add_out_valid() ||
+        !aecct::transformer_layer_debug_layer0_sublayer1_ln_in_valid() ||
+        !aecct::transformer_layer_debug_layer0_sublayer1_ln_out_writeback_valid() ||
+        !aecct::transformer_layer_debug_layer0_ffn_ln_out_writeback_valid() ||
         !mid_norm_output_writeback_valid ||
         !aecct::transformer_layer_debug_layer1_attn_input_valid() ||
         !aecct::transformer_layer_debug_layer1_post_concat_valid() ||
@@ -1293,7 +1332,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         !aecct::transformer_layer_debug_layer1_attn_out_valid() ||
         !aecct::transformer_layer_debug_layer1_pre_ln_input_valid() ||
         !aecct::transformer_layer_debug_layer1_ln0_out_valid()) {
-        fail("bounded debug taps missing (layer0_ffn_ln_out_writeback/mid_norm_output/layer1_attn_input...)");
+        fail("bounded debug taps missing (layer0 tail recursive split / mid_norm_output / layer1...)");
     }
 
     REF_LAYER0_FFN_LN_OUT_WRITEBACK_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
@@ -1623,6 +1662,392 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     if (r.xpred_exact) {
         r.xpred_dut_bits = got_words[focused_idx];
         r.xpred_ref_bits = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
+    }
+
+    struct Layer0StageCmp {
+        bool exact;
+        uint32_t token;
+        uint32_t dim;
+        uint32_t dut_bits;
+        uint32_t ref_bits;
+    };
+    auto make_layer0_cmp_pass = []() -> Layer0StageCmp {
+        Layer0StageCmp c;
+        c.exact = true;
+        c.token = 0u;
+        c.dim = 0u;
+        c.dut_bits = 0u;
+        c.ref_bits = 0u;
+        return c;
+    };
+    auto compare_tensor_stage = [&](uint32_t rows,
+                                    uint32_t cols,
+                                    uint32_t words_valid,
+                                    const std::vector<double>& ref_words,
+                                    auto dut_word_at) -> Layer0StageCmp {
+        Layer0StageCmp c = make_layer0_cmp_pass();
+        for (uint32_t t = 0u; t < rows; ++t) {
+            const uint32_t row_base = t * cols;
+            for (uint32_t d = 0u; d < cols; ++d) {
+                const uint32_t flat = row_base + d;
+                const uint32_t dut_bits = (flat < words_valid) ? dut_word_at(flat) : 0u;
+                const uint32_t ref_bits = f32_to_bits((float)ref_words[flat]);
+                if (dut_bits != ref_bits) {
+                    c.exact = false;
+                    c.token = t;
+                    c.dim = d;
+                    c.dut_bits = dut_bits;
+                    c.ref_bits = ref_bits;
+                    return c;
+                }
+            }
+        }
+        return c;
+    };
+    auto emit_stage_cmp = [&](const char* tag, const Layer0StageCmp& c) {
+        if (c.exact) {
+            std::printf("[backup_io8][layer0_tail][%s] sample=%u exact=1\n",
+                        tag,
+                        (unsigned)sample_idx);
+        } else {
+            std::printf(
+                "[backup_io8][layer0_tail][%s] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                tag,
+                (unsigned)sample_idx,
+                (unsigned)c.token,
+                (unsigned)c.dim,
+                (unsigned)c.dut_bits,
+                (unsigned)c.ref_bits);
+        }
+    };
+
+    const Layer0StageCmp layer0_r1_ffn2 = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_x_words,
+        ref_layer0_ffn2_out,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn2_out_word((aecct::u32_t)flat).to_uint();
+        });
+    const Layer0StageCmp layer0_r1_residual_add = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_x_words,
+        ref_layer0_residual_add_out,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual_add_out_word((aecct::u32_t)flat).to_uint();
+        });
+    const Layer0StageCmp layer0_r1_ln_in = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_x_words,
+        ref_layer0_sublayer1_ln_in,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer1_ln_in_word((aecct::u32_t)flat).to_uint();
+        });
+    Layer0StageCmp layer0_r1_ln_out_writeback = make_layer0_cmp_pass();
+    layer0_r1_ln_out_writeback.exact = r.layer0_ffn_ln_out_writeback_exact;
+    layer0_r1_ln_out_writeback.token = r.layer0_ffn_ln_out_writeback_first_mismatch_token;
+    layer0_r1_ln_out_writeback.dim = r.layer0_ffn_ln_out_writeback_first_mismatch_dim;
+    layer0_r1_ln_out_writeback.dut_bits = r.layer0_ffn_ln_out_writeback_dut_bits;
+    layer0_r1_ln_out_writeback.ref_bits = r.layer0_ffn_ln_out_writeback_ref_bits;
+
+    std::printf(
+        "[backup_io8][layer0_tail][round1] sample=%u ffn2_out_exact=%u residual_add_out_exact=%u sublayer1_ln_in_exact=%u sublayer1_ln_out_writeback_exact=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)(layer0_r1_ffn2.exact ? 1u : 0u),
+        (unsigned)(layer0_r1_residual_add.exact ? 1u : 0u),
+        (unsigned)(layer0_r1_ln_in.exact ? 1u : 0u),
+        (unsigned)(layer0_r1_ln_out_writeback.exact ? 1u : 0u));
+    emit_stage_cmp("round1.layer0_ffn2_out", layer0_r1_ffn2);
+    emit_stage_cmp("round1.layer0_residual_add_out", layer0_r1_residual_add);
+    emit_stage_cmp("round1.layer0_sublayer1_ln_in", layer0_r1_ln_in);
+    emit_stage_cmp("round1.layer0_sublayer1_ln_out_writeback", layer0_r1_ln_out_writeback);
+
+    if (!layer0_r1_ffn2.exact) {
+        r.layer0_recursive_round1_bucket = 1u;
+    } else if (!layer0_r1_residual_add.exact) {
+        r.layer0_recursive_round1_bucket = 2u;
+    } else if (!layer0_r1_ln_in.exact) {
+        r.layer0_recursive_round1_bucket = 3u;
+    } else if (!layer0_r1_ln_out_writeback.exact) {
+        r.layer0_recursive_round1_bucket = 4u;
+    } else {
+        r.layer0_recursive_round1_bucket = 0u;
+    }
+
+    if (r.layer0_recursive_round1_bucket == 1u) {
+        const Layer0StageCmp layer0_r2_w1 = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_ffn,
+            layer0_ff_words,
+            ref_layer0_ffn1_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn1_out_word((aecct::u32_t)flat).to_uint();
+            });
+        const Layer0StageCmp layer0_r2_relu = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_ffn,
+            layer0_ff_words,
+            ref_layer0_relu_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_relu_out_word((aecct::u32_t)flat).to_uint();
+            });
+        const Layer0StageCmp layer0_r2_w2 = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_x_words,
+            ref_layer0_ffn2_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_w2_out_word((aecct::u32_t)flat).to_uint();
+            });
+        const Layer0StageCmp layer0_r2_ffn2 = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_x_words,
+            ref_layer0_ffn2_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn2_out_word((aecct::u32_t)flat).to_uint();
+            });
+        std::printf(
+            "[backup_io8][layer0_tail][round2] sample=%u branch=ffn2_out w1_out_exact=%u relu_out_exact=%u w2_out_exact=%u ffn2_out_exact=%u\n",
+            (unsigned)sample_idx,
+            (unsigned)(layer0_r2_w1.exact ? 1u : 0u),
+            (unsigned)(layer0_r2_relu.exact ? 1u : 0u),
+            (unsigned)(layer0_r2_w2.exact ? 1u : 0u),
+            (unsigned)(layer0_r2_ffn2.exact ? 1u : 0u));
+        emit_stage_cmp("round2.layer0_w1_out", layer0_r2_w1);
+        emit_stage_cmp("round2.layer0_relu_out", layer0_r2_relu);
+        emit_stage_cmp("round2.layer0_w2_out", layer0_r2_w2);
+        emit_stage_cmp("round2.layer0_ffn2_out", layer0_r2_ffn2);
+
+        Layer0StageCmp round3_leaf = make_layer0_cmp_pass();
+        if (!layer0_r2_w1.exact) {
+            r.layer0_recursive_round2_bucket = 1u;
+            r.layer0_recursive_round3_bucket = 1u;
+            r.layer0_recursive_first_divergence_bucket = 5u; // layer0_ffn_w1_out_producer
+            round3_leaf = layer0_r2_w1;
+        } else if (!layer0_r2_relu.exact) {
+            r.layer0_recursive_round2_bucket = 2u;
+            r.layer0_recursive_round3_bucket = 2u;
+            r.layer0_recursive_first_divergence_bucket = 6u; // layer0_ffn_relu_out_producer
+            round3_leaf = layer0_r2_relu;
+        } else if (!layer0_r2_w2.exact) {
+            r.layer0_recursive_round2_bucket = 3u;
+            r.layer0_recursive_round3_bucket = 3u;
+            r.layer0_recursive_first_divergence_bucket = 7u; // layer0_ffn_w2_out_producer
+            round3_leaf = layer0_r2_w2;
+        } else if (!layer0_r2_ffn2.exact) {
+            r.layer0_recursive_round2_bucket = 4u;
+            r.layer0_recursive_round3_bucket = 4u;
+            r.layer0_recursive_first_divergence_bucket = 8u; // layer0_ffn2_out_handoff
+            round3_leaf = layer0_r2_ffn2;
+        }
+        if (r.layer0_recursive_first_divergence_bucket != 0u) {
+            r.layer0_recursive_first_mismatch_token = round3_leaf.token;
+            r.layer0_recursive_first_mismatch_dim = round3_leaf.dim;
+            r.layer0_recursive_first_mismatch_dut_bits = round3_leaf.dut_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = round3_leaf.ref_bits;
+        }
+    } else if (r.layer0_recursive_round1_bucket == 2u) {
+        const Layer0StageCmp layer0_r2_res_lhs = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_x_words,
+            ref_layer0_ln_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual_lhs_word((aecct::u32_t)flat).to_uint();
+            });
+        const Layer0StageCmp layer0_r2_res_rhs = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_x_words,
+            ref_layer0_ffn2_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual_rhs_word((aecct::u32_t)flat).to_uint();
+            });
+        const Layer0StageCmp layer0_r2_res_add = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_x_words,
+            ref_layer0_residual_add_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual_add_out_word((aecct::u32_t)flat).to_uint();
+            });
+        std::printf(
+            "[backup_io8][layer0_tail][round2] sample=%u branch=residual_add lhs_exact=%u rhs_exact=%u add_out_exact=%u\n",
+            (unsigned)sample_idx,
+            (unsigned)(layer0_r2_res_lhs.exact ? 1u : 0u),
+            (unsigned)(layer0_r2_res_rhs.exact ? 1u : 0u),
+            (unsigned)(layer0_r2_res_add.exact ? 1u : 0u));
+        emit_stage_cmp("round2.layer0_residual_lhs", layer0_r2_res_lhs);
+        emit_stage_cmp("round2.layer0_residual_rhs", layer0_r2_res_rhs);
+        emit_stage_cmp("round2.layer0_residual_add_out", layer0_r2_res_add);
+
+        Layer0StageCmp round3_leaf = make_layer0_cmp_pass();
+        if (!layer0_r2_res_lhs.exact) {
+            r.layer0_recursive_round2_bucket = 5u;
+            r.layer0_recursive_round3_bucket = 5u;
+            r.layer0_recursive_first_divergence_bucket = 9u; // layer0_residual_lhs
+            round3_leaf = layer0_r2_res_lhs;
+        } else if (!layer0_r2_res_rhs.exact) {
+            r.layer0_recursive_round2_bucket = 6u;
+            r.layer0_recursive_round3_bucket = 6u;
+            r.layer0_recursive_first_divergence_bucket = 10u; // layer0_residual_rhs
+            round3_leaf = layer0_r2_res_rhs;
+        } else if (!layer0_r2_res_add.exact) {
+            r.layer0_recursive_round2_bucket = 7u;
+            r.layer0_recursive_round3_bucket = 7u;
+            r.layer0_recursive_first_divergence_bucket = 11u; // layer0_residual_add_writeback
+            round3_leaf = layer0_r2_res_add;
+        }
+        if (r.layer0_recursive_first_divergence_bucket != 0u) {
+            r.layer0_recursive_first_mismatch_token = round3_leaf.token;
+            r.layer0_recursive_first_mismatch_dim = round3_leaf.dim;
+            r.layer0_recursive_first_mismatch_dut_bits = round3_leaf.dut_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = round3_leaf.ref_bits;
+        }
+    } else if (r.layer0_recursive_round1_bucket == 3u) {
+        Layer0StageCmp ln_staging_cmp = make_layer0_cmp_pass();
+        for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+            const uint32_t row_base = t * d_model;
+            for (uint32_t d = 0u; d < d_model; ++d) {
+                const uint32_t flat = row_base + d;
+                const uint32_t lhs_bits =
+                    (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual_add_out_word((aecct::u32_t)flat).to_uint();
+                const uint32_t rhs_bits =
+                    (uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer1_ln_in_word((aecct::u32_t)flat).to_uint();
+                if (lhs_bits != rhs_bits) {
+                    ln_staging_cmp.exact = false;
+                    ln_staging_cmp.token = t;
+                    ln_staging_cmp.dim = d;
+                    ln_staging_cmp.dut_bits = lhs_bits;
+                    ln_staging_cmp.ref_bits = rhs_bits;
+                    break;
+                }
+            }
+            if (!ln_staging_cmp.exact) {
+                break;
+            }
+        }
+        std::printf(
+            "[backup_io8][layer0_tail][round2] sample=%u branch=sublayer1_ln_in staging_exact=%u\n",
+            (unsigned)sample_idx,
+            (unsigned)(ln_staging_cmp.exact ? 1u : 0u));
+        if (ln_staging_cmp.exact) {
+            std::printf("[backup_io8][layer0_tail][round2.layer0_ln_staging_handoff] sample=%u exact=1\n",
+                        (unsigned)sample_idx);
+        } else {
+            std::printf(
+                "[backup_io8][layer0_tail][round2.layer0_ln_staging_handoff] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)sample_idx,
+                (unsigned)ln_staging_cmp.token,
+                (unsigned)ln_staging_cmp.dim,
+                (unsigned)ln_staging_cmp.dut_bits,
+                (unsigned)ln_staging_cmp.ref_bits);
+            r.layer0_recursive_round2_bucket = 8u;
+            r.layer0_recursive_round3_bucket = 8u;
+            r.layer0_recursive_first_divergence_bucket = 12u; // layer0_ln_input_staging_handoff
+            r.layer0_recursive_first_mismatch_token = ln_staging_cmp.token;
+            r.layer0_recursive_first_mismatch_dim = ln_staging_cmp.dim;
+            r.layer0_recursive_first_mismatch_dut_bits = ln_staging_cmp.dut_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = ln_staging_cmp.ref_bits;
+        }
+    } else if (r.layer0_recursive_round1_bucket == 4u) {
+        const uint32_t token = layer0_r1_ln_out_writeback.token;
+        const uint32_t dim = layer0_r1_ln_out_writeback.dim;
+        float dut_sum = 0.0f;
+        float ref_sum = 0.0f;
+        for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = token * d_model + d;
+            dut_sum += bits_to_f32((uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer1_ln_in_word((aecct::u32_t)flat).to_uint());
+            ref_sum += (float)ref_layer0_sublayer1_ln_in[flat];
+        }
+        const float inv_d_model = (d_model == 0u) ? 0.0f : (1.0f / (float)d_model);
+        const float dut_mean = dut_sum * inv_d_model;
+        const float ref_mean = ref_sum * inv_d_model;
+        float dut_var_acc = 0.0f;
+        float ref_var_acc = 0.0f;
+        for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = token * d_model + d;
+            const float dut_x = bits_to_f32((uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer1_ln_in_word((aecct::u32_t)flat).to_uint());
+            const float ref_x = (float)ref_layer0_sublayer1_ln_in[flat];
+            const float dut_delta = dut_x - dut_mean;
+            const float ref_delta = ref_x - ref_mean;
+            dut_var_acc += dut_delta * dut_delta;
+            ref_var_acc += ref_delta * ref_delta;
+        }
+        const float dut_var = dut_var_acc * inv_d_model;
+        const float ref_var = ref_var_acc * inv_d_model;
+        const float eps = 1.0e-5f;
+        const float dut_normed = (bits_to_f32((uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer1_ln_in_word((aecct::u32_t)(token * d_model + dim)).to_uint()) - dut_mean) /
+                                 std::sqrt(dut_var + eps);
+        const float ref_normed = ((float)ref_layer0_sublayer1_ln_in[token * d_model + dim] - ref_mean) /
+                                 std::sqrt(ref_var + eps);
+        const uint32_t dut_sum_bits = f32_to_bits(dut_sum);
+        const uint32_t ref_sum_bits = f32_to_bits(ref_sum);
+        const uint32_t dut_var_acc_bits = f32_to_bits(dut_var_acc);
+        const uint32_t ref_var_acc_bits = f32_to_bits(ref_var_acc);
+        const uint32_t dut_normed_bits = f32_to_bits(dut_normed);
+        const uint32_t ref_normed_bits = f32_to_bits(ref_normed);
+        const uint32_t dut_affine_bits =
+            (uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer1_ln_out_writeback_word((aecct::u32_t)(token * d_model + dim)).to_uint();
+        const uint32_t ref_affine_bits = f32_to_bits((float)ref_layer0_ffn_ln_out[token * d_model + dim]);
+        const bool sum_exact = (dut_sum_bits == ref_sum_bits);
+        const bool var_acc_exact = (dut_var_acc_bits == ref_var_acc_bits);
+        const bool normed_exact = (dut_normed_bits == ref_normed_bits);
+        const bool affine_exact = (dut_affine_bits == ref_affine_bits);
+        std::printf(
+            "[backup_io8][layer0_tail][round2] sample=%u branch=sublayer1_ln_out_writeback token=%u dim=%u sum_exact=%u var_acc_exact=%u normed_before_affine_exact=%u affine_out_exact=%u writeback_exact=%u\n",
+            (unsigned)sample_idx,
+            (unsigned)token,
+            (unsigned)dim,
+            (unsigned)(sum_exact ? 1u : 0u),
+            (unsigned)(var_acc_exact ? 1u : 0u),
+            (unsigned)(normed_exact ? 1u : 0u),
+            (unsigned)(affine_exact ? 1u : 0u),
+            (unsigned)(layer0_r1_ln_out_writeback.exact ? 1u : 0u));
+        if (!sum_exact) {
+            r.layer0_recursive_round2_bucket = 9u;
+            r.layer0_recursive_round3_bucket = 9u;
+            r.layer0_recursive_first_divergence_bucket = 13u;
+            r.layer0_recursive_first_mismatch_token = token;
+            r.layer0_recursive_first_mismatch_dim = dim;
+            r.layer0_recursive_first_mismatch_dut_bits = dut_sum_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = ref_sum_bits;
+        } else if (!var_acc_exact) {
+            r.layer0_recursive_round2_bucket = 10u;
+            r.layer0_recursive_round3_bucket = 10u;
+            r.layer0_recursive_first_divergence_bucket = 14u;
+            r.layer0_recursive_first_mismatch_token = token;
+            r.layer0_recursive_first_mismatch_dim = dim;
+            r.layer0_recursive_first_mismatch_dut_bits = dut_var_acc_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = ref_var_acc_bits;
+        } else if (!normed_exact) {
+            r.layer0_recursive_round2_bucket = 11u;
+            r.layer0_recursive_round3_bucket = 11u;
+            r.layer0_recursive_first_divergence_bucket = 15u;
+            r.layer0_recursive_first_mismatch_token = token;
+            r.layer0_recursive_first_mismatch_dim = dim;
+            r.layer0_recursive_first_mismatch_dut_bits = dut_normed_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = ref_normed_bits;
+        } else if (!affine_exact) {
+            r.layer0_recursive_round2_bucket = 12u;
+            r.layer0_recursive_round3_bucket = 12u;
+            r.layer0_recursive_first_divergence_bucket = 16u;
+            r.layer0_recursive_first_mismatch_token = token;
+            r.layer0_recursive_first_mismatch_dim = dim;
+            r.layer0_recursive_first_mismatch_dut_bits = dut_affine_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = ref_affine_bits;
+        } else if (!layer0_r1_ln_out_writeback.exact) {
+            r.layer0_recursive_round2_bucket = 13u;
+            r.layer0_recursive_round3_bucket = 13u;
+            r.layer0_recursive_first_divergence_bucket = 17u;
+            r.layer0_recursive_first_mismatch_token = layer0_r1_ln_out_writeback.token;
+            r.layer0_recursive_first_mismatch_dim = layer0_r1_ln_out_writeback.dim;
+            r.layer0_recursive_first_mismatch_dut_bits = layer0_r1_ln_out_writeback.dut_bits;
+            r.layer0_recursive_first_mismatch_ref_bits = layer0_r1_ln_out_writeback.ref_bits;
+        }
     }
 
     r.all_exact =
@@ -2116,6 +2541,41 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     } else {
         std::printf(
             "[backup_io8][bounded_debug] first_divergence=none A_B_C_exact=1\n");
+    }
+    std::printf(
+        "[backup_io8][layer0_tail][recursive] sample=%u round1_bucket=%u round2_bucket=%u round3_bucket=%u leaf_bucket=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)r.layer0_recursive_round1_bucket,
+        (unsigned)r.layer0_recursive_round2_bucket,
+        (unsigned)r.layer0_recursive_round3_bucket,
+        (unsigned)r.layer0_recursive_first_divergence_bucket);
+    const char* layer0_recursive_leaf = "none";
+    switch (r.layer0_recursive_first_divergence_bucket) {
+        case 5u: layer0_recursive_leaf = "layer0_ffn_w1_out_producer"; break;
+        case 6u: layer0_recursive_leaf = "layer0_ffn_relu_out_producer"; break;
+        case 7u: layer0_recursive_leaf = "layer0_ffn_w2_out_producer"; break;
+        case 8u: layer0_recursive_leaf = "layer0_ffn2_out_handoff"; break;
+        case 9u: layer0_recursive_leaf = "layer0_residual_lhs_operand"; break;
+        case 10u: layer0_recursive_leaf = "layer0_residual_rhs_operand"; break;
+        case 11u: layer0_recursive_leaf = "layer0_residual_add_writeback"; break;
+        case 12u: layer0_recursive_leaf = "layer0_sublayer1_ln_input_staging_handoff"; break;
+        case 13u: layer0_recursive_leaf = "layer0_sublayer1_ln_sum_mean"; break;
+        case 14u: layer0_recursive_leaf = "layer0_sublayer1_ln_var_acc"; break;
+        case 15u: layer0_recursive_leaf = "layer0_sublayer1_ln_normed_before_affine"; break;
+        case 16u: layer0_recursive_leaf = "layer0_sublayer1_ln_affine_out"; break;
+        case 17u: layer0_recursive_leaf = "layer0_sublayer1_ln_writeback"; break;
+        default: break;
+    }
+    if (r.layer0_recursive_first_divergence_bucket != 0u) {
+        std::printf(
+            "[backup_io8][layer0_tail][recursive] first_divergence=%s token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            layer0_recursive_leaf,
+            (unsigned)r.layer0_recursive_first_mismatch_token,
+            (unsigned)r.layer0_recursive_first_mismatch_dim,
+            (unsigned)r.layer0_recursive_first_mismatch_dut_bits,
+            (unsigned)r.layer0_recursive_first_mismatch_ref_bits);
+    } else {
+        std::printf("[backup_io8][layer0_tail][recursive] first_divergence=none\n");
     }
     if (!r.layer1_attn_input_exact) {
         std::printf(
@@ -2773,11 +3233,12 @@ int main() {
         (unsigned)(triage_s0.local_ref_ok ? 1u : 0u),
         (unsigned)(triage_s0.trace_mismatch ? 1u : 0u));
     std::printf(
-        "[backup_io8][ref_model_gate] sample=%u all_exact=%u boundary_class=%u bounded_first_divergence=%u\n",
+        "[backup_io8][ref_model_gate] sample=%u all_exact=%u boundary_class=%u bounded_first_divergence=%u recursive_first_divergence=%u\n",
         (unsigned)ref_probe.sample_idx,
         (unsigned)(ref_probe.all_exact ? 1u : 0u),
         (unsigned)ref_probe.boundary_bucket,
-        (unsigned)ref_probe.bounded_first_divergence_bucket);
+        (unsigned)ref_probe.bounded_first_divergence_bucket,
+        (unsigned)ref_probe.layer0_recursive_first_divergence_bucket);
 
     std::vector<uint32_t> readmem_payload_prefix_post;
     std::vector<uint32_t> direct_payload_prefix_post;
