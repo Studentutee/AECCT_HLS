@@ -31,6 +31,7 @@ static const uint32_t kTracePatternCount = 8u;
 static const uint32_t kTraceSampleIds[kTracePatternCount] = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 9u };
 static const uint32_t kDebugMaxXpredOneSamples = 1u;
 static const uint32_t kDebugPreferredSampleId = 5u;
+static const uint32_t kDebugFocusedIdx = 31u;
 static const uint32_t kDebugPayloadReadbackWords = 64u;
 static const uint32_t kDebugPayloadWindowWords = 16u;
 
@@ -64,6 +65,21 @@ struct DebugCompareResult {
     uint32_t byte_mismatch_idx;
     uint8_t got_byte;
     uint8_t exp_byte;
+    uint32_t focused_idx;
+    bool st31_exact;
+    bool logit31_exact;
+    bool xpred31_exact;
+    bool st_any_mismatch;
+    uint32_t st_first_mismatch_idx;
+    uint32_t dut_st31_bits;
+    uint32_t ref_st31_bits;
+    uint32_t dut_logit31_bits;
+    uint32_t ref_logit31_bits;
+    uint32_t trace_logit31_bits;
+    uint32_t dut_xpred31_bits;
+    uint32_t ref_xpred31_bits;
+    uint32_t y31_bits;
+    uint32_t boundary_bucket; // A=1, B=2, C=3, D=4
 };
 
 static_assert(
@@ -94,6 +110,15 @@ static uint32_t f32_to_bits(float f) {
     } cvt;
     cvt.f = f;
     return cvt.u;
+}
+
+static float bits_to_f32(uint32_t u) {
+    union {
+        float f;
+        uint32_t u;
+    } cvt;
+    cvt.u = u;
+    return cvt.f;
 }
 
 static uint32_t fnv1a_u32_words(const std::vector<uint32_t>& words) {
@@ -804,6 +829,21 @@ static DebugCompareResult run_one_xpred_one_debug_sample(
     ret.byte_mismatch_idx = 0u;
     ret.got_byte = 0u;
     ret.exp_byte = 0u;
+    ret.focused_idx = kDebugFocusedIdx;
+    ret.st31_exact = false;
+    ret.logit31_exact = false;
+    ret.xpred31_exact = false;
+    ret.st_any_mismatch = false;
+    ret.st_first_mismatch_idx = 0u;
+    ret.dut_st31_bits = 0u;
+    ret.ref_st31_bits = 0u;
+    ret.dut_logit31_bits = 0u;
+    ret.ref_logit31_bits = 0u;
+    ret.trace_logit31_bits = 0u;
+    ret.dut_xpred31_bits = 0u;
+    ret.ref_xpred31_bits = 0u;
+    ret.y31_bits = 0u;
+    ret.boundary_bucket = 4u;
 
     std::vector<uint32_t> infer_words;
     std::vector<uint32_t> expected_xpred_words;
@@ -882,6 +922,173 @@ static DebugCompareResult run_one_xpred_one_debug_sample(
             "[backup_io8][debug_exact] sample=%u xpred_exact=PASS hash=0x%08X\n",
             (unsigned)pick.sample_id,
             (unsigned)fnv1a_u32_words(got_words));
+    }
+
+    const uint32_t idx31 = ret.focused_idx;
+    const bool idx31_in_range =
+        (idx31 < (uint32_t)EXP_LEN_OUT_XPRED_WORDS) &&
+        (idx31 < (uint32_t)EXP_LEN_OUT_LOGITS_WORDS) &&
+        (idx31 < (uint32_t)got_words.size()) &&
+        (idx31 < (uint32_t)infer_words.size()) &&
+        (idx31 < (uint32_t)expected_xpred_words.size()) &&
+        (idx31 < (uint32_t)expected_logits_words.size()) &&
+        (idx31 < (uint32_t)N_NODES);
+    if (!idx31_in_range) {
+        fail("debug focused idx out of range");
+    }
+
+    const aecct::u32_t* sram = aecct::top_sram();
+    const uint32_t x_end_base = (uint32_t)aecct::top_peek_infer_final_x_base_word().to_uint();
+    const uint32_t logits_base = (uint32_t)aecct::top_peek_infer_logits_base_word().to_uint();
+    const uint32_t xpred_base = (uint32_t)aecct::top_peek_infer_xpred_base_word().to_uint();
+    const uint32_t final_scalar_base = (uint32_t)sram_map::SCR_FINAL_SCALAR_BASE_W;
+    const aecct::HeadParamBase hp = aecct::make_head_param_base(aecct::top_peek_w_base_word());
+    const uint32_t ffn1_w_base = (uint32_t)hp.ffn1_w_base_word.to_uint();
+    const uint32_t ffn1_b_base = (uint32_t)hp.ffn1_b_base_word.to_uint();
+    const uint32_t out_fc_w_base = (uint32_t)hp.out_fc_w_base_word.to_uint();
+    const uint32_t out_fc_b_base = (uint32_t)hp.out_fc_b_base_word.to_uint();
+    const uint32_t token_count = (uint32_t)N_NODES;
+    const uint32_t d_model = (uint32_t)D_MODEL;
+
+    std::vector<uint32_t> dut_st_words(token_count, 0u);
+    std::vector<uint32_t> ref_st_words(token_count, 0u);
+    REF_ST_BUILD_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+        const uint32_t x_row_base = x_end_base + t * d_model;
+        float acc = bits_to_f32((uint32_t)sram[ffn1_b_base + 0u].to_uint());
+        REF_ST_DOT_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
+            const float xv = bits_to_f32((uint32_t)sram[x_row_base + i].to_uint());
+            const float wv = bits_to_f32((uint32_t)sram[ffn1_w_base + i].to_uint());
+            acc += (xv * wv);
+        }
+        ref_st_words[t] = f32_to_bits(acc);
+        dut_st_words[t] = (uint32_t)sram[final_scalar_base + t].to_uint();
+        if (!ret.st_any_mismatch && dut_st_words[t] != ref_st_words[t]) {
+            ret.st_any_mismatch = true;
+            ret.st_first_mismatch_idx = t;
+        }
+    }
+
+    ret.dut_st31_bits = dut_st_words[idx31];
+    ret.ref_st31_bits = ref_st_words[idx31];
+    ret.st31_exact = (ret.dut_st31_bits == ret.ref_st31_bits);
+
+    float ref_logit31 = bits_to_f32((uint32_t)sram[out_fc_b_base + idx31].to_uint());
+    REF_LOGIT31_ACC_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+        const float stv = bits_to_f32(ref_st_words[t]);
+        const float wv = bits_to_f32((uint32_t)sram[out_fc_w_base + idx31 * token_count + t].to_uint());
+        ref_logit31 += (stv * wv);
+    }
+
+    ret.ref_logit31_bits = f32_to_bits(ref_logit31);
+    ret.dut_logit31_bits = (uint32_t)sram[logits_base + idx31].to_uint();
+    ret.trace_logit31_bits = expected_logits_words[idx31];
+    ret.logit31_exact = (ret.dut_logit31_bits == ret.ref_logit31_bits);
+
+    ret.ref_xpred31_bits = expected_xpred_words[idx31];
+    ret.dut_xpred31_bits = got_words[idx31];
+    const uint32_t dut_xpred31_sram_bits = (uint32_t)sram[xpred_base + idx31].to_uint();
+    ret.xpred31_exact = (ret.dut_xpred31_bits == ret.ref_xpred31_bits);
+    ret.y31_bits = infer_words[idx31];
+
+    const float y31 = bits_to_f32(ret.y31_bits);
+    const float dut_logit31 = bits_to_f32(ret.dut_logit31_bits);
+    const float trace_logit31 = bits_to_f32(ret.trace_logit31_bits);
+    const float dut_st31 = bits_to_f32(ret.dut_st31_bits);
+    const float ref_st31 = bits_to_f32(ret.ref_st31_bits);
+    const float sign_y31 = (y31 > 0.0f) ? 1.0f : ((y31 < 0.0f) ? -1.0f : 0.0f);
+    const uint32_t ref_rule_xpred31_bits = f32_to_bits(((dut_logit31 * sign_y31) < 0.0f) ? 1.0f : 0.0f);
+    const uint32_t dut_rule_xpred31_bits = f32_to_bits(((dut_logit31 * y31) < 0.0f) ? 1.0f : 0.0f);
+
+    if (ret.st_any_mismatch) {
+        std::printf(
+            "[backup_io8][debug_st] sample=%u st_exact=FAIL first_mismatch_t=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)pick.sample_id,
+            (unsigned)ret.st_first_mismatch_idx,
+            (unsigned)dut_st_words[ret.st_first_mismatch_idx],
+            (unsigned)ref_st_words[ret.st_first_mismatch_idx]);
+    } else {
+        std::printf(
+            "[backup_io8][debug_st] sample=%u st_exact=PASS hash_dut=0x%08X hash_ref=0x%08X\n",
+            (unsigned)pick.sample_id,
+            (unsigned)fnv1a_u32_words(dut_st_words),
+            (unsigned)fnv1a_u32_words(ref_st_words));
+    }
+    std::printf(
+        "[backup_io8][debug_st31] sample=%u idx=%u dut=0x%08X(%.9g) ref=0x%08X(%.9g) exact=%u\n",
+        (unsigned)pick.sample_id,
+        (unsigned)idx31,
+        (unsigned)ret.dut_st31_bits,
+        (double)dut_st31,
+        (unsigned)ret.ref_st31_bits,
+        (double)ref_st31,
+        (unsigned)(ret.st31_exact ? 1u : 0u));
+
+    const uint32_t st_win_begin = (idx31 >= 2u) ? (idx31 - 2u) : 0u;
+    const uint32_t st_win_end = ((idx31 + 2u) < token_count) ? (idx31 + 2u) : (token_count - 1u);
+    DEBUG_ST_WINDOW_LOOP: for (uint32_t t = st_win_begin; t <= st_win_end; ++t) {
+        std::printf(
+            "[backup_io8][debug_st_window] sample=%u t=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)pick.sample_id,
+            (unsigned)t,
+            (unsigned)dut_st_words[t],
+            (unsigned)ref_st_words[t]);
+    }
+
+    std::printf(
+        "[backup_io8][debug_logit31] sample=%u idx=%u dut=0x%08X(%.9g) ref_formula=0x%08X(%.9g) ref_trace=0x%08X(%.9g) exact_formula=%u\n",
+        (unsigned)pick.sample_id,
+        (unsigned)idx31,
+        (unsigned)ret.dut_logit31_bits,
+        (double)dut_logit31,
+        (unsigned)ret.ref_logit31_bits,
+        (double)ref_logit31,
+        (unsigned)ret.trace_logit31_bits,
+        (double)trace_logit31,
+        (unsigned)(ret.logit31_exact ? 1u : 0u));
+
+    std::printf(
+        "[backup_io8][debug_xpred31] sample=%u idx=%u dut_stream=0x%08X dut_sram=0x%08X ref_trace=0x%08X exact=%u\n",
+        (unsigned)pick.sample_id,
+        (unsigned)idx31,
+        (unsigned)ret.dut_xpred31_bits,
+        (unsigned)dut_xpred31_sram_bits,
+        (unsigned)ret.ref_xpred31_bits,
+        (unsigned)(ret.xpred31_exact ? 1u : 0u));
+
+    std::printf(
+        "[backup_io8][debug_decision31] sample=%u idx=%u y_bits=0x%08X y=%.9g sign_y=%.1f dut_rule_xpred=0x%08X ref_rule_xpred=0x%08X\n",
+        (unsigned)pick.sample_id,
+        (unsigned)idx31,
+        (unsigned)ret.y31_bits,
+        (double)y31,
+        (double)sign_y31,
+        (unsigned)dut_rule_xpred31_bits,
+        (unsigned)ref_rule_xpred31_bits);
+
+    if (!ret.st31_exact || ret.st_any_mismatch) {
+        ret.boundary_bucket = 1u; // A
+        std::printf(
+            "[backup_io8][debug_focus_boundary] sample=%u idx=%u class=A_s_t_consume\n",
+            (unsigned)pick.sample_id,
+            (unsigned)idx31);
+    } else if (!ret.logit31_exact) {
+        ret.boundary_bucket = 2u; // B
+        std::printf(
+            "[backup_io8][debug_focus_boundary] sample=%u idx=%u class=B_out_fc_consume\n",
+            (unsigned)pick.sample_id,
+            (unsigned)idx31);
+    } else if (!ret.xpred31_exact) {
+        ret.boundary_bucket = 3u; // C
+        std::printf(
+            "[backup_io8][debug_focus_boundary] sample=%u idx=%u class=C_xpred_decision\n",
+            (unsigned)pick.sample_id,
+            (unsigned)idx31);
+    } else {
+        ret.boundary_bucket = 4u; // D
+        std::printf(
+            "[backup_io8][debug_focus_boundary] sample=%u idx=%u class=D_no_local_divergence\n",
+            (unsigned)pick.sample_id,
+            (unsigned)idx31);
     }
 
     return ret;
@@ -1087,6 +1294,16 @@ int main() {
             mismatch_ret = r;
             break;
         }
+    }
+    if (mismatch_found) {
+        std::printf(
+            "[backup_io8][debug_focus_summary] sample=%u idx=%u st_exact=%u logit_exact=%u xpred_exact=%u boundary_class=%u\n",
+            (unsigned)mismatch_sample,
+            (unsigned)mismatch_ret.focused_idx,
+            (unsigned)(mismatch_ret.st31_exact ? 1u : 0u),
+            (unsigned)(mismatch_ret.logit31_exact ? 1u : 0u),
+            (unsigned)(mismatch_ret.xpred31_exact ? 1u : 0u),
+            (unsigned)mismatch_ret.boundary_bucket);
     }
 
     std::vector<uint32_t> readmem_payload_prefix_post;
