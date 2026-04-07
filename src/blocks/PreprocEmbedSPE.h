@@ -10,8 +10,10 @@
 #include "AecctTypes.h"
 #include "AecctProtocol.h"
 #include "AecctRanges.h"
+#include "AecctUtil.h"
 #include "AttnTopManagedPackets.h"
 #include "PreprocDescBringup.h"
+#include "gen/WeightStreamOrder.h"
 
 namespace aecct {
 
@@ -130,6 +132,45 @@ static inline void PreprocEmbedSPECoreWindow(
 
     const uint32_t phase_id_u32 = (uint32_t)contract.phase_id;
     const uint32_t subphase_id_u32 = (uint32_t)ATTN_SUBPHASE_QSRC;
+    const uint32_t param_base = (uint32_t)contract.w_base_word.to_uint();
+    const uint32_t h_base = param_base + kParamMeta[20u].offset_w;   // BCH_H_BITPACK
+    const uint32_t src_embed_base = param_base + kParamMeta[21u].offset_w; // src_embed
+    const uint32_t lpe_base = param_base + kParamMeta[68u].offset_w; // lpe_token
+    const uint32_t src_embed_dim = (uint32_t)kParamMeta[21u].d1;
+    const uint32_t lpe_dim = (uint32_t)kParamMeta[68u].d1;
+
+    fp32_t var_feature[CODE_N];
+    uint32_t hard_bit[CODE_N];
+    fp32_t check_feature[CODE_C];
+    fp32_t node_feature[N_NODES];
+
+    PREPROC_VAR_FEATURE_INIT_LOOP: for (uint32_t v = 0u; v < (uint32_t)CODE_N; ++v) {
+        const u32_t y_bits =
+            (v < infer_in_words) ?
+                ((topfed_in_words != 0) ? topfed_in_words[v] : sram[in_base + v]) :
+                bits_from_fp32(fp32_zero());
+        const fp32_t y = fp32_from_bits(y_bits);
+        var_feature[v] = (y < fp32_zero()) ? (fp32_zero() - y) : y;
+        hard_bit[v] = (y < fp32_zero()) ? 1u : 0u;
+        node_feature[v] = var_feature[v];
+    }
+
+    PREPROC_CHECK_FEATURE_INIT_LOOP: for (uint32_t c = 0u; c < (uint32_t)CODE_C; ++c) {
+        uint32_t parity = 0u;
+        PREPROC_CHECK_PARITY_LOOP: for (uint32_t v = 0u; v < (uint32_t)CODE_N; ++v) {
+            const uint32_t bit_index = c * (uint32_t)CODE_N + v;
+            const uint32_t word_index = bit_index >> 5;
+            const uint32_t bit_in_word = bit_index & 31u;
+            const uint32_t h_word = (uint32_t)sram[h_base + word_index].to_uint();
+            const uint32_t h_bit = (h_word >> bit_in_word) & 1u;
+            if (h_bit != 0u) {
+                parity ^= hard_bit[v];
+            }
+        }
+        check_feature[c] = (parity == 0u) ? fp32_one() : (fp32_zero() - fp32_one());
+        node_feature[(uint32_t)CODE_N + c] = check_feature[c];
+    }
+
     PREPROC_TOP_MANAGED_TOKEN_LOOP: for (uint32_t t = token_begin; t < token_end; ++t) {
         const uint32_t token_base = t * token_stride;
         PREPROC_TOP_MANAGED_TILE_LOOP: for (uint32_t dt = tile_begin; dt < tile_end; ++dt) {
@@ -156,11 +197,15 @@ static inline void PreprocEmbedSPECoreWindow(
                 if (linear_idx >= x_out_words) {
                     continue;
                 }
-                if (linear_idx < infer_in_words) {
-                    // Input consume priority: Top-fed payload first, local SRAM read as compatibility fallback.
-                    const u32_t in_bits =
-                        (topfed_in_words != 0) ? topfed_in_words[linear_idx] : sram[in_base + linear_idx];
-                    sram[x_base + linear_idx] = in_bits;
+                const uint32_t d = linear_idx - token_base;
+                if (d < src_embed_dim) {
+                    const u32_t embed_bits = sram[src_embed_base + t * src_embed_dim + d];
+                    const fp32_t embed_v = fp32_from_bits(embed_bits);
+                    const fp32_t x = node_feature[t] * embed_v;
+                    sram[x_base + linear_idx] = bits_from_fp32(x);
+                } else if (d < (src_embed_dim + lpe_dim)) {
+                    const uint32_t lpe_d = d - src_embed_dim;
+                    sram[x_base + linear_idx] = sram[lpe_base + t * lpe_dim + lpe_d];
                 } else {
                     // Tail beyond infer payload is explicitly zero-filled into X_WORK.
                     sram[x_base + linear_idx] = (u32_t)0u;

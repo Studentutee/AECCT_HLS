@@ -22,6 +22,8 @@ struct RefModelIO {
   bit1_t* out_x_pred;
   // optional FinalHead scalar s_t dump: [B, 75], row-major
   double* out_finalhead_s_t;
+  // optional end_norm dump: [B, 75, 32], row-major
+  double* out_end_norm;
 
   int B;
   int N;

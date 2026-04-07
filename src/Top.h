@@ -1352,6 +1352,7 @@ namespace aecct {
         contract.start = true;
         contract.phase_id = regs.infer_ingest_contract.phase_id;
         contract.x_work_base_word = (u32_t)X_OUT_BASE_WORD;
+        contract.w_base_word = regs.w_base_word;
         contract.token_range = regs.infer_ingest_contract.token_range;
         contract.tile_range = regs.infer_ingest_contract.tile_range;
 
@@ -1404,35 +1405,15 @@ namespace aecct {
             attn_top_managed_tile_count(d_model, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
         contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
         contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
-
-        // Affine preload is a local bridge from Top-owned SRAM into LN call arguments.
-        u32_t topfed_gamma_words[LN_D_MODEL];
-        u32_t topfed_beta_words[LN_D_MODEL];
-        TOPFED_LN_AFFINE_INIT_LOOP: for (uint32_t c = 0u; c < (uint32_t)LN_D_MODEL; ++c) {
-            topfed_gamma_words[c] = 0;
-            topfed_beta_words[c] = 0;
+        // Backup bring-up contract alignment:
+        // ref_model step0 path is preproc_x -> layer0 (no standalone pre-layer LN stage).
+        // Keep Top ownership unchanged and preserve X_PAGE handoff by pass-through copy.
+        const uint32_t src_base = (uint32_t)LN_X_IN_BASE_WORD;
+        const uint32_t dst_base = (uint32_t)LN_X_OUT_BASE_WORD;
+        const uint32_t words = token_count * d_model;
+        TOP_PRELAYER_LN_BYPASS_COPY_LOOP: for (uint32_t i = 0u; i < words; ++i) {
+            sram[dst_base + i] = sram[src_base + i];
         }
-        const uint32_t gamma_base = (uint32_t)contract.gamma_base_word.to_uint();
-        const uint32_t beta_base = (uint32_t)contract.beta_base_word.to_uint();
-        uint32_t affine_words = d_model;
-        if (affine_words > (uint32_t)LN_D_MODEL) {
-            affine_words = (uint32_t)LN_D_MODEL;
-        }
-        TOPFED_LN_AFFINE_PRELOAD_LOOP: for (uint32_t c = 0u; c < affine_words; ++c) {
-            topfed_gamma_words[c] = sram[gamma_base + c];
-            topfed_beta_words[c] = sram[beta_base + c];
-        }
-
-        // Top-owned dispatch: Top builds the contract and block consumes this window.
-        LayerNormBlockCoreWindow<u32_t*>(
-            sram,
-            cfg,
-            (u32_t)LN_X_IN_BASE_WORD,
-            (u32_t)LN_X_OUT_BASE_WORD,
-            contract,
-            topfed_gamma_words,
-            topfed_beta_words
-        );
         contract.done = true;
     }
 

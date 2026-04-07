@@ -108,10 +108,15 @@ struct LocalContractResult {
 struct RefModelStageCompareResult {
     uint32_t sample_idx;
     uint32_t focused_idx;
+    bool end_norm_exact;
     bool st_exact;
     bool logit_exact;
     bool xpred_exact;
     bool all_exact;
+    uint32_t end_norm_first_mismatch_token;
+    uint32_t end_norm_first_mismatch_dim;
+    uint32_t end_norm_dut_bits;
+    uint32_t end_norm_ref_bits;
     uint32_t st_first_mismatch_idx;
     uint32_t st_dut_bits;
     uint32_t st_ref_bits;
@@ -1033,10 +1038,15 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     RefModelStageCompareResult r;
     r.sample_idx = sample_idx;
     r.focused_idx = focused_idx;
+    r.end_norm_exact = true;
     r.st_exact = true;
     r.logit_exact = true;
     r.xpred_exact = true;
     r.all_exact = true;
+    r.end_norm_first_mismatch_token = 0u;
+    r.end_norm_first_mismatch_dim = 0u;
+    r.end_norm_dut_bits = 0u;
+    r.end_norm_ref_bits = 0u;
     r.st_first_mismatch_idx = 0u;
     r.st_dut_bits = 0u;
     r.st_ref_bits = 0u;
@@ -1090,6 +1100,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_logits((uint32_t)EXP_LEN_OUT_LOGITS_WORDS, 0.0);
     std::vector<aecct_ref::bit1_t> ref_xpred((uint32_t)EXP_LEN_OUT_XPRED_WORDS);
     std::vector<double> ref_st((uint32_t)N_NODES, 0.0);
+    std::vector<double> ref_end_norm((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
 
     aecct_ref::RefModel ref_model;
     aecct_ref::RefModelIO ref_io;
@@ -1098,13 +1109,35 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_logits = ref_logits.data();
     ref_io.out_x_pred = ref_xpred.data();
     ref_io.out_finalhead_s_t = ref_st.data();
+    ref_io.out_end_norm = ref_end_norm.data();
     ref_io.B = 1;
     ref_io.N = (int)EXP_LEN_OUT_XPRED_WORDS;
     ref_model.infer_step0(ref_io);
 
     const aecct::u32_t* sram = aecct::top_sram();
+    const uint32_t x_end_base = (uint32_t)aecct::top_peek_infer_final_x_base_word().to_uint();
     const uint32_t final_scalar_base = (uint32_t)sram_map::SCR_FINAL_SCALAR_BASE_W;
     const uint32_t logits_base = (uint32_t)aecct::top_peek_infer_logits_base_word().to_uint();
+    const uint32_t d_model = (uint32_t)D_MODEL;
+
+    REF_END_NORM_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = x_end_base + t * d_model;
+        REF_END_NORM_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t dut_bits = (uint32_t)sram[row_base + d].to_uint();
+            const uint32_t ref_bits = f32_to_bits((float)ref_end_norm[t * d_model + d]);
+            if (dut_bits != ref_bits) {
+                r.end_norm_exact = false;
+                r.end_norm_first_mismatch_token = t;
+                r.end_norm_first_mismatch_dim = d;
+                r.end_norm_dut_bits = dut_bits;
+                r.end_norm_ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!r.end_norm_exact) {
+            break;
+        }
+    }
 
     REF_ST_COMPARE_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t dut_bits = (uint32_t)sram[final_scalar_base + t].to_uint();
@@ -1154,8 +1187,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         r.xpred_ref_bits = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
     }
 
-    r.all_exact = r.st_exact && r.logit_exact && r.xpred_exact;
-    if (!r.st_exact) {
+    r.all_exact = r.end_norm_exact && r.st_exact && r.logit_exact && r.xpred_exact;
+    if (!r.end_norm_exact) {
+        r.boundary_bucket = 0u;
+    } else if (!r.st_exact) {
         r.boundary_bucket = 1u;
     } else if (!r.logit_exact) {
         r.boundary_bucket = 2u;
@@ -1173,6 +1208,32 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     const uint32_t focused_dut_xpred = got_words[focused_idx];
     const uint32_t focused_ref_xpred = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
     const uint32_t focused_trace_xpred = trace_xpred_words[focused_idx];
+    const uint32_t focused_end_d = 0u;
+    const uint32_t focused_dut_end_norm_bits =
+        (uint32_t)sram[x_end_base + focused_idx * d_model + focused_end_d].to_uint();
+    const uint32_t focused_ref_end_norm_bits =
+        f32_to_bits((float)ref_end_norm[focused_idx * d_model + focused_end_d]);
+    std::printf(
+        "[backup_io8][ref_model_end_norm] sample=%u focus_token=%u focus_dim=%u dut=0x%08X ref_model=0x%08X exact=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)focused_idx,
+        (unsigned)focused_end_d,
+        (unsigned)focused_dut_end_norm_bits,
+        (unsigned)focused_ref_end_norm_bits,
+        (unsigned)(focused_dut_end_norm_bits == focused_ref_end_norm_bits ? 1u : 0u));
+    if (!r.end_norm_exact) {
+        std::printf(
+            "[backup_io8][ref_model_end_norm] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref_model=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.end_norm_first_mismatch_token,
+            (unsigned)r.end_norm_first_mismatch_dim,
+            (unsigned)r.end_norm_dut_bits,
+            (unsigned)r.end_norm_ref_bits);
+    } else {
+        std::printf(
+            "[backup_io8][ref_model_end_norm] sample=%u exact=1\n",
+            (unsigned)sample_idx);
+    }
     std::printf(
         "[backup_io8][ref_model_probe] sample=%u idx=%u dut_st=0x%08X ref_model_st=0x%08X dut_logit=0x%08X ref_model_logit=0x%08X trace_logit=0x%08X dut_xpred=0x%08X ref_model_xpred=0x%08X trace_xpred=0x%08X\n",
         (unsigned)sample_idx,
@@ -1186,8 +1247,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)focused_ref_xpred,
         (unsigned)focused_trace_xpred);
     std::printf(
-        "[backup_io8][ref_model_probe] sample=%u st_exact=%u logit_exact=%u xpred_exact=%u first_st_mismatch_idx=%u first_logit_mismatch_idx=%u first_xpred_mismatch_idx=%u boundary_class=%u\n",
+        "[backup_io8][ref_model_probe] sample=%u end_norm_exact=%u st_exact=%u logit_exact=%u xpred_exact=%u first_st_mismatch_idx=%u first_logit_mismatch_idx=%u first_xpred_mismatch_idx=%u boundary_class=%u\n",
         (unsigned)sample_idx,
+        (unsigned)(r.end_norm_exact ? 1u : 0u),
         (unsigned)(r.st_exact ? 1u : 0u),
         (unsigned)(r.logit_exact ? 1u : 0u),
         (unsigned)(r.xpred_exact ? 1u : 0u),
@@ -1196,7 +1258,14 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)r.xpred_first_mismatch_idx,
         (unsigned)r.boundary_bucket);
     if (!r.all_exact) {
-        if (r.boundary_bucket == 1u) {
+        if (r.boundary_bucket == 0u) {
+            std::printf(
+                "[backup_io8][ref_model_probe] first_divergence=end_norm_producer token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)r.end_norm_first_mismatch_token,
+                (unsigned)r.end_norm_first_mismatch_dim,
+                (unsigned)r.end_norm_dut_bits,
+                (unsigned)r.end_norm_ref_bits);
+        } else if (r.boundary_bucket == 1u) {
             std::printf(
                 "[backup_io8][ref_model_probe] first_divergence=final_embedding_or_upstream idx=%u dut=0x%08X ref=0x%08X\n",
                 (unsigned)r.st_first_mismatch_idx,

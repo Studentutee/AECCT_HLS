@@ -1933,6 +1933,14 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
       }
     }
+    if (io.out_end_norm != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_end_norm[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(end_norm[t][d].to_float());
+        }
+      }
+    }
 
     // Logical name: s_t (token-wise FinalEmbedding scalar), trace tensor name kept stable.
     static fp32_ref_t final_node_logits[TOKENS_T][1];
