@@ -108,11 +108,21 @@ struct LocalContractResult {
 struct RefModelStageCompareResult {
     uint32_t sample_idx;
     uint32_t focused_idx;
+    bool layer1_ffn2_exact;
+    bool layer1_ffn_ln_out_exact;
     bool end_norm_exact;
     bool st_exact;
     bool logit_exact;
     bool xpred_exact;
     bool all_exact;
+    uint32_t layer1_ffn2_first_mismatch_token;
+    uint32_t layer1_ffn2_first_mismatch_dim;
+    uint32_t layer1_ffn2_dut_bits;
+    uint32_t layer1_ffn2_ref_bits;
+    uint32_t layer1_ffn_ln_out_first_mismatch_token;
+    uint32_t layer1_ffn_ln_out_first_mismatch_dim;
+    uint32_t layer1_ffn_ln_out_dut_bits;
+    uint32_t layer1_ffn_ln_out_ref_bits;
     uint32_t end_norm_first_mismatch_token;
     uint32_t end_norm_first_mismatch_dim;
     uint32_t end_norm_dut_bits;
@@ -126,7 +136,7 @@ struct RefModelStageCompareResult {
     uint32_t xpred_first_mismatch_idx;
     uint32_t xpred_dut_bits;
     uint32_t xpred_ref_bits;
-    uint32_t boundary_bucket; // A=1, B=2, C=3, D=4
+    uint32_t boundary_bucket; // 0=layer1 pre-ln, 1=layer1 sublayer1 ln, 2=endLN core, 3=s_t, 4=logit, 5=x_pred, 6=none
 };
 
 static_assert(
@@ -1038,11 +1048,21 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     RefModelStageCompareResult r;
     r.sample_idx = sample_idx;
     r.focused_idx = focused_idx;
+    r.layer1_ffn2_exact = true;
+    r.layer1_ffn_ln_out_exact = true;
     r.end_norm_exact = true;
     r.st_exact = true;
     r.logit_exact = true;
     r.xpred_exact = true;
     r.all_exact = true;
+    r.layer1_ffn2_first_mismatch_token = 0u;
+    r.layer1_ffn2_first_mismatch_dim = 0u;
+    r.layer1_ffn2_dut_bits = 0u;
+    r.layer1_ffn2_ref_bits = 0u;
+    r.layer1_ffn_ln_out_first_mismatch_token = 0u;
+    r.layer1_ffn_ln_out_first_mismatch_dim = 0u;
+    r.layer1_ffn_ln_out_dut_bits = 0u;
+    r.layer1_ffn_ln_out_ref_bits = 0u;
     r.end_norm_first_mismatch_token = 0u;
     r.end_norm_first_mismatch_dim = 0u;
     r.end_norm_dut_bits = 0u;
@@ -1056,7 +1076,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.xpred_first_mismatch_idx = 0u;
     r.xpred_dut_bits = 0u;
     r.xpred_ref_bits = 0u;
-    r.boundary_bucket = 4u;
+    r.boundary_bucket = 6u;
 
     std::vector<uint32_t> infer_words;
     std::vector<uint32_t> trace_logits_words;
@@ -1100,6 +1120,8 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_logits((uint32_t)EXP_LEN_OUT_LOGITS_WORDS, 0.0);
     std::vector<aecct_ref::bit1_t> ref_xpred((uint32_t)EXP_LEN_OUT_XPRED_WORDS);
     std::vector<double> ref_st((uint32_t)N_NODES, 0.0);
+    std::vector<double> ref_layer1_ffn2_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer1_ffn_ln_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_end_norm((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
 
     aecct_ref::RefModel ref_model;
@@ -1109,16 +1131,61 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_logits = ref_logits.data();
     ref_io.out_x_pred = ref_xpred.data();
     ref_io.out_finalhead_s_t = ref_st.data();
+    ref_io.out_layer1_ffn2_out = ref_layer1_ffn2_out.data();
+    ref_io.out_layer1_ffn_ln_out = ref_layer1_ffn_ln_out.data();
     ref_io.out_end_norm = ref_end_norm.data();
     ref_io.B = 1;
     ref_io.N = (int)EXP_LEN_OUT_XPRED_WORDS;
     ref_model.infer_step0(ref_io);
 
     const aecct::u32_t* sram = aecct::top_sram();
+    const uint32_t x_endln_input_base =
+        (uint32_t)aecct::top_peek_infer_endln_input_base_word().to_uint();
     const uint32_t x_end_base = (uint32_t)aecct::top_peek_infer_final_x_base_word().to_uint();
+    const uint32_t layer1_ffn2_base =
+        (uint32_t)aecct::default_ffn_scratch().w2_out_base_word.to_uint();
     const uint32_t final_scalar_base = (uint32_t)sram_map::SCR_FINAL_SCALAR_BASE_W;
     const uint32_t logits_base = (uint32_t)aecct::top_peek_infer_logits_base_word().to_uint();
     const uint32_t d_model = (uint32_t)D_MODEL;
+
+    REF_LAYER1_FFN2_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        REF_LAYER1_FFN2_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t dut_bits = (uint32_t)sram[layer1_ffn2_base + row_base + d].to_uint();
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_ffn2_out[row_base + d]);
+            if (dut_bits != ref_bits) {
+                r.layer1_ffn2_exact = false;
+                r.layer1_ffn2_first_mismatch_token = t;
+                r.layer1_ffn2_first_mismatch_dim = d;
+                r.layer1_ffn2_dut_bits = dut_bits;
+                r.layer1_ffn2_ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!r.layer1_ffn2_exact) {
+            break;
+        }
+    }
+
+    REF_LAYER1_OUT_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        REF_LAYER1_OUT_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t dut_bits =
+                (uint32_t)aecct::top_peek_infer_endln_input_word(row_base + d).to_uint();
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_ffn_ln_out[row_base + d]);
+            if (dut_bits != ref_bits) {
+                r.layer1_ffn_ln_out_exact = false;
+                r.layer1_ffn_ln_out_first_mismatch_token = t;
+                r.layer1_ffn_ln_out_first_mismatch_dim = d;
+                r.layer1_ffn_ln_out_dut_bits = dut_bits;
+                r.layer1_ffn_ln_out_ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!r.layer1_ffn_ln_out_exact) {
+            break;
+        }
+    }
 
     REF_END_NORM_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = x_end_base + t * d_model;
@@ -1187,17 +1254,27 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         r.xpred_ref_bits = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
     }
 
-    r.all_exact = r.end_norm_exact && r.st_exact && r.logit_exact && r.xpred_exact;
-    if (!r.end_norm_exact) {
+    r.all_exact =
+        r.layer1_ffn2_exact &&
+        r.layer1_ffn_ln_out_exact &&
+        r.end_norm_exact &&
+        r.st_exact &&
+        r.logit_exact &&
+        r.xpred_exact;
+    if (!r.layer1_ffn2_exact) {
         r.boundary_bucket = 0u;
-    } else if (!r.st_exact) {
+    } else if (!r.layer1_ffn_ln_out_exact) {
         r.boundary_bucket = 1u;
-    } else if (!r.logit_exact) {
+    } else if (!r.end_norm_exact) {
         r.boundary_bucket = 2u;
-    } else if (!r.xpred_exact) {
+    } else if (!r.st_exact) {
         r.boundary_bucket = 3u;
-    } else {
+    } else if (!r.logit_exact) {
         r.boundary_bucket = 4u;
+    } else if (!r.xpred_exact) {
+        r.boundary_bucket = 5u;
+    } else {
+        r.boundary_bucket = 6u;
     }
 
     const uint32_t focused_dut_st = (uint32_t)sram[final_scalar_base + focused_idx].to_uint();
@@ -1209,10 +1286,62 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     const uint32_t focused_ref_xpred = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
     const uint32_t focused_trace_xpred = trace_xpred_words[focused_idx];
     const uint32_t focused_end_d = 0u;
+    const uint32_t focused_dut_layer1_ffn2_bits =
+        (uint32_t)sram[layer1_ffn2_base + focused_idx * d_model + focused_end_d].to_uint();
+    const uint32_t focused_ref_layer1_ffn2_bits =
+        f32_to_bits((float)ref_layer1_ffn2_out[focused_idx * d_model + focused_end_d]);
+    const uint32_t focused_dut_layer1_bits =
+        (uint32_t)aecct::top_peek_infer_endln_input_word(focused_idx * d_model + focused_end_d).to_uint();
+    const uint32_t focused_ref_layer1_bits =
+        f32_to_bits((float)ref_layer1_ffn_ln_out[focused_idx * d_model + focused_end_d]);
     const uint32_t focused_dut_end_norm_bits =
         (uint32_t)sram[x_end_base + focused_idx * d_model + focused_end_d].to_uint();
     const uint32_t focused_ref_end_norm_bits =
         f32_to_bits((float)ref_end_norm[focused_idx * d_model + focused_end_d]);
+    std::printf(
+        "[backup_io8][ref_model_layer1_ffn_ln_out] sample=%u focus_token=%u focus_dim=%u dut=0x%08X ref_model=0x%08X exact=%u endln_input_base=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)focused_idx,
+        (unsigned)focused_end_d,
+        (unsigned)focused_dut_layer1_bits,
+        (unsigned)focused_ref_layer1_bits,
+        (unsigned)(focused_dut_layer1_bits == focused_ref_layer1_bits ? 1u : 0u),
+        (unsigned)x_endln_input_base);
+    std::printf(
+        "[backup_io8][ref_model_layer1_ffn2_out] sample=%u focus_token=%u focus_dim=%u dut=0x%08X ref_model=0x%08X exact=%u ffn2_base=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)focused_idx,
+        (unsigned)focused_end_d,
+        (unsigned)focused_dut_layer1_ffn2_bits,
+        (unsigned)focused_ref_layer1_ffn2_bits,
+        (unsigned)(focused_dut_layer1_ffn2_bits == focused_ref_layer1_ffn2_bits ? 1u : 0u),
+        (unsigned)layer1_ffn2_base);
+    if (!r.layer1_ffn2_exact) {
+        std::printf(
+            "[backup_io8][ref_model_layer1_ffn2_out] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref_model=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer1_ffn2_first_mismatch_token,
+            (unsigned)r.layer1_ffn2_first_mismatch_dim,
+            (unsigned)r.layer1_ffn2_dut_bits,
+            (unsigned)r.layer1_ffn2_ref_bits);
+    } else {
+        std::printf(
+            "[backup_io8][ref_model_layer1_ffn2_out] sample=%u exact=1\n",
+            (unsigned)sample_idx);
+    }
+    if (!r.layer1_ffn_ln_out_exact) {
+        std::printf(
+            "[backup_io8][ref_model_layer1_ffn_ln_out] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref_model=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer1_ffn_ln_out_first_mismatch_token,
+            (unsigned)r.layer1_ffn_ln_out_first_mismatch_dim,
+            (unsigned)r.layer1_ffn_ln_out_dut_bits,
+            (unsigned)r.layer1_ffn_ln_out_ref_bits);
+    } else {
+        std::printf(
+            "[backup_io8][ref_model_layer1_ffn_ln_out] sample=%u exact=1\n",
+            (unsigned)sample_idx);
+    }
     std::printf(
         "[backup_io8][ref_model_end_norm] sample=%u focus_token=%u focus_dim=%u dut=0x%08X ref_model=0x%08X exact=%u\n",
         (unsigned)sample_idx,
@@ -1247,8 +1376,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)focused_ref_xpred,
         (unsigned)focused_trace_xpred);
     std::printf(
-        "[backup_io8][ref_model_probe] sample=%u end_norm_exact=%u st_exact=%u logit_exact=%u xpred_exact=%u first_st_mismatch_idx=%u first_logit_mismatch_idx=%u first_xpred_mismatch_idx=%u boundary_class=%u\n",
+        "[backup_io8][ref_model_probe] sample=%u layer1_ffn2_exact=%u layer1_ffn_ln_out_exact=%u end_norm_exact=%u st_exact=%u logit_exact=%u xpred_exact=%u first_st_mismatch_idx=%u first_logit_mismatch_idx=%u first_xpred_mismatch_idx=%u boundary_class=%u\n",
         (unsigned)sample_idx,
+        (unsigned)(r.layer1_ffn2_exact ? 1u : 0u),
+        (unsigned)(r.layer1_ffn_ln_out_exact ? 1u : 0u),
         (unsigned)(r.end_norm_exact ? 1u : 0u),
         (unsigned)(r.st_exact ? 1u : 0u),
         (unsigned)(r.logit_exact ? 1u : 0u),
@@ -1260,29 +1391,47 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     if (!r.all_exact) {
         if (r.boundary_bucket == 0u) {
             std::printf(
-                "[backup_io8][ref_model_probe] first_divergence=end_norm_producer token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                "[backup_io8][ref_model_probe] first_divergence=layer1_pre_ln_producer token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)r.layer1_ffn2_first_mismatch_token,
+                (unsigned)r.layer1_ffn2_first_mismatch_dim,
+                (unsigned)r.layer1_ffn2_dut_bits,
+                (unsigned)r.layer1_ffn2_ref_bits);
+        } else if (r.boundary_bucket == 1u) {
+            std::printf(
+                "[backup_io8][ref_model_probe] first_divergence=layer1_sublayer1_ln token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)r.layer1_ffn_ln_out_first_mismatch_token,
+                (unsigned)r.layer1_ffn_ln_out_first_mismatch_dim,
+                (unsigned)r.layer1_ffn_ln_out_dut_bits,
+                (unsigned)r.layer1_ffn_ln_out_ref_bits);
+        } else if (r.boundary_bucket == 2u) {
+            std::printf(
+                "[backup_io8][ref_model_probe] first_divergence=endln_core token=%u dim=%u dut=0x%08X ref=0x%08X\n",
                 (unsigned)r.end_norm_first_mismatch_token,
                 (unsigned)r.end_norm_first_mismatch_dim,
                 (unsigned)r.end_norm_dut_bits,
                 (unsigned)r.end_norm_ref_bits);
-        } else if (r.boundary_bucket == 1u) {
+        } else if (r.boundary_bucket == 3u) {
             std::printf(
                 "[backup_io8][ref_model_probe] first_divergence=final_embedding_or_upstream idx=%u dut=0x%08X ref=0x%08X\n",
                 (unsigned)r.st_first_mismatch_idx,
                 (unsigned)r.st_dut_bits,
                 (unsigned)r.st_ref_bits);
-        } else if (r.boundary_bucket == 2u) {
+        } else if (r.boundary_bucket == 4u) {
             std::printf(
                 "[backup_io8][ref_model_probe] first_divergence=out_fc_consume idx=%u dut=0x%08X ref=0x%08X\n",
                 (unsigned)r.logit_first_mismatch_idx,
                 (unsigned)r.logit_dut_bits,
                 (unsigned)r.logit_ref_bits);
-        } else {
+        } else if (r.boundary_bucket == 5u) {
             std::printf(
                 "[backup_io8][ref_model_probe] first_divergence=xpred_decision idx=%u dut=0x%08X ref=0x%08X\n",
                 (unsigned)r.xpred_first_mismatch_idx,
                 (unsigned)r.xpred_dut_bits,
                 (unsigned)r.xpred_ref_bits);
+        } else {
+            std::printf(
+                "[backup_io8][ref_model_probe] first_divergence=none sample=%u all_stages_exact=1\n",
+                (unsigned)sample_idx);
         }
     } else {
         std::printf(

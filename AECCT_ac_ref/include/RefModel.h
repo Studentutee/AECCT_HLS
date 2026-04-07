@@ -24,6 +24,10 @@ struct RefModelIO {
   double* out_finalhead_s_t;
   // optional end_norm dump: [B, 75, 32], row-major
   double* out_end_norm;
+  // optional layer1_ffn_ln_out dump: [B, 75, 32], row-major
+  double* out_layer1_ffn_ln_out;
+  // optional layer1_ffn2_out dump: [B, 75, 32], row-major
+  double* out_layer1_ffn2_out;
 
   int B;
   int N;

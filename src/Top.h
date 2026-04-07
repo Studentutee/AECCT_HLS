@@ -353,6 +353,9 @@ namespace aecct {
         AcceptedCommitMetadataRecord accepted_commit_record;
         // Local mirror for INFER payload debug/probe only; not a shared-SRAM owner contract.
         u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
+        // Local mirror for EndLN input boundary debug/probe only; not a shared-SRAM owner contract.
+        u32_t infer_endln_input_base_word;
+        u32_t infer_endln_input_shadow[LN_X_TOTAL_WORDS];
         bool p11ac_mainline_path_taken;
         bool p11ac_fallback_taken;
         bool p11ad_mainline_q_path_taken;
@@ -470,6 +473,10 @@ namespace aecct {
             clear_accepted_commit_metadata_record(accepted_commit_record);
             for (unsigned i = 0; i < INFER_IN_WORDS_EXPECTED; ++i) {
                 infer_input_shadow[i] = 0;
+            }
+            infer_endln_input_base_word = 0;
+            for (unsigned i = 0; i < LN_X_TOTAL_WORDS; ++i) {
+                infer_endln_input_shadow[i] = 0;
             }
             p11ac_mainline_path_taken = false;
             p11ac_fallback_taken = false;
@@ -775,6 +782,11 @@ namespace aecct {
     static inline u32_t top_peek_cfg_n_layers() { return top_regs().cfg_n_layers; }
     static inline u32_t top_peek_infer_input_base_word() { return top_regs().infer_ingest_contract.in_base_word; }
     static inline u32_t top_peek_infer_final_x_base_word() { return top_regs().infer_final_x_base_word; }
+    static inline u32_t top_peek_infer_endln_input_base_word() { return top_regs().infer_endln_input_base_word; }
+    static inline u32_t top_peek_infer_endln_input_word(unsigned idx) {
+        if (idx >= (unsigned)LN_X_TOTAL_WORDS) { return (u32_t)0u; }
+        return top_regs().infer_endln_input_shadow[idx];
+    }
     static inline u32_t top_peek_infer_mid_dump_base_word() { return top_regs().infer_mid_dump_base_word; }
     static inline bool top_peek_infer_mid_valid() { return top_regs().infer_mid_valid; }
     static inline u32_t top_peek_infer_logits_base_word() { return top_regs().infer_logits_base_word; }
@@ -3060,6 +3072,13 @@ namespace aecct {
             }
         }
 
+        // EndLN input boundary snapshot for local-only producer/consumer debug.
+        regs.infer_endln_input_base_word = x_in_base;
+        copy_x_words(
+            regs.infer_endln_input_shadow,
+            &sram[(uint32_t)x_in_base.to_uint()],
+            (uint32_t)LN_X_TOTAL_WORDS
+        );
         // end LN must be out-of-place and always runs before FinalHead.
         run_mid_or_end_layernorm(
             false,
@@ -3706,6 +3725,13 @@ namespace aecct {
             }
         }
 
+        // EndLN input boundary snapshot for local-only producer/consumer debug.
+        regs.infer_endln_input_base_word = x_in_base;
+        copy_x_words(
+            regs.infer_endln_input_shadow,
+            &sram[(uint32_t)x_in_base.to_uint()],
+            (uint32_t)LN_X_TOTAL_WORDS
+        );
         run_mid_or_end_layernorm(
             false,
             cfg,

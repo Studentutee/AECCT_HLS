@@ -1909,7 +1909,23 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer1_ffn1_out", layer1_ffn1);
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer1_act_out", layer1_act);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ffn2_out", layer1_ffn2);
+    if (io.out_layer1_ffn2_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_ffn2_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_ffn2[t][d].to_float());
+        }
+      }
+    }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ffn_ln_out", layer1_ffn_ln_out);
+    if (io.out_layer1_ffn_ln_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_ffn_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_ffn_ln_out[t][d].to_float());
+        }
+      }
+    }
 
     // Logical name: endLN_out, kept in end_norm for trace compatibility.
     static fp32_ref_t end_norm[TOKENS_T][D_MODEL];

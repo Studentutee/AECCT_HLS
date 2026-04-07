@@ -436,6 +436,25 @@ static inline void load_layer_sublayer1_norm_params(
     }
 }
 
+static inline void load_layer_sublayer0_norm_params(
+    u32_t* sram,
+    uint32_t param_base_word,
+    uint32_t layer_id,
+    uint32_t gamma_base,
+    uint32_t beta_base,
+    uint32_t d_model
+) {
+    const uint32_t norm_w_id = (layer_id == 0u) ? 42u : 62u;
+    const uint32_t norm_b_id = (layer_id == 0u) ? 6u : 14u;
+    const uint32_t norm_w_base = param_base_word + kParamMeta[norm_w_id].offset_w;
+    const uint32_t norm_b_base = param_base_word + kParamMeta[norm_b_id].offset_w;
+
+    TRANSFORMER_LAYER_SUBLAYER0_NORM_PARAM_COPY_LOOP: for (uint32_t c = 0; c < d_model; ++c) {
+        sram[gamma_base + c] = sram[norm_w_base + c];
+        sram[beta_base + c] = sram[norm_b_base + c];
+    }
+}
+
 // P00-011AN/P00-011AO: first deep Attn+FFN boundary bridges for Catapult-facing progress.
 // This variant keeps Attn/FFN first deep entries array-shaped while preserving
 // accepted core compute semantics.
@@ -494,6 +513,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
             attn_out_topfed_payload_enable);
+
     if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
         // Stage boundary: non-selected partial-prebuild buckets keep full-shell execution.
         AttnLayer0TopManagedWindowBridge<ATTN_STAGE_FULL>(
@@ -1004,6 +1024,21 @@ static inline void TransformerLayer(
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
             attn_out_topfed_payload_enable);
+    const uint32_t layer_token_count = (uint32_t)attn_cfg.token_count.to_uint();
+    const uint32_t x_in_base = (uint32_t)x_in_base_word.to_uint();
+    const uint32_t attn_out_base = (uint32_t)sc.attn_out_base_word.to_uint();
+    const uint32_t pre_ln_residual_base = (uint32_t)sc.ffn.add2_base_word.to_uint();
+    uint32_t layer_words = layer_token_count * d_model;
+    if (layer_words == 0u) {
+        layer_words = (uint32_t)FFN_X_WORDS;
+    }
+    if (layer_words > (uint32_t)FFN_X_WORDS) {
+        layer_words = (uint32_t)FFN_X_WORDS;
+    }
+    // Preserve x_in before attention writeback so sublayer0 residual add consumes the original token row.
+    TRANSFORMER_LAYER_SUBLAYER0_RESIDUAL_SNAPSHOT_LOOP: for (uint32_t i = 0u; i < layer_words; ++i) {
+        sram[pre_ln_residual_base + i] = sram[x_in_base + i];
+    }
     if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
         // Stage boundary: non-selected partial-prebuild buckets keep full-shell execution.
         AttnLayer0<ATTN_STAGE_FULL>(
@@ -1083,6 +1118,36 @@ static inline void TransformerLayer(
         }
     }
 
+    // Sublayer0 compose: residual add (attn_out + original x_in), then LayerNorm to produce FFN input.
+    TRANSFORMER_LAYER_SUBLAYER0_RESIDUAL_ADD_LOOP: for (uint32_t i = 0u; i < layer_words; ++i) {
+        const fp32_t attn_v = fp32_from_bits(sram[attn_out_base + i]);
+        const fp32_t x_prev = fp32_from_bits(sram[pre_ln_residual_base + i]);
+        sram[pre_ln_residual_base + i] = bits_from_fp32(attn_v + x_prev);
+    }
+    const uint32_t sublayer0_gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
+    const uint32_t sublayer0_beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
+    load_layer_sublayer0_norm_params(
+        sram,
+        (uint32_t)pb.param_base_word.to_uint(),
+        (uint32_t)layer_id.to_uint(),
+        sublayer0_gamma_base,
+        sublayer0_beta_base,
+        d_model
+    );
+    LayerNormCfg sublayer0_ln_cfg;
+    sublayer0_ln_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
+    sublayer0_ln_cfg.d_model = (u32_t)d_model;
+    sublayer0_ln_cfg.eps_bits = LN_EPS_BITS;
+    LayerNormBlock(
+        sram,
+        sublayer0_ln_cfg,
+        (u32_t)pre_ln_residual_base,
+        x_out_base_word,
+        (u32_t)sublayer0_gamma_base,
+        (u32_t)sublayer0_beta_base
+    );
+    const uint32_t ffn_input_base = (uint32_t)x_out_base_word.to_uint();
+
     FfnCfg ffn_cfg;
     ffn_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
     ffn_cfg.d_model = (u32_t)d_model;
@@ -1106,7 +1171,8 @@ static inline void TransformerLayer(
     const bool w1_input_topfed_ready =
         (ffn_topfed_handoff_desc.topfed_w1_x_words != 0) &&
         (topfed_w1_x_words_valid_raw >= ffn_x_words);
-    const uint32_t ffn_x_base = (uint32_t)sc.attn_out_base_word.to_uint();
+    // FFN W1 fallback must consume sublayer0 LN output, not raw attention output.
+    const uint32_t ffn_x_base = ffn_input_base;
     if (!w1_input_topfed_ready) {
         // Probe this branch to prove W1 input compatibility preload fallback.
         if (w2_seam_probe != 0) {
@@ -1237,7 +1303,7 @@ static inline void TransformerLayer(
     FFNLayer0<FFN_STAGE_W1>(
         sram,
         ffn_cfg,
-        sc.attn_out_base_word,
+        (u32_t)ffn_input_base,
         sc.ffn,
         pb.param_base_word,
         layer_id,
@@ -1261,7 +1327,7 @@ static inline void TransformerLayer(
     FFNLayer0<FFN_STAGE_RELU>(
         sram,
         ffn_cfg,
-        sc.attn_out_base_word,
+        (u32_t)ffn_input_base,
         sc.ffn,
         pb.param_base_word,
         layer_id
@@ -1397,7 +1463,7 @@ static inline void TransformerLayer(
     FFNLayer0<FFN_STAGE_W2>(
         sram,
         ffn_cfg,
-        sc.attn_out_base_word,
+        (u32_t)ffn_input_base,
         sc.ffn,
         pb.param_base_word,
         layer_id,
@@ -1413,7 +1479,7 @@ static inline void TransformerLayer(
         (u32_t)FFN_POLICY_REQUIRE_W2_TOPFED
     );
 
-    uint32_t residual_base = (uint32_t)sc.attn_out_base_word.to_uint();
+    uint32_t residual_base = ffn_input_base;
     uint32_t w2_base = (uint32_t)sc.ffn.w2_out_base_word.to_uint();
     uint32_t add2_base = (uint32_t)sc.ffn.add2_base_word.to_uint();
     uint32_t words = (uint32_t)FFN_X_WORDS;
@@ -1426,17 +1492,16 @@ static inline void TransformerLayer(
 
     uint32_t gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
     uint32_t beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
-    if (!sublayer1_norm_preloaded_by_top) {
-        // Legacy fallback: keep in-block param fetch only when Top did not preload.
-        load_layer_sublayer1_norm_params(
-            sram,
-            (uint32_t)pb.param_base_word.to_uint(),
-            (uint32_t)layer_id.to_uint(),
-            gamma_base,
-            beta_base,
-            d_model
-        );
-    }
+    (void)sublayer1_norm_preloaded_by_top;
+    // Sublayer0 LN reused gamma/beta scratch; reload sublayer1 parameters before final LN.
+    load_layer_sublayer1_norm_params(
+        sram,
+        (uint32_t)pb.param_base_word.to_uint(),
+        (uint32_t)layer_id.to_uint(),
+        gamma_base,
+        beta_base,
+        d_model
+    );
 
     LayerNormCfg ln_cfg;
     ln_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
