@@ -56,12 +56,17 @@ struct RefDumpConfig {
 };
 
 struct RefRunConfig {
-  RefPrecisionMode precision_mode;
-  RefAlgoVariant algo_variant;
+  RefPrecisionMode precision_mode = RefPrecisionMode::BASELINE_FP32;
+  RefAlgoVariant algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
   RefLayerNormMode ln_mode = RefLayerNormMode::LN_BASELINE;
   RefFinalHeadExploreStage finalhead_stage = RefFinalHeadExploreStage::S0;
   RefFragGroup frag_group = RefFragGroup::NONE;
 };
+
+bool is_fp32_baseline_mode(RefPrecisionMode mode);
+bool is_fp16_experiment_mode(RefPrecisionMode mode);
+RefRunConfig make_fp32_baseline_run_config();
+RefRunConfig make_fp16_experiment_run_config();
 
 class RefModel {
 public:

@@ -1682,11 +1682,32 @@ static void run_layer(const int layer_idx,
 
 } // namespace
 
+bool is_fp32_baseline_mode(RefPrecisionMode mode) {
+  return mode == RefPrecisionMode::BASELINE_FP32;
+}
+
+bool is_fp16_experiment_mode(RefPrecisionMode mode) {
+  return mode == RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
+}
+
+RefRunConfig make_fp32_baseline_run_config() {
+  RefRunConfig cfg{};
+  cfg.precision_mode = RefPrecisionMode::BASELINE_FP32;
+  cfg.algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
+  cfg.ln_mode = RefLayerNormMode::LN_BASELINE;
+  cfg.finalhead_stage = RefFinalHeadExploreStage::S0;
+  cfg.frag_group = RefFragGroup::NONE;
+  return cfg;
+}
+
+RefRunConfig make_fp16_experiment_run_config() {
+  RefRunConfig cfg = make_fp32_baseline_run_config();
+  cfg.precision_mode = RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
+  return cfg;
+}
+
 RefModel::RefModel() {
-  run_cfg_.precision_mode = RefPrecisionMode::BASELINE_FP32;
-  run_cfg_.algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
-  run_cfg_.ln_mode = RefLayerNormMode::LN_BASELINE;
-  run_cfg_.finalhead_stage = RefFinalHeadExploreStage::S0;
+  run_cfg_ = make_fp32_baseline_run_config();
   dump_cfg_.enabled = false;
   dump_cfg_.dump_dir = nullptr;
   dump_cfg_.pattern_index = -1;

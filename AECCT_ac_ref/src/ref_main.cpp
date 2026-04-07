@@ -217,6 +217,35 @@ struct EvalAggregateStats {
   double x_pred_match_ratio;
 };
 
+static constexpr int STAGE_TOKENS = 75;
+static constexpr int STAGE_D_MODEL = 32;
+
+struct StageTensorDiffSummary {
+  const char* name = "";
+  std::size_t total_count = 0;
+  std::size_t mismatch_count = 0;
+  double max_abs_diff = 0.0;
+  bool exact_equal = true;
+  bool has_first_mismatch = false;
+  int first_pattern = -1;
+  int first_token = -1;
+  int first_dim = -1;
+  double first_baseline_value = 0.0;
+  double first_experiment_value = 0.0;
+};
+
+struct StageBitDiffSummary {
+  const char* name = "";
+  std::size_t total_count = 0;
+  std::size_t mismatch_count = 0;
+  bool exact_equal = true;
+  bool has_first_mismatch = false;
+  int first_pattern = -1;
+  int first_index = -1;
+  int first_baseline_value = 0;
+  int first_experiment_value = 0;
+};
+
 static constexpr int LN_DEBUG_D_MODEL = 32;
 
 struct LnDebugEntryRow {
@@ -425,6 +454,10 @@ static void print_usage() {
   std::printf("  --ln-mode ln_baseline|ln_sum_sumsq_approx\n");
   std::printf("  --ln-mode-exp ln_baseline|ln_sum_sumsq_approx\n");
   std::printf("  --help\n");
+  std::printf("Examples:\n");
+  std::printf("  ref_sim --mode baseline --pattern 0\n");
+  std::printf("  ref_sim --mode experiment --precision-exp fp16_replace_fp32_global --pattern 0\n");
+  std::printf("  ref_sim --mode compare --precision-exp fp16_replace_fp32_global --pattern-begin 0 --pattern-count 32\n");
 }
 
 static bool parse_run_mode(const char* text, CliRunMode& mode) {
@@ -516,7 +549,7 @@ static bool parse_finalhead_stage(const char* text, aecct_ref::RefFinalHeadExplo
 }
 
 static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& mode) {
-  if (std::strcmp(text, "baseline_fp32") == 0) {
+  if (std::strcmp(text, "baseline_fp32") == 0 || std::strcmp(text, "fp32") == 0) {
     mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
     return true;
   }
@@ -576,7 +609,9 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
     mode = aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2;
     return true;
   }
-  if (std::strcmp(text, "fp16_replace_fp32_global") == 0) {
+  if (std::strcmp(text, "fp16_replace_fp32_global") == 0 ||
+      std::strcmp(text, "fp16_experiment") == 0 ||
+      std::strcmp(text, "fp16") == 0) {
     mode = aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
     return true;
   }
@@ -868,8 +903,7 @@ static inline bool precision_mode_anchors_to_finalhead_s0(aecct_ref::RefPrecisio
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY ||
          mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF ||
          mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2 ||
-         mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2 ||
-         mode == aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
+         mode == aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2;
 }
 
 static inline bool precision_mode_requires_frag_group(aecct_ref::RefPrecisionMode mode) {
@@ -971,7 +1005,9 @@ static void run_ref_batch(
   int n_vars,
   std::vector<double>& logits,
   std::vector<aecct_ref::bit1_t>& x_pred,
-  double* out_finalhead_s_t
+  double* out_finalhead_s_t,
+  double* out_layer1_attn_input = nullptr,
+  double* out_end_norm = nullptr
 ) {
   const int run_b = range.count;
   const std::size_t logits_count = static_cast<std::size_t>(run_b * n_vars);
@@ -984,6 +1020,8 @@ static void run_ref_batch(
   io.out_logits = logits.data();
   io.out_x_pred = x_pred.data();
   io.out_finalhead_s_t = out_finalhead_s_t;
+  io.out_layer1_attn_input = out_layer1_attn_input;
+  io.out_end_norm = out_end_norm;
   io.B = run_b;
   io.N = n_vars;
   model.infer_step0(io);
@@ -1081,6 +1119,192 @@ static std::size_t compute_pattern_xpred_match_vs_golden(
     }
   }
   return match;
+}
+
+static StageTensorDiffSummary compare_stage_tensor_diff(
+  const char* name,
+  const double* baseline,
+  const double* experiment,
+  int pattern_begin,
+  int pattern_count,
+  int per_pattern_outer,
+  int per_outer_inner
+) {
+  StageTensorDiffSummary s{};
+  s.name = name;
+  const std::size_t per_pattern_count =
+    static_cast<std::size_t>(per_pattern_outer) * static_cast<std::size_t>(per_outer_inner);
+  s.total_count = static_cast<std::size_t>(pattern_count) * per_pattern_count;
+  s.exact_equal = true;
+  s.max_abs_diff = 0.0;
+
+  for (std::size_t i = 0; i < s.total_count; ++i) {
+    const double b = baseline[i];
+    const double e = experiment[i];
+    const double abs_diff = std::fabs(b - e);
+    if (abs_diff > s.max_abs_diff) {
+      s.max_abs_diff = abs_diff;
+    }
+    if (b != e) {
+      s.mismatch_count++;
+      s.exact_equal = false;
+      if (!s.has_first_mismatch) {
+        const std::size_t pattern_offset = (per_pattern_count > 0U) ? (i / per_pattern_count) : 0U;
+        const std::size_t rem = (per_pattern_count > 0U) ? (i % per_pattern_count) : 0U;
+        const int token = (per_outer_inner > 0)
+          ? static_cast<int>(rem / static_cast<std::size_t>(per_outer_inner))
+          : 0;
+        const int dim = (per_outer_inner > 1)
+          ? static_cast<int>(rem % static_cast<std::size_t>(per_outer_inner))
+          : -1;
+        s.has_first_mismatch = true;
+        s.first_pattern = pattern_begin + static_cast<int>(pattern_offset);
+        s.first_token = token;
+        s.first_dim = dim;
+        s.first_baseline_value = b;
+        s.first_experiment_value = e;
+      }
+    }
+  }
+  return s;
+}
+
+static StageBitDiffSummary compare_xpred_diff(
+  const char* name,
+  const std::vector<aecct_ref::bit1_t>& baseline,
+  const std::vector<aecct_ref::bit1_t>& experiment,
+  int pattern_begin,
+  int pattern_count,
+  int n_vars
+) {
+  StageBitDiffSummary s{};
+  s.name = name;
+  const std::size_t expected = static_cast<std::size_t>(pattern_count * n_vars);
+  if (baseline.size() < expected || experiment.size() < expected) {
+    return s;
+  }
+  s.total_count = expected;
+  s.exact_equal = true;
+  for (std::size_t i = 0; i < expected; ++i) {
+    const int b = baseline[i].to_int();
+    const int e = experiment[i].to_int();
+    if (b != e) {
+      s.mismatch_count++;
+      s.exact_equal = false;
+      if (!s.has_first_mismatch) {
+        const std::size_t pattern_offset = static_cast<std::size_t>(i / static_cast<std::size_t>(n_vars));
+        const std::size_t idx = static_cast<std::size_t>(i % static_cast<std::size_t>(n_vars));
+        s.has_first_mismatch = true;
+        s.first_pattern = pattern_begin + static_cast<int>(pattern_offset);
+        s.first_index = static_cast<int>(idx);
+        s.first_baseline_value = b;
+        s.first_experiment_value = e;
+      }
+    }
+  }
+  return s;
+}
+
+static void print_stage_tensor_diff_summary(const StageTensorDiffSummary& s, const char* coord_label) {
+  std::printf("[stage:%s] exact=%s mismatch=%zu/%zu max_abs=%.9e",
+    s.name,
+    s.exact_equal ? "YES" : "NO",
+    s.mismatch_count,
+    s.total_count,
+    s.max_abs_diff);
+  if (s.has_first_mismatch) {
+    if (s.first_dim >= 0) {
+      std::printf(" first_mismatch(pattern=%d,%s=%d,dim=%d,b=%.9e,e=%.9e)\n",
+        s.first_pattern,
+        coord_label,
+        s.first_token,
+        s.first_dim,
+        s.first_baseline_value,
+        s.first_experiment_value);
+    } else {
+      std::printf(" first_mismatch(pattern=%d,%s=%d,b=%.9e,e=%.9e)\n",
+        s.first_pattern,
+        coord_label,
+        s.first_token,
+        s.first_baseline_value,
+        s.first_experiment_value);
+    }
+    return;
+  }
+  std::printf(" first_mismatch(none)\n");
+}
+
+static void print_stage_bit_diff_summary(const StageBitDiffSummary& s) {
+  std::printf("[stage:%s] exact=%s mismatch=%zu/%zu",
+    s.name,
+    s.exact_equal ? "YES" : "NO",
+    s.mismatch_count,
+    s.total_count);
+  if (s.has_first_mismatch) {
+    std::printf(" first_mismatch(pattern=%d,index=%d,b=%d,e=%d)\n",
+      s.first_pattern,
+      s.first_index,
+      s.first_baseline_value,
+      s.first_experiment_value);
+    return;
+  }
+  std::printf(" first_mismatch(none)\n");
+}
+
+static bool write_stage_compare_summary_txt(
+  const std::string& path,
+  const StageTensorDiffSummary& mid_norm,
+  const StageTensorDiffSummary& layer1_attn_input,
+  const StageTensorDiffSummary& end_norm,
+  const StageTensorDiffSummary& s_t,
+  const StageTensorDiffSummary& logits,
+  const StageBitDiffSummary& x_pred
+) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  ofs << "=== Ref-vs-Ref Stage Compare (baseline FP32 vs experiment) ===\n";
+  const StageTensorDiffSummary tensors[] = {
+    mid_norm, layer1_attn_input, end_norm, s_t, logits
+  };
+  const char* labels[] = {"token", "token", "token", "token", "index"};
+  for (int i = 0; i < 5; ++i) {
+    const StageTensorDiffSummary& s = tensors[i];
+    ofs << "[stage:" << s.name << "] exact=" << (s.exact_equal ? "YES" : "NO")
+        << " mismatch=" << s.mismatch_count << "/" << s.total_count
+        << " max_abs=" << s.max_abs_diff;
+    if (s.has_first_mismatch) {
+      ofs << " first_mismatch(pattern=" << s.first_pattern
+          << "," << labels[i] << "=" << s.first_token;
+      if (s.first_dim >= 0) {
+        ofs << ",dim=" << s.first_dim;
+      }
+      ofs << ",b=" << s.first_baseline_value
+          << ",e=" << s.first_experiment_value << ")";
+    } else {
+      ofs << " first_mismatch(none)";
+    }
+    ofs << "\n";
+  }
+  ofs << "[stage:" << x_pred.name << "] exact=" << (x_pred.exact_equal ? "YES" : "NO")
+      << " mismatch=" << x_pred.mismatch_count << "/" << x_pred.total_count;
+  if (x_pred.has_first_mismatch) {
+    ofs << " first_mismatch(pattern=" << x_pred.first_pattern
+        << ",index=" << x_pred.first_index
+        << ",b=" << x_pred.first_baseline_value
+        << ",e=" << x_pred.first_experiment_value << ")";
+  } else {
+    ofs << " first_mismatch(none)";
+  }
+  ofs << "\n";
+  return true;
 }
 
 static EvalPatternRow build_eval_pattern_row(
@@ -3208,8 +3432,7 @@ static bool run_stage_compare_eval_snapshot(
   out.eval_rows.reserve(static_cast<std::size_t>(range.count));
 
   aecct_ref::RefModel baseline_model;
-  aecct_ref::RefRunConfig baseline_cfg{};
-  baseline_cfg.precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+  aecct_ref::RefRunConfig baseline_cfg = aecct_ref::make_fp32_baseline_run_config();
   baseline_cfg.algo_variant = opts.algo_variant;
   baseline_cfg.ln_mode = opts.ln_mode;
   baseline_cfg.finalhead_stage = stage;
@@ -3218,7 +3441,7 @@ static bool run_stage_compare_eval_snapshot(
   std::vector<double> baseline_logits_batch;
   std::vector<aecct_ref::bit1_t> baseline_x_pred_batch;
   std::vector<double> baseline_finalhead_s_t;
-  baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
+  baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * STAGE_TOKENS));
   std::vector<double> experiment_logits_batch;
   std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
 
@@ -3394,7 +3617,7 @@ static int run_single_mode(
   const CliOptions& opts
 ) {
   aecct_ref::RefModel model;
-  aecct_ref::RefRunConfig cfg{};
+  aecct_ref::RefRunConfig cfg = aecct_ref::make_fp32_baseline_run_config();
   cfg.precision_mode = precision_mode;
   cfg.algo_variant = opts.algo_variant;
   cfg.ln_mode = ln_mode;
@@ -3474,8 +3697,11 @@ int main(int argc, char** argv) {
   }
 
   std::printf("Run config:\n");
+  const bool anchor_baseline_for_compare =
+    (opts.run_mode != CliRunMode::BASELINE_ONLY) &&
+    precision_mode_anchors_to_finalhead_s0(opts.experiment_precision_mode);
   const aecct_ref::RefPrecisionMode effective_baseline_precision =
-    precision_mode_anchors_to_finalhead_s0(opts.experiment_precision_mode)
+    anchor_baseline_for_compare
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
@@ -3707,7 +3933,7 @@ int main(int argc, char** argv) {
     const bool use_frag_group_for_experiment =
       precision_mode_requires_frag_group(opts.experiment_precision_mode);
     aecct_ref::RefModel baseline_model_eval;
-    aecct_ref::RefRunConfig baseline_cfg_eval{};
+    aecct_ref::RefRunConfig baseline_cfg_eval = aecct_ref::make_fp32_baseline_run_config();
     baseline_cfg_eval.precision_mode = anchor_finalhead_s0
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
@@ -3737,7 +3963,7 @@ int main(int argc, char** argv) {
       !opts.ln_input_debug &&
       !opts.ln_upstream_debug;
     if (experiment_use_reconstruct) {
-      baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
+      baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * STAGE_TOKENS));
     }
 
     const auto t_baseline_start = now_tp();
@@ -3765,7 +3991,10 @@ int main(int argc, char** argv) {
         );
       } else {
         aecct_ref::RefModel experiment_model_eval;
-        aecct_ref::RefRunConfig experiment_cfg_eval{};
+        aecct_ref::RefRunConfig experiment_cfg_eval =
+          aecct_ref::is_fp16_experiment_mode(opts.experiment_precision_mode)
+            ? aecct_ref::make_fp16_experiment_run_config()
+            : aecct_ref::make_fp32_baseline_run_config();
         experiment_cfg_eval.precision_mode = opts.experiment_precision_mode;
         experiment_cfg_eval.algo_variant = opts.algo_variant;
         experiment_cfg_eval.ln_mode = opts.experiment_ln_mode;
@@ -3976,8 +4205,10 @@ int main(int argc, char** argv) {
     precision_mode_anchors_to_finalhead_s0(opts.experiment_precision_mode);
   const bool use_frag_group_for_experiment =
     precision_mode_requires_frag_group(opts.experiment_precision_mode);
+  const bool enable_fp16_stage_compare =
+    aecct_ref::is_fp16_experiment_mode(opts.experiment_precision_mode);
   aecct_ref::RefModel baseline_model;
-  aecct_ref::RefRunConfig baseline_cfg{};
+  aecct_ref::RefRunConfig baseline_cfg = aecct_ref::make_fp32_baseline_run_config();
   baseline_cfg.precision_mode = anchor_finalhead_s0
     ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
     : aecct_ref::RefPrecisionMode::BASELINE_FP32;
@@ -3996,8 +4227,13 @@ int main(int argc, char** argv) {
   std::vector<double> baseline_logits_batch;
   std::vector<aecct_ref::bit1_t> baseline_x_pred_batch;
   std::vector<double> baseline_finalhead_s_t;
+  std::vector<double> baseline_layer1_attn_input_batch;
+  std::vector<double> baseline_end_norm_batch;
   std::vector<double> experiment_logits_batch;
   std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
+  std::vector<double> experiment_finalhead_s_t;
+  std::vector<double> experiment_layer1_attn_input_batch;
+  std::vector<double> experiment_end_norm_batch;
   std::vector<LnDebugEntryRow> baseline_ln_debug_entries;
   std::vector<LnDebugEntryRow> experiment_ln_debug_entries;
   std::vector<LnUpstreamEntryRow> baseline_ln_upstream_entries;
@@ -4011,8 +4247,18 @@ int main(int argc, char** argv) {
     !opts.ln_var_debug &&
     !opts.ln_input_debug &&
     !opts.ln_upstream_debug;
-  if (experiment_use_reconstruct) {
-    baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * 75));
+  const bool capture_baseline_s_t = experiment_use_reconstruct || enable_fp16_stage_compare;
+  if (capture_baseline_s_t) {
+    baseline_finalhead_s_t.resize(static_cast<std::size_t>(range.count * STAGE_TOKENS));
+  }
+  if (enable_fp16_stage_compare) {
+    const std::size_t stage_tensor_count =
+      static_cast<std::size_t>(range.count * STAGE_TOKENS * STAGE_D_MODEL);
+    baseline_layer1_attn_input_batch.resize(stage_tensor_count);
+    baseline_end_norm_batch.resize(stage_tensor_count);
+    experiment_finalhead_s_t.resize(static_cast<std::size_t>(range.count * STAGE_TOKENS));
+    experiment_layer1_attn_input_batch.resize(stage_tensor_count);
+    experiment_end_norm_batch.resize(stage_tensor_count);
   }
 
   const bool enable_ln_trace = opts.ln_debug || opts.ln_var_debug || opts.ln_input_debug;
@@ -4032,7 +4278,9 @@ int main(int argc, char** argv) {
     N,
     baseline_logits_batch,
     baseline_x_pred_batch,
-    experiment_use_reconstruct ? baseline_finalhead_s_t.data() : nullptr
+    capture_baseline_s_t ? baseline_finalhead_s_t.data() : nullptr,
+    enable_fp16_stage_compare ? baseline_layer1_attn_input_batch.data() : nullptr,
+    enable_fp16_stage_compare ? baseline_end_norm_batch.data() : nullptr
   );
   perf.baseline_model_s = elapsed_sec(t_baseline_start, now_tp());
   if (enable_ln_trace) {
@@ -4061,7 +4309,10 @@ int main(int argc, char** argv) {
     );
   } else {
     aecct_ref::RefModel experiment_model;
-    aecct_ref::RefRunConfig experiment_cfg{};
+    aecct_ref::RefRunConfig experiment_cfg =
+      aecct_ref::is_fp16_experiment_mode(opts.experiment_precision_mode)
+        ? aecct_ref::make_fp16_experiment_run_config()
+        : aecct_ref::make_fp32_baseline_run_config();
     experiment_cfg.precision_mode = opts.experiment_precision_mode;
     experiment_cfg.algo_variant = opts.algo_variant;
     experiment_cfg.ln_mode = opts.experiment_ln_mode;
@@ -4078,7 +4329,9 @@ int main(int argc, char** argv) {
       N,
       experiment_logits_batch,
       experiment_x_pred_batch,
-      nullptr
+      enable_fp16_stage_compare ? experiment_finalhead_s_t.data() : nullptr,
+      enable_fp16_stage_compare ? experiment_layer1_attn_input_batch.data() : nullptr,
+      enable_fp16_stage_compare ? experiment_end_norm_batch.data() : nullptr
     );
   }
   experiment_full_stats = aecct_ref::get_ref_full_quant_stats();
@@ -4144,6 +4397,66 @@ int main(int argc, char** argv) {
 
   const DistributionStats margin_dist = compute_distribution_stats(batch.per_pattern_min_margin);
   const std::vector<std::size_t> vulnerable_idx = collect_top_vulnerable_indices(rows, 5U);
+  StageTensorDiffSummary stage_mid_norm{};
+  StageTensorDiffSummary stage_layer1_attn_input{};
+  StageTensorDiffSummary stage_end_norm{};
+  StageTensorDiffSummary stage_s_t{};
+  StageTensorDiffSummary stage_logits{};
+  StageBitDiffSummary stage_x_pred{};
+  const bool has_fp16_stage_compare_data =
+    enable_fp16_stage_compare &&
+    !experiment_use_reconstruct &&
+    baseline_layer1_attn_input_batch.size() == experiment_layer1_attn_input_batch.size() &&
+    baseline_end_norm_batch.size() == experiment_end_norm_batch.size() &&
+    baseline_finalhead_s_t.size() == experiment_finalhead_s_t.size() &&
+    baseline_logits_batch.size() == experiment_logits_batch.size() &&
+    baseline_x_pred_batch.size() == experiment_x_pred_batch.size();
+  if (enable_fp16_stage_compare && !has_fp16_stage_compare_data) {
+    std::printf("[warn] FP16 stage compare data incomplete, skip stage drift summary.\n");
+  }
+  if (has_fp16_stage_compare_data) {
+    stage_mid_norm = compare_stage_tensor_diff(
+      "mid_norm",
+      baseline_layer1_attn_input_batch.data(),
+      experiment_layer1_attn_input_batch.data(),
+      range.begin,
+      range.count,
+      STAGE_TOKENS,
+      STAGE_D_MODEL);
+    stage_layer1_attn_input = stage_mid_norm;
+    stage_layer1_attn_input.name = "layer1_attn_input";
+    stage_end_norm = compare_stage_tensor_diff(
+      "end_norm",
+      baseline_end_norm_batch.data(),
+      experiment_end_norm_batch.data(),
+      range.begin,
+      range.count,
+      STAGE_TOKENS,
+      STAGE_D_MODEL);
+    stage_s_t = compare_stage_tensor_diff(
+      "s_t",
+      baseline_finalhead_s_t.data(),
+      experiment_finalhead_s_t.data(),
+      range.begin,
+      range.count,
+      STAGE_TOKENS,
+      1);
+    stage_logits = compare_stage_tensor_diff(
+      "logits",
+      baseline_logits_batch.data(),
+      experiment_logits_batch.data(),
+      range.begin,
+      range.count,
+      N,
+      1);
+    stage_x_pred = compare_xpred_diff(
+      "x_pred",
+      baseline_x_pred_batch,
+      experiment_x_pred_batch,
+      range.begin,
+      range.count,
+      N);
+  }
 
   const std::string mode_suffix = precision_mode_output_suffix(
     opts.experiment_precision_mode,
@@ -4164,6 +4477,21 @@ int main(int argc, char** argv) {
     std::printf("Reviewer summary txt    : %s\n", txt_path.c_str());
   } else {
     std::printf("[warn] Failed to write reviewer summary txt: %s\n", txt_path.c_str());
+  }
+  if (has_fp16_stage_compare_data) {
+    const std::string stage_compare_path = csv_path + ".stage_compare.txt";
+    if (write_stage_compare_summary_txt(
+          stage_compare_path,
+          stage_mid_norm,
+          stage_layer1_attn_input,
+          stage_end_norm,
+          stage_s_t,
+          stage_logits,
+          stage_x_pred)) {
+      std::printf("Stage compare txt       : %s\n", stage_compare_path.c_str());
+    } else {
+      std::printf("[warn] Failed to write stage compare txt: %s\n", stage_compare_path.c_str());
+    }
   }
   const std::string timing_path = derive_timing_txt_path(csv_path);
   if (opts.ln_debug) {
@@ -4252,6 +4580,15 @@ int main(int argc, char** argv) {
       r.cmp.logits_diff.max_abs,
       r.cmp.x_pred_mismatch_count,
       r.cmp.sign_flip_count);
+  }
+  if (has_fp16_stage_compare_data) {
+    std::printf("=== FP16 Stage Drift Summary (Ref-vs-Ref) ===\n");
+    print_stage_tensor_diff_summary(stage_mid_norm, "token");
+    print_stage_tensor_diff_summary(stage_layer1_attn_input, "token");
+    print_stage_tensor_diff_summary(stage_end_norm, "token");
+    print_stage_tensor_diff_summary(stage_s_t, "token");
+    print_stage_tensor_diff_summary(stage_logits, "index");
+    print_stage_bit_diff_summary(stage_x_pred);
   }
   std::printf("=== Timing Breakdown (sec) ===\n");
   std::printf("startup/init             : %.6f\n", perf.startup_init_s);
