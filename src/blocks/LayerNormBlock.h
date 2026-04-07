@@ -1,7 +1,7 @@
 #pragma once
 // LayerNorm block with two-pass implementation.
-// Pass 1 accumulates token-wise mean/variance.
-// Pass 2 normalizes, applies gamma/beta, and writes back to the caller-selected window.
+// Pass 1 accumulates token-wise mean inputs.
+// Pass 2 accumulates variance around mean, then normalizes and applies gamma/beta.
 // Ownership boundary: caller/Top selects token/tile ranges and owns shared-SRAM policy.
 
 #include <cstdio>
@@ -62,6 +62,33 @@ struct LayerNormTopManagedTileMeta {
     u16_t tile_idx;
     u16_t tile_valid_words;
 };
+
+static inline bool layernorm_fp32_is_finite(const fp32_t& x) {
+    const uint32_t bits = (uint32_t)bits_from_fp32(x).to_uint();
+    return (bits & 0x7F800000u) != 0x7F800000u;
+}
+
+static inline fp32_t layernorm_fp32_sanitize_input(const fp32_t& x) {
+    if (layernorm_fp32_is_finite(x)) {
+        return x;
+    }
+    return fp32_zero();
+}
+
+static inline fp32_t layernorm_refstyle_inv_sqrt_approx(const fp32_t& x_eps_safe) {
+    const fp32_t half = fp32_from_bits((u32_t)0x3F000000u);       // 0.5
+    const fp32_t three_halves = fp32_from_bits((u32_t)0x3FC00000u); // 1.5
+    const fp32_t y0 = fp32_one().template div<AC_RND_CONV, false>(
+        x_eps_safe.template sqrt<AC_RND_CONV, false>());
+    fp32_t y1 = y0 * (three_halves - (half * x_eps_safe * y0 * y0));
+    if (!layernorm_fp32_is_finite(y1) || y1 <= fp32_zero()) {
+        y1 = y0;
+    }
+    if (!layernorm_fp32_is_finite(y1) || y1 <= fp32_zero()) {
+        return fp32_one();
+    }
+    return y1;
+}
 
 // Local-only observability for affine consume seam selection.
 // This does not affect production ownership semantics.
@@ -214,7 +241,8 @@ static inline void LayerNormBlockCoreWindow(
             LAYERNORM_TOP_MANAGED_PASS1_TILE_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                 const uint32_t c = tile_offset + i;
                 const u32_t x_bits = sram[row_in_base + c];
-                const fp32_t x = fp32_from_bits(x_bits);
+                const fp32_t x_raw = fp32_from_bits(x_bits);
+                const fp32_t x = layernorm_fp32_sanitize_input(x_raw);
                 sum_fp += x;
                 sq_sum_fp += (x * x);
 #ifndef __SYNTHESIS__
@@ -222,12 +250,12 @@ static inline void LayerNormBlockCoreWindow(
                 legacy_sum += x_q;
                 legacy_sq_sum += (quant_acc_t(x_q) * quant_acc_t(x_q));
                 if (!x_minmax_init) {
-                    x_min = x;
-                    x_max = x;
+                    x_min = x_raw;
+                    x_max = x_raw;
                     x_minmax_init = true;
                 } else {
-                    if (x < x_min) { x_min = x; }
-                    if (x > x_max) { x_max = x; }
+                    if (x_raw < x_min) { x_min = x_raw; }
+                    if (x_raw > x_max) { x_max = x_raw; }
                 }
                 const uint32_t raw = (uint32_t)x_bits.to_uint();
                 if ((raw & 0x7F800000u) == 0x7F800000u) {
@@ -243,7 +271,31 @@ static inline void LayerNormBlockCoreWindow(
         fp32_t inv_n_den(d_model_i);
 
         mean = sum_fp / inv_n_den;
-        fp32_t var = (sq_sum_fp / inv_n_den) - (mean * mean);
+        fp32_t var_acc = fp32_zero();
+        LAYERNORM_TOP_MANAGED_VAR_TILE_LOOP: for (uint32_t dt = tile_begin; dt < tile_end; ++dt) {
+            const uint32_t tile_offset = dt * tile_words;
+            const uint32_t valid = attn_top_managed_tile_valid_words(d_model, tile_words, dt);
+            LayerNormTopManagedTileMeta meta;
+            meta.phase_id = (u16_t)phase_id_u32;
+            meta.subphase_id = (u16_t)subphase_id_u32;
+            meta.token_begin = (u16_t)token_begin;
+            meta.token_end = (u16_t)token_end;
+            meta.token_idx = (u16_t)t;
+            meta.tile_begin = (u16_t)tile_begin;
+            meta.tile_end = (u16_t)tile_end;
+            meta.tile_idx = (u16_t)dt;
+            meta.tile_valid_words = (u16_t)valid;
+            if (!layernorm_top_managed_tile_meta_ok(meta, phase_id_u32, t, dt)) {
+                continue;
+            }
+            LAYERNORM_TOP_MANAGED_VAR_ELEM_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+                const uint32_t c = tile_offset + i;
+                const fp32_t x = layernorm_fp32_sanitize_input(fp32_from_bits(sram[row_in_base + c]));
+                const fp32_t d = x - mean;
+                var_acc += (d * d);
+            }
+        }
+        fp32_t var = var_acc / inv_n_den;
 #ifndef __SYNTHESIS__
         static bool p11ai_ln_root_cause_logged = false;
         if (!p11ai_ln_root_cause_logged) {
@@ -251,14 +303,16 @@ static inline void LayerNormBlockCoreWindow(
             const fp32_t legacy_sq_sum_fp(legacy_sq_sum);
             const fp32_t legacy_mean = legacy_sum_fp / inv_n_den;
             const fp32_t legacy_var = (legacy_sq_sum_fp / inv_n_den) - (legacy_mean * legacy_mean);
+            const fp32_t ex2_var = (sq_sum_fp / inv_n_den) - (mean * mean);
             if (legacy_var <= fp32_zero() && var > fp32_zero()) {
                 p11ai_ln_root_cause_logged = true;
                 std::printf(
-                    "[p11ai][LN_ROOT_CAUSE] token=%u input_nonfinite=%d legacy_var_bits=0x%08X fp32_var_bits=0x%08X legacy_sq_sum_bits=0x%08X fp32_sq_sum_bits=0x%08X legacy_sum_bits=0x%08X fp32_sum_bits=0x%08X x_min_bits=0x%08X x_max_bits=0x%08X\n",
+                    "[p11ai][LN_ROOT_CAUSE] token=%u input_nonfinite=%d legacy_var_bits=0x%08X fp32_var_bits=0x%08X ex2_var_bits=0x%08X legacy_sq_sum_bits=0x%08X fp32_sq_sum_bits=0x%08X legacy_sum_bits=0x%08X fp32_sum_bits=0x%08X x_min_bits=0x%08X x_max_bits=0x%08X\n",
                     (unsigned)t,
                     input_nonfinite ? 1 : 0,
                     (unsigned)bits_from_fp32(legacy_var).to_uint(),
                     (unsigned)bits_from_fp32(var).to_uint(),
+                    (unsigned)bits_from_fp32(ex2_var).to_uint(),
                     (unsigned)bits_from_fp32(legacy_sq_sum_fp).to_uint(),
                     (unsigned)bits_from_fp32(sq_sum_fp).to_uint(),
                     (unsigned)bits_from_fp32(legacy_sum_fp).to_uint(),
@@ -270,7 +324,7 @@ static inline void LayerNormBlockCoreWindow(
 #endif
 
         fp32_t var_plus_eps = var + eps;
-        if (var_plus_eps <= fp32_zero()) {
+        if (!layernorm_fp32_is_finite(var_plus_eps) || var_plus_eps <= fp32_zero()) {
 #ifndef __SYNTHESIS__
             static bool p11ai_ln_guard_logged = false;
             if (!p11ai_ln_guard_logged) {
@@ -287,8 +341,10 @@ static inline void LayerNormBlockCoreWindow(
 #endif
             var_plus_eps = eps;
         }
-        const fp32_t std_val = var_plus_eps.template sqrt<AC_RND_CONV, false>();
-        inv_std = fp32_one().template div<AC_RND_CONV, false>(std_val);
+        if (!layernorm_fp32_is_finite(var_plus_eps) || var_plus_eps <= fp32_zero()) {
+            var_plus_eps = fp32_one();
+        }
+        inv_std = layernorm_refstyle_inv_sqrt_approx(var_plus_eps);
 
         // Pass-2: normalize + affine writeback, still token-wise and tile-driven.
         LAYERNORM_TOP_MANAGED_PASS2_TILE_LOOP: for (uint32_t dt = tile_begin; dt < tile_end; ++dt) {
@@ -311,7 +367,7 @@ static inline void LayerNormBlockCoreWindow(
 
             LAYERNORM_TOP_MANAGED_PASS2_TILE_STORE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                 const uint32_t c = tile_offset + i;
-                const fp32_t x = fp32_from_bits(sram[row_in_base + c]);
+                const fp32_t x = layernorm_fp32_sanitize_input(fp32_from_bits(sram[row_in_base + c]));
                 // Affine consume seam: prefer Top-fed gamma/beta words, otherwise read caller SRAM.
                 const u32_t g_bits =
                     (topfed_gamma_words != 0) ? topfed_gamma_words[c] : sram[gamma_base + c];
@@ -378,7 +434,8 @@ static inline void LayerNormBlockCoreWindowDirect(
 #endif
         for (uint32_t c = 0; c < d_model; ++c) {
             const u32_t x_bits = sram[row_in_base + c];
-            const fp32_t x = fp32_from_bits(x_bits);
+            const fp32_t x_raw = fp32_from_bits(x_bits);
+            const fp32_t x = layernorm_fp32_sanitize_input(x_raw);
             sum_fp += x;
             sq_sum_fp += (x * x);
 #ifndef __SYNTHESIS__
@@ -386,12 +443,12 @@ static inline void LayerNormBlockCoreWindowDirect(
             legacy_sum += x_q;
             legacy_sq_sum += (quant_acc_t(x_q) * quant_acc_t(x_q));
             if (!x_minmax_init) {
-                x_min = x;
-                x_max = x;
+                x_min = x_raw;
+                x_max = x_raw;
                 x_minmax_init = true;
             } else {
-                if (x < x_min) { x_min = x; }
-                if (x > x_max) { x_max = x; }
+                if (x_raw < x_min) { x_min = x_raw; }
+                if (x_raw > x_max) { x_max = x_raw; }
             }
             const uint32_t raw = (uint32_t)x_bits.to_uint();
             if ((raw & 0x7F800000u) == 0x7F800000u) {
@@ -407,7 +464,13 @@ static inline void LayerNormBlockCoreWindowDirect(
             fp32_t inv_n_den(d_model_i);
 
             mean = sum_fp / inv_n_den;
-            fp32_t var = (sq_sum_fp / inv_n_den) - (mean * mean);
+            fp32_t var_acc = fp32_zero();
+            for (uint32_t c = 0; c < d_model; ++c) {
+                const fp32_t x = layernorm_fp32_sanitize_input(fp32_from_bits(sram[row_in_base + c]));
+                const fp32_t d = x - mean;
+                var_acc += (d * d);
+            }
+            fp32_t var = var_acc / inv_n_den;
 #ifndef __SYNTHESIS__
             static bool p11ai_ln_root_cause_logged = false;
             if (!p11ai_ln_root_cause_logged) {
@@ -415,14 +478,16 @@ static inline void LayerNormBlockCoreWindowDirect(
                 const fp32_t legacy_sq_sum_fp(legacy_sq_sum);
                 const fp32_t legacy_mean = legacy_sum_fp / inv_n_den;
                 const fp32_t legacy_var = (legacy_sq_sum_fp / inv_n_den) - (legacy_mean * legacy_mean);
+                const fp32_t ex2_var = (sq_sum_fp / inv_n_den) - (mean * mean);
                 if (legacy_var <= fp32_zero() && var > fp32_zero()) {
                     p11ai_ln_root_cause_logged = true;
                     std::printf(
-                        "[p11ai][LN_ROOT_CAUSE] token=%u input_nonfinite=%d legacy_var_bits=0x%08X fp32_var_bits=0x%08X legacy_sq_sum_bits=0x%08X fp32_sq_sum_bits=0x%08X legacy_sum_bits=0x%08X fp32_sum_bits=0x%08X x_min_bits=0x%08X x_max_bits=0x%08X\n",
+                        "[p11ai][LN_ROOT_CAUSE] token=%u input_nonfinite=%d legacy_var_bits=0x%08X fp32_var_bits=0x%08X ex2_var_bits=0x%08X legacy_sq_sum_bits=0x%08X fp32_sq_sum_bits=0x%08X legacy_sum_bits=0x%08X fp32_sum_bits=0x%08X x_min_bits=0x%08X x_max_bits=0x%08X\n",
                         (unsigned)t,
                         input_nonfinite ? 1 : 0,
                         (unsigned)bits_from_fp32(legacy_var).to_uint(),
                         (unsigned)bits_from_fp32(var).to_uint(),
+                        (unsigned)bits_from_fp32(ex2_var).to_uint(),
                         (unsigned)bits_from_fp32(legacy_sq_sum_fp).to_uint(),
                         (unsigned)bits_from_fp32(sq_sum_fp).to_uint(),
                         (unsigned)bits_from_fp32(legacy_sum_fp).to_uint(),
@@ -433,7 +498,7 @@ static inline void LayerNormBlockCoreWindowDirect(
             }
 #endif
             fp32_t var_plus_eps = var + eps;
-            if (var_plus_eps <= fp32_zero()) {
+            if (!layernorm_fp32_is_finite(var_plus_eps) || var_plus_eps <= fp32_zero()) {
 #ifndef __SYNTHESIS__
                 static bool p11ai_ln_guard_logged = false;
                 if (!p11ai_ln_guard_logged) {
@@ -450,12 +515,14 @@ static inline void LayerNormBlockCoreWindowDirect(
 #endif
                 var_plus_eps = eps;
             }
-            fp32_t std_val = var_plus_eps.template sqrt<AC_RND_CONV, false>();
-            inv_std = fp32_one().template div<AC_RND_CONV, false>(std_val);
+            if (!layernorm_fp32_is_finite(var_plus_eps) || var_plus_eps <= fp32_zero()) {
+                var_plus_eps = fp32_one();
+            }
+            inv_std = layernorm_refstyle_inv_sqrt_approx(var_plus_eps);
         }
 
         for (uint32_t c = 0; c < d_model; ++c) {
-            fp32_t x = fp32_from_bits(sram[row_in_base + c]);
+            fp32_t x = layernorm_fp32_sanitize_input(fp32_from_bits(sram[row_in_base + c]));
             fp32_t g = fp32_from_bits(sram[gamma_base + c]);
             fp32_t b = fp32_from_bits(sram[beta_base + c]);
             fp32_t y = ((x - mean) * inv_std) * g + b;
