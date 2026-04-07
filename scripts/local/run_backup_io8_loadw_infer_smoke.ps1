@@ -70,6 +70,7 @@ try {
     Invoke-ExeRun -ExePath $exePath -LogOut $runLog
 
     Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_trace_aligned_xpred_compare'
+    Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_xpred1_debug_bridge'
     Require-PassString -LogPath $runLog -Needle 'PASS: tb_backup_io8_loadw_infer_smoke'
 
     Write-Host 'PASS: run_backup_io8_loadw_infer_smoke'

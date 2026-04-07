@@ -16,6 +16,7 @@
 #include "weights_streamer.h"
 #include "input_y_step0.h"
 #include "output_x_pred_step0.h"
+#include "output_logits_step0.h"
 
 namespace {
 
@@ -28,6 +29,32 @@ struct Io8Top {
 
 static const uint32_t kTracePatternCount = 8u;
 static const uint32_t kTraceSampleIds[kTracePatternCount] = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 9u };
+static const uint32_t kDebugMaxXpredOneSamples = 3u;
+static const uint32_t kDebugPayloadReadbackWords = 64u;
+
+struct XpredOneSample {
+    uint32_t sample_id;
+    std::vector<uint32_t> one_indices;
+};
+
+enum DebugBoundary : uint32_t {
+    DEBUG_BOUNDARY_NONE = 0u,
+    DEBUG_BOUNDARY_INPUT_SELECTION = 1u,
+    DEBUG_BOUNDARY_PAYLOAD_LOADW = 2u,
+    DEBUG_BOUNDARY_OUTPUT_PACKING = 3u,
+    DEBUG_BOUNDARY_DUT_ALGO = 4u
+};
+
+struct DebugCompareResult {
+    bool exact;
+    uint32_t mismatch_idx;
+    uint32_t got_word;
+    uint32_t exp_word;
+    bool byte_mismatch_found;
+    uint32_t byte_mismatch_idx;
+    uint8_t got_byte;
+    uint8_t exp_byte;
+};
 
 static_assert(
     trace_input_y_step0_tensor_ndim == 2,
@@ -41,6 +68,9 @@ static_assert(
 static_assert(
     (uint32_t)trace_output_x_pred_step0_tensor_shape[1] == (uint32_t)EXP_LEN_OUT_XPRED_WORDS,
     "trace x_pred width must match EXP_LEN_OUT_XPRED_WORDS");
+static_assert(
+    (uint32_t)trace_output_logits_step0_tensor_shape[1] == (uint32_t)EXP_LEN_OUT_LOGITS_WORDS,
+    "trace logits width must match EXP_LEN_OUT_LOGITS_WORDS");
 
 static void fail(const char* msg) {
     std::printf("[backup_io8][FAIL] %s\n", msg);
@@ -63,6 +93,19 @@ static uint32_t fnv1a_u32_words(const std::vector<uint32_t>& words) {
         h *= 16777619u;
     }
     return h;
+}
+
+static void print_indices_line(const std::vector<uint32_t>& indices) {
+    if (indices.empty()) {
+        std::printf("none");
+        return;
+    }
+    IDX_PRINT_LOOP: for (uint32_t i = 0u; i < (uint32_t)indices.size(); ++i) {
+        std::printf("%u", (unsigned)indices[i]);
+        if (i + 1u < (uint32_t)indices.size()) {
+            std::printf(",");
+        }
+    }
 }
 
 static void top_tick(Io8Top& io) {
@@ -251,6 +294,47 @@ static void build_trace_xpred_words(uint32_t sample_idx, std::vector<uint32_t>& 
     }
 }
 
+static void build_trace_logits_words(uint32_t sample_idx, std::vector<uint32_t>& logits_words) {
+    logits_words.assign((uint32_t)EXP_LEN_OUT_LOGITS_WORDS, 0u);
+    const uint32_t stride = (uint32_t)EXP_LEN_OUT_LOGITS_WORDS;
+    const uint32_t base = sample_idx * stride;
+    TRACE_LOGITS_WORD_LOOP: for (uint32_t i = 0u; i < stride; ++i) {
+        const float fv = (float)trace_output_logits_step0_tensor[base + i];
+        logits_words[i] = f32_to_bits(fv);
+    }
+}
+
+static void collect_trace_xpred_one_indices(uint32_t sample_idx, std::vector<uint32_t>& one_indices) {
+    one_indices.clear();
+    const uint32_t stride = (uint32_t)EXP_LEN_OUT_XPRED_WORDS;
+    const uint32_t base = sample_idx * stride;
+    const uint32_t one_bits = f32_to_bits(1.0f);
+    X_PRED_ONE_INDEX_SCAN_LOOP: for (uint32_t i = 0u; i < stride; ++i) {
+        const float fv = (float)trace_output_x_pred_step0_tensor[base + i];
+        if (f32_to_bits(fv) == one_bits) {
+            one_indices.push_back(i);
+        }
+    }
+}
+
+static bool select_xpred_one_samples(std::vector<XpredOneSample>& samples) {
+    samples.clear();
+    const uint32_t total_samples = (uint32_t)trace_output_x_pred_step0_tensor_shape[0];
+    SELECT_XPRED_ONE_SAMPLE_LOOP: for (uint32_t sample_idx = 0u; sample_idx < total_samples; ++sample_idx) {
+        XpredOneSample pick;
+        pick.sample_id = sample_idx;
+        collect_trace_xpred_one_indices(sample_idx, pick.one_indices);
+        if (pick.one_indices.empty()) {
+            continue;
+        }
+        samples.push_back(pick);
+        if ((uint32_t)samples.size() >= kDebugMaxXpredOneSamples) {
+            break;
+        }
+    }
+    return !samples.empty();
+}
+
 static void collect_out_bytes(Io8Top& io, uint32_t expected_bytes, std::vector<uint8_t>& out_bytes) {
     out_bytes.clear();
     uint32_t guard = 0u;
@@ -282,6 +366,18 @@ static void bytes_to_words_le(const std::vector<uint8_t>& bytes, std::vector<uin
             ((uint32_t)bytes[b + 2u] << 16) |
             ((uint32_t)bytes[b + 3u] << 24);
         words_out[i] = w;
+    }
+}
+
+static void words_to_bytes_le(const std::vector<uint32_t>& words, std::vector<uint8_t>& bytes_out) {
+    bytes_out.assign((uint32_t)words.size() * 4u, 0u);
+    WORDS_TO_BYTES_LOOP: for (uint32_t i = 0u; i < (uint32_t)words.size(); ++i) {
+        const uint32_t b = i * 4u;
+        const uint32_t w = words[i];
+        bytes_out[b + 0u] = (uint8_t)(w & 0xFFu);
+        bytes_out[b + 1u] = (uint8_t)((w >> 8) & 0xFFu);
+        bytes_out[b + 2u] = (uint8_t)((w >> 16) & 0xFFu);
+        bytes_out[b + 3u] = (uint8_t)((w >> 24) & 0xFFu);
     }
 }
 
@@ -333,6 +429,84 @@ static void run_setup_cfg_loadw(Io8Top& io, const std::vector<uint32_t>& param_w
     io.ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_SET_OUTMODE));
     top_tick(io);
     expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_OUTMODE, "set_outmode_xpred");
+}
+
+static bool verify_payload_readback_prefix(
+    Io8Top& io,
+    const std::vector<uint32_t>& param_words,
+    uint32_t readback_words,
+    uint32_t& first_bad_idx,
+    uint32_t& first_bad_got,
+    uint32_t& first_bad_exp
+) {
+    first_bad_idx = 0u;
+    first_bad_got = 0u;
+    first_bad_exp = 0u;
+
+    uint32_t words_to_check = readback_words;
+    if (words_to_check > (uint32_t)param_words.size()) {
+        words_to_check = (uint32_t)param_words.size();
+    }
+    if (words_to_check == 0u) {
+        return false;
+    }
+
+    std::vector<uint8_t> out_bytes;
+    std::vector<uint32_t> got_words;
+    std::vector<uint32_t> exp_words;
+    exp_words.assign(param_words.begin(), param_words.begin() + words_to_check);
+
+    push_u32_le(io, (uint32_t)sram_map::PARAM_BASE_DEFAULT);
+    push_u32_le(io, words_to_check);
+    send_cmd(io, (uint8_t)aecct::OP_READ_MEM);
+    collect_out_bytes(io, words_to_check * 4u, out_bytes);
+    expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_READ_MEM, "read_mem_done");
+    bytes_to_words_le(out_bytes, got_words);
+
+    if (got_words.size() != exp_words.size()) {
+        return false;
+    }
+
+    PAYLOAD_READBACK_COMPARE_LOOP: for (uint32_t i = 0u; i < words_to_check; ++i) {
+        if (got_words[i] != exp_words[i]) {
+            first_bad_idx = i;
+            first_bad_got = got_words[i];
+            first_bad_exp = exp_words[i];
+            return false;
+        }
+    }
+    return true;
+}
+
+static void print_input_summary(uint32_t sample_idx, const std::vector<uint32_t>& infer_words) {
+    uint32_t pos_cnt = 0u;
+    uint32_t neg_cnt = 0u;
+    uint32_t zero_cnt = 0u;
+    const uint32_t stride = (uint32_t)EXP_LEN_INFER_IN_WORDS;
+    const uint32_t base = sample_idx * stride;
+    INPUT_SIGN_SCAN_LOOP: for (uint32_t i = 0u; i < stride; ++i) {
+        const float v = (float)trace_input_y_step0_tensor[base + i];
+        if (v > 0.0f) {
+            ++pos_cnt;
+        } else if (v < 0.0f) {
+            ++neg_cnt;
+        } else {
+            ++zero_cnt;
+        }
+    }
+
+    std::printf(
+        "[backup_io8][debug_input] sample=%u in_words=%u hash=0x%08X sign_pos=%u sign_neg=%u sign_zero=%u first4=0x%08X,0x%08X,0x%08X,0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)infer_words.size(),
+        (unsigned)fnv1a_u32_words(infer_words),
+        (unsigned)pos_cnt,
+        (unsigned)neg_cnt,
+        (unsigned)zero_cnt,
+        (unsigned)infer_words[0],
+        (unsigned)infer_words[1],
+        (unsigned)infer_words[2],
+        (unsigned)infer_words[3]);
 }
 
 static bool run_one_trace_sample_and_compare(Io8Top& io, uint32_t sample_idx) {
@@ -399,6 +573,102 @@ static bool run_one_trace_sample_and_compare(Io8Top& io, uint32_t sample_idx) {
     return true;
 }
 
+static DebugCompareResult run_one_xpred_one_debug_sample(
+    Io8Top& io,
+    const XpredOneSample& pick
+) {
+    DebugCompareResult ret;
+    ret.exact = true;
+    ret.mismatch_idx = 0u;
+    ret.got_word = 0u;
+    ret.exp_word = 0u;
+    ret.byte_mismatch_found = false;
+    ret.byte_mismatch_idx = 0u;
+    ret.got_byte = 0u;
+    ret.exp_byte = 0u;
+
+    std::vector<uint32_t> infer_words;
+    std::vector<uint32_t> expected_xpred_words;
+    std::vector<uint32_t> expected_logits_words;
+    std::vector<uint8_t> out_bytes;
+    std::vector<uint32_t> got_words;
+    std::vector<uint8_t> expected_bytes;
+    build_trace_infer_words(pick.sample_id, infer_words);
+    build_trace_xpred_words(pick.sample_id, expected_xpred_words);
+    build_trace_logits_words(pick.sample_id, expected_logits_words);
+    print_input_summary(pick.sample_id, infer_words);
+    std::printf("[backup_io8][debug_ref] sample=%u xpred_one_indices=", (unsigned)pick.sample_id);
+    print_indices_line(pick.one_indices);
+    std::printf("\n");
+
+    send_cmd(io, (uint8_t)aecct::OP_INFER);
+    expect_rsp(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_INFER, "infer_begin_debug");
+    DEBUG_INFER_INGEST_LOOP: for (uint32_t i = 0u; i < (uint32_t)infer_words.size(); ++i) {
+        push_u32_le(io, infer_words[i]);
+        top_tick(io);
+        if (i + 1u < (uint32_t)infer_words.size()) {
+            expect_no_rsp(io, "infer_ingest_debug");
+        } else {
+            expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_INFER, "infer_done_debug");
+        }
+    }
+
+    const uint32_t expected_bytes_len = (uint32_t)EXP_LEN_OUT_XPRED_WORDS * 4u;
+    collect_out_bytes(io, expected_bytes_len, out_bytes);
+    bytes_to_words_le(out_bytes, got_words);
+    words_to_bytes_le(expected_xpred_words, expected_bytes);
+
+    DEBUG_COMPARE_WORD_LOOP: for (uint32_t i = 0u; i < (uint32_t)expected_xpred_words.size(); ++i) {
+        if (got_words[i] != expected_xpred_words[i]) {
+            ret.exact = false;
+            ret.mismatch_idx = i;
+            ret.got_word = got_words[i];
+            ret.exp_word = expected_xpred_words[i];
+            break;
+        }
+    }
+
+    if (!ret.exact) {
+        DEBUG_COMPARE_BYTE_LOOP: for (uint32_t i = 0u; i < (uint32_t)expected_bytes.size(); ++i) {
+            if (out_bytes[i] != expected_bytes[i]) {
+                ret.byte_mismatch_found = true;
+                ret.byte_mismatch_idx = i;
+                ret.got_byte = out_bytes[i];
+                ret.exp_byte = expected_bytes[i];
+                break;
+            }
+        }
+
+        const uint32_t idx = ret.mismatch_idx;
+        std::printf(
+            "[backup_io8][debug_mismatch] sample=%u first_word_mismatch_idx=%u expected=0x%08X actual=0x%08X ref_logit_bits=0x%08X\n",
+            (unsigned)pick.sample_id,
+            (unsigned)idx,
+            (unsigned)ret.exp_word,
+            (unsigned)ret.got_word,
+            (unsigned)expected_logits_words[idx]);
+        if (ret.byte_mismatch_found) {
+            std::printf(
+                "[backup_io8][debug_mismatch] sample=%u first_byte_mismatch_idx=%u expected=0x%02X actual=0x%02X\n",
+                (unsigned)pick.sample_id,
+                (unsigned)ret.byte_mismatch_idx,
+                (unsigned)ret.exp_byte,
+                (unsigned)ret.got_byte);
+        } else {
+            std::printf(
+                "[backup_io8][debug_mismatch] sample=%u byte_mismatch=none (packing suspect)\n",
+                (unsigned)pick.sample_id);
+        }
+    } else {
+        std::printf(
+            "[backup_io8][debug_exact] sample=%u xpred_exact=PASS hash=0x%08X\n",
+            (unsigned)pick.sample_id,
+            (unsigned)fnv1a_u32_words(got_words));
+    }
+
+    return ret;
+}
+
 } // namespace
 
 int main() {
@@ -436,6 +706,91 @@ int main() {
         "PASS: tb_backup_io8_loadw_infer_trace_aligned_xpred_compare patterns=%u words_per_pattern=%u\n",
         (unsigned)kTracePatternCount,
         (unsigned)EXP_LEN_OUT_XPRED_WORDS);
+
+    std::vector<XpredOneSample> xpred_one_samples;
+    if (!select_xpred_one_samples(xpred_one_samples)) {
+        fail("cannot find any trace sample with x_pred=1");
+    }
+    std::printf(
+        "[backup_io8][debug_select] selected_samples=%u (max=%u)\n",
+        (unsigned)xpred_one_samples.size(),
+        (unsigned)kDebugMaxXpredOneSamples);
+    DEBUG_SELECTED_SAMPLE_PRINT_LOOP: for (uint32_t i = 0u; i < (uint32_t)xpred_one_samples.size(); ++i) {
+        const XpredOneSample& pick = xpred_one_samples[i];
+        std::printf("[backup_io8][debug_select] sample=%u xpred_one_indices=", (unsigned)pick.sample_id);
+        print_indices_line(pick.one_indices);
+        std::printf("\n");
+    }
+
+    uint32_t payload_bad_idx = 0u;
+    uint32_t payload_bad_got = 0u;
+    uint32_t payload_bad_exp = 0u;
+    const bool payload_readback_ok = verify_payload_readback_prefix(
+        io,
+        param_words,
+        kDebugPayloadReadbackWords,
+        payload_bad_idx,
+        payload_bad_got,
+        payload_bad_exp);
+    if (payload_readback_ok) {
+        std::vector<uint32_t> payload_prefix(
+            param_words.begin(),
+            param_words.begin() + (size_t)kDebugPayloadReadbackWords);
+        std::printf(
+            "[backup_io8][debug_payload] readback_prefix_words=%u exact=PASS hash=0x%08X\n",
+            (unsigned)kDebugPayloadReadbackWords,
+            (unsigned)fnv1a_u32_words(payload_prefix));
+    } else {
+        std::printf(
+            "[backup_io8][debug_payload] readback_prefix_words=%u exact=FAIL first_mismatch_idx=%u expected=0x%08X actual=0x%08X\n",
+            (unsigned)kDebugPayloadReadbackWords,
+            (unsigned)payload_bad_idx,
+            (unsigned)payload_bad_exp,
+            (unsigned)payload_bad_got);
+    }
+
+    bool mismatch_found = false;
+    uint32_t mismatch_sample = 0u;
+    DebugCompareResult mismatch_ret;
+    DEBUG_SAMPLE_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)xpred_one_samples.size(); ++i) {
+        const XpredOneSample& pick = xpred_one_samples[i];
+        DebugCompareResult r = run_one_xpred_one_debug_sample(io, pick);
+        if (!r.exact) {
+            mismatch_found = true;
+            mismatch_sample = pick.sample_id;
+            mismatch_ret = r;
+            break;
+        }
+    }
+
+    DebugBoundary boundary = DEBUG_BOUNDARY_NONE;
+    if (!payload_readback_ok) {
+        boundary = DEBUG_BOUNDARY_PAYLOAD_LOADW;
+    } else if (mismatch_found && !mismatch_ret.byte_mismatch_found) {
+        boundary = DEBUG_BOUNDARY_OUTPUT_PACKING;
+    } else if (mismatch_found) {
+        boundary = DEBUG_BOUNDARY_DUT_ALGO;
+    }
+
+    if (boundary == DEBUG_BOUNDARY_PAYLOAD_LOADW) {
+        std::printf(
+            "[backup_io8][debug_boundary] earliest_boundary=payload_or_loadw first_payload_mismatch_idx=%u\n",
+            (unsigned)payload_bad_idx);
+    } else if (boundary == DEBUG_BOUNDARY_OUTPUT_PACKING) {
+        std::printf(
+            "[backup_io8][debug_boundary] earliest_boundary=output_packing sample=%u first_word_mismatch_idx=%u\n",
+            (unsigned)mismatch_sample,
+            (unsigned)mismatch_ret.mismatch_idx);
+    } else if (boundary == DEBUG_BOUNDARY_DUT_ALGO) {
+        std::printf(
+            "[backup_io8][debug_boundary] earliest_boundary=dut_algorithm_divergence sample=%u first_word_mismatch_idx=%u\n",
+            (unsigned)mismatch_sample,
+            (unsigned)mismatch_ret.mismatch_idx);
+    } else {
+        std::printf("[backup_io8][debug_boundary] earliest_boundary=none (selected x_pred=1 samples all exact)\n");
+    }
+
+    std::printf("PASS: tb_backup_io8_loadw_infer_xpred1_debug_bridge\n");
     std::printf("PASS: tb_backup_io8_loadw_infer_smoke\n");
     return 0;
 }
