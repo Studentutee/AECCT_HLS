@@ -82,6 +82,102 @@ static inline void transformer_layer_probe_inc(u32_t* counter) {
     }
 }
 
+#ifndef __SYNTHESIS__
+// local-only debug taps for layer1 producer binary-cut.
+// These shadows are sampled at producer/consumer boundaries and are not part of production ownership.
+static u32_t g_layer1_attn_out_shadow[FFN_X_WORDS];
+static u32_t g_layer1_pre_ln_input_shadow[FFN_X_WORDS];
+static u32_t g_layer1_ln0_out_shadow[FFN_X_WORDS];
+static u32_t g_layer1_ffn1_out_shadow[FFN_W1_OUT_WORDS];
+static u32_t g_layer1_relu_out_shadow[FFN_W1_OUT_WORDS];
+static u32_t g_layer1_ffn2_out_shadow[FFN_X_WORDS];
+static bool g_layer1_attn_out_valid = false;
+static bool g_layer1_pre_ln_input_valid = false;
+static bool g_layer1_ln0_out_valid = false;
+static bool g_layer1_ffn1_out_valid = false;
+static bool g_layer1_relu_out_valid = false;
+static bool g_layer1_ffn2_out_valid = false;
+static u32_t g_layer1_x_words_valid = (u32_t)0u;
+static u32_t g_layer1_ff_words_valid = (u32_t)0u;
+
+static inline void transformer_layer_debug_clear_layer1_stage_valid() {
+    g_layer1_attn_out_valid = false;
+    g_layer1_pre_ln_input_valid = false;
+    g_layer1_ln0_out_valid = false;
+    g_layer1_ffn1_out_valid = false;
+    g_layer1_relu_out_valid = false;
+    g_layer1_ffn2_out_valid = false;
+    g_layer1_x_words_valid = (u32_t)0u;
+    g_layer1_ff_words_valid = (u32_t)0u;
+}
+
+static inline void transformer_layer_debug_copy_words(
+    u32_t* dst,
+    const u32_t* src,
+    uint32_t words
+) {
+    TRANSFORMER_LAYER_DEBUG_COPY_WORDS_LOOP: for (uint32_t i = 0u; i < words; ++i) {
+        dst[i] = src[i];
+    }
+}
+
+static inline bool transformer_layer_debug_layer1_attn_out_valid() { return g_layer1_attn_out_valid; }
+static inline bool transformer_layer_debug_layer1_pre_ln_input_valid() { return g_layer1_pre_ln_input_valid; }
+static inline bool transformer_layer_debug_layer1_ln0_out_valid() { return g_layer1_ln0_out_valid; }
+static inline bool transformer_layer_debug_layer1_ffn1_out_valid() { return g_layer1_ffn1_out_valid; }
+static inline bool transformer_layer_debug_layer1_relu_out_valid() { return g_layer1_relu_out_valid; }
+static inline bool transformer_layer_debug_layer1_ffn2_out_valid() { return g_layer1_ffn2_out_valid; }
+static inline u32_t transformer_layer_debug_layer1_x_words_valid() { return g_layer1_x_words_valid; }
+static inline u32_t transformer_layer_debug_layer1_ff_words_valid() { return g_layer1_ff_words_valid; }
+
+static inline u32_t transformer_layer_debug_peek_layer1_attn_out_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer1_attn_out_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer1_pre_ln_input_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer1_pre_ln_input_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer1_ln0_out_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer1_ln0_out_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer1_ffn1_out_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_W1_OUT_WORDS) { return g_layer1_ffn1_out_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer1_relu_out_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_W1_OUT_WORDS) { return g_layer1_relu_out_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer1_ffn2_out_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer1_ffn2_out_shadow[i]; }
+    return (u32_t)0u;
+}
+#else
+static inline void transformer_layer_debug_clear_layer1_stage_valid() {}
+static inline bool transformer_layer_debug_layer1_attn_out_valid() { return false; }
+static inline bool transformer_layer_debug_layer1_pre_ln_input_valid() { return false; }
+static inline bool transformer_layer_debug_layer1_ln0_out_valid() { return false; }
+static inline bool transformer_layer_debug_layer1_ffn1_out_valid() { return false; }
+static inline bool transformer_layer_debug_layer1_relu_out_valid() { return false; }
+static inline bool transformer_layer_debug_layer1_ffn2_out_valid() { return false; }
+static inline u32_t transformer_layer_debug_layer1_x_words_valid() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_layer1_ff_words_valid() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer1_attn_out_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer1_pre_ln_input_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer1_ln0_out_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer1_ffn1_out_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer1_relu_out_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer1_ffn2_out_word(u32_t) { return (u32_t)0u; }
+#endif
+
 struct CfgRegs {
     u32_t d_model;
     u32_t n_heads;
@@ -455,6 +551,41 @@ static inline void load_layer_sublayer0_norm_params(
     }
 }
 
+static inline void apply_layer_attn_out_projection(
+    u32_t* sram,
+    uint32_t param_base_word,
+    uint32_t layer_id,
+    uint32_t attn_out_base_word,
+    uint32_t token_count,
+    uint32_t d_model
+) {
+    const uint32_t wo_weight_id = (layer_id == 0u) ? 33u : 53u;
+    const uint32_t wo_bias_id = (layer_id == 0u) ? 3u : 11u;
+    const uint32_t wo_weight_base = param_base_word + kParamMeta[wo_weight_id].offset_w;
+    const uint32_t wo_bias_base = param_base_word + kParamMeta[wo_bias_id].offset_w;
+    const uint32_t max_d_model = (d_model > (uint32_t)ATTN_D_MODEL) ? (uint32_t)ATTN_D_MODEL : d_model;
+    if (max_d_model == 0u || token_count == 0u) {
+        return;
+    }
+    u32_t out_row[ATTN_D_MODEL];
+    ATTN_OUT_PROJ_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+        const uint32_t x_row_base = attn_out_base_word + t * d_model;
+        ATTN_OUT_PROJ_OUT_DIM_LOOP: for (uint32_t o = 0u; o < max_d_model; ++o) {
+            fp32_t acc = fp32_from_bits(sram[wo_bias_base + o]);
+            const uint32_t w_row_base = wo_weight_base + o * d_model;
+            ATTN_OUT_PROJ_IN_DIM_LOOP: for (uint32_t i = 0u; i < max_d_model; ++i) {
+                const fp32_t x = fp32_from_bits(sram[x_row_base + i]);
+                const fp32_t w = fp32_from_bits(sram[w_row_base + i]);
+                acc = acc + (x * w);
+            }
+            out_row[o] = bits_from_fp32(acc);
+        }
+        ATTN_OUT_PROJ_WRITEBACK_LOOP: for (uint32_t o = 0u; o < max_d_model; ++o) {
+            sram[x_row_base + o] = out_row[o];
+        }
+    }
+}
+
 // P00-011AN/P00-011AO: first deep Attn+FFN boundary bridges for Catapult-facing progress.
 // This variant keeps Attn/FFN first deep entries array-shaped while preserving
 // accepted core compute semantics.
@@ -513,6 +644,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
             attn_out_topfed_payload_enable);
+    const u32_t attn_param_base_word = pb.param_base_word;
 
     if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_FULL) {
         // Stage boundary: non-selected partial-prebuild buckets keep full-shell execution.
@@ -522,7 +654,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
     } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
@@ -533,7 +665,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
     } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY) {
@@ -544,7 +676,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
         // Ownership seam: SCORES-only stage still commits post->attn_out writeback for downstream FFN input.
@@ -567,7 +699,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
         AttnLayer0TopManagedWindowBridge<ATTN_STAGE_SCORES>(
@@ -576,7 +708,7 @@ static inline void TransformerLayerTopManagedAttnBridge(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
         // Ownership seam: composed stages still commit explicit post->attn_out writeback for downstream FFN input.
@@ -592,6 +724,14 @@ static inline void TransformerLayerTopManagedAttnBridge(
             sram_window[out_base + i] = sram_window[post_base + i];
         }
     }
+    apply_layer_attn_out_projection(
+        sram_window,
+        (uint32_t)pb.param_base_word.to_uint(),
+        (uint32_t)layer_id.to_uint(),
+        (uint32_t)sc.attn_out_base_word.to_uint(),
+        (uint32_t)attn_cfg.token_count.to_uint(),
+        d_model
+    );
 
     FfnCfg ffn_cfg;
     ffn_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
@@ -1024,6 +1164,7 @@ static inline void TransformerLayer(
             score_prebuilt_from_top_managed,
             out_prebuilt_from_top_managed,
             attn_out_topfed_payload_enable);
+    const u32_t attn_param_base_word = pb.param_base_word;
     const uint32_t layer_token_count = (uint32_t)attn_cfg.token_count.to_uint();
     const uint32_t x_in_base = (uint32_t)x_in_base_word.to_uint();
     const uint32_t attn_out_base = (uint32_t)sc.attn_out_base_word.to_uint();
@@ -1035,6 +1176,12 @@ static inline void TransformerLayer(
     if (layer_words > (uint32_t)FFN_X_WORDS) {
         layer_words = (uint32_t)FFN_X_WORDS;
     }
+#ifndef __SYNTHESIS__
+    const bool layer1_debug_capture_enable = ((uint32_t)layer_id.to_uint() == 1u);
+    if ((uint32_t)layer_id.to_uint() == 0u) {
+        transformer_layer_debug_clear_layer1_stage_valid();
+    }
+#endif
     // Preserve x_in before attention writeback so sublayer0 residual add consumes the original token row.
     TRANSFORMER_LAYER_SUBLAYER0_RESIDUAL_SNAPSHOT_LOOP: for (uint32_t i = 0u; i < layer_words; ++i) {
         sram[pre_ln_residual_base + i] = sram[x_in_base + i];
@@ -1047,7 +1194,7 @@ static inline void TransformerLayer(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
     } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_OUT_ONLY) {
@@ -1058,7 +1205,7 @@ static inline void TransformerLayer(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
     } else if (attn_shell_stage == TRANSFORMER_ATTN_COMPAT_SHELL_SCORES_ONLY) {
@@ -1069,7 +1216,7 @@ static inline void TransformerLayer(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
         // Ownership seam: SCORES-only stage still commits post->attn_out writeback for downstream FFN input.
@@ -1092,7 +1239,7 @@ static inline void TransformerLayer(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
         AttnLayer0<ATTN_STAGE_SCORES>(
@@ -1101,7 +1248,7 @@ static inline void TransformerLayer(
             x_in_base_word,
             sc.attn_out_base_word,
             sc.attn,
-            (u32_t)0,
+            attn_param_base_word,
             attn_prebuilt_handoff
         );
         // Ownership seam: composed stages still commit explicit post->attn_out writeback for downstream FFN input.
@@ -1117,6 +1264,26 @@ static inline void TransformerLayer(
             sram[out_base + i] = sram[post_base + i];
         }
     }
+    apply_layer_attn_out_projection(
+        sram,
+        (uint32_t)pb.param_base_word.to_uint(),
+        (uint32_t)layer_id.to_uint(),
+        (uint32_t)sc.attn_out_base_word.to_uint(),
+        (uint32_t)attn_cfg.token_count.to_uint(),
+        d_model
+    );
+
+#ifndef __SYNTHESIS__
+    if (layer1_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer1_attn_out_shadow,
+            &sram[attn_out_base],
+            layer_words
+        );
+        g_layer1_attn_out_valid = true;
+        g_layer1_x_words_valid = (u32_t)layer_words;
+    }
+#endif
 
     // Sublayer0 compose: residual add (attn_out + original x_in), then LayerNorm to produce FFN input.
     TRANSFORMER_LAYER_SUBLAYER0_RESIDUAL_ADD_LOOP: for (uint32_t i = 0u; i < layer_words; ++i) {
@@ -1124,6 +1291,16 @@ static inline void TransformerLayer(
         const fp32_t x_prev = fp32_from_bits(sram[pre_ln_residual_base + i]);
         sram[pre_ln_residual_base + i] = bits_from_fp32(attn_v + x_prev);
     }
+#ifndef __SYNTHESIS__
+    if (layer1_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer1_pre_ln_input_shadow,
+            &sram[pre_ln_residual_base],
+            layer_words
+        );
+        g_layer1_pre_ln_input_valid = true;
+    }
+#endif
     const uint32_t sublayer0_gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
     const uint32_t sublayer0_beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
     load_layer_sublayer0_norm_params(
@@ -1147,6 +1324,16 @@ static inline void TransformerLayer(
         (u32_t)sublayer0_beta_base
     );
     const uint32_t ffn_input_base = (uint32_t)x_out_base_word.to_uint();
+#ifndef __SYNTHESIS__
+    if (layer1_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer1_ln0_out_shadow,
+            &sram[ffn_input_base],
+            layer_words
+        );
+        g_layer1_ln0_out_valid = true;
+    }
+#endif
 
     FfnCfg ffn_cfg;
     ffn_cfg.token_count = (u32_t)FFN_TOKEN_COUNT;
@@ -1323,6 +1510,19 @@ static inline void TransformerLayer(
         selected_topfed_ffn_w1_bias_words,
         selected_topfed_ffn_w1_bias_words_valid
     );
+#ifndef __SYNTHESIS__
+    if (layer1_debug_capture_enable) {
+        const uint32_t ffn_hidden_words = (w1_bias_words * ffn_token_count > (uint32_t)FFN_W1_OUT_WORDS) ?
+            (uint32_t)FFN_W1_OUT_WORDS : (w1_bias_words * ffn_token_count);
+        transformer_layer_debug_copy_words(
+            g_layer1_ffn1_out_shadow,
+            &sram[(uint32_t)sc.ffn.w1_out_base_word.to_uint()],
+            ffn_hidden_words
+        );
+        g_layer1_ffn1_out_valid = true;
+        g_layer1_ff_words_valid = (u32_t)ffn_hidden_words;
+    }
+#endif
     // FFN stage transition: ReLU.
     FFNLayer0<FFN_STAGE_RELU>(
         sram,
@@ -1332,6 +1532,19 @@ static inline void TransformerLayer(
         pb.param_base_word,
         layer_id
     );
+#ifndef __SYNTHESIS__
+    if (layer1_debug_capture_enable) {
+        const uint32_t ffn_hidden_words = (w1_bias_words * ffn_token_count > (uint32_t)FFN_W1_OUT_WORDS) ?
+            (uint32_t)FFN_W1_OUT_WORDS : (w1_bias_words * ffn_token_count);
+        transformer_layer_debug_copy_words(
+            g_layer1_relu_out_shadow,
+            &sram[(uint32_t)sc.ffn.relu_out_base_word.to_uint()],
+            ffn_hidden_words
+        );
+        g_layer1_relu_out_valid = true;
+        g_layer1_ff_words_valid = (u32_t)ffn_hidden_words;
+    }
+#endif
 
     uint32_t ffn_d_ffn = (uint32_t)ffn_cfg.d_ffn.to_uint();
     if (ffn_d_ffn == 0u) { ffn_d_ffn = (uint32_t)FFN_D_FFN; }
@@ -1478,6 +1691,16 @@ static inline void TransformerLayer(
         selected_topfed_ffn_w2_bias_words_valid,
         (u32_t)FFN_POLICY_REQUIRE_W2_TOPFED
     );
+#ifndef __SYNTHESIS__
+    if (layer1_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer1_ffn2_out_shadow,
+            &sram[(uint32_t)sc.ffn.w2_out_base_word.to_uint()],
+            layer_words
+        );
+        g_layer1_ffn2_out_valid = true;
+    }
+#endif
 
     uint32_t residual_base = ffn_input_base;
     uint32_t w2_base = (uint32_t)sc.ffn.w2_out_base_word.to_uint();

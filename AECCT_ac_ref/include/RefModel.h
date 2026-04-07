@@ -13,24 +13,34 @@ namespace aecct_ref {
 struct RefModelIO {
   // Flattened pointers (row-major):
   // input_y: [B, N] (quantized path)
-  const act_t* input_y;
+  const act_t* input_y = nullptr;
   // input_y_fp32: [B, N] optional exact FP32/F64 bring-up path
-  const double* input_y_fp32;
+  const double* input_y_fp32 = nullptr;
   // output logits: [B, N] as double for convenient comparison
-  double* out_logits;
+  double* out_logits = nullptr;
   // output x_pred: [B, N] (0/1)
-  bit1_t* out_x_pred;
+  bit1_t* out_x_pred = nullptr;
   // optional FinalHead scalar s_t dump: [B, 75], row-major
-  double* out_finalhead_s_t;
+  double* out_finalhead_s_t = nullptr;
   // optional end_norm dump: [B, 75, 32], row-major
-  double* out_end_norm;
+  double* out_end_norm = nullptr;
   // optional layer1_ffn_ln_out dump: [B, 75, 32], row-major
-  double* out_layer1_ffn_ln_out;
+  double* out_layer1_ffn_ln_out = nullptr;
   // optional layer1_ffn2_out dump: [B, 75, 32], row-major
-  double* out_layer1_ffn2_out;
+  double* out_layer1_ffn2_out = nullptr;
+  // optional layer1_sublayer0_attn_out dump: [B, 75, 32], row-major
+  double* out_layer1_attn_out = nullptr;
+  // optional layer1_sublayer0_pre_ln_input dump: [B, 75, 32], row-major
+  double* out_layer1_pre_ln_input = nullptr;
+  // optional layer1_sublayer0_ln_out dump (FFN input): [B, 75, 32], row-major
+  double* out_layer1_ln_out = nullptr;
+  // optional layer1_ffn1_out dump: [B, 75, 128], row-major
+  double* out_layer1_ffn1_out = nullptr;
+  // optional layer1_relu_out dump: [B, 75, 128], row-major
+  double* out_layer1_relu_out = nullptr;
 
-  int B;
-  int N;
+  int B = 0;
+  int N = 0;
 };
 
 struct RefDumpConfig {

@@ -1904,10 +1904,50 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_3d<HEADS, TOKENS_T, TOKENS_T>(dump, "layer1_attn_probs", layer1_probs);
     dump_3d<HEADS, TOKENS_T, D_HEAD>(dump, "layer1_ctx", layer1_ctx);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_attn_out", layer1_attn_out);
+    if (io.out_layer1_attn_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_attn_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_attn_out[t][d].to_float());
+        }
+      }
+    }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ln_in", layer1_ln_in);
+    if (io.out_layer1_pre_ln_input != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_pre_ln_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_ln_in[t][d].to_float());
+        }
+      }
+    }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ln_out", layer1_ln_out);
+    if (io.out_layer1_ln_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_ln_out[t][d].to_float());
+        }
+      }
+    }
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer1_ffn1_out", layer1_ffn1);
+    if (io.out_layer1_ffn1_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < FF_DIM; ++d) {
+          io.out_layer1_ffn1_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
+            static_cast<double>(layer1_ffn1[t][d].to_float());
+        }
+      }
+    }
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer1_act_out", layer1_act);
+    if (io.out_layer1_relu_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < FF_DIM; ++d) {
+          io.out_layer1_relu_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
+            static_cast<double>(layer1_act[t][d].to_float());
+        }
+      }
+    }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ffn2_out", layer1_ffn2);
     if (io.out_layer1_ffn2_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
