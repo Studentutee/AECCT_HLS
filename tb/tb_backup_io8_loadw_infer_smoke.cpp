@@ -1056,7 +1056,7 @@ static DebugCompareResult run_one_xpred_one_debug_sample(
         (unsigned)(ret.xpred31_exact ? 1u : 0u));
 
     std::printf(
-        "[backup_io8][debug_decision31] sample=%u idx=%u y_bits=0x%08X y=%.9g sign_y=%.1f dut_rule_xpred=0x%08X ref_rule_xpred=0x%08X\n",
+        "[backup_io8][debug_decision31] sample=%u idx=%u y_bits_raw=0x%08X y=%.9g sign_y=%.1f dut_rule_xpred=0x%08X ref_rule_xpred=0x%08X\n",
         (unsigned)pick.sample_id,
         (unsigned)idx31,
         (unsigned)ret.y31_bits,
@@ -1119,6 +1119,17 @@ int main() {
 
     Io8Top io;
     run_setup_cfg_loadw(io, param_words);
+
+    const uint32_t infer_input_base_dbg = (uint32_t)aecct::top_peek_infer_input_base_word().to_uint();
+    const uint32_t infer_logits_base_dbg = (uint32_t)aecct::top_peek_infer_logits_base_word().to_uint();
+    const uint32_t final_logits_base_dbg = (uint32_t)aecct::FINAL_LOGITS_BASE_WORD;
+    const bool y_logits_alias = (infer_input_base_dbg == final_logits_base_dbg);
+    std::printf(
+        "[backup_io8][debug_alias] infer_input_base_word=0x%08X infer_logits_base_word=0x%08X FINAL_LOGITS_BASE_WORD=0x%08X alias=%u\n",
+        (unsigned)infer_input_base_dbg,
+        (unsigned)infer_logits_base_dbg,
+        (unsigned)final_logits_base_dbg,
+        (unsigned)(y_logits_alias ? 1u : 0u));
 
     const uint32_t payload_words_to_check = clip_words_to_check(param_words, kDebugPayloadReadbackWords);
     if (payload_words_to_check == 0u) {
@@ -1255,18 +1266,6 @@ int main() {
         std::printf("[backup_io8][debug_payload_boundary] class=payload_path_aligned_no_mismatch\n");
     }
 
-    TRACE_PATTERN_LOOP: for (uint32_t pattern_idx = 0u; pattern_idx < kTracePatternCount; ++pattern_idx) {
-        const uint32_t sample_idx = kTraceSampleIds[pattern_idx];
-        if (!run_one_trace_sample_and_compare(io, sample_idx)) {
-            return 1;
-        }
-    }
-
-    std::printf(
-        "PASS: tb_backup_io8_loadw_infer_trace_aligned_xpred_compare patterns=%u words_per_pattern=%u\n",
-        (unsigned)kTracePatternCount,
-        (unsigned)EXP_LEN_OUT_XPRED_WORDS);
-
     std::vector<XpredOneSample> xpred_one_samples;
     if (!select_xpred_one_samples(xpred_one_samples)) {
         fail("cannot find any trace sample with x_pred=1");
@@ -1379,6 +1378,18 @@ int main() {
     } else {
         std::printf("[backup_io8][debug_boundary] earliest_boundary=none (selected x_pred=1 samples all exact)\n");
     }
+
+    TRACE_PATTERN_LOOP: for (uint32_t pattern_idx = 0u; pattern_idx < kTracePatternCount; ++pattern_idx) {
+        const uint32_t sample_idx = kTraceSampleIds[pattern_idx];
+        if (!run_one_trace_sample_and_compare(io, sample_idx)) {
+            return 1;
+        }
+    }
+
+    std::printf(
+        "PASS: tb_backup_io8_loadw_infer_trace_aligned_xpred_compare patterns=%u words_per_pattern=%u\n",
+        (unsigned)kTracePatternCount,
+        (unsigned)EXP_LEN_OUT_XPRED_WORDS);
 
     std::printf("PASS: tb_backup_io8_loadw_infer_xpred1_debug_bridge\n");
     std::printf("PASS: tb_backup_io8_loadw_infer_smoke\n");

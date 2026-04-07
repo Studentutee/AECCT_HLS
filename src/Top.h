@@ -773,6 +773,7 @@ namespace aecct {
     static inline u32_t top_peek_cfg_d_model() { return top_regs().cfg_d_model; }
     static inline u32_t top_peek_cfg_n_heads() { return top_regs().cfg_n_heads; }
     static inline u32_t top_peek_cfg_n_layers() { return top_regs().cfg_n_layers; }
+    static inline u32_t top_peek_infer_input_base_word() { return top_regs().infer_ingest_contract.in_base_word; }
     static inline u32_t top_peek_infer_final_x_base_word() { return top_regs().infer_final_x_base_word; }
     static inline u32_t top_peek_infer_mid_dump_base_word() { return top_regs().infer_mid_dump_base_word; }
     static inline bool top_peek_infer_mid_valid() { return top_regs().infer_mid_valid; }

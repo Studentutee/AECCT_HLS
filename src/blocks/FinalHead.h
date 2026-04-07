@@ -228,6 +228,10 @@ static inline bool FinalHeadCorePassABTopManaged(
                 acc += (w * st);
             }
 
+            // Alias-safe capture: latch y before writing logits in case y/logits share SRAM window.
+            const u32_t y_bits_raw = (y_words != 0) ? y_words[c] : bits_from_fp32(fp32_one());
+            const fp32_t y = fp32_from_bits(y_bits_raw);
+
             // Pass-B write-back boundary: commit logits into SRAM, then optional stream.
             const u32_t logits_bits = bits_from_fp32(acc);
             sram[logits_base + c] = logits_bits;
@@ -237,7 +241,6 @@ static inline bool FinalHeadCorePassABTopManaged(
 
             if (c < xpred_words) {
                 // xpred path compares sign with target y and writes binary mismatch flag.
-                const fp32_t y = (y_words != 0) ? fp32_from_bits(y_words[c]) : fp32_one();
                 const fp32_t prod = acc * y;
                 const bool mismatch = (prod < fp32_zero());
                 const u32_t xpred_bits = mismatch ? bits_from_fp32(fp32_one()) : bits_from_fp32(fp32_zero());
@@ -245,6 +248,17 @@ static inline bool FinalHeadCorePassABTopManaged(
                 if (stream_enabled && stream_xpred) {
                     data_out->write(xpred_bits);
                 }
+#ifndef __SYNTHESIS__
+                if (c == 31u) {
+                    std::printf(
+                        "[p11ba][X_PRED_DECISION_TAP] c=%u y_bits_raw=0x%08X logits_bits=0x%08X xpred_bits=0x%08X\n",
+                        (unsigned)c,
+                        (unsigned)y_bits_raw.to_uint(),
+                        (unsigned)logits_bits.to_uint(),
+                        (unsigned)xpred_bits.to_uint()
+                    );
+                }
+#endif
             }
         }
     }
