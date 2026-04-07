@@ -29,8 +29,10 @@ struct Io8Top {
 
 static const uint32_t kTracePatternCount = 8u;
 static const uint32_t kTraceSampleIds[kTracePatternCount] = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 9u };
-static const uint32_t kDebugMaxXpredOneSamples = 3u;
+static const uint32_t kDebugMaxXpredOneSamples = 1u;
+static const uint32_t kDebugPreferredSampleId = 5u;
 static const uint32_t kDebugPayloadReadbackWords = 64u;
+static const uint32_t kDebugPayloadWindowWords = 16u;
 
 struct XpredOneSample {
     uint32_t sample_id;
@@ -43,6 +45,14 @@ enum DebugBoundary : uint32_t {
     DEBUG_BOUNDARY_PAYLOAD_LOADW = 2u,
     DEBUG_BOUNDARY_OUTPUT_PACKING = 3u,
     DEBUG_BOUNDARY_DUT_ALGO = 4u
+};
+
+enum PayloadResponsibilityBoundary : uint32_t {
+    PAYLOAD_BOUNDARY_UNKNOWN = 0u,
+    PAYLOAD_BOUNDARY_A_EXPECTED_STREAM = 1u,
+    PAYLOAD_BOUNDARY_B_PARAM_ASSEMBLY = 2u,
+    PAYLOAD_BOUNDARY_C_LOADW_WRITE = 3u,
+    PAYLOAD_BOUNDARY_D_READ_MEM = 4u
 };
 
 struct DebugCompareResult {
@@ -320,7 +330,20 @@ static void collect_trace_xpred_one_indices(uint32_t sample_idx, std::vector<uin
 static bool select_xpred_one_samples(std::vector<XpredOneSample>& samples) {
     samples.clear();
     const uint32_t total_samples = (uint32_t)trace_output_x_pred_step0_tensor_shape[0];
+    if (kDebugPreferredSampleId < total_samples) {
+        XpredOneSample pick;
+        pick.sample_id = kDebugPreferredSampleId;
+        collect_trace_xpred_one_indices(kDebugPreferredSampleId, pick.one_indices);
+        if (!pick.one_indices.empty()) {
+            samples.push_back(pick);
+            return true;
+        }
+    }
+
     SELECT_XPRED_ONE_SAMPLE_LOOP: for (uint32_t sample_idx = 0u; sample_idx < total_samples; ++sample_idx) {
+        if (sample_idx == kDebugPreferredSampleId) {
+            continue;
+        }
         XpredOneSample pick;
         pick.sample_id = sample_idx;
         collect_trace_xpred_one_indices(sample_idx, pick.one_indices);
@@ -431,10 +454,52 @@ static void run_setup_cfg_loadw(Io8Top& io, const std::vector<uint32_t>& param_w
     expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_OUTMODE, "set_outmode_xpred");
 }
 
-static bool verify_payload_readback_prefix(
-    Io8Top& io,
+static uint32_t clip_words_to_check(
     const std::vector<uint32_t>& param_words,
+    uint32_t requested_words
+) {
+    uint32_t words_to_check = requested_words;
+    if (words_to_check > (uint32_t)param_words.size()) {
+        words_to_check = (uint32_t)param_words.size();
+    }
+    return words_to_check;
+}
+
+static void read_mem_words(
+    Io8Top& io,
+    uint32_t base_word,
     uint32_t readback_words,
+    std::vector<uint32_t>& out_words
+) {
+    out_words.clear();
+    if (readback_words == 0u) {
+        return;
+    }
+
+    std::vector<uint8_t> out_bytes;
+    push_u32_le(io, base_word);
+    push_u32_le(io, readback_words);
+    send_cmd(io, (uint8_t)aecct::OP_READ_MEM);
+    collect_out_bytes(io, readback_words * 4u, out_bytes);
+    expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_READ_MEM, "read_mem_done");
+    bytes_to_words_le(out_bytes, out_words);
+}
+
+static void read_sram_words_direct(
+    uint32_t base_word,
+    uint32_t readback_words,
+    std::vector<uint32_t>& out_words
+) {
+    out_words.assign(readback_words, 0u);
+    const aecct::u32_t* sram = aecct::top_sram();
+    SRAM_DIRECT_READ_LOOP: for (uint32_t i = 0u; i < readback_words; ++i) {
+        out_words[i] = (uint32_t)sram[base_word + i].to_uint();
+    }
+}
+
+static bool compare_word_vectors_exact(
+    const std::vector<uint32_t>& expected_words,
+    const std::vector<uint32_t>& actual_words,
     uint32_t& first_bad_idx,
     uint32_t& first_bad_got,
     uint32_t& first_bad_exp
@@ -442,40 +507,193 @@ static bool verify_payload_readback_prefix(
     first_bad_idx = 0u;
     first_bad_got = 0u;
     first_bad_exp = 0u;
-
-    uint32_t words_to_check = readback_words;
-    if (words_to_check > (uint32_t)param_words.size()) {
-        words_to_check = (uint32_t)param_words.size();
-    }
-    if (words_to_check == 0u) {
+    if (expected_words.size() != actual_words.size()) {
         return false;
     }
-
-    std::vector<uint8_t> out_bytes;
-    std::vector<uint32_t> got_words;
-    std::vector<uint32_t> exp_words;
-    exp_words.assign(param_words.begin(), param_words.begin() + words_to_check);
-
-    push_u32_le(io, (uint32_t)sram_map::PARAM_BASE_DEFAULT);
-    push_u32_le(io, words_to_check);
-    send_cmd(io, (uint8_t)aecct::OP_READ_MEM);
-    collect_out_bytes(io, words_to_check * 4u, out_bytes);
-    expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_READ_MEM, "read_mem_done");
-    bytes_to_words_le(out_bytes, got_words);
-
-    if (got_words.size() != exp_words.size()) {
-        return false;
-    }
-
-    PAYLOAD_READBACK_COMPARE_LOOP: for (uint32_t i = 0u; i < words_to_check; ++i) {
-        if (got_words[i] != exp_words[i]) {
+    PAYLOAD_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)expected_words.size(); ++i) {
+        if (actual_words[i] != expected_words[i]) {
             first_bad_idx = i;
-            first_bad_got = got_words[i];
-            first_bad_exp = exp_words[i];
+            first_bad_got = actual_words[i];
+            first_bad_exp = expected_words[i];
             return false;
         }
     }
     return true;
+}
+
+static bool map_param_word_index(
+    uint32_t word_idx,
+    uint32_t& out_param_id,
+    uint32_t& out_local_word_idx
+) {
+    MAP_PARAM_WORD_LOOP: for (uint32_t pid = 0u; pid < (uint32_t)PARAM_COUNT; ++pid) {
+        const uint32_t begin = kParamMeta[pid].offset_w;
+        const uint32_t len_w = kParamMeta[pid].len_w;
+        const uint32_t end_excl = begin + len_w;
+        if (word_idx >= begin && word_idx < end_excl) {
+            out_param_id = pid;
+            out_local_word_idx = word_idx - begin;
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char* payload_section_name(uint32_t param_id) {
+    return (param_id < (uint32_t)BIAS_COUNT) ? "bias_section_a" : "weight_section_b";
+}
+
+static const char* payload_emit_helper_name(uint32_t param_id, uint32_t dtype) {
+    if (param_id < (uint32_t)BIAS_COUNT) {
+        return "tb_emit_fp32_words_from_fp64(bias)";
+    }
+    const uint32_t weight_slot = param_id - (uint32_t)BIAS_COUNT;
+    if (weight_slot >= (uint32_t)WEIGHT_COUNT) {
+        return "unknown_weight_slot";
+    }
+    const WeightId wid = (WeightId)weight_slot;
+    if (dtype == 0u) {
+        if (is_quant_linear_inv_sw_weight_slot(wid)) {
+            return "tb_emit_inv_sw_words_from_fp64";
+        }
+        return "tb_emit_fp32_words_from_fp64(weight)";
+    }
+    return "tb_emit_bitpack_words";
+}
+
+static bool try_get_source_word_for_expected(
+    uint32_t param_id,
+    uint32_t local_word_idx,
+    uint32_t& out_word
+) {
+    if (param_id < (uint32_t)BIAS_COUNT) {
+        uint32_t numel = 0u;
+        const double* ptr = tb_lookup_bias_fp64((BiasId)param_id, numel);
+        if (ptr == 0) {
+            return false;
+        }
+        if (local_word_idx < numel) {
+            out_word = f32_to_bits((float)ptr[local_word_idx]);
+        } else {
+            out_word = 0u;
+        }
+        return true;
+    }
+
+    const uint32_t weight_slot = param_id - (uint32_t)BIAS_COUNT;
+    if (weight_slot >= (uint32_t)WEIGHT_COUNT) {
+        return false;
+    }
+
+    const WeightId wid = (WeightId)weight_slot;
+    const TensorMeta meta = kWeightMeta[weight_slot];
+    if (meta.dtype != 0u || is_quant_linear_inv_sw_weight_slot(wid)) {
+        return false;
+    }
+
+    uint32_t numel = 0u;
+    const double* ptr = tb_lookup_weight_fp64(wid, numel);
+    if (ptr == 0) {
+        return false;
+    }
+    if (local_word_idx < numel) {
+        out_word = f32_to_bits((float)ptr[local_word_idx]);
+    } else {
+        out_word = 0u;
+    }
+    return true;
+}
+
+static void print_payload_stream_order_summary() {
+    std::printf(
+        "[backup_io8][debug_payload_expected] stream_order=sectionA_bias(param_id=0..%u) + sectionB_weight(param_id=%u..%u)\n",
+        (unsigned)((uint32_t)BIAS_COUNT - 1u),
+        (unsigned)(uint32_t)BIAS_COUNT,
+        (unsigned)((uint32_t)PARAM_COUNT - 1u));
+}
+
+static void print_expected_payload_prefix_with_source(
+    const std::vector<uint32_t>& param_words,
+    uint32_t window_words
+) {
+    const uint32_t words_to_print = clip_words_to_check(param_words, window_words);
+    print_payload_stream_order_summary();
+    EXPECTED_PREFIX_DUMP_LOOP: for (uint32_t i = 0u; i < words_to_print; ++i) {
+        uint32_t param_id = 0u;
+        uint32_t local_idx = 0u;
+        if (!map_param_word_index(i, param_id, local_idx)) {
+            std::printf(
+                "[backup_io8][debug_payload_expected] idx=%u word=0x%08X source=unmapped\n",
+                (unsigned)i,
+                (unsigned)param_words[i]);
+            continue;
+        }
+
+        const ParamMeta meta = kParamMeta[param_id];
+        uint32_t source_word = 0u;
+        const bool source_known = try_get_source_word_for_expected(param_id, local_idx, source_word);
+        const bool source_match = source_known && (source_word == param_words[i]);
+
+        std::printf(
+            "[backup_io8][debug_payload_expected] idx=%u word=0x%08X param_id=%u key=%s section=%s dtype=%u local_word=%u helper=%s source_known=%u source_word=0x%08X source_match=%u\n",
+            (unsigned)i,
+            (unsigned)param_words[i],
+            (unsigned)param_id,
+            kParamKey[param_id],
+            payload_section_name(param_id),
+            (unsigned)meta.dtype,
+            (unsigned)local_idx,
+            payload_emit_helper_name(param_id, meta.dtype),
+            (unsigned)(source_known ? 1u : 0u),
+            (unsigned)source_word,
+            (unsigned)(source_match ? 1u : 0u));
+    }
+}
+
+static void print_payload_compare_window(
+    const char* tag,
+    const std::vector<uint32_t>& expected_words,
+    const std::vector<uint32_t>& actual_words,
+    uint32_t window_words
+) {
+    uint32_t words_to_print = window_words;
+    if (words_to_print > (uint32_t)expected_words.size()) {
+        words_to_print = (uint32_t)expected_words.size();
+    }
+    if (words_to_print > (uint32_t)actual_words.size()) {
+        words_to_print = (uint32_t)actual_words.size();
+    }
+
+    PAYLOAD_WINDOW_DUMP_LOOP: for (uint32_t i = 0u; i < words_to_print; ++i) {
+        uint32_t param_id = 0u;
+        uint32_t local_idx = 0u;
+        const bool mapped = map_param_word_index(i, param_id, local_idx);
+        const char* key = mapped ? kParamKey[param_id] : "unmapped";
+        std::printf(
+            "[backup_io8][%s] idx=%u expected=0x%08X actual=0x%08X exact=%s param_id=%u key=%s local_word=%u\n",
+            tag,
+            (unsigned)i,
+            (unsigned)expected_words[i],
+            (unsigned)actual_words[i],
+            (expected_words[i] == actual_words[i]) ? "PASS" : "FAIL",
+            (unsigned)param_id,
+            key,
+            (unsigned)local_idx);
+    }
+}
+
+static bool find_first_occurrence(
+    const std::vector<uint32_t>& words,
+    uint32_t needle,
+    uint32_t& out_idx
+) {
+    FIND_WORD_OCC_LOOP: for (uint32_t i = 0u; i < (uint32_t)words.size(); ++i) {
+        if (words[i] == needle) {
+            out_idx = i;
+            return true;
+        }
+    }
+    return false;
 }
 
 static void print_input_summary(uint32_t sample_idx, const std::vector<uint32_t>& infer_words) {
@@ -695,6 +913,141 @@ int main() {
     Io8Top io;
     run_setup_cfg_loadw(io, param_words);
 
+    const uint32_t payload_words_to_check = clip_words_to_check(param_words, kDebugPayloadReadbackWords);
+    if (payload_words_to_check == 0u) {
+        fail("payload debug words_to_check is zero");
+    }
+
+    std::vector<uint32_t> expected_payload_prefix(
+        param_words.begin(),
+        param_words.begin() + (size_t)payload_words_to_check);
+    std::vector<uint32_t> readmem_payload_prefix;
+    std::vector<uint32_t> direct_payload_prefix;
+    read_mem_words(io, (uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, readmem_payload_prefix);
+    read_sram_words_direct((uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, direct_payload_prefix);
+
+    uint32_t payload_readmem_bad_idx = 0u;
+    uint32_t payload_readmem_bad_got = 0u;
+    uint32_t payload_readmem_bad_exp = 0u;
+    const bool payload_readmem_ok = compare_word_vectors_exact(
+        expected_payload_prefix,
+        readmem_payload_prefix,
+        payload_readmem_bad_idx,
+        payload_readmem_bad_got,
+        payload_readmem_bad_exp);
+
+    uint32_t payload_direct_bad_idx = 0u;
+    uint32_t payload_direct_bad_got = 0u;
+    uint32_t payload_direct_bad_exp = 0u;
+    const bool payload_direct_ok = compare_word_vectors_exact(
+        expected_payload_prefix,
+        direct_payload_prefix,
+        payload_direct_bad_idx,
+        payload_direct_bad_got,
+        payload_direct_bad_exp);
+
+    print_expected_payload_prefix_with_source(expected_payload_prefix, kDebugPayloadWindowWords);
+    print_payload_compare_window(
+        "debug_payload_readmem",
+        expected_payload_prefix,
+        readmem_payload_prefix,
+        kDebugPayloadWindowWords);
+    print_payload_compare_window(
+        "debug_payload_direct",
+        expected_payload_prefix,
+        direct_payload_prefix,
+        kDebugPayloadWindowWords);
+
+    const uint32_t top_w_base = (uint32_t)aecct::top_peek_w_base_word().to_uint();
+    const uint32_t commit_valid = aecct::top_peek_accepted_commit_record_valid() ? 1u : 0u;
+    const uint32_t commit_owner = (uint32_t)aecct::top_peek_accepted_commit_owner_opcode().to_uint();
+    const uint32_t commit_base = (uint32_t)aecct::top_peek_accepted_commit_base_word().to_uint();
+    const uint32_t commit_len_expected = (uint32_t)aecct::top_peek_accepted_commit_len_words_expected().to_uint();
+    const uint32_t commit_len_valid = (uint32_t)aecct::top_peek_accepted_commit_len_words_valid().to_uint();
+    std::printf(
+        "[backup_io8][debug_payload_commit] top_w_base=0x%08X accepted_valid=%u owner_opcode=0x%02X base=0x%08X len_expected=%u len_valid=%u\n",
+        (unsigned)top_w_base,
+        (unsigned)commit_valid,
+        (unsigned)commit_owner,
+        (unsigned)commit_base,
+        (unsigned)commit_len_expected,
+        (unsigned)commit_len_valid);
+
+    uint32_t idx0_param_id = 0u;
+    uint32_t idx0_local_idx = 0u;
+    uint32_t idx0_source_word = 0u;
+    const bool idx0_mapped = map_param_word_index(0u, idx0_param_id, idx0_local_idx);
+    const bool idx0_source_known = idx0_mapped && try_get_source_word_for_expected(idx0_param_id, idx0_local_idx, idx0_source_word);
+    const bool idx0_source_match = idx0_source_known && (idx0_source_word == expected_payload_prefix[0]);
+    std::printf(
+        "[backup_io8][debug_payload_expected_idx0] mapped=%u param_id=%u key=%s expected=0x%08X source_known=%u source=0x%08X source_match=%u\n",
+        (unsigned)(idx0_mapped ? 1u : 0u),
+        (unsigned)idx0_param_id,
+        idx0_mapped ? kParamKey[idx0_param_id] : "unmapped",
+        (unsigned)expected_payload_prefix[0],
+        (unsigned)(idx0_source_known ? 1u : 0u),
+        (unsigned)idx0_source_word,
+        (unsigned)(idx0_source_match ? 1u : 0u));
+
+    if (payload_readmem_ok) {
+        std::printf(
+            "[backup_io8][debug_payload] readback_prefix_words=%u exact=PASS hash=0x%08X\n",
+            (unsigned)payload_words_to_check,
+            (unsigned)fnv1a_u32_words(readmem_payload_prefix));
+    } else {
+        std::printf(
+            "[backup_io8][debug_payload] readback_prefix_words=%u exact=FAIL first_mismatch_idx=%u expected=0x%08X actual=0x%08X\n",
+            (unsigned)payload_words_to_check,
+            (unsigned)payload_readmem_bad_idx,
+            (unsigned)payload_readmem_bad_exp,
+            (unsigned)payload_readmem_bad_got);
+    }
+    if (payload_direct_ok) {
+        std::printf(
+            "[backup_io8][debug_payload_direct] direct_prefix_words=%u exact=PASS hash=0x%08X\n",
+            (unsigned)payload_words_to_check,
+            (unsigned)fnv1a_u32_words(direct_payload_prefix));
+    } else {
+        std::printf(
+            "[backup_io8][debug_payload_direct] direct_prefix_words=%u exact=FAIL first_mismatch_idx=%u expected=0x%08X actual=0x%08X\n",
+            (unsigned)payload_words_to_check,
+            (unsigned)payload_direct_bad_idx,
+            (unsigned)payload_direct_bad_exp,
+            (unsigned)payload_direct_bad_got);
+    }
+
+    uint32_t readmem_hit_idx = 0u;
+    if (!payload_readmem_ok && find_first_occurrence(param_words, payload_readmem_bad_got, readmem_hit_idx)) {
+        uint32_t hit_param_id = 0u;
+        uint32_t hit_local_idx = 0u;
+        if (map_param_word_index(readmem_hit_idx, hit_param_id, hit_local_idx)) {
+            std::printf(
+                "[backup_io8][debug_payload_hint] readmem_actual_first_mismatch_word_hit expected_idx=%u param_id=%u key=%s local_word=%u\n",
+                (unsigned)readmem_hit_idx,
+                (unsigned)hit_param_id,
+                kParamKey[hit_param_id],
+                (unsigned)hit_local_idx);
+        }
+    }
+
+    PayloadResponsibilityBoundary payload_boundary = PAYLOAD_BOUNDARY_UNKNOWN;
+    if (!idx0_source_match) {
+        payload_boundary = PAYLOAD_BOUNDARY_A_EXPECTED_STREAM;
+    } else if (!payload_direct_ok) {
+        payload_boundary = PAYLOAD_BOUNDARY_C_LOADW_WRITE;
+    } else if (!payload_readmem_ok) {
+        payload_boundary = PAYLOAD_BOUNDARY_D_READ_MEM;
+    }
+    if (payload_boundary == PAYLOAD_BOUNDARY_A_EXPECTED_STREAM) {
+        std::printf("[backup_io8][debug_payload_boundary] class=A_weights_streamer_or_expected_stream\n");
+    } else if (payload_boundary == PAYLOAD_BOUNDARY_C_LOADW_WRITE) {
+        std::printf("[backup_io8][debug_payload_boundary] class=C_loadw_write_or_base_order (direct_sram mismatch)\n");
+    } else if (payload_boundary == PAYLOAD_BOUNDARY_D_READ_MEM) {
+        std::printf("[backup_io8][debug_payload_boundary] class=D_read_mem_window_or_addr (direct_sram match, read_mem mismatch)\n");
+    } else {
+        std::printf("[backup_io8][debug_payload_boundary] class=payload_path_aligned_no_mismatch\n");
+    }
+
     TRACE_PATTERN_LOOP: for (uint32_t pattern_idx = 0u; pattern_idx < kTracePatternCount; ++pattern_idx) {
         const uint32_t sample_idx = kTraceSampleIds[pattern_idx];
         if (!run_one_trace_sample_and_compare(io, sample_idx)) {
@@ -722,33 +1075,6 @@ int main() {
         std::printf("\n");
     }
 
-    uint32_t payload_bad_idx = 0u;
-    uint32_t payload_bad_got = 0u;
-    uint32_t payload_bad_exp = 0u;
-    const bool payload_readback_ok = verify_payload_readback_prefix(
-        io,
-        param_words,
-        kDebugPayloadReadbackWords,
-        payload_bad_idx,
-        payload_bad_got,
-        payload_bad_exp);
-    if (payload_readback_ok) {
-        std::vector<uint32_t> payload_prefix(
-            param_words.begin(),
-            param_words.begin() + (size_t)kDebugPayloadReadbackWords);
-        std::printf(
-            "[backup_io8][debug_payload] readback_prefix_words=%u exact=PASS hash=0x%08X\n",
-            (unsigned)kDebugPayloadReadbackWords,
-            (unsigned)fnv1a_u32_words(payload_prefix));
-    } else {
-        std::printf(
-            "[backup_io8][debug_payload] readback_prefix_words=%u exact=FAIL first_mismatch_idx=%u expected=0x%08X actual=0x%08X\n",
-            (unsigned)kDebugPayloadReadbackWords,
-            (unsigned)payload_bad_idx,
-            (unsigned)payload_bad_exp,
-            (unsigned)payload_bad_got);
-    }
-
     bool mismatch_found = false;
     uint32_t mismatch_sample = 0u;
     DebugCompareResult mismatch_ret;
@@ -763,9 +1089,54 @@ int main() {
         }
     }
 
+    std::vector<uint32_t> readmem_payload_prefix_post;
+    std::vector<uint32_t> direct_payload_prefix_post;
+    read_mem_words(io, (uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, readmem_payload_prefix_post);
+    read_sram_words_direct((uint32_t)sram_map::PARAM_BASE_DEFAULT, payload_words_to_check, direct_payload_prefix_post);
+
+    uint32_t payload_readmem_bad_idx_post = 0u;
+    uint32_t payload_readmem_bad_got_post = 0u;
+    uint32_t payload_readmem_bad_exp_post = 0u;
+    const bool payload_readmem_ok_post = compare_word_vectors_exact(
+        expected_payload_prefix,
+        readmem_payload_prefix_post,
+        payload_readmem_bad_idx_post,
+        payload_readmem_bad_got_post,
+        payload_readmem_bad_exp_post);
+    uint32_t payload_direct_bad_idx_post = 0u;
+    uint32_t payload_direct_bad_got_post = 0u;
+    uint32_t payload_direct_bad_exp_post = 0u;
+    const bool payload_direct_ok_post = compare_word_vectors_exact(
+        expected_payload_prefix,
+        direct_payload_prefix_post,
+        payload_direct_bad_idx_post,
+        payload_direct_bad_got_post,
+        payload_direct_bad_exp_post);
+
+    std::printf(
+        "[backup_io8][debug_payload_post_infer] readmem_exact=%u direct_exact=%u first_readmem_mismatch_idx=%u first_direct_mismatch_idx=%u\n",
+        (unsigned)(payload_readmem_ok_post ? 1u : 0u),
+        (unsigned)(payload_direct_ok_post ? 1u : 0u),
+        (unsigned)payload_readmem_bad_idx_post,
+        (unsigned)payload_direct_bad_idx_post);
+    if (!payload_readmem_ok_post) {
+        std::printf(
+            "[backup_io8][debug_payload_post_infer] readmem_first_mismatch expected=0x%08X actual=0x%08X\n",
+            (unsigned)payload_readmem_bad_exp_post,
+            (unsigned)payload_readmem_bad_got_post);
+    }
+    if (!payload_direct_ok_post) {
+        std::printf(
+            "[backup_io8][debug_payload_post_infer] direct_first_mismatch expected=0x%08X actual=0x%08X\n",
+            (unsigned)payload_direct_bad_exp_post,
+            (unsigned)payload_direct_bad_got_post);
+    }
+
     DebugBoundary boundary = DEBUG_BOUNDARY_NONE;
-    if (!payload_readback_ok) {
+    if (!payload_readmem_ok || !payload_direct_ok) {
         boundary = DEBUG_BOUNDARY_PAYLOAD_LOADW;
+    } else if (!payload_readmem_ok_post || !payload_direct_ok_post) {
+        boundary = DEBUG_BOUNDARY_DUT_ALGO;
     } else if (mismatch_found && !mismatch_ret.byte_mismatch_found) {
         boundary = DEBUG_BOUNDARY_OUTPUT_PACKING;
     } else if (mismatch_found) {
@@ -774,8 +1145,10 @@ int main() {
 
     if (boundary == DEBUG_BOUNDARY_PAYLOAD_LOADW) {
         std::printf(
-            "[backup_io8][debug_boundary] earliest_boundary=payload_or_loadw first_payload_mismatch_idx=%u\n",
-            (unsigned)payload_bad_idx);
+            "[backup_io8][debug_boundary] earliest_boundary=payload_or_loadw payload_boundary_class=%u first_readmem_mismatch_idx=%u first_direct_mismatch_idx=%u\n",
+            (unsigned)payload_boundary,
+            (unsigned)payload_readmem_bad_idx,
+            (unsigned)payload_direct_bad_idx);
     } else if (boundary == DEBUG_BOUNDARY_OUTPUT_PACKING) {
         std::printf(
             "[backup_io8][debug_boundary] earliest_boundary=output_packing sample=%u first_word_mismatch_idx=%u\n",
