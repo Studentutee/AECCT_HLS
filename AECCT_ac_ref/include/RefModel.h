@@ -26,6 +26,8 @@ struct RefModelIO {
   double* out_end_norm = nullptr;
   // optional layer1_ffn_ln_out dump: [B, 75, 32], row-major
   double* out_layer1_ffn_ln_out = nullptr;
+  // optional layer0_ffn_ln_out dump: [B, 75, 32], row-major
+  double* out_layer0_ffn_ln_out = nullptr;
   // optional layer1_ffn2_out dump: [B, 75, 32], row-major
   double* out_layer1_ffn2_out = nullptr;
   // optional layer1_sublayer0_attn_out dump: [B, 75, 32], row-major

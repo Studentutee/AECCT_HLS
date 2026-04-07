@@ -1870,6 +1870,14 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer0_act_out", layer0_act);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn2_out", layer0_ffn2);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_out", layer0_ffn_ln_out);
+    if (io.out_layer0_ffn_ln_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_ffn_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_ffn_ln_out[t][d].to_float());
+        }
+      }
+    }
 
     static fp32_ref_t mid_norm[TOKENS_T][D_MODEL];
     apply_layernorm_tokens(layer0_ffn_ln_out,

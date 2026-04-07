@@ -356,6 +356,10 @@ namespace aecct {
         // Local mirror for EndLN input boundary debug/probe only; not a shared-SRAM owner contract.
         u32_t infer_endln_input_base_word;
         u32_t infer_endln_input_shadow[LN_X_TOTAL_WORDS];
+        // Local mirror for mid_norm writeback boundary debug/probe only; not a shared-SRAM owner contract.
+        u32_t infer_mid_norm_output_base_word;
+        u32_t infer_mid_norm_output_shadow[LN_X_TOTAL_WORDS];
+        bool infer_mid_norm_output_valid;
         bool p11ac_mainline_path_taken;
         bool p11ac_fallback_taken;
         bool p11ad_mainline_q_path_taken;
@@ -478,6 +482,11 @@ namespace aecct {
             for (unsigned i = 0; i < LN_X_TOTAL_WORDS; ++i) {
                 infer_endln_input_shadow[i] = 0;
             }
+            infer_mid_norm_output_base_word = 0;
+            for (unsigned i = 0; i < LN_X_TOTAL_WORDS; ++i) {
+                infer_mid_norm_output_shadow[i] = 0;
+            }
+            infer_mid_norm_output_valid = false;
             p11ac_mainline_path_taken = false;
             p11ac_fallback_taken = false;
             p11ad_mainline_q_path_taken = false;
@@ -786,6 +795,16 @@ namespace aecct {
     static inline u32_t top_peek_infer_endln_input_word(unsigned idx) {
         if (idx >= (unsigned)LN_X_TOTAL_WORDS) { return (u32_t)0u; }
         return top_regs().infer_endln_input_shadow[idx];
+    }
+    static inline u32_t top_peek_infer_mid_norm_output_base_word() {
+        return top_regs().infer_mid_norm_output_base_word;
+    }
+    static inline bool top_peek_infer_mid_norm_output_valid() {
+        return top_regs().infer_mid_norm_output_valid;
+    }
+    static inline u32_t top_peek_infer_mid_norm_output_word(unsigned idx) {
+        if (idx >= (unsigned)LN_X_TOTAL_WORDS) { return (u32_t)0u; }
+        return top_regs().infer_mid_norm_output_shadow[idx];
     }
     static inline u32_t top_peek_infer_mid_dump_base_word() { return top_regs().infer_mid_dump_base_word; }
     static inline bool top_peek_infer_mid_valid() { return top_regs().infer_mid_valid; }
@@ -2475,6 +2494,8 @@ namespace aecct {
         u32_t x_out_base = alternate_x_page(x_in_base);
         bool mid_valid = false;
         static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
+        regs.infer_mid_norm_output_valid = false;
+        regs.infer_mid_norm_output_base_word = 0;
         regs.p11ac_mainline_path_taken = false;
         regs.p11ac_fallback_taken = false;
         regs.p11ad_mainline_q_path_taken = false;
@@ -3064,6 +3085,13 @@ namespace aecct {
                     x_out_base,
                     &regs.layernorm_contract
                 );
+                regs.infer_mid_norm_output_base_word = x_out_base;
+                copy_x_words(
+                    regs.infer_mid_norm_output_shadow,
+                    &sram[(uint32_t)x_out_base.to_uint()],
+                    (uint32_t)LN_X_TOTAL_WORDS
+                );
+                regs.infer_mid_norm_output_valid = true;
                 x_in_base = x_out_base;
                 x_out_base = alternate_x_page(x_in_base);
 
@@ -3101,6 +3129,8 @@ namespace aecct {
         else {
             regs.infer_mid_valid = false;
             regs.infer_mid_dump_base_word = 0;
+            regs.infer_mid_norm_output_valid = false;
+            regs.infer_mid_norm_output_base_word = 0;
         }
     }
 
@@ -3134,6 +3164,8 @@ namespace aecct {
         u32_t x_out_base = alternate_x_page(x_in_base);
         bool mid_valid = false;
         static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
+        regs.infer_mid_norm_output_valid = false;
+        regs.infer_mid_norm_output_base_word = 0;
         regs.p11ac_mainline_path_taken = false;
         regs.p11ac_fallback_taken = false;
         regs.p11ad_mainline_q_path_taken = false;
@@ -3717,6 +3749,13 @@ namespace aecct {
                     x_out_base,
                     &regs.layernorm_contract
                 );
+                regs.infer_mid_norm_output_base_word = x_out_base;
+                copy_x_words(
+                    regs.infer_mid_norm_output_shadow,
+                    &sram[(uint32_t)x_out_base.to_uint()],
+                    (uint32_t)LN_X_TOTAL_WORDS
+                );
+                regs.infer_mid_norm_output_valid = true;
                 x_in_base = x_out_base;
                 x_out_base = alternate_x_page(x_in_base);
 
@@ -3752,6 +3791,8 @@ namespace aecct {
         } else {
             regs.infer_mid_valid = false;
             regs.infer_mid_dump_base_word = 0;
+            regs.infer_mid_norm_output_valid = false;
+            regs.infer_mid_norm_output_base_word = 0;
         }
     }
 
