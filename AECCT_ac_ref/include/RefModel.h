@@ -34,6 +34,14 @@ struct RefModelIO {
   double* out_layer0_relu_out = nullptr;
   // optional layer0_ffn2_out dump: [B, 75, 32], row-major
   double* out_layer0_ffn2_out = nullptr;
+  // optional layer0_sublayer0_attn_input dump: [B, 75, 32], row-major
+  double* out_layer0_attn_input = nullptr;
+  // optional layer0_attention_post_concat dump: [B, 75, 32], row-major
+  double* out_layer0_post_concat = nullptr;
+  // optional layer0_sublayer0_attn_out dump: [B, 75, 32], row-major
+  double* out_layer0_attn_out = nullptr;
+  // optional layer0_sublayer0_pre_ln_input dump: [B, 75, 32], row-major
+  double* out_layer0_pre_ln_input = nullptr;
   // optional layer0_ln_out dump: [B, 75, 32], row-major
   double* out_layer0_ln_out = nullptr;
   // optional layer0 residual add sum dump: [B, 75, 32], row-major

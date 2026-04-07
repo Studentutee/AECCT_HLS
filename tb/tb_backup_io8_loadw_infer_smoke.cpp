@@ -216,6 +216,16 @@ struct RefModelStageCompareResult {
     uint32_t layer0_w1_writeback_dut_bits;
     uint32_t layer0_w1_writeback_ref_bits;
     uint32_t layer0_w1_first_divergence_class; // 0=none,1=upstream_before_w1_compute,2=param_load_or_addressing,3=w1_mac_compute,4=w1_writeback
+    uint32_t earliest_e0_first_divergence_bucket; // 0=none,1=attention_tail_producer,2=residual_add0_or_pre_ln0_add,3=residual_add0_or_ln0_input_staging,4=ln0_core_or_ln0_writeback,5=ffn_input_base_page_or_consume,6=w1_dispatch_or_input_copy
+    uint32_t earliest_e0_first_mismatch_token;
+    uint32_t earliest_e0_first_mismatch_dim;
+    uint32_t earliest_e0_first_mismatch_dut_bits;
+    uint32_t earliest_e0_first_mismatch_ref_bits;
+    uint32_t earliest_e1_first_divergence_bucket; // branch-local secondary split bucket
+    uint32_t earliest_e1_first_mismatch_token;
+    uint32_t earliest_e1_first_mismatch_dim;
+    uint32_t earliest_e1_first_mismatch_dut_bits;
+    uint32_t earliest_e1_first_mismatch_ref_bits;
     uint32_t end_norm_first_mismatch_token;
     uint32_t end_norm_first_mismatch_dim;
     uint32_t end_norm_dut_bits;
@@ -1248,6 +1258,16 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer0_w1_writeback_dut_bits = 0u;
     r.layer0_w1_writeback_ref_bits = 0u;
     r.layer0_w1_first_divergence_class = 0u;
+    r.earliest_e0_first_divergence_bucket = 0u;
+    r.earliest_e0_first_mismatch_token = 0u;
+    r.earliest_e0_first_mismatch_dim = 0u;
+    r.earliest_e0_first_mismatch_dut_bits = 0u;
+    r.earliest_e0_first_mismatch_ref_bits = 0u;
+    r.earliest_e1_first_divergence_bucket = 0u;
+    r.earliest_e1_first_mismatch_token = 0u;
+    r.earliest_e1_first_mismatch_dim = 0u;
+    r.earliest_e1_first_mismatch_dut_bits = 0u;
+    r.earliest_e1_first_mismatch_ref_bits = 0u;
     r.end_norm_first_mismatch_token = 0u;
     r.end_norm_first_mismatch_dim = 0u;
     r.end_norm_dut_bits = 0u;
@@ -1309,6 +1329,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_layer0_ffn1_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer0_relu_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer0_ffn2_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_attn_input((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_post_concat((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_attn_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_pre_ln_input((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_ln_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_residual_add_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_sublayer1_ln_in((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
@@ -1335,6 +1359,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_layer0_ffn1_out = ref_layer0_ffn1_out.data();
     ref_io.out_layer0_relu_out = ref_layer0_relu_out.data();
     ref_io.out_layer0_ffn2_out = ref_layer0_ffn2_out.data();
+    ref_io.out_layer0_attn_input = ref_layer0_attn_input.data();
+    ref_io.out_layer0_post_concat = ref_layer0_post_concat.data();
+    ref_io.out_layer0_attn_out = ref_layer0_attn_out.data();
+    ref_io.out_layer0_pre_ln_input = ref_layer0_pre_ln_input.data();
     ref_io.out_layer0_ln_out = ref_layer0_ln_out.data();
     ref_io.out_layer0_residual_add_out = ref_layer0_residual_add_out.data();
     ref_io.out_layer0_sublayer1_ln_in = ref_layer0_sublayer1_ln_in.data();
@@ -1371,6 +1399,18 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w1_bias_words_valid().to_uint();
     const uint32_t layer0_w1_mac_cols =
         (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w1_mac_cols_valid().to_uint();
+    const uint32_t layer0_sublayer0_words =
+        (uint32_t)aecct::transformer_layer_debug_layer0_sublayer0_words_valid().to_uint();
+    const uint32_t layer0_ffn_input_words =
+        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_input_words_valid().to_uint();
+    const uint32_t layer0_selected_topfed_words =
+        (uint32_t)aecct::transformer_layer_debug_layer0_selected_topfed_ffn_x_words_count().to_uint();
+    const uint32_t layer0_sublayer0_x_in_base =
+        (uint32_t)aecct::transformer_layer_debug_layer0_sublayer0_x_in_base_word().to_uint();
+    const uint32_t layer0_sublayer0_x_out_base =
+        (uint32_t)aecct::transformer_layer_debug_layer0_sublayer0_x_out_base_word().to_uint();
+    const uint32_t layer0_ffn_input_base =
+        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_input_base_word().to_uint();
     const uint32_t layer1_x_words = (uint32_t)aecct::transformer_layer_debug_layer1_x_words_valid().to_uint();
     const uint32_t layer1_ff_words = (uint32_t)aecct::transformer_layer_debug_layer1_ff_words_valid().to_uint();
     const bool mid_norm_output_writeback_valid = aecct::top_peek_infer_mid_norm_output_valid();
@@ -1381,6 +1421,15 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         !aecct::transformer_layer_debug_layer0_ffn_w1_weight_valid() ||
         !aecct::transformer_layer_debug_layer0_ffn_w1_bias_valid() ||
         !aecct::transformer_layer_debug_layer0_ffn_w1_mac_psum_valid() ||
+        !aecct::transformer_layer_debug_layer0_post_concat_valid() ||
+        !aecct::transformer_layer_debug_layer0_attn_out_writeback_valid() ||
+        !aecct::transformer_layer_debug_layer0_residual0_lhs_valid() ||
+        !aecct::transformer_layer_debug_layer0_residual0_rhs_valid() ||
+        !aecct::transformer_layer_debug_layer0_residual0_add_out_valid() ||
+        !aecct::transformer_layer_debug_layer0_sublayer0_ln_in_valid() ||
+        !aecct::transformer_layer_debug_layer0_sublayer0_ln_out_writeback_valid() ||
+        !aecct::transformer_layer_debug_layer0_ffn_input_base_readback_valid() ||
+        !aecct::transformer_layer_debug_layer0_selected_topfed_ffn_x_words_valid() ||
         !aecct::transformer_layer_debug_layer0_ffn1_out_valid() ||
         !aecct::transformer_layer_debug_layer0_relu_out_valid() ||
         !aecct::transformer_layer_debug_layer0_w2_out_valid() ||
@@ -2311,6 +2360,336 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         r.layer0_w1_first_divergence_class = 0u;
     }
 
+    const uint32_t layer0_e0_words =
+        (layer0_sublayer0_words == 0u) ? ((uint32_t)N_NODES * d_model) : layer0_sublayer0_words;
+    const uint32_t layer0_e0_ffn_words =
+        (layer0_ffn_input_words == 0u) ? layer0_e0_words : layer0_ffn_input_words;
+    const uint32_t layer0_e0_selected_words =
+        (layer0_selected_topfed_words == 0u) ? layer0_e0_ffn_words : layer0_selected_topfed_words;
+    auto compare_scalar_stage = [&](uint32_t dut_bits, uint32_t ref_bits) -> Layer0StageCmp {
+        Layer0StageCmp c = make_layer0_cmp_pass();
+        c.exact = (dut_bits == ref_bits);
+        if (!c.exact) {
+            c.dut_bits = dut_bits;
+            c.ref_bits = ref_bits;
+        }
+        return c;
+    };
+    auto emit_earliest_cmp = [&](const char* phase, const char* point, const Layer0StageCmp& c) {
+        std::printf(
+            "[backup_io8][earliest][%s][%s] sample=%u exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
+            phase,
+            point,
+            (unsigned)sample_idx,
+            (unsigned)(c.exact ? 1u : 0u),
+            (unsigned)c.token,
+            (unsigned)c.dim,
+            (unsigned)c.dut_bits,
+            (unsigned)c.ref_bits
+        );
+    };
+
+    const Layer0StageCmp e0_a_attn_out_writeback_cmp = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_e0_words,
+        ref_layer0_attn_out,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_attn_out_writeback_word((aecct::u32_t)flat).to_uint();
+        }
+    );
+    const Layer0StageCmp e0_b_residual0_add_out_cmp = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_e0_words,
+        ref_layer0_pre_ln_input,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual0_add_out_word((aecct::u32_t)flat).to_uint();
+        }
+    );
+    const Layer0StageCmp e0_c_sublayer0_ln_in_cmp = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_e0_words,
+        ref_layer0_pre_ln_input,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer0_ln_in_word((aecct::u32_t)flat).to_uint();
+        }
+    );
+    const Layer0StageCmp e0_d_sublayer0_ln_out_writeback_cmp = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_e0_ffn_words,
+        ref_layer0_ln_out,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer0_ln_out_writeback_word((aecct::u32_t)flat).to_uint();
+        }
+    );
+    const Layer0StageCmp e0_e_ffn_input_base_readback_cmp = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_e0_ffn_words,
+        ref_layer0_ln_out,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_input_base_readback_word((aecct::u32_t)flat).to_uint();
+        }
+    );
+    const Layer0StageCmp e0_f_w1_input_cmp = compare_tensor_stage(
+        (uint32_t)N_NODES,
+        d_model,
+        layer0_e0_selected_words,
+        ref_layer0_ln_out,
+        [&](uint32_t flat) -> uint32_t {
+            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w1_input_word((aecct::u32_t)flat).to_uint();
+        }
+    );
+    emit_earliest_cmp("E0", "A.layer0_attn_out_writeback", e0_a_attn_out_writeback_cmp);
+    emit_earliest_cmp("E0", "B.layer0_residual0_add_out", e0_b_residual0_add_out_cmp);
+    emit_earliest_cmp("E0", "C.layer0_sublayer0_ln_in", e0_c_sublayer0_ln_in_cmp);
+    emit_earliest_cmp("E0", "D.layer0_sublayer0_ln_out_writeback", e0_d_sublayer0_ln_out_writeback_cmp);
+    emit_earliest_cmp("E0", "E.layer0_ffn_input_base_readback", e0_e_ffn_input_base_readback_cmp);
+    emit_earliest_cmp("E0", "F.layer0_ffn_w1_input", e0_f_w1_input_cmp);
+
+    Layer0StageCmp e0_first_leaf = make_layer0_cmp_pass();
+    if (!e0_a_attn_out_writeback_cmp.exact) {
+        r.earliest_e0_first_divergence_bucket = 1u;
+        e0_first_leaf = e0_a_attn_out_writeback_cmp;
+    } else if (!e0_b_residual0_add_out_cmp.exact) {
+        r.earliest_e0_first_divergence_bucket = 2u;
+        e0_first_leaf = e0_b_residual0_add_out_cmp;
+    } else if (!e0_c_sublayer0_ln_in_cmp.exact) {
+        r.earliest_e0_first_divergence_bucket = 3u;
+        e0_first_leaf = e0_c_sublayer0_ln_in_cmp;
+    } else if (!e0_d_sublayer0_ln_out_writeback_cmp.exact) {
+        r.earliest_e0_first_divergence_bucket = 4u;
+        e0_first_leaf = e0_d_sublayer0_ln_out_writeback_cmp;
+    } else if (!e0_e_ffn_input_base_readback_cmp.exact) {
+        r.earliest_e0_first_divergence_bucket = 5u;
+        e0_first_leaf = e0_e_ffn_input_base_readback_cmp;
+    } else if (!e0_f_w1_input_cmp.exact) {
+        r.earliest_e0_first_divergence_bucket = 6u;
+        e0_first_leaf = e0_f_w1_input_cmp;
+    } else {
+        r.earliest_e0_first_divergence_bucket = 0u;
+    }
+    if (r.earliest_e0_first_divergence_bucket != 0u) {
+        r.earliest_e0_first_mismatch_token = e0_first_leaf.token;
+        r.earliest_e0_first_mismatch_dim = e0_first_leaf.dim;
+        r.earliest_e0_first_mismatch_dut_bits = e0_first_leaf.dut_bits;
+        r.earliest_e0_first_mismatch_ref_bits = e0_first_leaf.ref_bits;
+    }
+
+    Layer0StageCmp e1_first_leaf = make_layer0_cmp_pass();
+    if (r.earliest_e0_first_divergence_bucket == 1u) {
+        const Layer0StageCmp e1_post_concat_cmp = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_e0_words,
+            ref_layer0_post_concat,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_post_concat_word((aecct::u32_t)flat).to_uint();
+            }
+        );
+        const Layer0StageCmp e1_wo_out_cmp = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_e0_words,
+            ref_layer0_attn_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_attn_out_writeback_word((aecct::u32_t)flat).to_uint();
+            }
+        );
+        const Layer0StageCmp e1_attn_out_writeback_cmp = e0_a_attn_out_writeback_cmp;
+        emit_earliest_cmp("E1", "attention_tail.layer0_post_concat", e1_post_concat_cmp);
+        emit_earliest_cmp("E1", "attention_tail.layer0_wo_out", e1_wo_out_cmp);
+        emit_earliest_cmp("E1", "attention_tail.layer0_attn_out_writeback", e1_attn_out_writeback_cmp);
+        if (!e1_post_concat_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 101u;
+            e1_first_leaf = e1_post_concat_cmp;
+        } else if (!e1_wo_out_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 102u;
+            e1_first_leaf = e1_wo_out_cmp;
+        } else if (!e1_attn_out_writeback_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 103u;
+            e1_first_leaf = e1_attn_out_writeback_cmp;
+        }
+    } else if (r.earliest_e0_first_divergence_bucket == 2u) {
+        const Layer0StageCmp e1_res_lhs_cmp = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_e0_words,
+            ref_layer0_attn_input,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual0_lhs_word((aecct::u32_t)flat).to_uint();
+            }
+        );
+        const Layer0StageCmp e1_res_rhs_cmp = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_e0_words,
+            ref_layer0_attn_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual0_rhs_word((aecct::u32_t)flat).to_uint();
+            }
+        );
+        const Layer0StageCmp e1_res_add_cmp = e0_b_residual0_add_out_cmp;
+        emit_earliest_cmp("E1", "residual_add0.residual_lhs", e1_res_lhs_cmp);
+        emit_earliest_cmp("E1", "residual_add0.residual_rhs", e1_res_rhs_cmp);
+        emit_earliest_cmp("E1", "residual_add0.add_out", e1_res_add_cmp);
+        if (!e1_res_lhs_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 201u;
+            e1_first_leaf = e1_res_lhs_cmp;
+        } else if (!e1_res_rhs_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 202u;
+            e1_first_leaf = e1_res_rhs_cmp;
+        } else if (!e1_res_add_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 203u;
+            e1_first_leaf = e1_res_add_cmp;
+        }
+    } else if (r.earliest_e0_first_divergence_bucket == 3u) {
+        const Layer0StageCmp e1_add_staging_cmp = e0_b_residual0_add_out_cmp;
+        const Layer0StageCmp e1_ln0_staging_cmp = e0_c_sublayer0_ln_in_cmp;
+        const Layer0StageCmp e1_ln0_real_input_cmp = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_e0_words,
+            ref_layer0_pre_ln_input,
+            [&](uint32_t flat) -> uint32_t {
+                const float lhs = bits_to_f32(
+                    (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual0_lhs_word((aecct::u32_t)flat).to_uint()
+                );
+                const float rhs = bits_to_f32(
+                    (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual0_rhs_word((aecct::u32_t)flat).to_uint()
+                );
+                return f32_to_bits(lhs + rhs);
+            }
+        );
+        emit_earliest_cmp("E1", "ln0_input_staging.add_out_staging", e1_add_staging_cmp);
+        emit_earliest_cmp("E1", "ln0_input_staging.ln0_consume_pre_staging", e1_ln0_staging_cmp);
+        emit_earliest_cmp("E1", "ln0_input_staging.ln0_real_input", e1_ln0_real_input_cmp);
+        if (!e1_add_staging_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 301u;
+            e1_first_leaf = e1_add_staging_cmp;
+        } else if (!e1_ln0_staging_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 302u;
+            e1_first_leaf = e1_ln0_staging_cmp;
+        } else if (!e1_ln0_real_input_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 303u;
+            e1_first_leaf = e1_ln0_real_input_cmp;
+        }
+    } else if (r.earliest_e0_first_divergence_bucket == 4u) {
+        const uint32_t token =
+            (e0_d_sublayer0_ln_out_writeback_cmp.token < (uint32_t)N_NODES) ? e0_d_sublayer0_ln_out_writeback_cmp.token : 0u;
+        const uint32_t dim = (e0_d_sublayer0_ln_out_writeback_cmp.dim < d_model) ? e0_d_sublayer0_ln_out_writeback_cmp.dim : 0u;
+        float dut_sum = 0.0f;
+        float ref_sum = 0.0f;
+        for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = token * d_model + d;
+            dut_sum += bits_to_f32((uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer0_ln_in_word((aecct::u32_t)flat).to_uint());
+            ref_sum += (float)ref_layer0_pre_ln_input[flat];
+        }
+        const float inv_d_model = (d_model == 0u) ? 0.0f : (1.0f / (float)d_model);
+        float dut_var_acc = 0.0f;
+        float ref_var_acc = 0.0f;
+        for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = token * d_model + d;
+            const float dut_x =
+                bits_to_f32((uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer0_ln_in_word((aecct::u32_t)flat).to_uint());
+            const float ref_x = (float)ref_layer0_pre_ln_input[flat];
+            const float dut_delta = dut_x - (dut_sum * inv_d_model);
+            const float ref_delta = ref_x - (ref_sum * inv_d_model);
+            dut_var_acc += dut_delta * dut_delta;
+            ref_var_acc += ref_delta * ref_delta;
+        }
+        const float eps = 1.0e-5f;
+        const float dut_normed =
+            (bits_to_f32((uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer0_ln_in_word((aecct::u32_t)(token * d_model + dim)).to_uint()) -
+             (dut_sum * inv_d_model)) /
+            std::sqrt((dut_var_acc * inv_d_model) + eps);
+        const float ref_normed =
+            ((float)ref_layer0_pre_ln_input[token * d_model + dim] - (ref_sum * inv_d_model)) /
+            std::sqrt((ref_var_acc * inv_d_model) + eps);
+        const uint32_t dut_affine_bits =
+            (uint32_t)aecct::transformer_layer_debug_peek_layer0_sublayer0_ln_out_writeback_word((aecct::u32_t)(token * d_model + dim)).to_uint();
+        const uint32_t ref_affine_bits = f32_to_bits((float)ref_layer0_ln_out[token * d_model + dim]);
+        const Layer0StageCmp e1_ln_mean_cmp = compare_scalar_stage(f32_to_bits(dut_sum), f32_to_bits(ref_sum));
+        const Layer0StageCmp e1_ln_var_acc_cmp = compare_scalar_stage(f32_to_bits(dut_var_acc), f32_to_bits(ref_var_acc));
+        const Layer0StageCmp e1_ln_normed_cmp = compare_scalar_stage(f32_to_bits(dut_normed), f32_to_bits(ref_normed));
+        const Layer0StageCmp e1_ln_affine_cmp = compare_scalar_stage(dut_affine_bits, ref_affine_bits);
+        const Layer0StageCmp e1_ln_writeback_cmp = e0_d_sublayer0_ln_out_writeback_cmp;
+        emit_earliest_cmp("E1", "ln0_core.ln0_mean", e1_ln_mean_cmp);
+        emit_earliest_cmp("E1", "ln0_core.ln0_var_acc", e1_ln_var_acc_cmp);
+        emit_earliest_cmp("E1", "ln0_core.ln0_normed_before_affine", e1_ln_normed_cmp);
+        emit_earliest_cmp("E1", "ln0_core.ln0_affine_out", e1_ln_affine_cmp);
+        emit_earliest_cmp("E1", "ln0_core.ln0_writeback_readback", e1_ln_writeback_cmp);
+        if (!e1_ln_mean_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 401u;
+            e1_first_leaf = e1_ln_mean_cmp;
+        } else if (!e1_ln_var_acc_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 402u;
+            e1_first_leaf = e1_ln_var_acc_cmp;
+        } else if (!e1_ln_normed_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 403u;
+            e1_first_leaf = e1_ln_normed_cmp;
+        } else if (!e1_ln_affine_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 404u;
+            e1_first_leaf = e1_ln_affine_cmp;
+        } else if (!e1_ln_writeback_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 405u;
+            e1_first_leaf = e1_ln_writeback_cmp;
+        }
+    } else if (r.earliest_e0_first_divergence_bucket == 5u) {
+        const uint32_t expected_x_out_base =
+            (uint32_t)aecct::alternate_x_page((aecct::u32_t)layer0_sublayer0_x_in_base).to_uint();
+        const Layer0StageCmp e1_x_out_base_cmp = compare_scalar_stage(layer0_sublayer0_x_out_base, expected_x_out_base);
+        const Layer0StageCmp e1_ffn_input_base_cmp = compare_scalar_stage(layer0_ffn_input_base, layer0_sublayer0_x_out_base);
+        const Layer0StageCmp e1_readback_cmp = e0_e_ffn_input_base_readback_cmp;
+        emit_earliest_cmp("E1", "ffn_input_base.x_out_base_word_page", e1_x_out_base_cmp);
+        emit_earliest_cmp("E1", "ffn_input_base.ffn_input_base_word", e1_ffn_input_base_cmp);
+        emit_earliest_cmp("E1", "ffn_input_base.readback_before_w1_dispatch", e1_readback_cmp);
+        if (!e1_x_out_base_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 501u;
+            e1_first_leaf = e1_x_out_base_cmp;
+        } else if (!e1_ffn_input_base_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 502u;
+            e1_first_leaf = e1_ffn_input_base_cmp;
+        } else if (!e1_readback_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 503u;
+            e1_first_leaf = e1_readback_cmp;
+        }
+    } else if (r.earliest_e0_first_divergence_bucket == 6u) {
+        const Layer0StageCmp e1_ffn_input_readback_cmp = e0_e_ffn_input_base_readback_cmp;
+        const Layer0StageCmp e1_selected_topfed_cmp = compare_tensor_stage(
+            (uint32_t)N_NODES,
+            d_model,
+            layer0_e0_selected_words,
+            ref_layer0_ln_out,
+            [&](uint32_t flat) -> uint32_t {
+                return (uint32_t)aecct::transformer_layer_debug_peek_layer0_selected_topfed_ffn_x_word((aecct::u32_t)flat).to_uint();
+            }
+        );
+        const Layer0StageCmp e1_w1_input_shadow_cmp = e0_f_w1_input_cmp;
+        emit_earliest_cmp("E1", "w1_dispatch.ffn_input_base_readback", e1_ffn_input_readback_cmp);
+        emit_earliest_cmp("E1", "w1_dispatch.selected_topfed_ffn_x_words", e1_selected_topfed_cmp);
+        emit_earliest_cmp("E1", "w1_dispatch.g_layer0_ffn_w1_input_shadow", e1_w1_input_shadow_cmp);
+        if (!e1_ffn_input_readback_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 601u;
+            e1_first_leaf = e1_ffn_input_readback_cmp;
+        } else if (!e1_selected_topfed_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 602u;
+            e1_first_leaf = e1_selected_topfed_cmp;
+        } else if (!e1_w1_input_shadow_cmp.exact) {
+            r.earliest_e1_first_divergence_bucket = 603u;
+            e1_first_leaf = e1_w1_input_shadow_cmp;
+        }
+    }
+    if (r.earliest_e1_first_divergence_bucket != 0u) {
+        r.earliest_e1_first_mismatch_token = e1_first_leaf.token;
+        r.earliest_e1_first_mismatch_dim = e1_first_leaf.dim;
+        r.earliest_e1_first_mismatch_dut_bits = e1_first_leaf.dut_bits;
+        r.earliest_e1_first_mismatch_ref_bits = e1_first_leaf.ref_bits;
+    }
+
     r.all_exact =
         r.layer0_ffn_ln_out_writeback_exact &&
         r.mid_norm_output_writeback_exact &&
@@ -2860,6 +3239,70 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (unsigned)(r.layer0_w1_mac_operand_mismatch_first ? 1u : 0u),
             (unsigned)r.layer0_w1_mac_dut_partial_bits,
             (unsigned)r.layer0_w1_mac_ref_partial_bits);
+    }
+    const char* earliest_e0_name = "none";
+    switch (r.earliest_e0_first_divergence_bucket) {
+        case 1u: earliest_e0_name = "attention_tail_producer"; break;
+        case 2u: earliest_e0_name = "residual_add0_or_pre_ln0_add"; break;
+        case 3u: earliest_e0_name = "residual_add0_or_ln0_input_staging"; break;
+        case 4u: earliest_e0_name = "ln0_core_or_ln0_writeback"; break;
+        case 5u: earliest_e0_name = "ffn_input_base_page_or_consume"; break;
+        case 6u: earliest_e0_name = "w1_dispatch_or_input_copy"; break;
+        default: break;
+    }
+    std::printf(
+        "[backup_io8][earliest][E0][decision] sample=%u first_divergence=%s class=%u\n",
+        (unsigned)sample_idx,
+        earliest_e0_name,
+        (unsigned)r.earliest_e0_first_divergence_bucket
+    );
+    if (r.earliest_e0_first_divergence_bucket != 0u) {
+        std::printf(
+            "[backup_io8][earliest][E0][decision] token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)r.earliest_e0_first_mismatch_token,
+            (unsigned)r.earliest_e0_first_mismatch_dim,
+            (unsigned)r.earliest_e0_first_mismatch_dut_bits,
+            (unsigned)r.earliest_e0_first_mismatch_ref_bits
+        );
+    }
+    const char* earliest_e1_name = "none";
+    switch (r.earliest_e1_first_divergence_bucket) {
+        case 101u: earliest_e1_name = "attention_tail.post_concat"; break;
+        case 102u: earliest_e1_name = "attention_tail.wo_out"; break;
+        case 103u: earliest_e1_name = "attention_tail.attn_out_writeback"; break;
+        case 201u: earliest_e1_name = "residual_add0.residual_lhs"; break;
+        case 202u: earliest_e1_name = "residual_add0.residual_rhs"; break;
+        case 203u: earliest_e1_name = "residual_add0.add_out"; break;
+        case 301u: earliest_e1_name = "ln0_input_staging.add_out_staging"; break;
+        case 302u: earliest_e1_name = "ln0_input_staging.consume_pre_staging"; break;
+        case 303u: earliest_e1_name = "ln0_input_staging.real_input"; break;
+        case 401u: earliest_e1_name = "ln0_core.mean"; break;
+        case 402u: earliest_e1_name = "ln0_core.var_acc"; break;
+        case 403u: earliest_e1_name = "ln0_core.normed_before_affine"; break;
+        case 404u: earliest_e1_name = "ln0_core.affine_out"; break;
+        case 405u: earliest_e1_name = "ln0_core.writeback_readback"; break;
+        case 501u: earliest_e1_name = "ffn_input_base.x_out_base_page"; break;
+        case 502u: earliest_e1_name = "ffn_input_base.ffn_input_base_word"; break;
+        case 503u: earliest_e1_name = "ffn_input_base.readback_before_w1_dispatch"; break;
+        case 601u: earliest_e1_name = "w1_dispatch.ffn_input_base_readback"; break;
+        case 602u: earliest_e1_name = "w1_dispatch.selected_topfed_ffn_x_words"; break;
+        case 603u: earliest_e1_name = "w1_dispatch.g_layer0_ffn_w1_input_shadow"; break;
+        default: break;
+    }
+    std::printf(
+        "[backup_io8][earliest][E1][decision] sample=%u first_divergence=%s class=%u\n",
+        (unsigned)sample_idx,
+        earliest_e1_name,
+        (unsigned)r.earliest_e1_first_divergence_bucket
+    );
+    if (r.earliest_e1_first_divergence_bucket != 0u) {
+        std::printf(
+            "[backup_io8][earliest][E1][decision] token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)r.earliest_e1_first_mismatch_token,
+            (unsigned)r.earliest_e1_first_mismatch_dim,
+            (unsigned)r.earliest_e1_first_mismatch_dut_bits,
+            (unsigned)r.earliest_e1_first_mismatch_ref_bits
+        );
     }
     if (!r.layer1_attn_input_exact) {
         std::printf(
@@ -3517,13 +3960,15 @@ int main() {
         (unsigned)(triage_s0.local_ref_ok ? 1u : 0u),
         (unsigned)(triage_s0.trace_mismatch ? 1u : 0u));
     std::printf(
-        "[backup_io8][ref_model_gate] sample=%u all_exact=%u boundary_class=%u bounded_first_divergence=%u recursive_first_divergence=%u w1_first_divergence_class=%u\n",
+        "[backup_io8][ref_model_gate] sample=%u all_exact=%u boundary_class=%u bounded_first_divergence=%u recursive_first_divergence=%u w1_first_divergence_class=%u earliest_e0_class=%u earliest_e1_class=%u\n",
         (unsigned)ref_probe.sample_idx,
         (unsigned)(ref_probe.all_exact ? 1u : 0u),
         (unsigned)ref_probe.boundary_bucket,
         (unsigned)ref_probe.bounded_first_divergence_bucket,
         (unsigned)ref_probe.layer0_recursive_first_divergence_bucket,
-        (unsigned)ref_probe.layer0_w1_first_divergence_class);
+        (unsigned)ref_probe.layer0_w1_first_divergence_class,
+        (unsigned)ref_probe.earliest_e0_first_divergence_bucket,
+        (unsigned)ref_probe.earliest_e1_first_divergence_bucket);
 
     std::vector<uint32_t> readmem_payload_prefix_post;
     std::vector<uint32_t> direct_payload_prefix_post;

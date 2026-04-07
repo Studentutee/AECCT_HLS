@@ -100,6 +100,15 @@ static u32_t g_layer0_residual_rhs_shadow[FFN_X_WORDS];
 static u32_t g_layer0_residual_add_out_shadow[FFN_X_WORDS];
 static u32_t g_layer0_sublayer1_ln_in_shadow[FFN_X_WORDS];
 static u32_t g_layer0_sublayer1_ln_out_writeback_shadow[FFN_X_WORDS];
+static u32_t g_layer0_post_concat_shadow[FFN_X_WORDS];
+static u32_t g_layer0_attn_out_writeback_shadow[FFN_X_WORDS];
+static u32_t g_layer0_residual0_lhs_shadow[FFN_X_WORDS];
+static u32_t g_layer0_residual0_rhs_shadow[FFN_X_WORDS];
+static u32_t g_layer0_residual0_add_out_shadow[FFN_X_WORDS];
+static u32_t g_layer0_sublayer0_ln_in_shadow[FFN_X_WORDS];
+static u32_t g_layer0_sublayer0_ln_out_writeback_shadow[FFN_X_WORDS];
+static u32_t g_layer0_ffn_input_base_readback_shadow[FFN_X_WORDS];
+static u32_t g_layer0_selected_topfed_ffn_x_words_shadow[FFN_X_WORDS];
 static u32_t g_layer1_attn_input_shadow[FFN_X_WORDS];
 static u32_t g_layer1_post_concat_shadow[FFN_X_WORDS];
 static u32_t g_layer1_q_shadow[FFN_X_WORDS];
@@ -123,6 +132,15 @@ static bool g_layer0_residual_rhs_valid = false;
 static bool g_layer0_residual_add_out_valid = false;
 static bool g_layer0_sublayer1_ln_in_valid = false;
 static bool g_layer0_sublayer1_ln_out_writeback_valid = false;
+static bool g_layer0_post_concat_valid = false;
+static bool g_layer0_attn_out_writeback_valid = false;
+static bool g_layer0_residual0_lhs_valid = false;
+static bool g_layer0_residual0_rhs_valid = false;
+static bool g_layer0_residual0_add_out_valid = false;
+static bool g_layer0_sublayer0_ln_in_valid = false;
+static bool g_layer0_sublayer0_ln_out_writeback_valid = false;
+static bool g_layer0_ffn_input_base_readback_valid = false;
+static bool g_layer0_selected_topfed_ffn_x_words_valid = false;
 static bool g_layer1_attn_input_valid = false;
 static bool g_layer1_post_concat_valid = false;
 static bool g_layer1_q_valid = false;
@@ -138,6 +156,12 @@ static u32_t g_layer0_ff_words_valid = (u32_t)0u;
 static u32_t g_layer0_ffn_w1_weight_words_valid = (u32_t)0u;
 static u32_t g_layer0_ffn_w1_bias_words_valid = (u32_t)0u;
 static u32_t g_layer0_ffn_w1_mac_cols_valid = (u32_t)0u;
+static u32_t g_layer0_sublayer0_words_valid = (u32_t)0u;
+static u32_t g_layer0_ffn_input_words_valid = (u32_t)0u;
+static u32_t g_layer0_selected_topfed_ffn_x_words_count = (u32_t)0u;
+static u32_t g_layer0_sublayer0_x_in_base_word = (u32_t)0u;
+static u32_t g_layer0_sublayer0_x_out_base_word = (u32_t)0u;
+static u32_t g_layer0_ffn_input_base_word = (u32_t)0u;
 
 static inline void transformer_layer_debug_clear_layer1_stage_valid() {
     g_layer1_attn_out_valid = false;
@@ -155,6 +179,15 @@ static inline void transformer_layer_debug_clear_layer1_stage_valid() {
     g_layer0_residual_add_out_valid = false;
     g_layer0_sublayer1_ln_in_valid = false;
     g_layer0_sublayer1_ln_out_writeback_valid = false;
+    g_layer0_post_concat_valid = false;
+    g_layer0_attn_out_writeback_valid = false;
+    g_layer0_residual0_lhs_valid = false;
+    g_layer0_residual0_rhs_valid = false;
+    g_layer0_residual0_add_out_valid = false;
+    g_layer0_sublayer0_ln_in_valid = false;
+    g_layer0_sublayer0_ln_out_writeback_valid = false;
+    g_layer0_ffn_input_base_readback_valid = false;
+    g_layer0_selected_topfed_ffn_x_words_valid = false;
     g_layer1_attn_input_valid = false;
     g_layer1_post_concat_valid = false;
     g_layer1_q_valid = false;
@@ -170,6 +203,12 @@ static inline void transformer_layer_debug_clear_layer1_stage_valid() {
     g_layer0_ffn_w1_weight_words_valid = (u32_t)0u;
     g_layer0_ffn_w1_bias_words_valid = (u32_t)0u;
     g_layer0_ffn_w1_mac_cols_valid = (u32_t)0u;
+    g_layer0_sublayer0_words_valid = (u32_t)0u;
+    g_layer0_ffn_input_words_valid = (u32_t)0u;
+    g_layer0_selected_topfed_ffn_x_words_count = (u32_t)0u;
+    g_layer0_sublayer0_x_in_base_word = (u32_t)0u;
+    g_layer0_sublayer0_x_out_base_word = (u32_t)0u;
+    g_layer0_ffn_input_base_word = (u32_t)0u;
 }
 
 static inline void transformer_layer_debug_copy_words(
@@ -201,6 +240,25 @@ static inline bool transformer_layer_debug_layer0_sublayer1_ln_in_valid() { retu
 static inline bool transformer_layer_debug_layer0_sublayer1_ln_out_writeback_valid() {
     return g_layer0_sublayer1_ln_out_writeback_valid;
 }
+static inline bool transformer_layer_debug_layer0_post_concat_valid() { return g_layer0_post_concat_valid; }
+static inline bool transformer_layer_debug_layer0_attn_out_writeback_valid() {
+    return g_layer0_attn_out_writeback_valid;
+}
+static inline bool transformer_layer_debug_layer0_residual0_lhs_valid() { return g_layer0_residual0_lhs_valid; }
+static inline bool transformer_layer_debug_layer0_residual0_rhs_valid() { return g_layer0_residual0_rhs_valid; }
+static inline bool transformer_layer_debug_layer0_residual0_add_out_valid() {
+    return g_layer0_residual0_add_out_valid;
+}
+static inline bool transformer_layer_debug_layer0_sublayer0_ln_in_valid() { return g_layer0_sublayer0_ln_in_valid; }
+static inline bool transformer_layer_debug_layer0_sublayer0_ln_out_writeback_valid() {
+    return g_layer0_sublayer0_ln_out_writeback_valid;
+}
+static inline bool transformer_layer_debug_layer0_ffn_input_base_readback_valid() {
+    return g_layer0_ffn_input_base_readback_valid;
+}
+static inline bool transformer_layer_debug_layer0_selected_topfed_ffn_x_words_valid() {
+    return g_layer0_selected_topfed_ffn_x_words_valid;
+}
 static inline bool transformer_layer_debug_layer1_attn_input_valid() { return g_layer1_attn_input_valid; }
 static inline bool transformer_layer_debug_layer1_post_concat_valid() { return g_layer1_post_concat_valid; }
 static inline bool transformer_layer_debug_layer1_q_valid() { return g_layer1_q_valid; }
@@ -221,6 +279,24 @@ static inline u32_t transformer_layer_debug_layer0_ffn_w1_bias_words_valid() {
 }
 static inline u32_t transformer_layer_debug_layer0_ffn_w1_mac_cols_valid() {
     return g_layer0_ffn_w1_mac_cols_valid;
+}
+static inline u32_t transformer_layer_debug_layer0_sublayer0_words_valid() {
+    return g_layer0_sublayer0_words_valid;
+}
+static inline u32_t transformer_layer_debug_layer0_ffn_input_words_valid() {
+    return g_layer0_ffn_input_words_valid;
+}
+static inline u32_t transformer_layer_debug_layer0_selected_topfed_ffn_x_words_count() {
+    return g_layer0_selected_topfed_ffn_x_words_count;
+}
+static inline u32_t transformer_layer_debug_layer0_sublayer0_x_in_base_word() {
+    return g_layer0_sublayer0_x_in_base_word;
+}
+static inline u32_t transformer_layer_debug_layer0_sublayer0_x_out_base_word() {
+    return g_layer0_sublayer0_x_out_base_word;
+}
+static inline u32_t transformer_layer_debug_layer0_ffn_input_base_word() {
+    return g_layer0_ffn_input_base_word;
 }
 
 static inline u32_t transformer_layer_debug_peek_layer1_attn_out_word(u32_t idx) {
@@ -304,6 +380,51 @@ static inline u32_t transformer_layer_debug_peek_layer0_sublayer1_ln_out_writeba
     if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_sublayer1_ln_out_writeback_shadow[i]; }
     return (u32_t)0u;
 }
+static inline u32_t transformer_layer_debug_peek_layer0_post_concat_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_post_concat_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_attn_out_writeback_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_attn_out_writeback_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_residual0_lhs_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_residual0_lhs_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_residual0_rhs_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_residual0_rhs_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_residual0_add_out_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_residual0_add_out_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_sublayer0_ln_in_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_sublayer0_ln_in_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_sublayer0_ln_out_writeback_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_sublayer0_ln_out_writeback_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_ffn_input_base_readback_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_ffn_input_base_readback_shadow[i]; }
+    return (u32_t)0u;
+}
+static inline u32_t transformer_layer_debug_peek_layer0_selected_topfed_ffn_x_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_selected_topfed_ffn_x_words_shadow[i]; }
+    return (u32_t)0u;
+}
 static inline u32_t transformer_layer_debug_peek_layer1_attn_input_word(u32_t idx) {
     const uint32_t i = (uint32_t)idx.to_uint();
     if (i < (uint32_t)FFN_X_WORDS) { return g_layer1_attn_input_shadow[i]; }
@@ -361,6 +482,15 @@ static inline bool transformer_layer_debug_layer0_residual_rhs_valid() { return 
 static inline bool transformer_layer_debug_layer0_residual_add_out_valid() { return false; }
 static inline bool transformer_layer_debug_layer0_sublayer1_ln_in_valid() { return false; }
 static inline bool transformer_layer_debug_layer0_sublayer1_ln_out_writeback_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_post_concat_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_attn_out_writeback_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_residual0_lhs_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_residual0_rhs_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_residual0_add_out_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_sublayer0_ln_in_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_sublayer0_ln_out_writeback_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_ffn_input_base_readback_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_selected_topfed_ffn_x_words_valid() { return false; }
 static inline bool transformer_layer_debug_layer1_attn_input_valid() { return false; }
 static inline bool transformer_layer_debug_layer1_post_concat_valid() { return false; }
 static inline bool transformer_layer_debug_layer1_q_valid() { return false; }
@@ -376,6 +506,12 @@ static inline u32_t transformer_layer_debug_layer0_ff_words_valid() { return (u3
 static inline u32_t transformer_layer_debug_layer0_ffn_w1_weight_words_valid() { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_layer0_ffn_w1_bias_words_valid() { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_layer0_ffn_w1_mac_cols_valid() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_layer0_sublayer0_words_valid() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_layer0_ffn_input_words_valid() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_layer0_selected_topfed_ffn_x_words_count() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_layer0_sublayer0_x_in_base_word() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_layer0_sublayer0_x_out_base_word() { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_layer0_ffn_input_base_word() { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_attn_out_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_ffn_ln_out_writeback_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_ffn1_out_word(u32_t) { return (u32_t)0u; }
@@ -391,6 +527,15 @@ static inline u32_t transformer_layer_debug_peek_layer0_residual_rhs_word(u32_t)
 static inline u32_t transformer_layer_debug_peek_layer0_residual_add_out_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_sublayer1_ln_in_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_sublayer1_ln_out_writeback_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_post_concat_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_attn_out_writeback_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_residual0_lhs_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_residual0_rhs_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_residual0_add_out_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_sublayer0_ln_in_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_sublayer0_ln_out_writeback_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_ffn_input_base_readback_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_selected_topfed_ffn_x_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_attn_input_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_post_concat_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer1_q_word(u32_t) { return (u32_t)0u; }
@@ -1411,6 +1556,9 @@ static inline void TransformerLayer(
     const bool layer1_debug_capture_enable = ((uint32_t)layer_id.to_uint() == 1u);
     if ((uint32_t)layer_id.to_uint() == 0u) {
         transformer_layer_debug_clear_layer1_stage_valid();
+        g_layer0_sublayer0_x_in_base_word = x_in_base_word;
+        g_layer0_sublayer0_x_out_base_word = x_out_base_word;
+        g_layer0_sublayer0_words_valid = (u32_t)layer_words;
     }
 #endif
     // Preserve x_in before attention writeback so sublayer0 residual add consumes the original token row.
@@ -1512,6 +1660,14 @@ static inline void TransformerLayer(
         }
     }
 #ifndef __SYNTHESIS__
+    if (layer0_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer0_post_concat_shadow,
+            &sram[post_concat_base],
+            layer_words
+        );
+        g_layer0_post_concat_valid = true;
+    }
     if (layer1_debug_capture_enable) {
         transformer_layer_debug_copy_words(
             g_layer1_post_concat_shadow,
@@ -1538,6 +1694,14 @@ static inline void TransformerLayer(
     );
 
 #ifndef __SYNTHESIS__
+    if (layer0_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer0_attn_out_writeback_shadow,
+            &sram[attn_out_base],
+            layer_words
+        );
+        g_layer0_attn_out_writeback_valid = true;
+    }
     if (layer1_debug_capture_enable) {
         transformer_layer_debug_copy_words(
             g_layer1_attn_out_shadow,
@@ -1549,6 +1713,22 @@ static inline void TransformerLayer(
     }
 #endif
 
+#ifndef __SYNTHESIS__
+    if (layer0_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer0_residual0_lhs_shadow,
+            &sram[pre_ln_residual_base],
+            layer_words
+        );
+        transformer_layer_debug_copy_words(
+            g_layer0_residual0_rhs_shadow,
+            &sram[attn_out_base],
+            layer_words
+        );
+        g_layer0_residual0_lhs_valid = true;
+        g_layer0_residual0_rhs_valid = true;
+    }
+#endif
     // Sublayer0 compose: residual add (attn_out + original x_in), then LayerNorm to produce FFN input.
     TRANSFORMER_LAYER_SUBLAYER0_RESIDUAL_ADD_LOOP: for (uint32_t i = 0u; i < layer_words; ++i) {
         const fp32_t attn_v = fp32_from_bits(sram[attn_out_base + i]);
@@ -1556,6 +1736,20 @@ static inline void TransformerLayer(
         sram[pre_ln_residual_base + i] = bits_from_fp32(attn_v + x_prev);
     }
 #ifndef __SYNTHESIS__
+    if (layer0_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer0_residual0_add_out_shadow,
+            &sram[pre_ln_residual_base],
+            layer_words
+        );
+        transformer_layer_debug_copy_words(
+            g_layer0_sublayer0_ln_in_shadow,
+            &sram[pre_ln_residual_base],
+            layer_words
+        );
+        g_layer0_residual0_add_out_valid = true;
+        g_layer0_sublayer0_ln_in_valid = true;
+    }
     if (layer1_debug_capture_enable) {
         transformer_layer_debug_copy_words(
             g_layer1_pre_ln_input_shadow,
@@ -1589,6 +1783,22 @@ static inline void TransformerLayer(
     );
     const uint32_t ffn_input_base = (uint32_t)x_out_base_word.to_uint();
 #ifndef __SYNTHESIS__
+    if (layer0_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer0_sublayer0_ln_out_writeback_shadow,
+            &sram[ffn_input_base],
+            layer_words
+        );
+        transformer_layer_debug_copy_words(
+            g_layer0_ffn_input_base_readback_shadow,
+            &sram[ffn_input_base],
+            layer_words
+        );
+        g_layer0_sublayer0_ln_out_writeback_valid = true;
+        g_layer0_ffn_input_base_readback_valid = true;
+        g_layer0_ffn_input_words_valid = (u32_t)layer_words;
+        g_layer0_ffn_input_base_word = (u32_t)ffn_input_base;
+    }
     if (layer1_debug_capture_enable) {
         transformer_layer_debug_copy_words(
             g_layer1_ln0_out_shadow,
@@ -1762,10 +1972,17 @@ static inline void TransformerLayer(
             (w1_bias_words_valid > (uint32_t)FFN_W1_BIAS_WORDS) ? (uint32_t)FFN_W1_BIAS_WORDS : w1_bias_words_valid;
         if (selected_topfed_ffn_x_words != 0) {
             transformer_layer_debug_copy_words(
+                g_layer0_selected_topfed_ffn_x_words_shadow,
+                selected_topfed_ffn_x_words,
+                w1_input_words_copy
+            );
+            transformer_layer_debug_copy_words(
                 g_layer0_ffn_w1_input_shadow,
                 selected_topfed_ffn_x_words,
                 w1_input_words_copy
             );
+            g_layer0_selected_topfed_ffn_x_words_count = (u32_t)w1_input_words_copy;
+            g_layer0_selected_topfed_ffn_x_words_valid = true;
             g_layer0_ffn_w1_input_valid = true;
         }
         if (selected_topfed_ffn_w1_words != 0) {

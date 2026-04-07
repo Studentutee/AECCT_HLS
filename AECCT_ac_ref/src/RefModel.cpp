@@ -1886,6 +1886,38 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_attn_out", layer0_attn_out);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ln_in", layer0_ln_in);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ln_out", layer0_ln_out);
+    if (io.out_layer0_attn_input != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_attn_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(prelayer_x[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer0_post_concat != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_post_concat[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_post_concat[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer0_attn_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_attn_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_attn_out[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer0_pre_ln_input != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_pre_ln_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_ln_in[t][d].to_float());
+        }
+      }
+    }
     if (io.out_layer0_ln_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
