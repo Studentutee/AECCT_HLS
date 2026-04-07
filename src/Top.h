@@ -3891,6 +3891,22 @@ namespace aecct {
         return run_infer_pipeline_finalize(regs, sram, data_out);
     }
 
+    static inline bool run_infer_pipeline_mainline(
+        TopRegs& regs,
+        u32_t* sram,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        const bool saved_gate_enable = regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        const bool saved_descriptor_valid = regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        // Mainline OP_INFER path must not consume local-only FFN fixed handoff payload.
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = false;
+        regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = false;
+        const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = saved_gate_enable;
+        regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = saved_descriptor_valid;
+        return finalhead_streamed;
+    }
+
     template<uint32_t SRAM_WORDS>
     static inline bool run_infer_pipeline_top_managed_attn_bridge(
         TopRegs& regs,
@@ -3968,7 +3984,7 @@ namespace aecct {
             }
 
             regs.infer_ingest_contract.done = true;
-            const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
+            const bool finalhead_streamed = run_infer_pipeline_mainline(regs, sram, data_out);
             if (!finalhead_streamed) {
                 infer_emit_outmode_payload(regs, data_out, sram);
             }
@@ -4001,7 +4017,7 @@ namespace aecct {
             }
 
             regs.infer_ingest_contract.done = true;
-            const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
+            const bool finalhead_streamed = run_infer_pipeline_mainline(regs, sram, data_out);
             if (!finalhead_streamed) {
                 infer_emit_outmode_payload(regs, data_out, sram);
             }
