@@ -102,6 +102,10 @@ static inline bool attn_qkv_input_sx_param_id(uint32_t& out_param_id) {
     return weight_id_to_param_id(QUANT_SX_8, out_param_id);
 }
 
+static inline bool attn_src_mask_param_id(uint32_t& out_param_id) {
+    return weight_id_to_param_id(SRC_MASK, out_param_id);
+}
+
 static inline fp32_t attn_qkv_quantize_int8_symmetric(fp32_t x, fp32_t s_x) {
     fp32_t q = (x * s_x).round();
     if (q > fp32_t(127.0f)) { q = fp32_t(127.0f); }
@@ -229,6 +233,66 @@ static inline bool attn_materialize_qkv_dense_fp32_contract(
     }
 
     out_inv_sw_bits = inv_sw_bits;
+    return true;
+}
+
+template<typename SramView>
+static inline bool attn_src_mask_bit_row_major(
+    const SramView& sram,
+    uint32_t src_mask_base,
+    uint32_t src_mask_rows,
+    uint32_t src_mask_cols,
+    uint32_t token_idx,
+    uint32_t key_idx
+) {
+    if (token_idx >= src_mask_rows || key_idx >= src_mask_cols) {
+        return false;
+    }
+    const uint32_t bit_idx = token_idx * src_mask_cols + key_idx;
+    const uint32_t word_idx = bit_idx >> 5;
+    const uint32_t shift = bit_idx & 31u;
+    const uint32_t packed = (uint32_t)sram[src_mask_base + word_idx].to_uint();
+    return ((packed >> shift) & 1u) != 0u;
+}
+
+template<typename SramView>
+static inline bool attn_score_masked_by_src_contract(
+    const SramView& sram,
+    bool src_mask_ready,
+    uint32_t src_mask_base,
+    uint32_t src_mask_rows,
+    uint32_t src_mask_cols,
+    uint32_t n_heads,
+    uint32_t head_idx,
+    uint32_t token_idx,
+    uint32_t key_idx
+) {
+    if (!src_mask_ready) {
+        return false;
+    }
+    const bool src_mask_bit = attn_src_mask_bit_row_major(
+        sram,
+        src_mask_base,
+        src_mask_rows,
+        src_mask_cols,
+        token_idx,
+        key_idx);
+    const bool is_var_i = (token_idx < (uint32_t)CODE_N);
+    const bool is_var_j = (key_idx < (uint32_t)CODE_N);
+    uint32_t one_ring_head_count = (n_heads >> 1);
+    if (one_ring_head_count == 0u) {
+        one_ring_head_count = 1u;
+    }
+    const bool use_one_ring = (head_idx < one_ring_head_count);
+    if (use_one_ring) {
+        if (is_var_i == is_var_j) {
+            return true;
+        }
+        return src_mask_bit;
+    }
+    if (is_var_i == is_var_j) {
+        return src_mask_bit;
+    }
     return true;
 }
 
@@ -759,16 +823,61 @@ static inline void AttnLayer0CoreWindow(
             // Top-managed AE/AF path already produced score/pre/post for this layer invocation.
             // Keep existing AC/AD hooks untouched and skip duplicate score/softmax execution only.
         } else {
+        const uint32_t param_base = (uint32_t)param_base_word.to_uint();
+        uint32_t src_mask_base = 0u;
+        uint32_t src_mask_rows = 0u;
+        uint32_t src_mask_cols = 0u;
+        bool src_mask_ready = false;
+        uint32_t src_mask_param_id = 0u;
+        if (param_base != 0u && attn_src_mask_param_id(src_mask_param_id)) {
+            const ParamMeta src_mask_meta = kParamMeta[src_mask_param_id];
+            const uint32_t total_mask_bits = src_mask_meta.d0 * src_mask_meta.d1;
+            const uint32_t total_mask_words = (total_mask_bits + 31u) >> 5;
+            if (src_mask_meta.dtype == (uint32_t)PARAM_DTYPE_BITPACK &&
+                src_mask_meta.ndims >= 2u &&
+                src_mask_meta.d0 > 0u &&
+                src_mask_meta.d1 > 0u &&
+                src_mask_meta.len_w >= total_mask_words &&
+                token_count <= src_mask_meta.d0 &&
+                token_count <= src_mask_meta.d1) {
+                src_mask_base = param_base + src_mask_meta.offset_w;
+                src_mask_rows = src_mask_meta.d0;
+                src_mask_cols = src_mask_meta.d1;
+                src_mask_ready = true;
+            }
+        }
+        const softmax_score_t score_mask_floor = softmax_score_t(-SoftmaxApproxCfg::SOFTMAX_NEG_T);
+        const u32_t score_mask_neg_inf_bits = (u32_t)0xFF800000u;
         // Scores stage:
         // Q/K/V -> scaled dot products -> softmax probabilities -> pre-concat accumulation.
         // Optional debug dumps are emitted only for (t=0, h=0) into score/softmax windows.
         softmax_score_t score_row[N_NODES];
         softmax_prob_t prob_row[N_NODES];
+        bool masked_row[N_NODES];
+        softmax_score_t unmasked_score_row[N_NODES];
+        softmax_prob_t unmasked_prob_row[N_NODES];
         ATTN_SCORE_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
             ATTN_SCORE_HEAD_LOOP: for (uint32_t h = 0; h < n_heads; ++h) {
                 uint32_t head_col_base = h * d_head;
+                uint32_t unmasked_count = 0u;
 
                 ATTN_SCORE_KEY_TOKEN_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                    const bool masked = attn_score_masked_by_src_contract(
+                        sram,
+                        src_mask_ready,
+                        src_mask_base,
+                        src_mask_rows,
+                        src_mask_cols,
+                        n_heads,
+                        h,
+                        t,
+                        j);
+                    masked_row[j] = masked;
+                    if (masked) {
+                        score_row[j] = score_mask_floor;
+                        prob_row[j] = softmax_prob_t(0);
+                        continue;
+                    }
                     quant_acc_t dot = 0;
                     uint32_t q_row = q_base + t * d_model + head_col_base;
                     uint32_t k_row = k_base + j * d_model + head_col_base;
@@ -778,16 +887,38 @@ static inline void AttnLayer0CoreWindow(
                         dot += quant_acc_t(qv) * quant_acc_t(kv);
                     }
                     score_row[j] = softmax_score_t(dot * inv_sqrt_d_head);
+                    unmasked_score_row[unmasked_count] = score_row[j];
+                    ++unmasked_count;
                 }
 
-                SoftmaxApprox<N_NODES>(score_row, prob_row, token_count);
+                if (unmasked_count > 0u) {
+                    SoftmaxApprox<N_NODES>(unmasked_score_row, unmasked_prob_row, unmasked_count);
+                    uint32_t unmasked_idx = 0u;
+                    ATTN_SCORE_MASK_SCATTER_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                        if (masked_row[j]) {
+                            prob_row[j] = softmax_prob_t(0);
+                            continue;
+                        }
+                        prob_row[j] = unmasked_prob_row[unmasked_idx];
+                        ++unmasked_idx;
+                    }
+                } else {
+                    ATTN_SCORE_MASK_ALL_ZERO_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                        prob_row[j] = softmax_prob_t(0);
+                    }
+                }
 
                 if (t == 0u && h == 0u) {
                     ATTN_SCORE_DEBUG_DUMP_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
-                        fp32_t score_fp(score_row[j]);
-                        fp32_t prob_fp(prob_row[j]);
-                        sram[score_base + j] = bits_from_fp32(score_fp);
-                        sram[softmax_base + j] = bits_from_fp32(prob_fp);
+                        if (masked_row[j]) {
+                            sram[score_base + j] = score_mask_neg_inf_bits;
+                            sram[softmax_base + j] = (u32_t)0u;
+                        } else {
+                            fp32_t score_fp(score_row[j]);
+                            fp32_t prob_fp(prob_row[j]);
+                            sram[score_base + j] = bits_from_fp32(score_fp);
+                            sram[softmax_base + j] = bits_from_fp32(prob_fp);
+                        }
                     }
                 }
 

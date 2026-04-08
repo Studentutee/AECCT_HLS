@@ -8,11 +8,13 @@
 
 #include <cassert>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -41,6 +43,18 @@ struct CompareOutcome {
     uint32_t dim;
     uint32_t dut_bits;
     uint32_t ref_bits;
+};
+
+struct MaskedSemanticsOutcome {
+    uint32_t masked_count;
+    bool has_first_masked;
+    uint32_t first_masked_score_idx;
+    uint32_t first_dut_score_bits;
+    uint32_t first_ref_score_bits;
+    uint32_t first_dut_prob_bits;
+    uint32_t first_ref_prob_bits;
+    uint32_t masked_prob_nonzero;
+    bool masked_score_semantics_ok;
 };
 
 static void fail(const char* msg) {
@@ -324,6 +338,39 @@ static bool parse_shape_2d(const std::string& header, uint32_t& rows, uint32_t& 
     return true;
 }
 
+static bool parse_shape_3d(const std::string& header, uint32_t& d0, uint32_t& d1, uint32_t& d2) {
+    d0 = 0u;
+    d1 = 0u;
+    d2 = 0u;
+    const std::size_t shape_pos = header.find("shape");
+    if (shape_pos == std::string::npos) {
+        return false;
+    }
+    const std::size_t lp = header.find('(', shape_pos);
+    const std::size_t rp = header.find(')', lp);
+    if (lp == std::string::npos || rp == std::string::npos || rp <= lp) {
+        return false;
+    }
+    const std::string shape_csv = header.substr(lp + 1u, rp - lp - 1u);
+    std::stringstream ss(shape_csv);
+    std::string tok;
+    std::vector<uint32_t> dims;
+    SHAPE3_TOKEN_LOOP: while (std::getline(ss, tok, ',')) {
+        const std::string t = trim_copy(tok);
+        if (t.empty()) {
+            continue;
+        }
+        dims.push_back((uint32_t)std::strtoul(t.c_str(), 0, 10));
+    }
+    if (dims.size() != 3u) {
+        return false;
+    }
+    d0 = dims[0];
+    d1 = dims[1];
+    d2 = dims[2];
+    return true;
+}
+
 static bool load_npy_f32_2d(
     const std::string& path,
     uint32_t expect_rows,
@@ -411,6 +458,104 @@ static bool load_npy_f32_2d(
     }
 
     const uint32_t count = rows * cols;
+    out.resize(count);
+    ifs.read((char*)out.data(), (std::streamsize)(count * sizeof(float)));
+    if (!ifs.good()) {
+        err = "npy payload read failed: " + path;
+        return false;
+    }
+    return true;
+}
+
+static bool load_npy_f32_3d(
+    const std::string& path,
+    uint32_t expect_d0,
+    uint32_t expect_d1,
+    uint32_t expect_d2,
+    std::vector<float>& out,
+    std::string& err
+) {
+    err.clear();
+    out.clear();
+
+    std::ifstream ifs(path.c_str(), std::ios::binary);
+    if (!ifs.good()) {
+        err = "cannot open npy file: " + path;
+        return false;
+    }
+
+    char magic[6];
+    ifs.read(magic, 6);
+    if (ifs.gcount() != 6 || !(magic[0] == char(0x93) && magic[1] == 'N' && magic[2] == 'U' &&
+                               magic[3] == 'M' && magic[4] == 'P' && magic[5] == 'Y')) {
+        err = "bad npy magic: " + path;
+        return false;
+    }
+
+    unsigned char ver_major = 0u;
+    unsigned char ver_minor = 0u;
+    ifs.read((char*)&ver_major, 1);
+    ifs.read((char*)&ver_minor, 1);
+    (void)ver_minor;
+    if (!ifs.good()) {
+        err = "bad npy version bytes: " + path;
+        return false;
+    }
+
+    uint32_t header_len = 0u;
+    if (ver_major == 1u) {
+        unsigned char h0 = 0u;
+        unsigned char h1 = 0u;
+        ifs.read((char*)&h0, 1);
+        ifs.read((char*)&h1, 1);
+        if (!ifs.good()) {
+            err = "bad npy header length (v1): " + path;
+            return false;
+        }
+        header_len = (uint32_t)h0 | ((uint32_t)h1 << 8);
+    } else {
+        unsigned char h[4] = {0u, 0u, 0u, 0u};
+        ifs.read((char*)h, 4);
+        if (!ifs.good()) {
+            err = "bad npy header length (v2+): " + path;
+            return false;
+        }
+        header_len = ((uint32_t)h[0]) | ((uint32_t)h[1] << 8) | ((uint32_t)h[2] << 16) | ((uint32_t)h[3] << 24);
+    }
+
+    std::string header;
+    header.resize(header_len);
+    ifs.read(&header[0], (std::streamsize)header_len);
+    if (!ifs.good()) {
+        err = "bad npy header read: " + path;
+        return false;
+    }
+    if (header.find("'descr': '<f4'") == std::string::npos &&
+        header.find("\"descr\": \"<f4\"") == std::string::npos) {
+        err = "npy descr is not <f4: " + path;
+        return false;
+    }
+    if (header.find("False") == std::string::npos) {
+        err = "npy fortran_order is not False: " + path;
+        return false;
+    }
+
+    uint32_t d0 = 0u;
+    uint32_t d1 = 0u;
+    uint32_t d2 = 0u;
+    if (!parse_shape_3d(header, d0, d1, d2)) {
+        err = "npy shape parse failed: " + path;
+        return false;
+    }
+    if (d0 != expect_d0 || d1 != expect_d1 || d2 != expect_d2) {
+        std::ostringstream oss;
+        oss << "npy shape mismatch: got=(" << d0 << "," << d1 << "," << d2 << "), expect=("
+            << expect_d0 << "," << expect_d1 << "," << expect_d2 << ")";
+        err = oss.str();
+        return false;
+    }
+
+    const uint32_t count = d0 * d1 * d2;
     out.resize(count);
     ifs.read((char*)out.data(), (std::streamsize)(count * sizeof(float)));
     if (!ifs.good()) {
@@ -515,6 +660,62 @@ static void print_first_mismatch(const char* name, const CompareOutcome& r) {
     }
 }
 
+static inline uint32_t idx_3d(
+    uint32_t i0,
+    uint32_t i1,
+    uint32_t i2,
+    uint32_t dim1,
+    uint32_t dim2
+) {
+    return (i0 * dim1 + i1) * dim2 + i2;
+}
+
+static MaskedSemanticsOutcome evaluate_masked_semantics(
+    const aecct::u32_t* sram,
+    uint32_t score_base_word,
+    uint32_t prob_base_word,
+    const std::vector<float>& ref_scores,
+    const std::vector<float>& ref_probs,
+    uint32_t n_heads,
+    uint32_t token_count,
+    uint32_t head_idx,
+    uint32_t token_idx
+) {
+    (void)n_heads;
+    const uint32_t neg_inf_bits = f32_to_bits(-std::numeric_limits<float>::infinity());
+    MaskedSemanticsOutcome out = {0u, false, 0u, 0u, 0u, 0u, 0u, 0u, true};
+    MASKED_SEMANTICS_SCAN_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
+        const uint32_t ref_flat = idx_3d(head_idx, token_idx, j, token_count, token_count);
+        const float ref_score_fp = ref_scores[ref_flat];
+        const bool ref_masked = std::isinf(ref_score_fp) && (ref_score_fp < 0.0f);
+        if (!ref_masked) {
+            continue;
+        }
+
+        const uint32_t dut_score_bits = (uint32_t)sram[score_base_word + j].to_uint();
+        const uint32_t dut_prob_bits = (uint32_t)sram[prob_base_word + j].to_uint();
+        const uint32_t ref_score_bits = f32_to_bits(ref_score_fp);
+        const uint32_t ref_prob_bits = f32_to_bits(ref_probs[ref_flat]);
+
+        out.masked_count += 1u;
+        if (!out.has_first_masked) {
+            out.has_first_masked = true;
+            out.first_masked_score_idx = j;
+            out.first_dut_score_bits = dut_score_bits;
+            out.first_ref_score_bits = ref_score_bits;
+            out.first_dut_prob_bits = dut_prob_bits;
+            out.first_ref_prob_bits = ref_prob_bits;
+        }
+        if (dut_prob_bits != 0u) {
+            out.masked_prob_nonzero += 1u;
+        }
+        if (dut_score_bits != neg_inf_bits) {
+            out.masked_score_semantics_ok = false;
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 int main() {
@@ -568,6 +769,8 @@ int main() {
     std::vector<float> ref_q;
     std::vector<float> ref_k;
     std::vector<float> ref_v;
+    std::vector<float> ref_attn_scores;
+    std::vector<float> ref_attn_probs;
     std::string npy_error;
     if (!load_npy_f32_2d(dump_dir + "/layer0_q.npy", token_count, d_model, ref_q, npy_error)) {
         fail(npy_error.c_str());
@@ -576,6 +779,24 @@ int main() {
         fail(npy_error.c_str());
     }
     if (!load_npy_f32_2d(dump_dir + "/layer0_v.npy", token_count, d_model, ref_v, npy_error)) {
+        fail(npy_error.c_str());
+    }
+    if (!load_npy_f32_3d(
+            dump_dir + "/layer0_attn_scores.npy",
+            (uint32_t)N_HEAD,
+            token_count,
+            token_count,
+            ref_attn_scores,
+            npy_error)) {
+        fail(npy_error.c_str());
+    }
+    if (!load_npy_f32_3d(
+            dump_dir + "/layer0_attn_probs.npy",
+            (uint32_t)N_HEAD,
+            token_count,
+            token_count,
+            ref_attn_probs,
+            npy_error)) {
         fail(npy_error.c_str());
     }
 
@@ -651,6 +872,35 @@ int main() {
         ref_layer0_post_concat,
         token_count,
         d_model);
+    std::vector<float> ref_score_row(token_count, 0.0f);
+    std::vector<float> ref_prob_row(token_count, 0.0f);
+    REF_SCOREPROB_ROW_EXTRACT_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
+        const uint32_t flat = idx_3d(0u, 0u, j, token_count, token_count);
+        ref_score_row[j] = ref_attn_scores[flat];
+        ref_prob_row[j] = ref_attn_probs[flat];
+    }
+    const CompareOutcome score_cmp = compare_sram_with_ref_fp32(
+        sram,
+        (uint32_t)sc.score_base_word.to_uint(),
+        ref_score_row,
+        1u,
+        token_count);
+    const CompareOutcome prob_cmp = compare_sram_with_ref_fp32(
+        sram,
+        (uint32_t)sc.softmax_base_word.to_uint(),
+        ref_prob_row,
+        1u,
+        token_count);
+    const MaskedSemanticsOutcome masked_sem = evaluate_masked_semantics(
+        sram,
+        (uint32_t)sc.score_base_word.to_uint(),
+        (uint32_t)sc.softmax_base_word.to_uint(),
+        ref_attn_scores,
+        ref_attn_probs,
+        (uint32_t)N_HEAD,
+        token_count,
+        0u,
+        0u);
 
     std::printf("Q_exact=%u\n", (unsigned)(q_cmp.exact ? 1u : 0u));
     std::printf("K_exact=%u\n", (unsigned)(k_cmp.exact ? 1u : 0u));
@@ -658,6 +908,24 @@ int main() {
     std::printf("Q_equals_input_exact=%u\n", (unsigned)(q_eq_in.exact ? 1u : 0u));
     std::printf("K_equals_input_exact=%u\n", (unsigned)(k_eq_in.exact ? 1u : 0u));
     std::printf("V_equals_input_exact=%u\n", (unsigned)(v_eq_in.exact ? 1u : 0u));
+    std::printf("SCORE_row_head0_token0_exact=%u\n", (unsigned)(score_cmp.exact ? 1u : 0u));
+    std::printf("PROB_row_head0_token0_exact=%u\n", (unsigned)(prob_cmp.exact ? 1u : 0u));
+    std::printf("masked_count=%u\n", (unsigned)masked_sem.masked_count);
+    if (masked_sem.has_first_masked) {
+        std::printf("first_masked_score_idx=%u\n", (unsigned)masked_sem.first_masked_score_idx);
+        std::printf("first_masked_dut_score=0x%08X\n", (unsigned)masked_sem.first_dut_score_bits);
+        std::printf("first_masked_ref_score=0x%08X\n", (unsigned)masked_sem.first_ref_score_bits);
+        std::printf("first_masked_dut_prob=0x%08X\n", (unsigned)masked_sem.first_dut_prob_bits);
+        std::printf("first_masked_ref_prob=0x%08X\n", (unsigned)masked_sem.first_ref_prob_bits);
+    } else {
+        std::printf("first_masked_score_idx=(none)\n");
+        std::printf("first_masked_dut_score=(none)\n");
+        std::printf("first_masked_ref_score=(none)\n");
+        std::printf("first_masked_dut_prob=(none)\n");
+        std::printf("first_masked_ref_prob=(none)\n");
+    }
+    std::printf("MASKED_SCORE_SEMANTICS_OK=%u\n", (unsigned)(masked_sem.masked_score_semantics_ok ? 1u : 0u));
+    std::printf("MASKED_PROB_NONZERO=%u\n", (unsigned)masked_sem.masked_prob_nonzero);
     std::printf("POST_exact=%u\n", (unsigned)(post_cmp.exact ? 1u : 0u));
 
     print_first_mismatch("Q", q_cmp);
@@ -666,12 +934,18 @@ int main() {
     print_first_mismatch("Q_equals_input", q_eq_in);
     print_first_mismatch("K_equals_input", k_eq_in);
     print_first_mismatch("V_equals_input", v_eq_in);
+    print_first_mismatch("SCORE_row_head0_token0", score_cmp);
+    print_first_mismatch("PROB_row_head0_token0", prob_cmp);
     print_first_mismatch("POST", post_cmp);
 
     const bool qkv_exact = q_cmp.exact && k_cmp.exact && v_cmp.exact;
     const bool qkv_not_input = (!q_eq_in.exact) && (!k_eq_in.exact) && (!v_eq_in.exact);
     if (!qkv_exact || !qkv_not_input) {
         std::printf("[backup_attn_qkv][FAIL] Q/K/V acceptance gate failed\n");
+        return 1;
+    }
+    if (masked_sem.masked_prob_nonzero != 0u || !masked_sem.masked_score_semantics_ok) {
+        std::printf("[backup_attn_qkv][FAIL] masked score/prob semantics gate failed\n");
         return 1;
     }
 

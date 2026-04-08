@@ -82,6 +82,8 @@ try {
     Require-String -LogPath $runLog -Needle 'Q_equals_input_exact=0'
     Require-String -LogPath $runLog -Needle 'K_equals_input_exact=0'
     Require-String -LogPath $runLog -Needle 'V_equals_input_exact=0'
+    Require-String -LogPath $runLog -Needle 'MASKED_SCORE_SEMANTICS_OK=1'
+    Require-String -LogPath $runLog -Needle 'MASKED_PROB_NONZERO=0'
     Require-String -LogPath $runLog -Needle 'PASS: tb_backup_attn_qkv_live_contract'
 
     Write-Host 'PASS: run_backup_attn_qkv_live_contract'
