@@ -57,6 +57,11 @@ struct MaskedSemanticsOutcome {
     bool masked_score_semantics_ok;
 };
 
+struct RowMaskSummary {
+    uint32_t unmasked_count;
+    int only_key;
+};
+
 static void fail(const char* msg) {
     std::printf("[backup_attn_qkv][FAIL] %s\n", msg);
     std::exit(1);
@@ -716,6 +721,112 @@ static MaskedSemanticsOutcome evaluate_masked_semantics(
     return out;
 }
 
+static inline uint32_t attn_score_debug_probe_slot_base(
+    uint32_t score_base_word,
+    uint32_t token_count,
+    uint32_t slot
+) {
+    return score_base_word + slot * token_count;
+}
+
+static void extract_ref_score_prob_row(
+    const std::vector<float>& ref_scores,
+    const std::vector<float>& ref_probs,
+    uint32_t token_count,
+    uint32_t head_idx,
+    uint32_t token_idx,
+    std::vector<float>& out_score_row,
+    std::vector<float>& out_prob_row
+) {
+    out_score_row.assign(token_count, 0.0f);
+    out_prob_row.assign(token_count, 0.0f);
+    REF_SCOREPROB_ROW_EXTRACT_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
+        const uint32_t flat = idx_3d(head_idx, token_idx, j, token_count, token_count);
+        out_score_row[j] = ref_scores[flat];
+        out_prob_row[j] = ref_probs[flat];
+    }
+}
+
+static RowMaskSummary summarize_ref_row_mask(
+    const std::vector<float>& ref_scores,
+    uint32_t token_count,
+    uint32_t head_idx,
+    uint32_t token_idx
+) {
+    RowMaskSummary out = {0u, -1};
+    REF_ROW_MASK_SUMMARY_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
+        const uint32_t flat = idx_3d(head_idx, token_idx, j, token_count, token_count);
+        const float s = ref_scores[flat];
+        const bool masked = std::isinf(s) && (s < 0.0f);
+        if (!masked) {
+            out.only_key = (int)j;
+            out.unmasked_count += 1u;
+        }
+    }
+    if (out.unmasked_count != 1u) {
+        out.only_key = -1;
+    }
+    return out;
+}
+
+static void flatten_ref_ctx_to_token_model(
+    const std::vector<float>& ref_ctx,
+    uint32_t n_heads,
+    uint32_t token_count,
+    uint32_t d_head,
+    std::vector<float>& out
+) {
+    const uint32_t d_model = n_heads * d_head;
+    out.assign(token_count * d_model, 0.0f);
+    REF_CTX_FLATTEN_HEAD_LOOP: for (uint32_t h = 0u; h < n_heads; ++h) {
+        REF_CTX_FLATTEN_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+            REF_CTX_FLATTEN_D_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+                const uint32_t src = idx_3d(h, t, d, token_count, d_head);
+                const uint32_t dst = t * d_model + h * d_head + d;
+                out[dst] = ref_ctx[src];
+            }
+        }
+    }
+}
+
+static bool dut_ctx_head_token_equals_ref_v_row(
+    const aecct::u32_t* sram,
+    uint32_t pre_base_word,
+    uint32_t token_count,
+    uint32_t d_model,
+    uint32_t d_head,
+    uint32_t token_idx,
+    uint32_t head_idx,
+    uint32_t key_idx,
+    const std::vector<float>& ref_v
+) {
+    (void)token_count;
+    const uint32_t head_col_base = head_idx * d_head;
+    HEAD0_TOKEN0_CTX_EQ_REFV_D_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+        const uint32_t dut_idx = pre_base_word + token_idx * d_model + head_col_base + d;
+        const uint32_t ref_idx = key_idx * d_model + head_col_base + d;
+        const uint32_t dut_bits = (uint32_t)sram[dut_idx].to_uint();
+        const uint32_t ref_bits = f32_to_bits(ref_v[ref_idx]);
+        if (dut_bits != ref_bits) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void print_first_mismatch_j(const char* name, const CompareOutcome& r) {
+    if (r.has_mismatch) {
+        std::printf(
+            "%s_first_mismatch(j,dut,ref)=(%u,0x%08X,0x%08X)\n",
+            name,
+            (unsigned)r.dim,
+            (unsigned)r.dut_bits,
+            (unsigned)r.ref_bits);
+    } else {
+        std::printf("%s_first_mismatch(j,dut,ref)=(none)\n", name);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -769,6 +880,7 @@ int main() {
     std::vector<float> ref_q;
     std::vector<float> ref_k;
     std::vector<float> ref_v;
+    std::vector<float> ref_ctx;
     std::vector<float> ref_attn_scores;
     std::vector<float> ref_attn_probs;
     std::string npy_error;
@@ -779,6 +891,15 @@ int main() {
         fail(npy_error.c_str());
     }
     if (!load_npy_f32_2d(dump_dir + "/layer0_v.npy", token_count, d_model, ref_v, npy_error)) {
+        fail(npy_error.c_str());
+    }
+    if (!load_npy_f32_3d(
+            dump_dir + "/layer0_ctx.npy",
+            (uint32_t)N_HEAD,
+            token_count,
+            (uint32_t)(d_model / (uint32_t)N_HEAD),
+            ref_ctx,
+            npy_error)) {
         fail(npy_error.c_str());
     }
     if (!load_npy_f32_3d(
@@ -872,35 +993,139 @@ int main() {
         ref_layer0_post_concat,
         token_count,
         d_model);
-    std::vector<float> ref_score_row(token_count, 0.0f);
-    std::vector<float> ref_prob_row(token_count, 0.0f);
-    REF_SCOREPROB_ROW_EXTRACT_LOOP: for (uint32_t j = 0u; j < token_count; ++j) {
-        const uint32_t flat = idx_3d(0u, 0u, j, token_count, token_count);
-        ref_score_row[j] = ref_attn_scores[flat];
-        ref_prob_row[j] = ref_attn_probs[flat];
-    }
+    std::vector<float> ref_ctx_flat;
+    flatten_ref_ctx_to_token_model(
+        ref_ctx,
+        (uint32_t)N_HEAD,
+        token_count,
+        (uint32_t)(d_model / (uint32_t)N_HEAD),
+        ref_ctx_flat);
+    const CompareOutcome ctx_cmp = compare_sram_with_ref_fp32(
+        sram,
+        (uint32_t)sc.pre_concat_base_word.to_uint(),
+        ref_ctx_flat,
+        token_count,
+        d_model);
+
+    const uint32_t score_slot_h0_t0 = 0u;
+    const uint32_t score_slot_h0_t16 = 1u;
+    const uint32_t score_slot_h4_t35 = 2u;
+    std::vector<float> ref_score_row_h0_t0;
+    std::vector<float> ref_prob_row_h0_t0;
+    std::vector<float> ref_score_row_h0_t16;
+    std::vector<float> ref_prob_row_h0_t16;
+    std::vector<float> ref_score_row_h4_t35;
+    std::vector<float> ref_prob_row_h4_t35;
+    extract_ref_score_prob_row(
+        ref_attn_scores,
+        ref_attn_probs,
+        token_count,
+        0u,
+        0u,
+        ref_score_row_h0_t0,
+        ref_prob_row_h0_t0);
+    extract_ref_score_prob_row(
+        ref_attn_scores,
+        ref_attn_probs,
+        token_count,
+        0u,
+        16u,
+        ref_score_row_h0_t16,
+        ref_prob_row_h0_t16);
+    extract_ref_score_prob_row(
+        ref_attn_scores,
+        ref_attn_probs,
+        token_count,
+        4u,
+        35u,
+        ref_score_row_h4_t35,
+        ref_prob_row_h4_t35);
     const CompareOutcome score_cmp = compare_sram_with_ref_fp32(
         sram,
-        (uint32_t)sc.score_base_word.to_uint(),
-        ref_score_row,
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.score_base_word.to_uint(),
+            token_count,
+            score_slot_h0_t0),
+        ref_score_row_h0_t0,
         1u,
         token_count);
     const CompareOutcome prob_cmp = compare_sram_with_ref_fp32(
         sram,
-        (uint32_t)sc.softmax_base_word.to_uint(),
-        ref_prob_row,
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.softmax_base_word.to_uint(),
+            token_count,
+            score_slot_h0_t0),
+        ref_prob_row_h0_t0,
+        1u,
+        token_count);
+    const CompareOutcome score_h0_t16_cmp = compare_sram_with_ref_fp32(
+        sram,
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.score_base_word.to_uint(),
+            token_count,
+            score_slot_h0_t16),
+        ref_score_row_h0_t16,
+        1u,
+        token_count);
+    const CompareOutcome prob_h0_t16_cmp = compare_sram_with_ref_fp32(
+        sram,
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.softmax_base_word.to_uint(),
+            token_count,
+            score_slot_h0_t16),
+        ref_prob_row_h0_t16,
+        1u,
+        token_count);
+    const CompareOutcome score_h4_t35_cmp = compare_sram_with_ref_fp32(
+        sram,
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.score_base_word.to_uint(),
+            token_count,
+            score_slot_h4_t35),
+        ref_score_row_h4_t35,
+        1u,
+        token_count);
+    const CompareOutcome prob_h4_t35_cmp = compare_sram_with_ref_fp32(
+        sram,
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.softmax_base_word.to_uint(),
+            token_count,
+            score_slot_h4_t35),
+        ref_prob_row_h4_t35,
         1u,
         token_count);
     const MaskedSemanticsOutcome masked_sem = evaluate_masked_semantics(
         sram,
-        (uint32_t)sc.score_base_word.to_uint(),
-        (uint32_t)sc.softmax_base_word.to_uint(),
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.score_base_word.to_uint(),
+            token_count,
+            score_slot_h0_t0),
+        attn_score_debug_probe_slot_base(
+            (uint32_t)sc.softmax_base_word.to_uint(),
+            token_count,
+            score_slot_h0_t0),
         ref_attn_scores,
         ref_attn_probs,
         (uint32_t)N_HEAD,
         token_count,
         0u,
         0u);
+    const RowMaskSummary row_mask_h0_t0 = summarize_ref_row_mask(ref_attn_scores, token_count, 0u, 0u);
+    const RowMaskSummary row_mask_h0_t16 = summarize_ref_row_mask(ref_attn_scores, token_count, 0u, 16u);
+    const RowMaskSummary row_mask_h4_t35 = summarize_ref_row_mask(ref_attn_scores, token_count, 4u, 35u);
+    const bool head0_token0_ctx_equals_ref_v_exact =
+        (row_mask_h0_t0.unmasked_count == 1u) &&
+        (row_mask_h0_t0.only_key >= 0) &&
+        dut_ctx_head_token_equals_ref_v_row(
+            sram,
+            (uint32_t)sc.pre_concat_base_word.to_uint(),
+            token_count,
+            d_model,
+            (uint32_t)(d_model / (uint32_t)N_HEAD),
+            0u,
+            0u,
+            (uint32_t)row_mask_h0_t0.only_key,
+            ref_v);
 
     std::printf("Q_exact=%u\n", (unsigned)(q_cmp.exact ? 1u : 0u));
     std::printf("K_exact=%u\n", (unsigned)(k_cmp.exact ? 1u : 0u));
@@ -908,8 +1133,20 @@ int main() {
     std::printf("Q_equals_input_exact=%u\n", (unsigned)(q_eq_in.exact ? 1u : 0u));
     std::printf("K_equals_input_exact=%u\n", (unsigned)(k_eq_in.exact ? 1u : 0u));
     std::printf("V_equals_input_exact=%u\n", (unsigned)(v_eq_in.exact ? 1u : 0u));
+    std::printf("CTX_exact=%u\n", (unsigned)(ctx_cmp.exact ? 1u : 0u));
     std::printf("SCORE_row_head0_token0_exact=%u\n", (unsigned)(score_cmp.exact ? 1u : 0u));
     std::printf("PROB_row_head0_token0_exact=%u\n", (unsigned)(prob_cmp.exact ? 1u : 0u));
+    std::printf("HEAD0_TOKEN0_UNMASKED_COUNT=%u\n", (unsigned)row_mask_h0_t0.unmasked_count);
+    std::printf("HEAD0_TOKEN0_ONLY_KEY=%d\n", row_mask_h0_t0.only_key);
+    std::printf(
+        "HEAD0_TOKEN0_CTX_EQUALS_REF_V_EXACT=%u\n",
+        (unsigned)(head0_token0_ctx_equals_ref_v_exact ? 1u : 0u));
+    std::printf("SCORE_row_h0_t16_exact=%u\n", (unsigned)(score_h0_t16_cmp.exact ? 1u : 0u));
+    std::printf("PROB_row_h0_t16_exact=%u\n", (unsigned)(prob_h0_t16_cmp.exact ? 1u : 0u));
+    std::printf("UNMASKED_COUNT_h0_t16=%u\n", (unsigned)row_mask_h0_t16.unmasked_count);
+    std::printf("SCORE_row_h4_t35_exact=%u\n", (unsigned)(score_h4_t35_cmp.exact ? 1u : 0u));
+    std::printf("PROB_row_h4_t35_exact=%u\n", (unsigned)(prob_h4_t35_cmp.exact ? 1u : 0u));
+    std::printf("UNMASKED_COUNT_h4_t35=%u\n", (unsigned)row_mask_h4_t35.unmasked_count);
     std::printf("masked_count=%u\n", (unsigned)masked_sem.masked_count);
     if (masked_sem.has_first_masked) {
         std::printf("first_masked_score_idx=%u\n", (unsigned)masked_sem.first_masked_score_idx);
@@ -934,8 +1171,13 @@ int main() {
     print_first_mismatch("Q_equals_input", q_eq_in);
     print_first_mismatch("K_equals_input", k_eq_in);
     print_first_mismatch("V_equals_input", v_eq_in);
-    print_first_mismatch("SCORE_row_head0_token0", score_cmp);
-    print_first_mismatch("PROB_row_head0_token0", prob_cmp);
+    print_first_mismatch("CTX", ctx_cmp);
+    print_first_mismatch_j("SCORE_row_head0_token0", score_cmp);
+    print_first_mismatch_j("PROB_row_head0_token0", prob_cmp);
+    print_first_mismatch_j("SCORE_row_h0_t16", score_h0_t16_cmp);
+    print_first_mismatch_j("PROB_row_h0_t16", prob_h0_t16_cmp);
+    print_first_mismatch_j("SCORE_row_h4_t35", score_h4_t35_cmp);
+    print_first_mismatch_j("PROB_row_h4_t35", prob_h4_t35_cmp);
     print_first_mismatch("POST", post_cmp);
 
     const bool qkv_exact = q_cmp.exact && k_cmp.exact && v_cmp.exact;
@@ -946,6 +1188,10 @@ int main() {
     }
     if (masked_sem.masked_prob_nonzero != 0u || !masked_sem.masked_score_semantics_ok) {
         std::printf("[backup_attn_qkv][FAIL] masked score/prob semantics gate failed\n");
+        return 1;
+    }
+    if (row_mask_h0_t0.unmasked_count != 1u || !head0_token0_ctx_equals_ref_v_exact || !score_cmp.exact) {
+        std::printf("[backup_attn_qkv][FAIL] dense-tail one-hot row acceptance gate failed\n");
         return 1;
     }
 

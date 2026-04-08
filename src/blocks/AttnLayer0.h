@@ -296,6 +296,45 @@ static inline bool attn_score_masked_by_src_contract(
     return true;
 }
 
+static inline fp32_t attn_inv_sqrt_d_head_fp32(uint32_t d_head) {
+    u32_t bits = (u32_t)0x3F800000u;
+    if (d_head == 2u) { bits = (u32_t)0x3F3504F3u; }
+    else if (d_head == 4u) { bits = (u32_t)0x3F000000u; }
+    else if (d_head == 8u) { bits = (u32_t)0x3EB504F3u; }
+    else if (d_head == 16u) { bits = (u32_t)0x3E800000u; }
+    else if (d_head == 32u) { bits = (u32_t)0x3E3504F3u; }
+    else if (d_head == 64u) { bits = (u32_t)0x3E000000u; }
+    return fp32_from_bits(bits);
+}
+
+static inline bool attn_score_debug_dump_slot_for_probe(
+    uint32_t h,
+    uint32_t t,
+    uint32_t n_heads,
+    uint32_t token_count,
+    uint32_t tensor_words,
+    uint32_t& out_slot
+) {
+    out_slot = 0u;
+    if (h == 0u && t == 0u) {
+        out_slot = 0u;
+    } else if (h == 0u && t == 16u) {
+        out_slot = 1u;
+    } else if (h == 4u && t == 35u) {
+        out_slot = 2u;
+    } else {
+        return false;
+    }
+    if (h >= n_heads || t >= token_count) {
+        return false;
+    }
+    const uint32_t slot_end = (out_slot + 1u) * token_count;
+    if (slot_end > tensor_words) {
+        return false;
+    }
+    return true;
+}
+
 // local-only boundary descriptor for Top-fed prebuilt handoff flags.
 // This keeps the AttnLayer0 seam contractized without changing Top ownership policy.
 struct AttnLayer0PrebuiltHandoffDesc {
@@ -391,6 +430,12 @@ static inline void AttnLayer0CoreWindow(
     if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
     if (d_head == 0u) { d_head = d_model / n_heads; }
     quant_acc_t inv_sqrt_d_head = attn_inv_sqrt_d_head(d_head);
+    bool q_dense_enabled_latched = false;
+    bool k_dense_enabled_latched = false;
+    bool v_dense_enabled_latched = false;
+    bool q_live_ok_latched = false;
+    bool k_live_ok_latched = false;
+    bool v_live_ok_latched = false;
 
     // QKV stage:
     // X_WORK + W_REGION metadata/payload -> Q/K/V (plus act_q mirrors) in attention scratch windows.
@@ -421,6 +466,9 @@ static inline void AttnLayer0CoreWindow(
             attn_dense_qkv_gate_ok(live_k_meta, k_matrix_id, param_base, token_count, d_model, layer_id);
         const bool dense_v_enabled =
             attn_dense_qkv_gate_ok(live_v_meta, v_matrix_id, param_base, token_count, d_model, layer_id);
+        q_dense_enabled_latched = dense_q_enabled;
+        k_dense_enabled_latched = dense_k_enabled;
+        v_dense_enabled_latched = dense_v_enabled;
         bool live_q_ok = false;
         bool live_k_ok = false;
         bool live_v_ok = false;
@@ -815,6 +863,9 @@ static inline void AttnLayer0CoreWindow(
                 }
             }
         }
+        q_live_ok_latched = live_q_ok;
+        k_live_ok_latched = live_k_ok;
+        v_live_ok_latched = live_v_ok;
     }
 
     if (STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) {
@@ -828,6 +879,14 @@ static inline void AttnLayer0CoreWindow(
         uint32_t src_mask_rows = 0u;
         uint32_t src_mask_cols = 0u;
         bool src_mask_ready = false;
+        const bool dense_tail_fp32_enabled =
+            q_dense_enabled_latched &&
+            k_dense_enabled_latched &&
+            v_dense_enabled_latched &&
+            q_live_ok_latched &&
+            k_live_ok_latched &&
+            v_live_ok_latched;
+        const fp32_t inv_sqrt_d_head_fp32 = attn_inv_sqrt_d_head_fp32(d_head);
         uint32_t src_mask_param_id = 0u;
         if (param_base != 0u && attn_src_mask_param_id(src_mask_param_id)) {
             const ParamMeta src_mask_meta = kParamMeta[src_mask_param_id];
@@ -848,17 +907,24 @@ static inline void AttnLayer0CoreWindow(
         }
         const softmax_score_t score_mask_floor = softmax_score_t(-SoftmaxApproxCfg::SOFTMAX_NEG_T);
         const u32_t score_mask_neg_inf_bits = (u32_t)0xFF800000u;
+        const fp32_t fp32_zero = fp32_t(0.0f);
+        const fp32_t fp32_one_v = fp32_t(1.0f);
+        const fp32_t fp32_neg_inf = fp32_from_bits(score_mask_neg_inf_bits);
         // Scores stage:
         // Q/K/V -> scaled dot products -> softmax probabilities -> pre-concat accumulation.
         // Optional debug dumps are emitted only for (t=0, h=0) into score/softmax windows.
         softmax_score_t score_row[N_NODES];
         softmax_prob_t prob_row[N_NODES];
+        fp32_t score_row_fp32[N_NODES];
+        fp32_t prob_row_fp32[N_NODES];
         bool masked_row[N_NODES];
         softmax_score_t unmasked_score_row[N_NODES];
         softmax_prob_t unmasked_prob_row[N_NODES];
+        uint32_t unmasked_keys[N_NODES];
         ATTN_SCORE_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
             ATTN_SCORE_HEAD_LOOP: for (uint32_t h = 0; h < n_heads; ++h) {
                 uint32_t head_col_base = h * d_head;
+                const uint32_t q_row_base = q_base + t * d_model + head_col_base;
                 uint32_t unmasked_count = 0u;
 
                 ATTN_SCORE_KEY_TOKEN_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
@@ -876,61 +942,116 @@ static inline void AttnLayer0CoreWindow(
                     if (masked) {
                         score_row[j] = score_mask_floor;
                         prob_row[j] = softmax_prob_t(0);
+                        score_row_fp32[j] = fp32_neg_inf;
+                        prob_row_fp32[j] = fp32_zero;
                         continue;
                     }
-                    quant_acc_t dot = 0;
-                    uint32_t q_row = q_base + t * d_model + head_col_base;
-                    uint32_t k_row = k_base + j * d_model + head_col_base;
-                    ATTN_SCORE_DOT_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
-                        quant_act_t qv = quant_act_from_bits(sram[q_row + d]);
-                        quant_act_t kv = quant_act_from_bits(sram[k_row + d]);
-                        dot += quant_acc_t(qv) * quant_acc_t(kv);
+                    const uint32_t k_row_base = k_base + j * d_model + head_col_base;
+                    if (dense_tail_fp32_enabled) {
+                        fp32_t dot_fp = fp32_zero;
+                        ATTN_SCORE_DOT_COL_DENSE_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
+                            const fp32_t qv_fp = fp32_from_bits(sram[q_row_base + d]);
+                            const fp32_t kv_fp = fp32_from_bits(sram[k_row_base + d]);
+                            dot_fp += qv_fp * kv_fp;
+                        }
+                        const fp32_t score_fp = dot_fp * inv_sqrt_d_head_fp32;
+                        score_row[j] =
+                            score_fp.template convert_to_ac_fixed<18, 6, true, AC_RND, AC_SAT>(false);
+                        score_row_fp32[j] = score_fp;
+                    } else {
+                        quant_acc_t dot = 0;
+                        ATTN_SCORE_DOT_COL_FIXED_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
+                            quant_act_t qv = quant_act_from_bits(sram[q_row_base + d]);
+                            quant_act_t kv = quant_act_from_bits(sram[k_row_base + d]);
+                            dot += quant_acc_t(qv) * quant_acc_t(kv);
+                        }
+                        score_row[j] = softmax_score_t(dot * inv_sqrt_d_head);
+                        score_row_fp32[j] = fp32_t(score_row[j]);
                     }
-                    score_row[j] = softmax_score_t(dot * inv_sqrt_d_head);
                     unmasked_score_row[unmasked_count] = score_row[j];
+                    unmasked_keys[unmasked_count] = j;
                     ++unmasked_count;
                 }
 
-                if (unmasked_count > 0u) {
+                if (unmasked_count == 0u) {
+                    ATTN_SCORE_MASK_ALL_ZERO_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                        prob_row[j] = softmax_prob_t(0);
+                        prob_row_fp32[j] = fp32_zero;
+                    }
+                } else if (unmasked_count == 1u) {
+                    const uint32_t only_key = unmasked_keys[0];
+                    ATTN_SCORE_MASK_ONEHOT_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                        if (j == only_key) {
+                            prob_row[j] = softmax_prob_t(1);
+                            prob_row_fp32[j] = fp32_one_v;
+                        } else {
+                            prob_row[j] = softmax_prob_t(0);
+                            prob_row_fp32[j] = fp32_zero;
+                        }
+                    }
+                } else {
                     SoftmaxApprox<N_NODES>(unmasked_score_row, unmasked_prob_row, unmasked_count);
                     uint32_t unmasked_idx = 0u;
                     ATTN_SCORE_MASK_SCATTER_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
                         if (masked_row[j]) {
                             prob_row[j] = softmax_prob_t(0);
+                            prob_row_fp32[j] = fp32_zero;
                             continue;
                         }
                         prob_row[j] = unmasked_prob_row[unmasked_idx];
+                        prob_row_fp32[j] = fp32_t(unmasked_prob_row[unmasked_idx]);
                         ++unmasked_idx;
-                    }
-                } else {
-                    ATTN_SCORE_MASK_ALL_ZERO_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
-                        prob_row[j] = softmax_prob_t(0);
                     }
                 }
 
-                if (t == 0u && h == 0u) {
+                uint32_t dump_slot = 0u;
+                if (attn_score_debug_dump_slot_for_probe(
+                        h, t, n_heads, token_count, tensor_words, dump_slot)) {
+                    const uint32_t score_dump_base = score_base + dump_slot * token_count;
+                    const uint32_t prob_dump_base = softmax_base + dump_slot * token_count;
                     ATTN_SCORE_DEBUG_DUMP_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
                         if (masked_row[j]) {
-                            sram[score_base + j] = score_mask_neg_inf_bits;
-                            sram[softmax_base + j] = (u32_t)0u;
+                            sram[score_dump_base + j] = score_mask_neg_inf_bits;
+                            sram[prob_dump_base + j] = (u32_t)0u;
                         } else {
-                            fp32_t score_fp(score_row[j]);
-                            fp32_t prob_fp(prob_row[j]);
-                            sram[score_base + j] = bits_from_fp32(score_fp);
-                            sram[softmax_base + j] = bits_from_fp32(prob_fp);
+                            sram[score_dump_base + j] = bits_from_fp32(score_row_fp32[j]);
+                            sram[prob_dump_base + j] = bits_from_fp32(prob_row_fp32[j]);
                         }
                     }
                 }
 
-                ATTN_PRECONCAT_HEAD_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
-                    quant_acc_t acc = 0;
-                    ATTN_PRECONCAT_KEY_TOKEN_ACC_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
-                        uint32_t v_idx = v_base + j * d_model + head_col_base + d;
-                        quant_act_t vv = quant_act_from_bits(sram[v_idx]);
-                        acc += quant_acc_t(prob_row[j]) * quant_acc_t(vv);
+                if (dense_tail_fp32_enabled && unmasked_count == 1u) {
+                    const uint32_t only_key = unmasked_keys[0];
+                    ATTN_PRECONCAT_DENSE_ONEHOT_COPY_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
+                        const uint32_t v_idx = v_base + only_key * d_model + head_col_base + d;
+                        const uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
+                        sram[out_idx] = sram[v_idx];
                     }
-                    uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
-                    sram[out_idx] = quant_bits_from_acc(acc);
+                } else if (dense_tail_fp32_enabled) {
+                    ATTN_PRECONCAT_DENSE_HEAD_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
+                        fp32_t acc_fp = fp32_zero;
+                        ATTN_PRECONCAT_DENSE_KEY_TOKEN_ACC_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                            if (masked_row[j]) {
+                                continue;
+                            }
+                            const uint32_t v_idx = v_base + j * d_model + head_col_base + d;
+                            const fp32_t vv_fp = fp32_from_bits(sram[v_idx]);
+                            acc_fp += prob_row_fp32[j] * vv_fp;
+                        }
+                        const uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
+                        sram[out_idx] = bits_from_fp32(acc_fp);
+                    }
+                } else {
+                    ATTN_PRECONCAT_HEAD_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
+                        quant_acc_t acc = 0;
+                        ATTN_PRECONCAT_KEY_TOKEN_ACC_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                            uint32_t v_idx = v_base + j * d_model + head_col_base + d;
+                            quant_act_t vv = quant_act_from_bits(sram[v_idx]);
+                            acc += quant_acc_t(prob_row[j]) * quant_acc_t(vv);
+                        }
+                        uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
+                        sram[out_idx] = quant_bits_from_acc(acc);
+                    }
                 }
             }
         }
