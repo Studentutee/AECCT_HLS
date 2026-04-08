@@ -100,6 +100,7 @@ static u32_t g_layer0_residual_rhs_shadow[FFN_X_WORDS];
 static u32_t g_layer0_residual_add_out_shadow[FFN_X_WORDS];
 static u32_t g_layer0_sublayer1_ln_in_shadow[FFN_X_WORDS];
 static u32_t g_layer0_sublayer1_ln_out_writeback_shadow[FFN_X_WORDS];
+static u32_t g_layer0_pre_concat_shadow[FFN_X_WORDS];
 static u32_t g_layer0_post_concat_shadow[FFN_X_WORDS];
 static u32_t g_layer0_attn_out_writeback_shadow[FFN_X_WORDS];
 static u32_t g_layer0_residual0_lhs_shadow[FFN_X_WORDS];
@@ -132,6 +133,7 @@ static bool g_layer0_residual_rhs_valid = false;
 static bool g_layer0_residual_add_out_valid = false;
 static bool g_layer0_sublayer1_ln_in_valid = false;
 static bool g_layer0_sublayer1_ln_out_writeback_valid = false;
+static bool g_layer0_pre_concat_valid = false;
 static bool g_layer0_post_concat_valid = false;
 static bool g_layer0_attn_out_writeback_valid = false;
 static bool g_layer0_residual0_lhs_valid = false;
@@ -179,6 +181,7 @@ static inline void transformer_layer_debug_clear_layer1_stage_valid() {
     g_layer0_residual_add_out_valid = false;
     g_layer0_sublayer1_ln_in_valid = false;
     g_layer0_sublayer1_ln_out_writeback_valid = false;
+    g_layer0_pre_concat_valid = false;
     g_layer0_post_concat_valid = false;
     g_layer0_attn_out_writeback_valid = false;
     g_layer0_residual0_lhs_valid = false;
@@ -240,6 +243,7 @@ static inline bool transformer_layer_debug_layer0_sublayer1_ln_in_valid() { retu
 static inline bool transformer_layer_debug_layer0_sublayer1_ln_out_writeback_valid() {
     return g_layer0_sublayer1_ln_out_writeback_valid;
 }
+static inline bool transformer_layer_debug_layer0_pre_concat_valid() { return g_layer0_pre_concat_valid; }
 static inline bool transformer_layer_debug_layer0_post_concat_valid() { return g_layer0_post_concat_valid; }
 static inline bool transformer_layer_debug_layer0_attn_out_writeback_valid() {
     return g_layer0_attn_out_writeback_valid;
@@ -380,6 +384,11 @@ static inline u32_t transformer_layer_debug_peek_layer0_sublayer1_ln_out_writeba
     if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_sublayer1_ln_out_writeback_shadow[i]; }
     return (u32_t)0u;
 }
+static inline u32_t transformer_layer_debug_peek_layer0_pre_concat_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_pre_concat_shadow[i]; }
+    return (u32_t)0u;
+}
 static inline u32_t transformer_layer_debug_peek_layer0_post_concat_word(u32_t idx) {
     const uint32_t i = (uint32_t)idx.to_uint();
     if (i < (uint32_t)FFN_X_WORDS) { return g_layer0_post_concat_shadow[i]; }
@@ -482,6 +491,7 @@ static inline bool transformer_layer_debug_layer0_residual_rhs_valid() { return 
 static inline bool transformer_layer_debug_layer0_residual_add_out_valid() { return false; }
 static inline bool transformer_layer_debug_layer0_sublayer1_ln_in_valid() { return false; }
 static inline bool transformer_layer_debug_layer0_sublayer1_ln_out_writeback_valid() { return false; }
+static inline bool transformer_layer_debug_layer0_pre_concat_valid() { return false; }
 static inline bool transformer_layer_debug_layer0_post_concat_valid() { return false; }
 static inline bool transformer_layer_debug_layer0_attn_out_writeback_valid() { return false; }
 static inline bool transformer_layer_debug_layer0_residual0_lhs_valid() { return false; }
@@ -527,6 +537,7 @@ static inline u32_t transformer_layer_debug_peek_layer0_residual_rhs_word(u32_t)
 static inline u32_t transformer_layer_debug_peek_layer0_residual_add_out_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_sublayer1_ln_in_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_sublayer1_ln_out_writeback_word(u32_t) { return (u32_t)0u; }
+static inline u32_t transformer_layer_debug_peek_layer0_pre_concat_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_post_concat_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_attn_out_writeback_word(u32_t) { return (u32_t)0u; }
 static inline u32_t transformer_layer_debug_peek_layer0_residual0_lhs_word(u32_t) { return (u32_t)0u; }
@@ -1614,6 +1625,7 @@ static inline void TransformerLayer(
     const uint32_t x_in_base = (uint32_t)x_in_base_word.to_uint();
     const uint32_t attn_out_base = (uint32_t)sc.attn_out_base_word.to_uint();
     const uint32_t q_base = (uint32_t)sc.attn.q_base_word.to_uint();
+    const uint32_t pre_concat_base = (uint32_t)sc.attn.pre_concat_base_word.to_uint();
     const uint32_t post_concat_base = (uint32_t)sc.attn.post_concat_base_word.to_uint();
     const uint32_t pre_ln_residual_base = (uint32_t)sc.ffn.add2_base_word.to_uint();
     uint32_t layer_words = layer_token_count * d_model;
@@ -1733,6 +1745,12 @@ static inline void TransformerLayer(
     }
 #ifndef __SYNTHESIS__
     if (layer0_debug_capture_enable) {
+        transformer_layer_debug_copy_words(
+            g_layer0_pre_concat_shadow,
+            &sram[pre_concat_base],
+            layer_words
+        );
+        g_layer0_pre_concat_valid = true;
         transformer_layer_debug_copy_words(
             g_layer0_post_concat_shadow,
             &sram[post_concat_base],

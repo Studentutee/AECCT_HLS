@@ -112,6 +112,11 @@ struct RefModelStageCompareResult {
     bool layer0_ffn_ln_out_writeback_exact;
     bool mid_norm_output_writeback_exact;
     bool layer1_attn_input_readback_exact;
+    bool layer0_ctx_exact;
+    bool layer0_pre_concat_exact;
+    bool layer0_post_concat_exact;
+    bool layer0_ctx_to_pre_concat_exact;
+    bool layer0_pre_to_post_copy_exact;
     bool layer1_attn_input_exact;
     bool layer1_post_concat_exact;
     bool layer1_q_exact;
@@ -179,6 +184,26 @@ struct RefModelStageCompareResult {
     uint32_t layer1_attn_input_readback_first_mismatch_dim;
     uint32_t layer1_attn_input_readback_dut_bits;
     uint32_t layer1_attn_input_readback_ref_bits;
+    uint32_t layer0_ctx_first_mismatch_token;
+    uint32_t layer0_ctx_first_mismatch_dim;
+    uint32_t layer0_ctx_dut_bits;
+    uint32_t layer0_ctx_ref_bits;
+    uint32_t layer0_pre_concat_first_mismatch_token;
+    uint32_t layer0_pre_concat_first_mismatch_dim;
+    uint32_t layer0_pre_concat_dut_bits;
+    uint32_t layer0_pre_concat_ref_bits;
+    uint32_t layer0_post_concat_first_mismatch_token;
+    uint32_t layer0_post_concat_first_mismatch_dim;
+    uint32_t layer0_post_concat_dut_bits;
+    uint32_t layer0_post_concat_ref_bits;
+    uint32_t layer0_ctx_to_pre_concat_first_mismatch_token;
+    uint32_t layer0_ctx_to_pre_concat_first_mismatch_dim;
+    uint32_t layer0_ctx_to_pre_concat_dut_bits;
+    uint32_t layer0_ctx_to_pre_concat_ref_bits;
+    uint32_t layer0_pre_to_post_copy_first_mismatch_token;
+    uint32_t layer0_pre_to_post_copy_first_mismatch_dim;
+    uint32_t layer0_pre_to_post_copy_dut_bits;
+    uint32_t layer0_pre_to_post_copy_ref_bits;
     uint32_t bounded_first_divergence_bucket; // 0=none,1=A(layer0_ffn_ln_out_writeback),2=B(mid_norm_output_writeback),3=C(layer1_attn_input_readback)
     uint32_t layer0_recursive_round1_bucket;  // 0=none,1=ffn2_out,2=residual_add_out,3=sublayer1_ln_in,4=sublayer1_ln_out_writeback
     uint32_t layer0_recursive_round2_bucket;  // branch-local secondary split bucket
@@ -1154,6 +1179,11 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer0_ffn_ln_out_writeback_exact = true;
     r.mid_norm_output_writeback_exact = true;
     r.layer1_attn_input_readback_exact = true;
+    r.layer0_ctx_exact = true;
+    r.layer0_pre_concat_exact = true;
+    r.layer0_post_concat_exact = true;
+    r.layer0_ctx_to_pre_concat_exact = true;
+    r.layer0_pre_to_post_copy_exact = true;
     r.layer1_attn_input_exact = true;
     r.layer1_post_concat_exact = true;
     r.layer1_q_exact = true;
@@ -1221,6 +1251,26 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer1_attn_input_readback_first_mismatch_dim = 0u;
     r.layer1_attn_input_readback_dut_bits = 0u;
     r.layer1_attn_input_readback_ref_bits = 0u;
+    r.layer0_ctx_first_mismatch_token = 0u;
+    r.layer0_ctx_first_mismatch_dim = 0u;
+    r.layer0_ctx_dut_bits = 0u;
+    r.layer0_ctx_ref_bits = 0u;
+    r.layer0_pre_concat_first_mismatch_token = 0u;
+    r.layer0_pre_concat_first_mismatch_dim = 0u;
+    r.layer0_pre_concat_dut_bits = 0u;
+    r.layer0_pre_concat_ref_bits = 0u;
+    r.layer0_post_concat_first_mismatch_token = 0u;
+    r.layer0_post_concat_first_mismatch_dim = 0u;
+    r.layer0_post_concat_dut_bits = 0u;
+    r.layer0_post_concat_ref_bits = 0u;
+    r.layer0_ctx_to_pre_concat_first_mismatch_token = 0u;
+    r.layer0_ctx_to_pre_concat_first_mismatch_dim = 0u;
+    r.layer0_ctx_to_pre_concat_dut_bits = 0u;
+    r.layer0_ctx_to_pre_concat_ref_bits = 0u;
+    r.layer0_pre_to_post_copy_first_mismatch_token = 0u;
+    r.layer0_pre_to_post_copy_first_mismatch_dim = 0u;
+    r.layer0_pre_to_post_copy_dut_bits = 0u;
+    r.layer0_pre_to_post_copy_ref_bits = 0u;
     r.bounded_first_divergence_bucket = 0u;
     r.layer0_recursive_round1_bucket = 0u;
     r.layer0_recursive_round2_bucket = 0u;
@@ -1411,6 +1461,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (uint32_t)aecct::transformer_layer_debug_layer0_sublayer0_x_out_base_word().to_uint();
     const uint32_t layer0_ffn_input_base =
         (uint32_t)aecct::transformer_layer_debug_layer0_ffn_input_base_word().to_uint();
+    const bool layer0_ctx_valid = aecct::attn_layer0_debug_ctx_valid();
+    const uint32_t layer0_ctx_token_count = (uint32_t)aecct::attn_layer0_debug_ctx_token_count().to_uint();
+    const uint32_t layer0_ctx_n_heads = (uint32_t)aecct::attn_layer0_debug_ctx_n_heads().to_uint();
+    const uint32_t layer0_ctx_d_head = (uint32_t)aecct::attn_layer0_debug_ctx_d_head().to_uint();
     const uint32_t layer1_x_words = (uint32_t)aecct::transformer_layer_debug_layer1_x_words_valid().to_uint();
     const uint32_t layer1_ff_words = (uint32_t)aecct::transformer_layer_debug_layer1_ff_words_valid().to_uint();
     const bool mid_norm_output_writeback_valid = aecct::top_peek_infer_mid_norm_output_valid();
@@ -1421,7 +1475,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         !aecct::transformer_layer_debug_layer0_ffn_w1_weight_valid() ||
         !aecct::transformer_layer_debug_layer0_ffn_w1_bias_valid() ||
         !aecct::transformer_layer_debug_layer0_ffn_w1_mac_psum_valid() ||
+        !aecct::transformer_layer_debug_layer0_pre_concat_valid() ||
         !aecct::transformer_layer_debug_layer0_post_concat_valid() ||
+        !layer0_ctx_valid ||
         !aecct::transformer_layer_debug_layer0_attn_out_writeback_valid() ||
         !aecct::transformer_layer_debug_layer0_residual0_lhs_valid() ||
         !aecct::transformer_layer_debug_layer0_residual0_rhs_valid() ||
@@ -1835,6 +1891,175 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
                 (unsigned)c.ref_bits);
         }
     };
+
+    if (layer0_ctx_token_count == 0u || layer0_ctx_n_heads == 0u || layer0_ctx_d_head == 0u) {
+        fail("layer0 ctx tap metadata missing");
+    }
+    if (layer0_ctx_token_count != (uint32_t)N_NODES || (layer0_ctx_n_heads * layer0_ctx_d_head) != d_model) {
+        fail("layer0 ctx tap shape mismatch");
+    }
+
+    LAYER0_CTX_REF_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < layer0_ctx_token_count; ++t) {
+        LAYER0_CTX_REF_COMPARE_HEAD_LOOP: for (uint32_t h = 0u; h < layer0_ctx_n_heads; ++h) {
+            LAYER0_CTX_REF_COMPARE_LANE_LOOP: for (uint32_t d = 0u; d < layer0_ctx_d_head; ++d) {
+                const uint32_t colume = h * layer0_ctx_d_head + d;
+                const uint32_t flat = t * d_model + colume;
+                const uint32_t dut_ctx_bits =
+                    (uint32_t)aecct::attn_layer0_debug_peek_ctx_word((aecct::u32_t)h, (aecct::u32_t)t, (aecct::u32_t)d).to_uint();
+                const uint32_t dut_pre_bits =
+                    (flat < layer0_x_words) ?
+                        (uint32_t)aecct::transformer_layer_debug_peek_layer0_pre_concat_word((aecct::u32_t)flat).to_uint() :
+                        0u;
+                const uint32_t ref_bits = f32_to_bits((float)ref_layer0_post_concat[flat]);
+                if (r.layer0_ctx_exact && dut_ctx_bits != ref_bits) {
+                    r.layer0_ctx_exact = false;
+                    r.layer0_ctx_first_mismatch_token = t;
+                    r.layer0_ctx_first_mismatch_dim = colume;
+                    r.layer0_ctx_dut_bits = dut_ctx_bits;
+                    r.layer0_ctx_ref_bits = ref_bits;
+                }
+                if (r.layer0_ctx_to_pre_concat_exact && dut_ctx_bits != dut_pre_bits) {
+                    r.layer0_ctx_to_pre_concat_exact = false;
+                    r.layer0_ctx_to_pre_concat_first_mismatch_token = t;
+                    r.layer0_ctx_to_pre_concat_first_mismatch_dim = colume;
+                    r.layer0_ctx_to_pre_concat_dut_bits = dut_ctx_bits;
+                    r.layer0_ctx_to_pre_concat_ref_bits = dut_pre_bits;
+                }
+            }
+        }
+    }
+
+    LAYER0_PRECONCAT_REF_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        LAYER0_PRECONCAT_REF_COMPARE_D_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = t * d_model + d;
+            const uint32_t dut_bits = (flat < layer0_x_words) ?
+                (uint32_t)aecct::transformer_layer_debug_peek_layer0_pre_concat_word((aecct::u32_t)flat).to_uint() :
+                0u;
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer0_post_concat[flat]);
+            if (r.layer0_pre_concat_exact && dut_bits != ref_bits) {
+                r.layer0_pre_concat_exact = false;
+                r.layer0_pre_concat_first_mismatch_token = t;
+                r.layer0_pre_concat_first_mismatch_dim = d;
+                r.layer0_pre_concat_dut_bits = dut_bits;
+                r.layer0_pre_concat_ref_bits = ref_bits;
+            }
+        }
+    }
+
+    LAYER0_POSTCONCAT_REF_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        LAYER0_POSTCONCAT_REF_COMPARE_D_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = t * d_model + d;
+            const uint32_t dut_bits = (flat < layer0_x_words) ?
+                (uint32_t)aecct::transformer_layer_debug_peek_layer0_post_concat_word((aecct::u32_t)flat).to_uint() :
+                0u;
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer0_post_concat[flat]);
+            if (r.layer0_post_concat_exact && dut_bits != ref_bits) {
+                r.layer0_post_concat_exact = false;
+                r.layer0_post_concat_first_mismatch_token = t;
+                r.layer0_post_concat_first_mismatch_dim = d;
+                r.layer0_post_concat_dut_bits = dut_bits;
+                r.layer0_post_concat_ref_bits = ref_bits;
+            }
+        }
+    }
+
+    LAYER0_PRE_TO_POST_COPY_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        LAYER0_PRE_TO_POST_COPY_COMPARE_D_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = t * d_model + d;
+            const uint32_t pre_bits = (flat < layer0_x_words) ?
+                (uint32_t)aecct::transformer_layer_debug_peek_layer0_pre_concat_word((aecct::u32_t)flat).to_uint() :
+                0u;
+            const uint32_t post_bits = (flat < layer0_x_words) ?
+                (uint32_t)aecct::transformer_layer_debug_peek_layer0_post_concat_word((aecct::u32_t)flat).to_uint() :
+                0u;
+            if (r.layer0_pre_to_post_copy_exact && pre_bits != post_bits) {
+                r.layer0_pre_to_post_copy_exact = false;
+                r.layer0_pre_to_post_copy_first_mismatch_token = t;
+                r.layer0_pre_to_post_copy_first_mismatch_dim = d;
+                r.layer0_pre_to_post_copy_dut_bits = pre_bits;
+                r.layer0_pre_to_post_copy_ref_bits = post_bits;
+            }
+        }
+    }
+
+    std::printf(
+        "[backup_io8][layer0_attn_tail_probe] sample=%u layer0_ctx_exact=%u layer0_pre_concat_exact=%u layer0_post_concat_exact=%u ctx_to_pre_concat_exact=%u pre_to_post_copy_exact=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.layer0_ctx_exact ? 1u : 0u),
+        (unsigned)(r.layer0_pre_concat_exact ? 1u : 0u),
+        (unsigned)(r.layer0_post_concat_exact ? 1u : 0u),
+        (unsigned)(r.layer0_ctx_to_pre_concat_exact ? 1u : 0u),
+        (unsigned)(r.layer0_pre_to_post_copy_exact ? 1u : 0u));
+    if (!r.layer0_ctx_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][ctx] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_ctx_first_mismatch_token,
+            (unsigned)r.layer0_ctx_first_mismatch_dim,
+            (unsigned)r.layer0_ctx_dut_bits,
+            (unsigned)r.layer0_ctx_ref_bits);
+    }
+    if (!r.layer0_pre_concat_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][pre_concat] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_pre_concat_first_mismatch_token,
+            (unsigned)r.layer0_pre_concat_first_mismatch_dim,
+            (unsigned)r.layer0_pre_concat_dut_bits,
+            (unsigned)r.layer0_pre_concat_ref_bits);
+    }
+    if (!r.layer0_post_concat_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][post_concat] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_post_concat_first_mismatch_token,
+            (unsigned)r.layer0_post_concat_first_mismatch_dim,
+            (unsigned)r.layer0_post_concat_dut_bits,
+            (unsigned)r.layer0_post_concat_ref_bits);
+    }
+    if (!r.layer0_ctx_to_pre_concat_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][ctx_to_pre_concat] sample=%u exact=0 first_mismatch_token=%u dim=%u ctx=0x%08X pre=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_ctx_to_pre_concat_first_mismatch_token,
+            (unsigned)r.layer0_ctx_to_pre_concat_first_mismatch_dim,
+            (unsigned)r.layer0_ctx_to_pre_concat_dut_bits,
+            (unsigned)r.layer0_ctx_to_pre_concat_ref_bits);
+    }
+    if (!r.layer0_pre_to_post_copy_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][pre_to_post_copy] sample=%u exact=0 first_mismatch_token=%u dim=%u pre=0x%08X post=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_pre_to_post_copy_first_mismatch_token,
+            (unsigned)r.layer0_pre_to_post_copy_first_mismatch_dim,
+            (unsigned)r.layer0_pre_to_post_copy_dut_bits,
+            (unsigned)r.layer0_pre_to_post_copy_ref_bits);
+    }
+    if (sample_idx == kDebugPreferredSampleId && layer0_ctx_token_count > 0u) {
+        const uint32_t probe_token = 0u;
+        LAYER0_FOCUS_HEAD_LOOP: for (uint32_t h = 0u; h < layer0_ctx_n_heads; ++h) {
+            LAYER0_FOCUS_LANE_LOOP: for (uint32_t d = 0u; d < layer0_ctx_d_head; ++d) {
+                const uint32_t colume = h * layer0_ctx_d_head + d;
+                const uint32_t flat = probe_token * d_model + colume;
+                const uint32_t dut_ctx_bits =
+                    (uint32_t)aecct::attn_layer0_debug_peek_ctx_word((aecct::u32_t)h, (aecct::u32_t)probe_token, (aecct::u32_t)d).to_uint();
+                const uint32_t dut_pre_bits =
+                    (uint32_t)aecct::transformer_layer_debug_peek_layer0_pre_concat_word((aecct::u32_t)flat).to_uint();
+                const uint32_t ref_bits = f32_to_bits((float)ref_layer0_post_concat[flat]);
+                std::printf(
+                    "[backup_io8][layer0_attn_tail_probe][sample5_token0_head_lane] head=%u lane=%u colume=%u ctx=0x%08X pre=0x%08X ref=0x%08X ctx_eq_ref=%u pre_eq_ref=%u ctx_eq_pre=%u\n",
+                    (unsigned)h,
+                    (unsigned)d,
+                    (unsigned)colume,
+                    (unsigned)dut_ctx_bits,
+                    (unsigned)dut_pre_bits,
+                    (unsigned)ref_bits,
+                    (unsigned)(dut_ctx_bits == ref_bits ? 1u : 0u),
+                    (unsigned)(dut_pre_bits == ref_bits ? 1u : 0u),
+                    (unsigned)(dut_ctx_bits == dut_pre_bits ? 1u : 0u));
+            }
+        }
+    }
 
     const Layer0StageCmp layer0_r1_ffn2 = compare_tensor_stage(
         (uint32_t)N_NODES,
@@ -3151,6 +3376,41 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)r.logit_first_mismatch_idx,
         (unsigned)r.xpred_first_mismatch_idx,
         (unsigned)r.boundary_bucket);
+    std::printf(
+        "[backup_io8][layer0_attn_tail_probe][summary] sample=%u layer0_ctx_exact=%u layer0_pre_concat_exact=%u layer0_post_concat_exact=%u ctx_to_pre_concat_exact=%u pre_to_post_copy_exact=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.layer0_ctx_exact ? 1u : 0u),
+        (unsigned)(r.layer0_pre_concat_exact ? 1u : 0u),
+        (unsigned)(r.layer0_post_concat_exact ? 1u : 0u),
+        (unsigned)(r.layer0_ctx_to_pre_concat_exact ? 1u : 0u),
+        (unsigned)(r.layer0_pre_to_post_copy_exact ? 1u : 0u));
+    if (!r.layer0_ctx_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][summary_ctx] sample=%u first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_ctx_first_mismatch_token,
+            (unsigned)r.layer0_ctx_first_mismatch_dim,
+            (unsigned)r.layer0_ctx_dut_bits,
+            (unsigned)r.layer0_ctx_ref_bits);
+    }
+    if (!r.layer0_pre_concat_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][summary_pre_concat] sample=%u first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_pre_concat_first_mismatch_token,
+            (unsigned)r.layer0_pre_concat_first_mismatch_dim,
+            (unsigned)r.layer0_pre_concat_dut_bits,
+            (unsigned)r.layer0_pre_concat_ref_bits);
+    }
+    if (!r.layer0_post_concat_exact) {
+        std::printf(
+            "[backup_io8][layer0_attn_tail_probe][summary_post_concat] sample=%u first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)r.layer0_post_concat_first_mismatch_token,
+            (unsigned)r.layer0_post_concat_first_mismatch_dim,
+            (unsigned)r.layer0_post_concat_dut_bits,
+            (unsigned)r.layer0_post_concat_ref_bits);
+    }
     std::printf(
         "[backup_io8][bounded_debug] sample=%u A_layer0_ffn_ln_out_writeback_exact=%u B_mid_norm_output_writeback_exact=%u C_layer1_attn_input_readback_exact=%u\n",
         (unsigned)sample_idx,

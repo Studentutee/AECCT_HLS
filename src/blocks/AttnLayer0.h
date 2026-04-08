@@ -335,6 +335,83 @@ static inline bool attn_score_debug_dump_slot_for_probe(
     return true;
 }
 
+#ifndef __SYNTHESIS__
+// local-only ctx tap for bounded debug:
+// captures logical ctx in head-major order [head][token][lane] before pre-concat flattening.
+static u32_t g_attn_layer0_ctx_shadow[ATTN_TENSOR_WORDS];
+static bool g_attn_layer0_ctx_valid = false;
+static u32_t g_attn_layer0_ctx_token_count = (u32_t)0u;
+static u32_t g_attn_layer0_ctx_n_heads = (u32_t)0u;
+static u32_t g_attn_layer0_ctx_d_head = (u32_t)0u;
+
+static inline void attn_layer0_debug_clear_ctx_shadow() {
+    g_attn_layer0_ctx_valid = false;
+    g_attn_layer0_ctx_token_count = (u32_t)0u;
+    g_attn_layer0_ctx_n_heads = (u32_t)0u;
+    g_attn_layer0_ctx_d_head = (u32_t)0u;
+    ATTN_LAYER0_DEBUG_CTX_CLEAR_LOOP: for (uint32_t i = 0u; i < (uint32_t)ATTN_TENSOR_WORDS; ++i) {
+        g_attn_layer0_ctx_shadow[i] = (u32_t)0u;
+    }
+}
+
+static inline void attn_layer0_debug_record_ctx_word(
+    uint32_t layer_id,
+    uint32_t head_idx,
+    uint32_t token_idx,
+    uint32_t lane_idx,
+    uint32_t token_count,
+    uint32_t n_heads,
+    uint32_t d_head,
+    u32_t bits
+) {
+    if (layer_id != 0u) {
+        return;
+    }
+    if (head_idx >= n_heads || token_idx >= token_count || lane_idx >= d_head) {
+        return;
+    }
+    const uint32_t idx = (head_idx * token_count + token_idx) * d_head + lane_idx;
+    if (idx >= (uint32_t)ATTN_TENSOR_WORDS) {
+        return;
+    }
+    g_attn_layer0_ctx_shadow[idx] = bits;
+    g_attn_layer0_ctx_valid = true;
+    g_attn_layer0_ctx_token_count = (u32_t)token_count;
+    g_attn_layer0_ctx_n_heads = (u32_t)n_heads;
+    g_attn_layer0_ctx_d_head = (u32_t)d_head;
+}
+
+static inline bool attn_layer0_debug_ctx_valid() { return g_attn_layer0_ctx_valid; }
+static inline u32_t attn_layer0_debug_ctx_token_count() { return g_attn_layer0_ctx_token_count; }
+static inline u32_t attn_layer0_debug_ctx_n_heads() { return g_attn_layer0_ctx_n_heads; }
+static inline u32_t attn_layer0_debug_ctx_d_head() { return g_attn_layer0_ctx_d_head; }
+static inline u32_t attn_layer0_debug_peek_ctx_word(u32_t head_idx, u32_t token_idx, u32_t lane_idx) {
+    const uint32_t h = (uint32_t)head_idx.to_uint();
+    const uint32_t t = (uint32_t)token_idx.to_uint();
+    const uint32_t d = (uint32_t)lane_idx.to_uint();
+    const uint32_t token_count = (uint32_t)g_attn_layer0_ctx_token_count.to_uint();
+    const uint32_t n_heads = (uint32_t)g_attn_layer0_ctx_n_heads.to_uint();
+    const uint32_t d_head = (uint32_t)g_attn_layer0_ctx_d_head.to_uint();
+    if (h >= n_heads || t >= token_count || d >= d_head) {
+        return (u32_t)0u;
+    }
+    const uint32_t idx = (h * token_count + t) * d_head + d;
+    if (idx < (uint32_t)ATTN_TENSOR_WORDS) {
+        return g_attn_layer0_ctx_shadow[idx];
+    }
+    return (u32_t)0u;
+}
+#else
+static inline void attn_layer0_debug_clear_ctx_shadow() {}
+static inline void attn_layer0_debug_record_ctx_word(
+    uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, u32_t) {}
+static inline bool attn_layer0_debug_ctx_valid() { return false; }
+static inline u32_t attn_layer0_debug_ctx_token_count() { return (u32_t)0u; }
+static inline u32_t attn_layer0_debug_ctx_n_heads() { return (u32_t)0u; }
+static inline u32_t attn_layer0_debug_ctx_d_head() { return (u32_t)0u; }
+static inline u32_t attn_layer0_debug_peek_ctx_word(u32_t, u32_t, u32_t) { return (u32_t)0u; }
+#endif
+
 static inline fp32_t attn_softmax_fp32_exp_lut(fp32_t x) {
     static const uint32_t kAttnSoftmaxExpLutBits[SoftmaxApproxCfg::EXP_LUT_SIZE] = {
         0x3F800000u, 0x3F743B65u, 0x3F690146u, 0x3F5E4B46u, 0x3F541351u, 0x3F4A539Du, 0x3F4106A3u, 0x3F38271Cu,
@@ -522,6 +599,11 @@ static inline void AttnLayer0CoreWindow(
     bool q_live_ok_latched = false;
     bool k_live_ok_latched = false;
     bool v_live_ok_latched = false;
+#ifndef __SYNTHESIS__
+    if ((STAGE_MODE == ATTN_STAGE_SCORES || STAGE_MODE == ATTN_STAGE_FULL) && layer_id == 0u) {
+        attn_layer0_debug_clear_ctx_shadow();
+    }
+#endif
 
     // QKV stage:
     // X_WORK + W_REGION metadata/payload -> Q/K/V (plus act_q mirrors) in attention scratch windows.
@@ -1181,12 +1263,32 @@ static inline void AttnLayer0CoreWindow(
                     ATTN_PRECONCAT_DENSE_ONEHOT_COPY_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
                         const uint32_t v_idx = v_base + only_key * d_model + head_col_base + d;
                         const uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
-                        sram[out_idx] = sram[v_idx];
+                        const u32_t ctx_bits = sram[v_idx];
+                        sram[out_idx] = ctx_bits;
+                        attn_layer0_debug_record_ctx_word(
+                            layer_id,
+                            h,
+                            t,
+                            d,
+                            token_count,
+                            n_heads,
+                            d_head,
+                            ctx_bits);
                     }
                 } else if (dense_tail_fp32_enabled && dense_multi_ctx_ready) {
                     ATTN_PRECONCAT_DENSE_ONLINE_CTX_COPY_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
                         const uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
-                        sram[out_idx] = bits_from_fp32(dense_multi_ctx_row[d]);
+                        const u32_t ctx_bits = bits_from_fp32(dense_multi_ctx_row[d]);
+                        sram[out_idx] = ctx_bits;
+                        attn_layer0_debug_record_ctx_word(
+                            layer_id,
+                            h,
+                            t,
+                            d,
+                            token_count,
+                            n_heads,
+                            d_head,
+                            ctx_bits);
                     }
                 } else if (dense_tail_fp32_enabled) {
                     ATTN_PRECONCAT_DENSE_HEAD_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
@@ -1200,7 +1302,17 @@ static inline void AttnLayer0CoreWindow(
                             acc_fp += prob_row_fp32[j] * vv_fp;
                         }
                         const uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
-                        sram[out_idx] = bits_from_fp32(acc_fp);
+                        const u32_t ctx_bits = bits_from_fp32(acc_fp);
+                        sram[out_idx] = ctx_bits;
+                        attn_layer0_debug_record_ctx_word(
+                            layer_id,
+                            h,
+                            t,
+                            d,
+                            token_count,
+                            n_heads,
+                            d_head,
+                            ctx_bits);
                     }
                 } else {
                     ATTN_PRECONCAT_HEAD_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
@@ -1211,7 +1323,17 @@ static inline void AttnLayer0CoreWindow(
                             acc += quant_acc_t(prob_row[j]) * quant_acc_t(vv);
                         }
                         uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
-                        sram[out_idx] = quant_bits_from_acc(acc);
+                        const u32_t ctx_bits = quant_bits_from_acc(acc);
+                        sram[out_idx] = ctx_bits;
+                        attn_layer0_debug_record_ctx_word(
+                            layer_id,
+                            h,
+                            t,
+                            d,
+                            token_count,
+                            n_heads,
+                            d_head,
+                            ctx_bits);
                     }
                 }
             }
