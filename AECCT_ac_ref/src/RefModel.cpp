@@ -827,8 +827,11 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
   const float inv_std_seed = ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
   const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(fp32_ref_t(x_eps_safe)).to_float();
 
-  const float inv_std =
-    ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
+  float inv_std =
+    ref_inv_sqrt_nr1_approx(fp32_ref_t(x_eps_safe)).to_float();
+  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
+    inv_std = ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
+  }
   for (int i = 0; i < D_MODEL; ++i) {
     const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
     const float xn = (xv - mean) * inv_std;
