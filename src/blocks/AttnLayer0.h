@@ -336,6 +336,40 @@ static inline bool attn_score_debug_dump_slot_for_probe(
 }
 
 static inline fp32_t attn_softmax_fp32_exp_lut(fp32_t x) {
+    static const uint32_t kAttnSoftmaxExpLutBits[SoftmaxApproxCfg::EXP_LUT_SIZE] = {
+        0x3F800000u, 0x3F743B65u, 0x3F690146u, 0x3F5E4B46u, 0x3F541351u, 0x3F4A539Du, 0x3F4106A3u, 0x3F38271Cu,
+        0x3F2FB000u, 0x3F279C83u, 0x3F1FE810u, 0x3F188E48u, 0x3F118B02u, 0x3F0ADA42u, 0x3F04783Eu, 0x3EFCC2AEu,
+        0x3EF12432u, 0x3EE60E72u, 0x3EDB7B25u, 0x3ED1644Bu, 0x3EC7C42Cu, 0x3EBE9553u, 0x3EB5D28Au, 0x3EAD76DBu,
+        0x3EA57D87u, 0x3E9DE20Au, 0x3E96A013u, 0x3E8FB384u, 0x3E891871u, 0x3E82CB1Au, 0x3E798FDBu, 0x3E6E1703u,
+        0x3E63252Cu, 0x3E58B421u, 0x3E4EBDF6u, 0x3E453D06u, 0x3E3C2BECu, 0x3E338585u, 0x3E2B44E9u, 0x3E23656Bu,
+        0x3E1BE293u, 0x3E14B81Eu, 0x3E0DE1FEu, 0x3E075C51u, 0x3E012365u, 0x3DF66764u, 0x3DEB13B6u, 0x3DE04554u,
+        0x3DD5F61Cu, 0x3DCC2037u, 0x3DC2BE10u, 0x3DB9CA56u, 0x3DB13FF4u, 0x3DA91A14u, 0x3DA15417u, 0x3D99E994u,
+        0x3D92D656u, 0x3D8C165Cu, 0x3D85A5D0u, 0x3D7F0217u, 0x3D734928u, 0x3D681A2Cu, 0x3D5D6ECBu, 0x3D5340F9u,
+        0x3D498AF1u, 0x3D404730u, 0x3D377076u, 0x3D2F01BFu, 0x3D26F645u, 0x3D1F4976u, 0x3D17F6F9u, 0x3D10FAA7u,
+        0x3D0A508Au, 0x3D03F4DBu, 0x3CFBC7FCu, 0x3CF03506u, 0x3CE52A45u, 0x3CDAA175u, 0x3CD0949Cu, 0x3CC6FE09u,
+        0x3CBDD84Cu, 0x3CB51E34u, 0x3CACCACFu, 0x3CA4D964u, 0x3C9D4572u, 0x3C960AAEu, 0x3C8F24FDu, 0x3C889077u,
+        0x3C824961u, 0x3C789855u, 0x3C6D2ADEu, 0x3C6243E2u, 0x3C57DD32u, 0x3C4DF0E8u, 0x3C447965u, 0x3C3B714Au,
+        0x3C32D377u, 0x3C2A9B0Bu, 0x3C22C35Bu, 0x3C1B47F6u, 0x3C14249Du, 0x3C0D5545u, 0x3C06D610u, 0x3C00A34Fu,
+        0x3BF57300u, 0x3BEA2A8Eu, 0x3BDF66E3u, 0x3BD521E5u, 0x3BCB55C1u, 0x3BC1FCE9u, 0x3BB91210u, 0x3BB09027u,
+        0x3BA8725Cu, 0x3BA0B414u, 0x3B9950ECu, 0x3B9244B3u, 0x3B8B8B6Au, 0x3B852141u, 0x3B7E052Bu, 0x3B7257DCu,
+        0x3B6733F7u, 0x3B5C932Cu, 0x3B526F72u, 0x3B48C30Bu, 0x3B3F887Bu, 0x3B36BA85u, 0x3B2E542Cu, 0x3B2650ACu,
+        0x3B1EAB7Au, 0x3B176040u, 0x3B106ADCu, 0x3B09C75Bu, 0x3B0371FAu, 0x3AFACE42u, 0x3AEF46C8u, 0x3AE446FAu,
+        0x3AD9C89Cu, 0x3ACFC5BCu, 0x3AC638ACu, 0x3ABD1C01u, 0x3AB46A90u, 0x3AAC1F6Du, 0x3AA435E3u, 0x3A9CA976u,
+        0x3A9575DDu, 0x3A8E9703u, 0x3A880904u, 0x3A81C828u, 0x3A77A1C4u, 0x3A6C3FA3u, 0x3A616377u, 0x3A570718u,
+        0x3A4D24A6u, 0x3A43B687u, 0x3A3AB760u, 0x3A32221Au, 0x3A29F1D4u, 0x3A2221ECu, 0x3A1AADF3u, 0x3A1391AEu,
+        0x3A0CC917u, 0x3A065054u, 0x3A0023B9u, 0x39F47F8Eu, 0x39E9424Du, 0x39DE8950u, 0x39D44E81u, 0x39CA8C15u,
+        0x39C13C82u, 0x39B85A81u, 0x39AFE108u, 0x39A7CB4Au, 0x39A014B0u, 0x3998B8DCu, 0x3991B3A0u, 0x398B0103u,
+        0x39849D36u, 0x397D0939u, 0x3971677Fu, 0x39664EA7u, 0x395BB866u, 0x39519EBBu, 0x3947FBECu, 0x393ECA83u,
+        0x39360549u, 0x392DA744u, 0x3925ABB7u, 0x391E0E1Au, 0x3916CA1Cu, 0x390FDB9Fu, 0x39093EB4u, 0x3902EF9Bu,
+        0x38F9D581u, 0x38EE5975u, 0x38E36490u, 0x38D8F09Bu, 0x38CEF7A9u, 0x38C57411u, 0x38BC6070u, 0x38B3B79Fu,
+        0x38AB74B6u, 0x38A39305u, 0x389C0E14u, 0x3894E1A0u, 0x388E0997u, 0x38878218u, 0x3881476Fu, 0x3876AC28u,
+        0x386B5551u, 0x386083EBu, 0x385631D2u, 0x384C592Eu, 0x3842F469u, 0x3839FE2Fu, 0x3831716Cu, 0x38294946u,
+        0x3821811Du, 0x381A1488u, 0x3812FF51u, 0x380C3D74u, 0x3805CB1Cu, 0x37FF4942u, 0x37F38D0Eu, 0x37E85AF3u,
+        0x37DDAC98u, 0x37D37BEFu, 0x37C9C330u, 0x37C07CD9u, 0x37B7A3A8u, 0x37AF3297u, 0x37A724DDu, 0x379F75EAu,
+        0x37982162u, 0x3791231Du, 0x378A7724u, 0x378419AEu, 0x377C0E40u, 0x37707810u, 0x37656A3Au, 0x375ADE79u,
+        0x3750CED2u, 0x37473592u, 0x373E0D47u, 0x373550C0u, 0x372CFB08u, 0x37250766u, 0x371D7156u, 0x3716348Eu,
+        0x370F4CF0u, 0x3708B694u, 0x37026DBDu, 0x36F8DDB6u, 0x36ED6D0Eu, 0x36E28307u, 0x36D81970u, 0x36CE2A62u
+    };
     fp32_t x_clamped = x;
     const fp32_t fp32_zero = fp32_t(0.0f);
     const fp32_t fp32_neg_t = fp32_t(-12.0f);
@@ -353,7 +387,7 @@ static inline fp32_t attn_softmax_fp32_exp_lut(fp32_t x) {
     if (idx >= SoftmaxApproxCfg::EXP_LUT_SIZE) {
         idx = SoftmaxApproxCfg::EXP_LUT_SIZE - 1;
     }
-    return fp32_t(g_exp_lut[idx].to_double());
+    return fp32_from_bits((u32_t)kAttnSoftmaxExpLutBits[idx]);
 }
 
 static inline fp32_t attn_softmax_fp32_rcp_lut_nr(fp32_t sumexp) {
@@ -378,9 +412,13 @@ static inline fp32_t attn_softmax_fp32_rcp_lut_nr(fp32_t sumexp) {
     if (idx >= SoftmaxApproxCfg::RCP_LUT_SIZE) {
         idx = SoftmaxApproxCfg::RCP_LUT_SIZE - 1;
     }
-    const fp32_t inv0 = fp32_t(g_rcp_lut[idx].to_double());
+    const fp32_t inv0 = fp32_t(1.0) / fp32_t((double)(idx + 1));
     const fp32_t two = fp32_t(2.0f);
     return inv0 * (two - (sumexp_safe * inv0));
+}
+
+static inline fp32_t attn_fp32_roundtrip(fp32_t x) {
+    return fp32_from_bits(bits_from_fp32(x));
 }
 
 // local-only boundary descriptor for Top-fed prebuilt handoff flags.
@@ -1064,7 +1102,8 @@ static inline void AttnLayer0CoreWindow(
                             continue;
                         }
                         if (score_fp > online_max) {
-                            const fp32_t alpha = attn_softmax_fp32_exp_lut(online_max - score_fp);
+                            const fp32_t alpha =
+                                attn_fp32_roundtrip(attn_softmax_fp32_exp_lut(online_max - score_fp));
                             online_sumexp = (online_sumexp * alpha) + fp32_one_v;
                             ATTN_DENSE_ONLINE_CTX_RENORM_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
                                 const uint32_t v_idx = v_base + key * d_model + head_col_base + d;
@@ -1073,7 +1112,8 @@ static inline void AttnLayer0CoreWindow(
                             }
                             online_max = score_fp;
                         } else {
-                            const fp32_t beta = attn_softmax_fp32_exp_lut(score_fp - online_max);
+                            const fp32_t beta =
+                                attn_fp32_roundtrip(attn_softmax_fp32_exp_lut(score_fp - online_max));
                             online_sumexp += beta;
                             ATTN_DENSE_ONLINE_CTX_ACC_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
                                 const uint32_t v_idx = v_base + key * d_model + head_col_base + d;
@@ -1083,17 +1123,20 @@ static inline void AttnLayer0CoreWindow(
                         }
                     }
                     if (online_init) {
-                        const fp32_t inv_sumexp_fp = attn_softmax_fp32_rcp_lut_nr(online_sumexp);
+                        const fp32_t inv_sumexp_fp =
+                            attn_fp32_roundtrip(attn_softmax_fp32_rcp_lut_nr(online_sumexp));
                         ATTN_DENSE_ONLINE_PROB_MATERIALIZE_LOOP: for (uint32_t u = 0u; u < unmasked_count; ++u) {
                             const uint32_t key = unmasked_keys[u];
-                            const fp32_t w_fp = attn_softmax_fp32_exp_lut(score_row_fp32[key] - online_max);
-                            const fp32_t prob_fp = w_fp * inv_sumexp_fp;
+                            const fp32_t w_fp =
+                                attn_fp32_roundtrip(attn_softmax_fp32_exp_lut(score_row_fp32[key] - online_max));
+                            const fp32_t prob_fp = attn_fp32_roundtrip(w_fp * inv_sumexp_fp);
                             prob_row_fp32[key] = prob_fp;
                             prob_row[key] =
                                 prob_fp.template convert_to_ac_fixed<18, 2, false, AC_RND, AC_SAT>(false);
                         }
                         ATTN_DENSE_ONLINE_CTX_FINAL_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
-                            dense_multi_ctx_row[d] = online_ctx_row[d] * inv_sumexp_fp;
+                            dense_multi_ctx_row[d] =
+                                attn_fp32_roundtrip(online_ctx_row[d] * inv_sumexp_fp);
                         }
                         dense_multi_ctx_ready = true;
                     } else {
