@@ -792,6 +792,50 @@ static inline float ln_sanitize_output(float x) {
   return std::isfinite(x) ? x : 0.0f;
 }
 
+static inline uint32_t ref_ln_fp32_to_bits(const fp32_ref_t& x) {
+  union RefLnFp32Bits {
+    float f;
+    uint32_t u;
+  };
+  RefLnFp32Bits cvt{};
+  cvt.f = x.to_float();
+  return cvt.u;
+}
+
+static inline bool ref_ln_fp32_is_finite(const fp32_ref_t& x) {
+  const uint32_t bits = ref_ln_fp32_to_bits(x);
+  return (bits & 0x7F800000u) != 0x7F800000u;
+}
+
+static inline fp32_ref_t ref_ln_fp32_sanitize_input(
+  const fp32_ref_t& x,
+  int* sanitize_count
+) {
+  if (ref_ln_fp32_is_finite(x)) {
+    return x;
+  }
+  if (sanitize_count != nullptr) {
+    *sanitize_count += 1;
+  }
+  return fp32_ref_t(0.0f);
+}
+
+static inline fp32_ref_t ref_ln_refstyle_inv_sqrt_fp32_flow(const fp32_ref_t& x_eps_safe) {
+  const fp32_ref_t half = fp32_ref_t(0.5f);
+  const fp32_ref_t three_halves = fp32_ref_t(1.5f);
+  const fp32_ref_t one = fp32_ref_t(1.0f);
+  const fp32_ref_t y0 = one.template div<AC_RND_CONV, false>(
+    x_eps_safe.template sqrt<AC_RND_CONV, false>());
+  fp32_ref_t y1 = y0 * (three_halves - (half * x_eps_safe * y0 * y0));
+  if (!ref_ln_fp32_is_finite(y1) || y1 <= fp32_ref_t(0.0f)) {
+    y1 = y0;
+  }
+  if (!ref_ln_fp32_is_finite(y1) || y1 <= fp32_ref_t(0.0f)) {
+    return one;
+  }
+  return y1;
+}
+
 static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
                                          const double w[D_MODEL],
                                          const double b[D_MODEL],
@@ -800,43 +844,60 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
                                          int site_call_index,
                                          int token_index,
                                          fp32_ref_t y[D_MODEL]) {
-  float sum = 0.0f;
-  float sumsq = 0.0f;
+  const fp32_ref_t fp32_zero = fp32_ref_t(0.0f);
+  const fp32_ref_t fp32_one = fp32_ref_t(1.0f);
+  const fp32_ref_t inv_n_den = fp32_ref_t((float)D_MODEL);
+  const fp32_ref_t eps_fp = fp32_ref_t(LN_EPS_F32);
+  fp32_ref_t sum_fp = fp32_zero;
+  fp32_ref_t sumsq_fp = fp32_zero;
   int sanitize_input_count = 0;
   for (int i = 0; i < D_MODEL; ++i) {
-    const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
-    sum += xv;
-    sumsq += xv * xv;
+    const fp32_ref_t xv = ref_ln_fp32_sanitize_input(x[i], &sanitize_input_count);
+    sum_fp += xv;
+    sumsq_fp += (xv * xv);
   }
-  const float mean = sum * LN_INV_D_F32;
-  const float ex2 = sumsq * LN_INV_D_F32;
-  const float mean_sq = mean * mean;
+  const fp32_ref_t mean_fp = sum_fp / inv_n_den;
+  const fp32_ref_t ex2_fp = sumsq_fp / inv_n_den;
+  const fp32_ref_t mean_sq_fp = mean_fp * mean_fp;
 
-  float var_acc = 0.0f;
+  fp32_ref_t var_acc_fp = fp32_zero;
   for (int i = 0; i < D_MODEL; ++i) {
-    const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
-    const float d = xv - mean;
-    var_acc += d * d;
+    const fp32_ref_t xv = ref_ln_fp32_sanitize_input(x[i], &sanitize_input_count);
+    const fp32_ref_t d = xv - mean_fp;
+    var_acc_fp += (d * d);
   }
-  const float var_raw = var_acc * LN_INV_D_F32;
-  const float var_from_ex2 = ex2 - mean_sq;
-  const float x_eps = var_raw + LN_EPS_F32;
-  const float x_eps_safe = std::isfinite(x_eps) && (x_eps > 0.0f) ? x_eps : LN_EPS_F32;
-  const float eps_applied = x_eps_safe - var_raw;
-  const float inv_std_true = 1.0f / std::sqrt(x_eps_safe);
-  const float inv_std_seed = ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
-  const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(fp32_ref_t(x_eps_safe)).to_float();
+  const fp32_ref_t var_raw_fp = var_acc_fp / inv_n_den;
+  const fp32_ref_t var_from_ex2_fp = ex2_fp - mean_sq_fp;
 
-  float inv_std =
-    ref_inv_sqrt_nr1_approx(fp32_ref_t(x_eps_safe)).to_float();
-  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
-    inv_std = ref_inv_sqrt_approx(fp32_ref_t(x_eps_safe)).to_float();
+  fp32_ref_t x_eps_safe_fp = var_raw_fp + eps_fp;
+  if (!ref_ln_fp32_is_finite(x_eps_safe_fp) || x_eps_safe_fp <= fp32_zero) {
+    x_eps_safe_fp = eps_fp;
   }
+  if (!ref_ln_fp32_is_finite(x_eps_safe_fp) || x_eps_safe_fp <= fp32_zero) {
+    x_eps_safe_fp = fp32_one;
+  }
+
+  fp32_ref_t inv_std_fp = ref_ln_refstyle_inv_sqrt_fp32_flow(x_eps_safe_fp);
+  if (!ref_ln_fp32_is_finite(inv_std_fp) || inv_std_fp <= fp32_zero) {
+    inv_std_fp = ref_inv_sqrt_nr1_approx(x_eps_safe_fp);
+  }
+  if (!ref_ln_fp32_is_finite(inv_std_fp) || inv_std_fp <= fp32_zero) {
+    inv_std_fp = ref_inv_sqrt_approx(x_eps_safe_fp);
+  }
+  if (!ref_ln_fp32_is_finite(inv_std_fp) || inv_std_fp <= fp32_zero) {
+    inv_std_fp = fp32_one;
+  }
+
   for (int i = 0; i < D_MODEL; ++i) {
-    const float xv = ln_sanitize_input(x[i].to_float(), &sanitize_input_count);
-    const float xn = (xv - mean) * inv_std;
-    const float yi = xn * static_cast<float>(w[i]) + static_cast<float>(b[i]);
-    y[i] = fp32_ref_t(yi);
+    const fp32_ref_t xv = ref_ln_fp32_sanitize_input(x[i], &sanitize_input_count);
+    const fp32_ref_t xn = (xv - mean_fp) * inv_std_fp;
+    const fp32_ref_t g = fp32_ref_t((float)w[i]);
+    const fp32_ref_t bb = fp32_ref_t((float)b[i]);
+    fp32_ref_t yi = (xn * g) + bb;
+    if (!ref_ln_fp32_is_finite(yi)) {
+      yi = fp32_zero;
+    }
+    y[i] = yi;
   }
 
   float sum_tile = 0.0f;
@@ -844,13 +905,26 @@ static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
   for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
     for (int lane = 0; lane < LN_TILE_D; ++lane) {
       const int d = tile_base + lane;
-      const float xv = ln_sanitize_input_no_count(x[d].to_float());
+      const float xv = ref_ln_fp32_sanitize_input(x[d], nullptr).to_float();
       sum_tile += xv;
       sumsq_tile += xv * xv;
     }
   }
 
   if (g_ref_ln_debug_enabled) {
+    const float sum = sum_fp.to_float();
+    const float sumsq = sumsq_fp.to_float();
+    const float mean = mean_fp.to_float();
+    const float ex2 = ex2_fp.to_float();
+    const float mean_sq = mean_sq_fp.to_float();
+    const float var_raw = var_raw_fp.to_float();
+    const float var_from_ex2 = var_from_ex2_fp.to_float();
+    const float x_eps_safe = x_eps_safe_fp.to_float();
+    const float eps_applied = (x_eps_safe_fp - var_raw_fp).to_float();
+    const float inv_std_true = 1.0f / std::sqrt(x_eps_safe);
+    const float inv_std_seed = ref_inv_sqrt_approx(x_eps_safe_fp).to_float();
+    const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(x_eps_safe_fp).to_float();
+    const float inv_std = inv_std_fp.to_float();
     RefLnDebugEntry e{};
     e.entry_seq = g_ref_ln_debug_entry_seq++;
     e.site_call_index = site_call_index;
