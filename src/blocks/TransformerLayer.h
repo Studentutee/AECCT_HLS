@@ -929,27 +929,99 @@ static inline void apply_layer_attn_out_projection(
 ) {
     const uint32_t wo_weight_id = (layer_id == 0u) ? 33u : 53u;
     const uint32_t wo_bias_id = (layer_id == 0u) ? 3u : 11u;
+    const QuantLinearMatrixId wo_matrix_id = (layer_id == 0u) ? QLM_L0_WO : QLM_L1_WO;
+    const QuantLinearMeta& wo_meta = kQuantLinearMeta[(uint32_t)wo_matrix_id];
+    const uint32_t wo_weight_param_id = wo_meta.weight_param_id;
+    const uint32_t wo_inv_sw_param_id = wo_meta.inv_sw_param_id;
     const uint32_t wo_weight_base = param_base_word + kParamMeta[wo_weight_id].offset_w;
     const uint32_t wo_bias_base = param_base_word + kParamMeta[wo_bias_id].offset_w;
     const uint32_t max_d_model = (d_model > (uint32_t)ATTN_D_MODEL) ? (uint32_t)ATTN_D_MODEL : d_model;
     if (max_d_model == 0u || token_count == 0u) {
         return;
     }
+
+    bool wo_quant_contract_ok = true;
+    if (wo_meta.matrix_id != (uint32_t)wo_matrix_id) {
+        wo_quant_contract_ok = false;
+    }
+    if (wo_weight_param_id != wo_weight_id) {
+        wo_quant_contract_ok = false;
+    }
+    if (wo_meta.rows == 0u || wo_meta.cols == 0u) {
+        wo_quant_contract_ok = false;
+    }
+    if (wo_meta.rows > max_d_model || wo_meta.cols > max_d_model) {
+        wo_quant_contract_ok = false;
+    }
+    if (wo_meta.num_weights != (wo_meta.rows * wo_meta.cols)) {
+        wo_quant_contract_ok = false;
+    }
+    if (kParamMeta[wo_weight_param_id].len_w < wo_meta.num_weights) {
+        wo_quant_contract_ok = false;
+    }
+    if (kParamMeta[wo_bias_id].len_w < wo_meta.rows) {
+        wo_quant_contract_ok = false;
+    }
+    if (kParamMeta[wo_inv_sw_param_id].len_w == 0u) {
+        wo_quant_contract_ok = false;
+    }
+    uint32_t sx_param_id = 0u;
+    if (!weight_id_to_param_id(QUANT_SX_8, sx_param_id)) {
+        wo_quant_contract_ok = false;
+    }
+    const uint32_t sx_slot = (layer_id == 0u) ? 1u : 5u;
+    if (kParamMeta[sx_param_id].len_w <= sx_slot) {
+        wo_quant_contract_ok = false;
+    }
+    fp32_t s_x = fp32_t(0.0f);
+    fp32_t inv_sw = fp32_t(0.0f);
+    fp32_t inv_scale = fp32_t(0.0f);
+    if (wo_quant_contract_ok) {
+        const uint32_t sx_addr = param_base_word + kParamMeta[sx_param_id].offset_w + sx_slot;
+        const uint32_t inv_sw_addr = param_base_word + kParamMeta[wo_inv_sw_param_id].offset_w;
+        const u32_t sx_bits = sram[sx_addr];
+        const u32_t inv_sw_bits = sram[inv_sw_addr];
+        if ((uint32_t)sx_bits.to_uint() == 0u || (uint32_t)inv_sw_bits.to_uint() == 0u) {
+            wo_quant_contract_ok = false;
+        } else {
+            s_x = fp32_from_bits(sx_bits);
+            inv_sw = fp32_from_bits(inv_sw_bits);
+            inv_scale = inv_sw / s_x;
+        }
+    }
+
     u32_t out_row[ATTN_D_MODEL];
     ATTN_OUT_PROJ_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
         const uint32_t x_row_base = attn_out_base_word + t * d_model;
-        ATTN_OUT_PROJ_OUT_DIM_LOOP: for (uint32_t o = 0u; o < max_d_model; ++o) {
-            fp32_t acc = fp32_from_bits(sram[wo_bias_base + o]);
-            const uint32_t w_row_base = wo_weight_base + o * d_model;
-            ATTN_OUT_PROJ_IN_DIM_LOOP: for (uint32_t i = 0u; i < max_d_model; ++i) {
-                const fp32_t x = fp32_from_bits(sram[x_row_base + i]);
-                const fp32_t w = fp32_from_bits(sram[w_row_base + i]);
-                acc = acc + (x * w);
+        if (wo_quant_contract_ok) {
+            ATTN_OUT_PROJ_OUT_DIM_QUANT_LOOP: for (uint32_t o = 0u; o < wo_meta.rows; ++o) {
+                fp32_t acc = fp32_from_bits(sram[wo_bias_base + o]);
+                const uint32_t w_row_base = wo_weight_base + o * wo_meta.cols;
+                ATTN_OUT_PROJ_IN_DIM_QUANT_LOOP: for (uint32_t i = 0u; i < wo_meta.cols; ++i) {
+                    const fp32_t x_fp = fp32_from_bits(sram[x_row_base + i]);
+                    const fp32_t q_fp = attn_qkv_quantize_int8_symmetric(x_fp, s_x);
+                    const fp32_t w_fp = fp32_from_bits(sram[w_row_base + i]);
+                    acc += q_fp * (w_fp * inv_scale);
+                }
+                out_row[o] = bits_from_fp32(acc);
             }
-            out_row[o] = bits_from_fp32(acc);
-        }
-        ATTN_OUT_PROJ_WRITEBACK_LOOP: for (uint32_t o = 0u; o < max_d_model; ++o) {
-            sram[x_row_base + o] = out_row[o];
+            ATTN_OUT_PROJ_WRITEBACK_QUANT_LOOP: for (uint32_t o = 0u; o < wo_meta.rows; ++o) {
+                sram[x_row_base + o] = out_row[o];
+            }
+        } else {
+            ATTN_OUT_PROJ_OUT_DIM_FP32_LOOP: for (uint32_t o = 0u; o < max_d_model; ++o) {
+                fp32_t acc = fp32_from_bits(sram[wo_bias_base + o]);
+                const uint32_t w_row_base = wo_weight_base + o * d_model;
+                ATTN_OUT_PROJ_IN_DIM_FP32_LOOP: for (uint32_t i = 0u; i < max_d_model; ++i) {
+                    const fp32_t x = fp32_from_bits(sram[x_row_base + i]);
+                    const fp32_t w = fp32_from_bits(sram[w_row_base + i]);
+                    acc = acc + (x * w);
+                }
+                out_row[o] = bits_from_fp32(acc);
+            }
+            ATTN_OUT_PROJ_WRITEBACK_FP32_LOOP: for (uint32_t o = 0u; o < max_d_model; ++o) {
+                sram[x_row_base + o] = out_row[o];
+            }
         }
     }
 }
