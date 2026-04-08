@@ -79,6 +79,159 @@ static inline QuantLinearMatrixId attn_v_matrix_id_for_layer(uint32_t layer_id) 
     return (layer_id == 0u) ? QLM_L0_WV : QLM_L1_WV;
 }
 
+static inline bool attn_qkv_bias_param_id_for_matrix(
+    QuantLinearMatrixId matrix_id,
+    uint32_t& out_bias_param_id
+) {
+    switch (matrix_id) {
+        case QLM_L0_WQ: out_bias_param_id = 0u; return true;
+        case QLM_L0_WK: out_bias_param_id = 1u; return true;
+        case QLM_L0_WV: out_bias_param_id = 2u; return true;
+        case QLM_L1_WQ: out_bias_param_id = 8u; return true;
+        case QLM_L1_WK: out_bias_param_id = 9u; return true;
+        case QLM_L1_WV: out_bias_param_id = 10u; return true;
+        default: return false;
+    }
+}
+
+static inline uint32_t attn_qkv_input_sx_slot_for_layer(uint32_t layer_id) {
+    return (layer_id == 0u) ? 0u : 4u;
+}
+
+static inline bool attn_qkv_input_sx_param_id(uint32_t& out_param_id) {
+    return weight_id_to_param_id(QUANT_SX_8, out_param_id);
+}
+
+static inline fp32_t attn_qkv_quantize_int8_symmetric(fp32_t x, fp32_t s_x) {
+    fp32_t q = (x * s_x).round();
+    if (q > fp32_t(127.0f)) { q = fp32_t(127.0f); }
+    if (q < fp32_t(-127.0f)) { q = fp32_t(-127.0f); }
+    return q;
+}
+
+static inline bool attn_dense_qkv_gate_ok(
+    const QuantLinearMeta& meta,
+    QuantLinearMatrixId expected_matrix_id,
+    uint32_t param_base_word,
+    uint32_t token_count,
+    uint32_t d_model,
+    uint32_t layer_id
+) {
+    if (param_base_word == 0u || token_count == 0u) {
+        return false;
+    }
+    if (meta.matrix_id != (uint32_t)expected_matrix_id) {
+        return false;
+    }
+    if (meta.rows != d_model || meta.cols != d_model) {
+        return false;
+    }
+    if (meta.num_weights != (meta.rows * meta.cols)) {
+        return false;
+    }
+    const ParamMeta weight_meta = kParamMeta[meta.weight_param_id];
+    if (weight_meta.len_w < meta.num_weights) {
+        return false;
+    }
+    uint32_t bias_param_id = 0u;
+    if (!attn_qkv_bias_param_id_for_matrix(expected_matrix_id, bias_param_id)) {
+        return false;
+    }
+    const ParamMeta bias_meta = kParamMeta[bias_param_id];
+    if (bias_meta.len_w < meta.rows) {
+        return false;
+    }
+    const ParamMeta inv_sw_meta = kParamMeta[meta.inv_sw_param_id];
+    if (inv_sw_meta.len_w == 0u) {
+        return false;
+    }
+    uint32_t sx_param_id = 0u;
+    if (!attn_qkv_input_sx_param_id(sx_param_id)) {
+        return false;
+    }
+    const ParamMeta sx_meta = kParamMeta[sx_param_id];
+    const uint32_t sx_slot = attn_qkv_input_sx_slot_for_layer(layer_id);
+    if (sx_meta.len_w <= sx_slot) {
+        return false;
+    }
+    return true;
+}
+
+template<typename SramView>
+static inline bool attn_materialize_qkv_dense_fp32_contract(
+    SramView& sram,
+    uint32_t param_base_word,
+    const QuantLinearMeta& meta,
+    QuantLinearMatrixId matrix_id,
+    uint32_t layer_id,
+    uint32_t token_count,
+    uint32_t d_model,
+    uint32_t x_in_base,
+    uint32_t out_base,
+    uint32_t out_act_q_base,
+    u32_t& out_inv_sw_bits
+) {
+    if (!attn_dense_qkv_gate_ok(
+            meta,
+            matrix_id,
+            param_base_word,
+            token_count,
+            d_model,
+            layer_id)) {
+        return false;
+    }
+
+    const ParamMeta weight_meta = kParamMeta[meta.weight_param_id];
+    const ParamMeta inv_sw_meta = kParamMeta[meta.inv_sw_param_id];
+    uint32_t bias_param_id = 0u;
+    if (!attn_qkv_bias_param_id_for_matrix(matrix_id, bias_param_id)) {
+        return false;
+    }
+    const ParamMeta bias_meta = kParamMeta[bias_param_id];
+    uint32_t sx_param_id = 0u;
+    if (!attn_qkv_input_sx_param_id(sx_param_id)) {
+        return false;
+    }
+    const ParamMeta sx_meta = kParamMeta[sx_param_id];
+    const uint32_t sx_slot = attn_qkv_input_sx_slot_for_layer(layer_id);
+
+    const uint32_t weight_base = param_base_word + weight_meta.offset_w;
+    const uint32_t bias_base = param_base_word + bias_meta.offset_w;
+    const uint32_t sx_addr = param_base_word + sx_meta.offset_w + sx_slot;
+    const uint32_t inv_sw_addr = param_base_word + inv_sw_meta.offset_w;
+    const u32_t s_x_bits = sram[sx_addr];
+    const u32_t inv_sw_bits = sram[inv_sw_addr];
+    if ((uint32_t)s_x_bits.to_uint() == 0u || (uint32_t)inv_sw_bits.to_uint() == 0u) {
+        return false;
+    }
+
+    const fp32_t s_x = fp32_from_bits(s_x_bits);
+    const fp32_t inv_sw = fp32_from_bits(inv_sw_bits);
+    const fp32_t inv_scale = inv_sw / s_x;
+
+    ATTN_DENSE_QKV_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+        const uint32_t x_row_base = x_in_base + t * d_model;
+        const uint32_t out_row_base = out_base + t * d_model;
+        const uint32_t out_act_q_row_base = out_act_q_base + t * d_model;
+        ATTN_DENSE_QKV_OUT_LOOP: for (uint32_t out = 0u; out < meta.rows; ++out) {
+            fp32_t acc = fp32_from_bits(sram[bias_base + out]);
+            const uint32_t w_row_base = weight_base + out * meta.cols;
+            ATTN_DENSE_QKV_IN_LOOP: for (uint32_t in = 0u; in < meta.cols; ++in) {
+                const fp32_t x_fp = fp32_from_bits(sram[x_row_base + in]);
+                const fp32_t q_fp = attn_qkv_quantize_int8_symmetric(x_fp, s_x);
+                const fp32_t w_fp = fp32_from_bits(sram[w_row_base + in]);
+                acc += q_fp * (w_fp * inv_scale);
+            }
+            const u32_t out_bits = bits_from_fp32(acc);
+            sram[out_row_base + out] = out_bits;
+            sram[out_act_q_row_base + out] = out_bits;
+        }
+    }
+
+    out_inv_sw_bits = inv_sw_bits;
+    return true;
+}
+
 // local-only boundary descriptor for Top-fed prebuilt handoff flags.
 // This keeps the AttnLayer0 seam contractized without changing Top ownership policy.
 struct AttnLayer0PrebuiltHandoffDesc {
@@ -192,16 +345,24 @@ static inline void AttnLayer0CoreWindow(
             attn_live_qkv_gate_ok(live_k_meta, k_matrix_id, param_base, token_count, d_model);
         const bool live_v_enabled =
             attn_live_qkv_gate_ok(live_v_meta, v_matrix_id, param_base, token_count, d_model);
-        bool live_q_ok = live_q_enabled;
-        bool live_k_ok = live_k_enabled;
-        bool live_v_ok = live_v_enabled;
-        u32_t live_q_inv_sw_bits = (u32_t)0u;
         // P11AD mainline hook: Top-owned Q prebuild bypasses only Q generation.
         // Top may mark Q as prebuilt; this block then consumes Q SRAM as-is.
         const bool skip_q_materialization = prebuilt_handoff.q_prebuilt_from_top_managed;
         // P11AC mainline hook: Top-owned K/V prebuild bypasses only K/V generation.
         // Top may mark K/V as prebuilt; this block then skips local KV materialization only.
         const bool skip_kv_materialization = prebuilt_handoff.kv_prebuilt_from_top_managed;
+        const bool dense_q_enabled =
+            attn_dense_qkv_gate_ok(live_q_meta, q_matrix_id, param_base, token_count, d_model, layer_id);
+        const bool dense_k_enabled =
+            attn_dense_qkv_gate_ok(live_k_meta, k_matrix_id, param_base, token_count, d_model, layer_id);
+        const bool dense_v_enabled =
+            attn_dense_qkv_gate_ok(live_v_meta, v_matrix_id, param_base, token_count, d_model, layer_id);
+        bool live_q_ok = false;
+        bool live_k_ok = false;
+        bool live_v_ok = false;
+        u32_t live_q_inv_sw_bits = (u32_t)0u;
+        u32_t live_k_inv_sw_bits = (u32_t)0u;
+        u32_t live_v_inv_sw_bits = (u32_t)0u;
 
         if (!skip_kv_materialization) {
             // Baseline priming path: copy X into K/V mirrors before live path overrides.
@@ -214,87 +375,103 @@ static inline void AttnLayer0CoreWindow(
             }
         }
 
-        if (!skip_q_materialization && live_q_enabled) {
+        if (!skip_q_materialization) {
             const uint32_t q_act_q_base = (uint32_t)sc.q_act_q_base_word.to_uint();
-            bool use_q_split_top = (layer_id == 0u);
+            if (dense_q_enabled) {
+                live_q_ok = attn_materialize_qkv_dense_fp32_contract(
+                    sram,
+                    param_base,
+                    live_q_meta,
+                    q_matrix_id,
+                    layer_id,
+                    token_count,
+                    d_model,
+                    x_in_base,
+                    q_base,
+                    q_act_q_base,
+                    live_q_inv_sw_bits);
+            } else if (live_q_enabled) {
+                live_q_ok = true;
+                bool use_q_split_top = (layer_id == 0u);
 #if defined(AECCT_LOCAL_P11M_WQ_SPLIT_TOP_ENABLE)
-            // Preferred Q path: fixed-shape split-kernel call over ternary leaf kernel.
-            if (use_q_split_top) {
-                const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
-                const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
-                if (live_q_meta.rows != kQkvCtSupportedL0WqRows ||
-                    live_q_meta.cols != kQkvCtSupportedL0WqCols ||
-                    live_q_meta.payload_words_2b != kQkvCtExpectedL0WqPayloadWords ||
-                    live_q_payload_meta.len_w < kQkvCtExpectedL0WqPayloadWords ||
-                    live_q_inv_meta.len_w == 0u) {
-                    live_q_ok = false;
-                }
-                u32_t payload_words[kTernaryLiveL0WqPayloadWords];
-                u32_t x_row[kTernaryLiveL0WqCols];
-                u32_t out_row[kTernaryLiveL0WqRows];
-                u32_t out_act_q_row[kTernaryLiveL0WqRows];
-                if (live_q_ok) {
-                    const uint32_t payload_base = param_base + live_q_payload_meta.offset_w;
-                    ATTN_Q_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WqPayloadWords; ++i) {
-                        payload_words[i] = sram[payload_base + i];
+                // Preferred Q path: fixed-shape split-kernel call over ternary leaf kernel.
+                if (use_q_split_top) {
+                    const ParamMeta live_q_payload_meta = kParamMeta[live_q_meta.weight_param_id];
+                    const ParamMeta live_q_inv_meta = kParamMeta[live_q_meta.inv_sw_param_id];
+                    if (live_q_meta.rows != kQkvCtSupportedL0WqRows ||
+                        live_q_meta.cols != kQkvCtSupportedL0WqCols ||
+                        live_q_meta.payload_words_2b != kQkvCtExpectedL0WqPayloadWords ||
+                        live_q_payload_meta.len_w < kQkvCtExpectedL0WqPayloadWords ||
+                        live_q_inv_meta.len_w == 0u) {
+                        live_q_ok = false;
                     }
-                    const uint32_t inv_sw_addr = param_base + live_q_inv_meta.offset_w;
-                    const u32_t live_q_inv_sw_input = sram[inv_sw_addr];
-                    ATTN_Q_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+                    u32_t payload_words[kTernaryLiveL0WqPayloadWords];
+                    u32_t x_row[kTernaryLiveL0WqCols];
+                    u32_t out_row[kTernaryLiveL0WqRows];
+                    u32_t out_act_q_row[kTernaryLiveL0WqRows];
+                    if (live_q_ok) {
+                        const uint32_t payload_base = param_base + live_q_payload_meta.offset_w;
+                        ATTN_Q_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WqPayloadWords; ++i) {
+                            payload_words[i] = sram[payload_base + i];
+                        }
+                        const uint32_t inv_sw_addr = param_base + live_q_inv_meta.offset_w;
+                        const u32_t live_q_inv_sw_input = sram[inv_sw_addr];
+                        ATTN_Q_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
+                            const uint32_t x_row_base = x_in_base + t * d_model;
+                            const uint32_t q_row_base = q_base + t * d_model;
+                            const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
+                            ATTN_Q_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
+                                x_row[in] = sram[x_row_base + in];
+                            }
+                            u32_t out_inv_sw_bits = (u32_t)0u;
+                            if (!ternary_live_l0_wq_materialize_row_kernel_split(
+                                    x_row,
+                                    payload_words,
+                                    live_q_inv_sw_input,
+                                    out_row,
+                                    out_act_q_row,
+                                    out_inv_sw_bits)) {
+                                live_q_ok = false;
+                                break;
+                            }
+                            if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_q_inv_sw_input.to_uint()) {
+                                live_q_ok = false;
+                                break;
+                            }
+                            ATTN_Q_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
+                                sram[q_row_base + out] = out_row[out];
+                                sram[q_act_q_row_base + out] = out_act_q_row[out];
+                            }
+                            live_q_inv_sw_bits = out_inv_sw_bits;
+                        }
+                    }
+                }
+#else
+                use_q_split_top = false;
+#endif
+                if (!use_q_split_top) {
+                    ATTN_Q_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
                         const uint32_t x_row_base = x_in_base + t * d_model;
                         const uint32_t q_row_base = q_base + t * d_model;
                         const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
-                        ATTN_Q_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WqCols; ++in) {
-                            x_row[in] = sram[x_row_base + in];
+                        ATTN_Q_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_q_meta.rows; ++out) {
+                            u32_t q_bits = 0;
+                            u32_t inv_sw_bits = 0;
+                            if (!ternary_linear_live_compute_q_elem(
+                                    sram,
+                                    param_base_word,
+                                    q_matrix_id,
+                                    (u32_t)x_row_base,
+                                    out,
+                                    q_bits,
+                                    inv_sw_bits)) {
+                                live_q_ok = false;
+                                break;
+                            }
+                            sram[q_row_base + out] = q_bits;
+                            sram[q_act_q_row_base + out] = q_bits;
+                            live_q_inv_sw_bits = inv_sw_bits;
                         }
-                        u32_t out_inv_sw_bits = (u32_t)0u;
-                        if (!ternary_live_l0_wq_materialize_row_kernel_split(
-                                x_row,
-                                payload_words,
-                                live_q_inv_sw_input,
-                                out_row,
-                                out_act_q_row,
-                                out_inv_sw_bits)) {
-                            live_q_ok = false;
-                            break;
-                        }
-                        if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_q_inv_sw_input.to_uint()) {
-                            live_q_ok = false;
-                            break;
-                        }
-                        ATTN_Q_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WqRows; ++out) {
-                            sram[q_row_base + out] = out_row[out];
-                            sram[q_act_q_row_base + out] = out_act_q_row[out];
-                        }
-                        live_q_inv_sw_bits = out_inv_sw_bits;
-                    }
-                }
-            }
-#else
-            use_q_split_top = false;
-#endif
-            if (!use_q_split_top) {
-                ATTN_Q_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_q_ok; ++t) {
-                    const uint32_t x_row_base = x_in_base + t * d_model;
-                    const uint32_t q_row_base = q_base + t * d_model;
-                    const uint32_t q_act_q_row_base = q_act_q_base + t * d_model;
-                    ATTN_Q_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_q_meta.rows; ++out) {
-                        u32_t q_bits = 0;
-                        u32_t inv_sw_bits = 0;
-                        if (!ternary_linear_live_compute_q_elem(
-                                sram,
-                                param_base_word,
-                                q_matrix_id,
-                                (u32_t)x_row_base,
-                                out,
-                                q_bits,
-                                inv_sw_bits)) {
-                            live_q_ok = false;
-                            break;
-                        }
-                        sram[q_row_base + out] = q_bits;
-                        sram[q_act_q_row_base + out] = q_bits;
-                        live_q_inv_sw_bits = inv_sw_bits;
                     }
                 }
             }
@@ -315,67 +492,106 @@ static inline void AttnLayer0CoreWindow(
             }
         }
 
-        if (!skip_kv_materialization && live_k_enabled) {
+        if (!skip_kv_materialization) {
             const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
+            if (dense_k_enabled) {
+                live_k_ok = attn_materialize_qkv_dense_fp32_contract(
+                    sram,
+                    param_base,
+                    live_k_meta,
+                    k_matrix_id,
+                    layer_id,
+                    token_count,
+                    d_model,
+                    x_in_base,
+                    k_base,
+                    k_act_q_base,
+                    live_k_inv_sw_bits);
+            } else if (live_k_enabled) {
+                live_k_ok = true;
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
-            // Preferred K path: fixed-shape split-kernel call over ternary leaf kernel.
-            bool use_k_split_top = (layer_id == 0u);
-            const ParamMeta live_k_payload_meta = kParamMeta[live_k_meta.weight_param_id];
-            const ParamMeta live_k_inv_meta = kParamMeta[live_k_meta.inv_sw_param_id];
-            if (live_k_meta.rows != kQkvCtSupportedL0WkRows ||
-                live_k_meta.cols != kQkvCtSupportedL0WkCols ||
-                live_k_meta.payload_words_2b != kQkvCtExpectedL0WkPayloadWords ||
-                live_k_payload_meta.len_w < kQkvCtExpectedL0WkPayloadWords ||
-                live_k_inv_meta.len_w == 0u) {
-                use_k_split_top = false;
-            }
-
-            if (use_k_split_top) {
-                u32_t payload_words[kTernaryLiveL0WkPayloadWords];
-                u32_t x_row[kTernaryLiveL0WkCols];
-                u32_t out_row[kTernaryLiveL0WkRows];
-                u32_t out_act_q_row[kTernaryLiveL0WkRows];
-                const uint32_t payload_base = param_base + live_k_payload_meta.offset_w;
-                ATTN_K_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WkPayloadWords; ++i) {
-                    payload_words[i] = sram[payload_base + i];
+                // Preferred K path: fixed-shape split-kernel call over ternary leaf kernel.
+                bool use_k_split_top = (layer_id == 0u);
+                const ParamMeta live_k_payload_meta = kParamMeta[live_k_meta.weight_param_id];
+                const ParamMeta live_k_inv_meta = kParamMeta[live_k_meta.inv_sw_param_id];
+                if (live_k_meta.rows != kQkvCtSupportedL0WkRows ||
+                    live_k_meta.cols != kQkvCtSupportedL0WkCols ||
+                    live_k_meta.payload_words_2b != kQkvCtExpectedL0WkPayloadWords ||
+                    live_k_payload_meta.len_w < kQkvCtExpectedL0WkPayloadWords ||
+                    live_k_inv_meta.len_w == 0u) {
+                    use_k_split_top = false;
                 }
-                const uint32_t inv_sw_addr = param_base + live_k_inv_meta.offset_w;
-                const u32_t live_k_inv_sw_input = sram[inv_sw_addr];
-                ATTN_K_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
+
+                if (use_k_split_top) {
+                    u32_t payload_words[kTernaryLiveL0WkPayloadWords];
+                    u32_t x_row[kTernaryLiveL0WkCols];
+                    u32_t out_row[kTernaryLiveL0WkRows];
+                    u32_t out_act_q_row[kTernaryLiveL0WkRows];
+                    const uint32_t payload_base = param_base + live_k_payload_meta.offset_w;
+                    ATTN_K_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WkPayloadWords; ++i) {
+                        payload_words[i] = sram[payload_base + i];
+                    }
+                    const uint32_t inv_sw_addr = param_base + live_k_inv_meta.offset_w;
+                    const u32_t live_k_inv_sw_input = sram[inv_sw_addr];
+                    ATTN_K_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
+                        const uint32_t x_row_base = x_in_base + t * d_model;
+                        const uint32_t k_row_base = k_base + t * d_model;
+                        const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
+                        ATTN_K_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WkCols; ++in) {
+                            x_row[in] = sram[x_row_base + in];
+                        }
+                        u32_t out_inv_sw_bits = (u32_t)0u;
+                        if (!ternary_live_l0_wk_materialize_row_kernel_split(
+                                x_row,
+                                payload_words,
+                                live_k_inv_sw_input,
+                                out_row,
+                                out_act_q_row,
+                                out_inv_sw_bits)) {
+                            use_k_split_top = false;
+                            break;
+                        }
+                        if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_k_inv_sw_input.to_uint()) {
+                            use_k_split_top = false;
+                            break;
+                        }
+                        ATTN_K_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WkRows; ++out) {
+                            sram[k_row_base + out] = out_row[out];
+                            sram[k_act_q_row_base + out] = out_act_q_row[out];
+                        }
+                    }
+                }
+
+                if (!use_k_split_top) {
+                    ATTN_K_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
+                        const uint32_t x_row_base = x_in_base + t * d_model;
+                        const uint32_t k_row_base = k_base + t * d_model;
+                        const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
+                        ATTN_K_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
+                            u32_t k_bits = 0;
+                            u32_t k_inv_sw_bits = 0;
+                            if (!ternary_linear_live_compute_q_elem(
+                                    sram,
+                                    param_base_word,
+                                    k_matrix_id,
+                                    (u32_t)x_row_base,
+                                    out,
+                                    k_bits,
+                                    k_inv_sw_bits)) {
+                                live_k_ok = false;
+                                break;
+                            }
+                            sram[k_row_base + out] = k_bits;
+                            sram[k_act_q_row_base + out] = k_bits;
+                        }
+                    }
+                }
+#else
+                ATTN_K_DIRECT_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t k_row_base = k_base + t * d_model;
                     const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
-                    ATTN_K_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WkCols; ++in) {
-                        x_row[in] = sram[x_row_base + in];
-                    }
-                    u32_t out_inv_sw_bits = (u32_t)0u;
-                    if (!ternary_live_l0_wk_materialize_row_kernel_split(
-                            x_row,
-                            payload_words,
-                            live_k_inv_sw_input,
-                            out_row,
-                            out_act_q_row,
-                            out_inv_sw_bits)) {
-                        use_k_split_top = false;
-                        break;
-                    }
-                    if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_k_inv_sw_input.to_uint()) {
-                        use_k_split_top = false;
-                        break;
-                    }
-                    ATTN_K_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WkRows; ++out) {
-                        sram[k_row_base + out] = out_row[out];
-                        sram[k_act_q_row_base + out] = out_act_q_row[out];
-                    }
-                }
-            }
-
-            if (!use_k_split_top) {
-                ATTN_K_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
-                    const uint32_t x_row_base = x_in_base + t * d_model;
-                    const uint32_t k_row_base = k_base + t * d_model;
-                    const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
-                    ATTN_K_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
+                    ATTN_K_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
                         u32_t k_bits = 0;
                         u32_t k_inv_sw_bits = 0;
                         if (!ternary_linear_live_compute_q_elem(
@@ -393,31 +609,8 @@ static inline void AttnLayer0CoreWindow(
                         sram[k_act_q_row_base + out] = k_bits;
                     }
                 }
-            }
-#else
-            ATTN_K_DIRECT_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_k_ok; ++t) {
-                const uint32_t x_row_base = x_in_base + t * d_model;
-                const uint32_t k_row_base = k_base + t * d_model;
-                const uint32_t k_act_q_row_base = k_act_q_base + t * d_model;
-                ATTN_K_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_k_meta.rows; ++out) {
-                    u32_t k_bits = 0;
-                    u32_t k_inv_sw_bits = 0;
-                    if (!ternary_linear_live_compute_q_elem(
-                            sram,
-                            param_base_word,
-                            k_matrix_id,
-                            (u32_t)x_row_base,
-                            out,
-                            k_bits,
-                            k_inv_sw_bits)) {
-                        live_k_ok = false;
-                        break;
-                    }
-                    sram[k_row_base + out] = k_bits;
-                    sram[k_act_q_row_base + out] = k_bits;
-                }
-            }
 #endif
+            }
             if (!live_k_ok) {
                 const uint32_t k_act_q_base = (uint32_t)sc.k_act_q_base_word.to_uint();
                 // K fallback path is an explicit bypass copy from X into K windows.
@@ -429,67 +622,106 @@ static inline void AttnLayer0CoreWindow(
             }
         }
 
-        if (!skip_kv_materialization && live_v_enabled) {
+        if (!skip_kv_materialization) {
             const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
+            if (dense_v_enabled) {
+                live_v_ok = attn_materialize_qkv_dense_fp32_contract(
+                    sram,
+                    param_base,
+                    live_v_meta,
+                    v_matrix_id,
+                    layer_id,
+                    token_count,
+                    d_model,
+                    x_in_base,
+                    v_base,
+                    v_act_q_base,
+                    live_v_inv_sw_bits);
+            } else if (live_v_enabled) {
+                live_v_ok = true;
 #if defined(AECCT_LOCAL_P11N_WK_WV_SPLIT_TOP_ENABLE)
-            // Preferred V path: fixed-shape split-kernel call over ternary leaf kernel.
-            bool use_v_split_top = (layer_id == 0u);
-            const ParamMeta live_v_payload_meta = kParamMeta[live_v_meta.weight_param_id];
-            const ParamMeta live_v_inv_meta = kParamMeta[live_v_meta.inv_sw_param_id];
-            if (live_v_meta.rows != kQkvCtSupportedL0WvRows ||
-                live_v_meta.cols != kQkvCtSupportedL0WvCols ||
-                live_v_meta.payload_words_2b != kQkvCtExpectedL0WvPayloadWords ||
-                live_v_payload_meta.len_w < kQkvCtExpectedL0WvPayloadWords ||
-                live_v_inv_meta.len_w == 0u) {
-                use_v_split_top = false;
-            }
-
-            if (use_v_split_top) {
-                u32_t payload_words[kTernaryLiveL0WvPayloadWords];
-                u32_t x_row[kTernaryLiveL0WvCols];
-                u32_t out_row[kTernaryLiveL0WvRows];
-                u32_t out_act_q_row[kTernaryLiveL0WvRows];
-                const uint32_t payload_base = param_base + live_v_payload_meta.offset_w;
-                ATTN_V_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WvPayloadWords; ++i) {
-                    payload_words[i] = sram[payload_base + i];
+                // Preferred V path: fixed-shape split-kernel call over ternary leaf kernel.
+                bool use_v_split_top = (layer_id == 0u);
+                const ParamMeta live_v_payload_meta = kParamMeta[live_v_meta.weight_param_id];
+                const ParamMeta live_v_inv_meta = kParamMeta[live_v_meta.inv_sw_param_id];
+                if (live_v_meta.rows != kQkvCtSupportedL0WvRows ||
+                    live_v_meta.cols != kQkvCtSupportedL0WvCols ||
+                    live_v_meta.payload_words_2b != kQkvCtExpectedL0WvPayloadWords ||
+                    live_v_payload_meta.len_w < kQkvCtExpectedL0WvPayloadWords ||
+                    live_v_inv_meta.len_w == 0u) {
+                    use_v_split_top = false;
                 }
-                const uint32_t inv_sw_addr = param_base + live_v_inv_meta.offset_w;
-                const u32_t live_v_inv_sw_input = sram[inv_sw_addr];
-                ATTN_V_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
+
+                if (use_v_split_top) {
+                    u32_t payload_words[kTernaryLiveL0WvPayloadWords];
+                    u32_t x_row[kTernaryLiveL0WvCols];
+                    u32_t out_row[kTernaryLiveL0WvRows];
+                    u32_t out_act_q_row[kTernaryLiveL0WvRows];
+                    const uint32_t payload_base = param_base + live_v_payload_meta.offset_w;
+                    ATTN_V_SPLIT_PAYLOAD_LOAD_LOOP: for (uint32_t i = 0u; i < kTernaryLiveL0WvPayloadWords; ++i) {
+                        payload_words[i] = sram[payload_base + i];
+                    }
+                    const uint32_t inv_sw_addr = param_base + live_v_inv_meta.offset_w;
+                    const u32_t live_v_inv_sw_input = sram[inv_sw_addr];
+                    ATTN_V_SPLIT_TOKEN_LOOP: for (uint32_t t = 0; t < token_count; ++t) {
+                        const uint32_t x_row_base = x_in_base + t * d_model;
+                        const uint32_t v_row_base = v_base + t * d_model;
+                        const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
+                        ATTN_V_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WvCols; ++in) {
+                            x_row[in] = sram[x_row_base + in];
+                        }
+                        u32_t out_inv_sw_bits = (u32_t)0u;
+                        if (!ternary_live_l0_wv_materialize_row_kernel_split(
+                                x_row,
+                                payload_words,
+                                live_v_inv_sw_input,
+                                out_row,
+                                out_act_q_row,
+                                out_inv_sw_bits)) {
+                            use_v_split_top = false;
+                            break;
+                        }
+                        if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_v_inv_sw_input.to_uint()) {
+                            use_v_split_top = false;
+                            break;
+                        }
+                        ATTN_V_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WvRows; ++out) {
+                            sram[v_row_base + out] = out_row[out];
+                            sram[v_act_q_row_base + out] = out_act_q_row[out];
+                        }
+                    }
+                }
+
+                if (!use_v_split_top) {
+                    ATTN_V_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
+                        const uint32_t x_row_base = x_in_base + t * d_model;
+                        const uint32_t v_row_base = v_base + t * d_model;
+                        const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
+                        ATTN_V_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
+                            u32_t v_bits = 0;
+                            u32_t v_inv_sw_bits = 0;
+                            if (!ternary_linear_live_compute_q_elem(
+                                    sram,
+                                    param_base_word,
+                                    v_matrix_id,
+                                    (u32_t)x_row_base,
+                                    out,
+                                    v_bits,
+                                    v_inv_sw_bits)) {
+                                live_v_ok = false;
+                                break;
+                            }
+                            sram[v_row_base + out] = v_bits;
+                            sram[v_act_q_row_base + out] = v_bits;
+                        }
+                    }
+                }
+#else
+                ATTN_V_DIRECT_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
                     const uint32_t x_row_base = x_in_base + t * d_model;
                     const uint32_t v_row_base = v_base + t * d_model;
                     const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
-                    ATTN_V_SPLIT_INPUT_COL_LOOP: for (uint32_t in = 0u; in < kTernaryLiveL0WvCols; ++in) {
-                        x_row[in] = sram[x_row_base + in];
-                    }
-                    u32_t out_inv_sw_bits = (u32_t)0u;
-                    if (!ternary_live_l0_wv_materialize_row_kernel_split(
-                            x_row,
-                            payload_words,
-                            live_v_inv_sw_input,
-                            out_row,
-                            out_act_q_row,
-                            out_inv_sw_bits)) {
-                        use_v_split_top = false;
-                        break;
-                    }
-                    if ((uint32_t)out_inv_sw_bits.to_uint() != (uint32_t)live_v_inv_sw_input.to_uint()) {
-                        use_v_split_top = false;
-                        break;
-                    }
-                    ATTN_V_SPLIT_OUTPUT_COL_LOOP: for (uint32_t out = 0u; out < kTernaryLiveL0WvRows; ++out) {
-                        sram[v_row_base + out] = out_row[out];
-                        sram[v_act_q_row_base + out] = out_act_q_row[out];
-                    }
-                }
-            }
-
-            if (!use_v_split_top) {
-                ATTN_V_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
-                    const uint32_t x_row_base = x_in_base + t * d_model;
-                    const uint32_t v_row_base = v_base + t * d_model;
-                    const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
-                    ATTN_V_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
+                    ATTN_V_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
                         u32_t v_bits = 0;
                         u32_t v_inv_sw_bits = 0;
                         if (!ternary_linear_live_compute_q_elem(
@@ -507,31 +739,8 @@ static inline void AttnLayer0CoreWindow(
                         sram[v_act_q_row_base + out] = v_bits;
                     }
                 }
-            }
-#else
-            ATTN_V_DIRECT_FALLBACK_TOKEN_LOOP: for (uint32_t t = 0; t < token_count && live_v_ok; ++t) {
-                const uint32_t x_row_base = x_in_base + t * d_model;
-                const uint32_t v_row_base = v_base + t * d_model;
-                const uint32_t v_act_q_row_base = v_act_q_base + t * d_model;
-                ATTN_V_DIRECT_FALLBACK_OUTPUT_COL_LOOP: for (uint32_t out = 0; out < live_v_meta.rows; ++out) {
-                    u32_t v_bits = 0;
-                    u32_t v_inv_sw_bits = 0;
-                    if (!ternary_linear_live_compute_q_elem(
-                            sram,
-                            param_base_word,
-                            v_matrix_id,
-                            (u32_t)x_row_base,
-                            out,
-                            v_bits,
-                            v_inv_sw_bits)) {
-                        live_v_ok = false;
-                        break;
-                    }
-                    sram[v_row_base + out] = v_bits;
-                    sram[v_act_q_row_base + out] = v_bits;
-                }
-            }
 #endif
+            }
             if (!live_v_ok) {
                 const uint32_t v_act_q_base = (uint32_t)sc.v_act_q_base_word.to_uint();
                 // V fallback path is an explicit bypass copy from X into V windows.
