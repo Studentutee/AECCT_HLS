@@ -335,6 +335,54 @@ static inline bool attn_score_debug_dump_slot_for_probe(
     return true;
 }
 
+static inline fp32_t attn_softmax_fp32_exp_lut(fp32_t x) {
+    fp32_t x_clamped = x;
+    const fp32_t fp32_zero = fp32_t(0.0f);
+    const fp32_t fp32_neg_t = fp32_t(-12.0f);
+    if (x_clamped > fp32_zero) {
+        x_clamped = fp32_zero;
+    }
+    if (x_clamped < fp32_neg_t) {
+        x_clamped = fp32_neg_t;
+    }
+    const fp32_t idxf = (fp32_zero - x_clamped) * fp32_t(21.25f);
+    int idx = (idxf + fp32_t(0.5f)).to_float();
+    if (idx < 0) {
+        idx = 0;
+    }
+    if (idx >= SoftmaxApproxCfg::EXP_LUT_SIZE) {
+        idx = SoftmaxApproxCfg::EXP_LUT_SIZE - 1;
+    }
+    return fp32_t(g_exp_lut[idx].to_double());
+}
+
+static inline fp32_t attn_softmax_fp32_rcp_lut_nr(fp32_t sumexp) {
+    fp32_t sumexp_safe = sumexp;
+    const fp32_t fp32_eps = fp32_t(1.0e-6f);
+    if (sumexp_safe < fp32_eps) {
+        sumexp_safe = fp32_eps;
+    }
+    fp32_t sumexp_for_idx = sumexp_safe;
+    const fp32_t fp32_one = fp32_t(1.0f);
+    const fp32_t fp32_max = fp32_t(256.0f);
+    if (sumexp_for_idx < fp32_one) {
+        sumexp_for_idx = fp32_one;
+    }
+    if (sumexp_for_idx > fp32_max) {
+        sumexp_for_idx = fp32_max;
+    }
+    int idx = ((sumexp_for_idx - fp32_one) + fp32_t(0.5f)).to_float();
+    if (idx < 0) {
+        idx = 0;
+    }
+    if (idx >= SoftmaxApproxCfg::RCP_LUT_SIZE) {
+        idx = SoftmaxApproxCfg::RCP_LUT_SIZE - 1;
+    }
+    const fp32_t inv0 = fp32_t(g_rcp_lut[idx].to_double());
+    const fp32_t two = fp32_t(2.0f);
+    return inv0 * (two - (sumexp_safe * inv0));
+}
+
 // local-only boundary descriptor for Top-fed prebuilt handoff flags.
 // This keeps the AttnLayer0 seam contractized without changing Top ownership policy.
 struct AttnLayer0PrebuiltHandoffDesc {
@@ -926,6 +974,11 @@ static inline void AttnLayer0CoreWindow(
                 uint32_t head_col_base = h * d_head;
                 const uint32_t q_row_base = q_base + t * d_model + head_col_base;
                 uint32_t unmasked_count = 0u;
+                bool dense_multi_ctx_ready = false;
+                fp32_t dense_multi_ctx_row[D_MODEL];
+                ATTN_DENSE_MULTI_CTX_INIT_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+                    dense_multi_ctx_row[d] = fp32_zero;
+                }
 
                 ATTN_SCORE_KEY_TOKEN_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
                     const bool masked = attn_score_masked_by_src_contract(
@@ -989,6 +1042,66 @@ static inline void AttnLayer0CoreWindow(
                             prob_row_fp32[j] = fp32_zero;
                         }
                     }
+                } else if (dense_tail_fp32_enabled) {
+                    fp32_t online_max = fp32_zero;
+                    fp32_t online_sumexp = fp32_zero;
+                    bool online_init = false;
+                    fp32_t online_ctx_row[D_MODEL];
+                    ATTN_DENSE_ONLINE_CTX_INIT_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+                        online_ctx_row[d] = fp32_zero;
+                    }
+                    ATTN_DENSE_ONLINE_KEY_LOOP: for (uint32_t u = 0u; u < unmasked_count; ++u) {
+                        const uint32_t key = unmasked_keys[u];
+                        const fp32_t score_fp = score_row_fp32[key];
+                        if (!online_init) {
+                            online_max = score_fp;
+                            online_sumexp = fp32_one_v;
+                            ATTN_DENSE_ONLINE_CTX_BOOT_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+                                const uint32_t v_idx = v_base + key * d_model + head_col_base + d;
+                                online_ctx_row[d] = fp32_from_bits(sram[v_idx]);
+                            }
+                            online_init = true;
+                            continue;
+                        }
+                        if (score_fp > online_max) {
+                            const fp32_t alpha = attn_softmax_fp32_exp_lut(online_max - score_fp);
+                            online_sumexp = (online_sumexp * alpha) + fp32_one_v;
+                            ATTN_DENSE_ONLINE_CTX_RENORM_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+                                const uint32_t v_idx = v_base + key * d_model + head_col_base + d;
+                                const fp32_t v_fp = fp32_from_bits(sram[v_idx]);
+                                online_ctx_row[d] = (online_ctx_row[d] * alpha) + v_fp;
+                            }
+                            online_max = score_fp;
+                        } else {
+                            const fp32_t beta = attn_softmax_fp32_exp_lut(score_fp - online_max);
+                            online_sumexp += beta;
+                            ATTN_DENSE_ONLINE_CTX_ACC_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+                                const uint32_t v_idx = v_base + key * d_model + head_col_base + d;
+                                const fp32_t v_fp = fp32_from_bits(sram[v_idx]);
+                                online_ctx_row[d] += beta * v_fp;
+                            }
+                        }
+                    }
+                    if (online_init) {
+                        const fp32_t inv_sumexp_fp = attn_softmax_fp32_rcp_lut_nr(online_sumexp);
+                        ATTN_DENSE_ONLINE_PROB_MATERIALIZE_LOOP: for (uint32_t u = 0u; u < unmasked_count; ++u) {
+                            const uint32_t key = unmasked_keys[u];
+                            const fp32_t w_fp = attn_softmax_fp32_exp_lut(score_row_fp32[key] - online_max);
+                            const fp32_t prob_fp = w_fp * inv_sumexp_fp;
+                            prob_row_fp32[key] = prob_fp;
+                            prob_row[key] =
+                                prob_fp.template convert_to_ac_fixed<18, 2, false, AC_RND, AC_SAT>(false);
+                        }
+                        ATTN_DENSE_ONLINE_CTX_FINAL_LOOP: for (uint32_t d = 0u; d < d_head; ++d) {
+                            dense_multi_ctx_row[d] = online_ctx_row[d] * inv_sumexp_fp;
+                        }
+                        dense_multi_ctx_ready = true;
+                    } else {
+                        ATTN_DENSE_ONLINE_EMPTY_PROB_LOOP: for (uint32_t j = 0; j < token_count; ++j) {
+                            prob_row[j] = softmax_prob_t(0);
+                            prob_row_fp32[j] = fp32_zero;
+                        }
+                    }
                 } else {
                     SoftmaxApprox<N_NODES>(unmasked_score_row, unmasked_prob_row, unmasked_count);
                     uint32_t unmasked_idx = 0u;
@@ -1026,6 +1139,11 @@ static inline void AttnLayer0CoreWindow(
                         const uint32_t v_idx = v_base + only_key * d_model + head_col_base + d;
                         const uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
                         sram[out_idx] = sram[v_idx];
+                    }
+                } else if (dense_tail_fp32_enabled && dense_multi_ctx_ready) {
+                    ATTN_PRECONCAT_DENSE_ONLINE_CTX_COPY_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
+                        const uint32_t out_idx = pre_base + t * d_model + head_col_base + d;
+                        sram[out_idx] = bits_from_fp32(dense_multi_ctx_row[d]);
                     }
                 } else if (dense_tail_fp32_enabled) {
                     ATTN_PRECONCAT_DENSE_HEAD_COL_LOOP: for (uint32_t d = 0; d < d_head; ++d) {
