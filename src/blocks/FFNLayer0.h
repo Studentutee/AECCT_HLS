@@ -34,6 +34,87 @@ static inline quant_w_t ffn_weight_from_sram(const u32_t* sram, uint32_t param_b
     return quant_w_t(quant_act_from_bits(sram[ffn_param_addr_word(param_base_word, param_id, elem_idx)]));
 }
 
+static inline fp32_t ffn_quantize_int8_symmetric(fp32_t x, fp32_t s_x) {
+    fp32_t q = (x * s_x).round();
+    if (q > fp32_t(127.0f)) { q = fp32_t(127.0f); }
+    if (q < fp32_t(-127.0f)) { q = fp32_t(-127.0f); }
+    return q;
+}
+
+static inline QuantLinearMatrixId ffn_w1_matrix_id_for_layer(bool use_layer1) {
+    return use_layer1 ? QLM_L1_WFF1 : QLM_L0_WFF1;
+}
+
+static inline QuantLinearMatrixId ffn_w2_matrix_id_for_layer(bool use_layer1) {
+    return use_layer1 ? QLM_L1_WFF2 : QLM_L0_WFF2;
+}
+
+static inline uint32_t ffn_w1_sx_slot_for_layer(bool use_layer1) {
+    return use_layer1 ? 6u : 2u;
+}
+
+static inline uint32_t ffn_w2_sx_slot_for_layer(bool use_layer1) {
+    return use_layer1 ? 7u : 3u;
+}
+
+template<typename SramView>
+static inline bool ffn_quant_linear_contract_ok(
+    SramView& sram,
+    uint32_t param_base_word,
+    const QuantLinearMeta& meta,
+    QuantLinearMatrixId expected_matrix_id,
+    uint32_t expect_weight_param_id,
+    uint32_t expect_bias_param_id,
+    uint32_t expect_rows,
+    uint32_t expect_cols,
+    uint32_t sx_slot,
+    fp32_t& out_s_x,
+    fp32_t& out_inv_scale
+) {
+    if (meta.matrix_id != (uint32_t)expected_matrix_id) {
+        return false;
+    }
+    if (meta.weight_param_id != expect_weight_param_id) {
+        return false;
+    }
+    if (meta.rows != expect_rows || meta.cols != expect_cols) {
+        return false;
+    }
+    if (meta.num_weights != (meta.rows * meta.cols)) {
+        return false;
+    }
+    if (kParamMeta[meta.weight_param_id].len_w < meta.num_weights) {
+        return false;
+    }
+    if (kParamMeta[expect_bias_param_id].len_w < meta.rows) {
+        return false;
+    }
+    if (kParamMeta[meta.inv_sw_param_id].len_w == 0u) {
+        return false;
+    }
+    uint32_t sx_param_id = 0u;
+    if (!weight_id_to_param_id(QUANT_SX_8, sx_param_id)) {
+        return false;
+    }
+    if (kParamMeta[sx_param_id].len_w <= sx_slot) {
+        return false;
+    }
+
+    const uint32_t sx_addr = param_base_word + kParamMeta[sx_param_id].offset_w + sx_slot;
+    const uint32_t inv_sw_addr = param_base_word + kParamMeta[meta.inv_sw_param_id].offset_w;
+    const u32_t sx_bits = sram[sx_addr];
+    const u32_t inv_sw_bits = sram[inv_sw_addr];
+    if ((uint32_t)sx_bits.to_uint() == 0u || (uint32_t)inv_sw_bits.to_uint() == 0u) {
+        return false;
+    }
+
+    const fp32_t s_x = fp32_from_bits(sx_bits);
+    const fp32_t inv_sw = fp32_from_bits(inv_sw_bits);
+    out_s_x = s_x;
+    out_inv_scale = inv_sw / s_x;
+    return true;
+}
+
 static inline void ffn_count_legacy_fallback_touch(u32_t* fallback_touch_counter) {
     if (fallback_touch_counter != 0) {
         const uint32_t v = (uint32_t)fallback_touch_counter->to_uint();
@@ -91,6 +172,24 @@ static inline quant_acc_t ffn_block_mac_tile(
         const quant_act_t xv = quant_act_from_bits(x_tile[i]);
         const quant_w_t wv = quant_act_from_bits(w_tile[i]);
         acc += quant_acc_t(xv) * quant_acc_t(wv);
+    }
+    return acc;
+}
+
+static inline fp32_t ffn_block_mac_tile_quant_fp32(
+    const FfnTopManagedTileMeta& meta,
+    const u32_t x_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS],
+    const u32_t w_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS],
+    fp32_t s_x,
+    fp32_t inv_scale,
+    fp32_t acc
+) {
+    const uint32_t valid = (uint32_t)meta.tile_valid_words.to_uint();
+    FFN_BLOCK_MAC_TILE_QUANT_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+        const fp32_t x_fp = fp32_from_bits(x_tile[i]);
+        const fp32_t q_fp = ffn_quantize_int8_symmetric(x_fp, s_x);
+        const fp32_t w_fp = fp32_from_bits(w_tile[i]);
+        acc += q_fp * (w_fp * inv_scale);
     }
     return acc;
 }
@@ -242,6 +341,39 @@ static inline void FFNLayer0CoreWindow(
         return;
     }
 
+    const QuantLinearMatrixId w1_matrix_id = ffn_w1_matrix_id_for_layer(use_layer1);
+    const QuantLinearMeta& w1_meta = kQuantLinearMeta[(uint32_t)w1_matrix_id];
+    fp32_t w1_s_x = fp32_t(0.0f);
+    fp32_t w1_inv_scale = fp32_t(0.0f);
+    const bool w1_quant_contract_ok = ffn_quant_linear_contract_ok(
+        sram,
+        param_base,
+        w1_meta,
+        w1_matrix_id,
+        w1_weight_id,
+        w1_bias_id,
+        d_ffn,
+        d_model,
+        ffn_w1_sx_slot_for_layer(use_layer1),
+        w1_s_x,
+        w1_inv_scale);
+    const QuantLinearMatrixId w2_matrix_id = ffn_w2_matrix_id_for_layer(use_layer1);
+    const QuantLinearMeta& w2_meta = kQuantLinearMeta[(uint32_t)w2_matrix_id];
+    fp32_t w2_s_x = fp32_t(0.0f);
+    fp32_t w2_inv_scale = fp32_t(0.0f);
+    const bool w2_quant_contract_ok = ffn_quant_linear_contract_ok(
+        sram,
+        param_base,
+        w2_meta,
+        w2_matrix_id,
+        w2_weight_id,
+        w2_bias_id,
+        d_model,
+        d_ffn,
+        ffn_w2_sx_slot_for_layer(use_layer1),
+        w2_s_x,
+        w2_inv_scale);
+
     if (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
         // Tightened fallback policy: caller can require fully ready W1 descriptors.
         if (require_w1_topfed &&
@@ -259,13 +391,15 @@ static inline void FFNLayer0CoreWindow(
             const uint32_t x_row = x_in_base + t * d_model;
             const uint32_t h_row = w1_base + t * d_ffn;
             FFN_TOP_MANAGED_W1_OUT_LOOP: for (uint32_t j = 0u; j < d_ffn; ++j) {
-                quant_acc_t acc = ffn_bias_from_sram(sram, param_base, w1_bias_id, j);
+                u32_t bias_bits = sram[ffn_param_addr_word(param_base, w1_bias_id, j)];
                 // Caller-fed W1 bias payload path: use preloaded bias words when provided.
                 if (topfed_w1_bias_words != 0 && j < topfed_w1_bias_valid) {
-                    acc = ffn_bias_from_word(topfed_w1_bias_words[j]);
+                    bias_bits = topfed_w1_bias_words[j];
                 } else {
                     ffn_count_legacy_fallback_touch(fallback_legacy_touch_counter);
                 }
+                quant_acc_t acc = ffn_bias_from_word(bias_bits);
+                fp32_t acc_fp = fp32_from_bits(bias_bits);
                 const uint32_t w_row = j * d_model;
                 FFN_TOP_MANAGED_W1_TILE_LOOP: for (uint32_t dt = 0u; dt < d_model_tile_count; ++dt) {
                     const uint32_t tile_offset = dt * tile_words;
@@ -305,9 +439,17 @@ static inline void FFNLayer0CoreWindow(
                             w_tile[i] = sram[ffn_param_addr_word(param_base, w1_weight_id, w1_idx)];
                         }
                     }
-                    acc = ffn_block_mac_tile(meta, x_tile, w_tile, acc);
+                    if (w1_quant_contract_ok) {
+                        acc_fp = ffn_block_mac_tile_quant_fp32(meta, x_tile, w_tile, w1_s_x, w1_inv_scale, acc_fp);
+                    } else {
+                        acc = ffn_block_mac_tile(meta, x_tile, w_tile, acc);
+                    }
                 }
-                sram[h_row + j] = quant_bits_from_acc(acc);
+                if (w1_quant_contract_ok) {
+                    sram[h_row + j] = bits_from_fp32(acc_fp);
+                } else {
+                    sram[h_row + j] = quant_bits_from_acc(acc);
+                }
             }
         }
     }
@@ -364,13 +506,15 @@ static inline void FFNLayer0CoreWindow(
             const uint32_t a_row = relu_base + t * d_ffn;
             const uint32_t y_row = w2_base + t * d_model;
             FFN_TOP_MANAGED_W2_OUT_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
-                quant_acc_t acc = ffn_bias_from_sram(sram, param_base, w2_bias_id, i);
+                u32_t bias_bits = sram[ffn_param_addr_word(param_base, w2_bias_id, i)];
                 // Caller-fed W2 bias payload path: use preloaded bias words when provided.
                 if (topfed_w2_bias_words != 0 && i < topfed_w2_bias_valid) {
-                    acc = ffn_bias_from_word(topfed_w2_bias_words[i]);
+                    bias_bits = topfed_w2_bias_words[i];
                 } else {
                     ffn_count_legacy_fallback_touch(fallback_legacy_touch_counter);
                 }
+                quant_acc_t acc = ffn_bias_from_word(bias_bits);
+                fp32_t acc_fp = fp32_from_bits(bias_bits);
                 const uint32_t w_row = i * d_ffn;
                 FFN_TOP_MANAGED_W2_TILE_LOOP: for (uint32_t dt = 0u; dt < d_ffn_tile_count; ++dt) {
                     const uint32_t tile_offset = dt * tile_words;
@@ -410,9 +554,17 @@ static inline void FFNLayer0CoreWindow(
                             w_tile[k] = sram[ffn_param_addr_word(param_base, w2_weight_id, w2_idx)];
                         }
                     }
-                    acc = ffn_block_mac_tile(meta, a_tile, w_tile, acc);
+                    if (w2_quant_contract_ok) {
+                        acc_fp = ffn_block_mac_tile_quant_fp32(meta, a_tile, w_tile, w2_s_x, w2_inv_scale, acc_fp);
+                    } else {
+                        acc = ffn_block_mac_tile(meta, a_tile, w_tile, acc);
+                    }
                 }
-                sram[y_row + i] = quant_bits_from_acc(acc);
+                if (w2_quant_contract_ok) {
+                    sram[y_row + i] = bits_from_fp32(acc_fp);
+                } else {
+                    sram[y_row + i] = quant_bits_from_acc(acc);
+                }
             }
         }
     }
