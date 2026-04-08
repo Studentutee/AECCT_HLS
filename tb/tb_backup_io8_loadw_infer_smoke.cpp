@@ -4212,6 +4212,36 @@ int main() {
     if (ref_probe_s5.all_exact) {
         ref_probe = run_one_ref_model_stage_probe(io_debug, kContractSample0, kContractIdx0);
     }
+
+    Io8Top io_probe;
+    run_setup_cfg_loadw(io_probe, param_words, "fresh_probe");
+    const RefModelStageCompareResult ref_probe_fresh_s5 =
+        run_one_ref_model_stage_probe(io_probe, kDebugPreferredSampleId, kDebugFocusedIdx);
+    std::printf(
+        "[backup_io8][fresh_probe] sample=%u idx=%u all_exact=%u A_layer0_ffn_ln_out_writeback_exact=%u B_mid_norm_output_writeback_exact=%u C_layer1_attn_input_readback_exact=%u bounded_first_divergence=%u boundary_class=%u\n",
+        (unsigned)ref_probe_fresh_s5.sample_idx,
+        (unsigned)ref_probe_fresh_s5.focused_idx,
+        (unsigned)(ref_probe_fresh_s5.all_exact ? 1u : 0u),
+        (unsigned)(ref_probe_fresh_s5.layer0_ffn_ln_out_writeback_exact ? 1u : 0u),
+        (unsigned)(ref_probe_fresh_s5.mid_norm_output_writeback_exact ? 1u : 0u),
+        (unsigned)(ref_probe_fresh_s5.layer1_attn_input_readback_exact ? 1u : 0u),
+        (unsigned)ref_probe_fresh_s5.bounded_first_divergence_bucket,
+        (unsigned)ref_probe_fresh_s5.boundary_bucket);
+    if (!ref_probe_fresh_s5.all_exact && ref_probe_fresh_s5.boundary_bucket == 0u) {
+        std::printf(
+            "[backup_io8][fresh_probe] first_divergence=layer1_attn_input_handoff token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)ref_probe_fresh_s5.layer1_attn_input_first_mismatch_token,
+            (unsigned)ref_probe_fresh_s5.layer1_attn_input_first_mismatch_dim,
+            (unsigned)ref_probe_fresh_s5.layer1_attn_input_dut_bits,
+            (unsigned)ref_probe_fresh_s5.layer1_attn_input_ref_bits);
+    } else if (!ref_probe_fresh_s5.all_exact) {
+        std::printf(
+            "[backup_io8][fresh_probe] first_divergence=non_handoff boundary_class=%u (see ref_model_probe logs above)\n",
+            (unsigned)ref_probe_fresh_s5.boundary_bucket);
+    } else {
+        std::printf("[backup_io8][fresh_probe] first_divergence=none sample=%u all_stages_exact=1\n", (unsigned)ref_probe_fresh_s5.sample_idx);
+    }
+
     const bool local_ref_gate_ok = triage_s5.local_ref_ok && triage_s0.local_ref_ok;
     std::printf(
         "[backup_io8][contract_gate] local_ref_gate_ok=%u sample5_local_ref_ok=%u sample0_local_ref_ok=%u sample0_trace_mismatch=%u\n",
