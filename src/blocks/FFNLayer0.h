@@ -207,6 +207,19 @@ static inline void ffn_block_relu_tile(
     }
 }
 
+static inline void ffn_block_relu_tile_preserve_fp32(
+    const FfnTopManagedTileMeta& meta,
+    const u32_t in_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS],
+    u32_t out_tile[ATTN_TOP_MANAGED_WORK_TILE_WORDS]
+) {
+    const uint32_t valid = (uint32_t)meta.tile_valid_words.to_uint();
+    FFN_BLOCK_RELU_TILE_FP32_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
+        const fp32_t x = fp32_from_bits(in_tile[i]);
+        const fp32_t y = (x > fp32_t(0.0f)) ? x : fp32_t(0.0f);
+        out_tile[i] = bits_from_fp32(y);
+    }
+}
+
 // Core FFN worker.
 // Read in this order:
 // 1) W1 path (input + W1 + optional caller-fed bias)
@@ -482,7 +495,11 @@ static inline void FFNLayer0CoreWindow(
                 FFN_TOP_MANAGED_RELU_TILE_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                     in_tile[i] = sram[h_row + tile_offset + i];
                 }
-                ffn_block_relu_tile(meta, in_tile, out_tile);
+                if (w1_quant_contract_ok) {
+                    ffn_block_relu_tile_preserve_fp32(meta, in_tile, out_tile);
+                } else {
+                    ffn_block_relu_tile(meta, in_tile, out_tile);
+                }
                 FFN_TOP_MANAGED_RELU_TILE_WRITEBACK_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
                     sram[a_row + tile_offset + i] = out_tile[i];
                 }
