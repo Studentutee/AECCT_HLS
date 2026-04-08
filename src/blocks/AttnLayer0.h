@@ -1043,6 +1043,37 @@ static inline void AttnLayer0CoreWindow(
             // Keep existing AC/AD hooks untouched and skip duplicate score/softmax execution only.
         } else {
         const uint32_t param_base = (uint32_t)param_base_word.to_uint();
+        if (STAGE_MODE == ATTN_STAGE_SCORES) {
+            // Split-stage call rebuild:
+            // QKV and SCORES can be invoked in separate calls, so local latch state does not carry over.
+            // Rebuild dense/live readiness from existing metadata + handoff contract.
+            const QuantLinearMatrixId q_matrix_id = attn_q_matrix_id_for_layer(layer_id);
+            const QuantLinearMatrixId k_matrix_id = attn_k_matrix_id_for_layer(layer_id);
+            const QuantLinearMatrixId v_matrix_id = attn_v_matrix_id_for_layer(layer_id);
+            const QuantLinearMeta live_q_meta = ternary_linear_live_meta(q_matrix_id);
+            const QuantLinearMeta live_k_meta = ternary_linear_live_meta(k_matrix_id);
+            const QuantLinearMeta live_v_meta = ternary_linear_live_meta(v_matrix_id);
+            const bool skip_q_materialization = prebuilt_handoff.q_prebuilt_from_top_managed;
+            const bool skip_kv_materialization = prebuilt_handoff.kv_prebuilt_from_top_managed;
+            const bool live_q_enabled =
+                attn_live_qkv_gate_ok(live_q_meta, q_matrix_id, param_base, token_count, d_model);
+            const bool live_k_enabled =
+                attn_live_qkv_gate_ok(live_k_meta, k_matrix_id, param_base, token_count, d_model);
+            const bool live_v_enabled =
+                attn_live_qkv_gate_ok(live_v_meta, v_matrix_id, param_base, token_count, d_model);
+            const bool dense_q_enabled =
+                attn_dense_qkv_gate_ok(live_q_meta, q_matrix_id, param_base, token_count, d_model, layer_id);
+            const bool dense_k_enabled =
+                attn_dense_qkv_gate_ok(live_k_meta, k_matrix_id, param_base, token_count, d_model, layer_id);
+            const bool dense_v_enabled =
+                attn_dense_qkv_gate_ok(live_v_meta, v_matrix_id, param_base, token_count, d_model, layer_id);
+            q_dense_enabled_latched = dense_q_enabled;
+            k_dense_enabled_latched = dense_k_enabled;
+            v_dense_enabled_latched = dense_v_enabled;
+            q_live_ok_latched = skip_q_materialization || dense_q_enabled || live_q_enabled;
+            k_live_ok_latched = skip_kv_materialization || dense_k_enabled || live_k_enabled;
+            v_live_ok_latched = skip_kv_materialization || dense_v_enabled || live_v_enabled;
+        }
         uint32_t src_mask_base = 0u;
         uint32_t src_mask_rows = 0u;
         uint32_t src_mask_cols = 0u;
