@@ -1097,6 +1097,36 @@ static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
     g_ref_ln_debug_entries.push_back(e);
   }
 }
+
+static inline void layernorm_32_exact_reference(const fp32_ref_t x[D_MODEL],
+                                                 const double w[D_MODEL],
+                                                 const double b[D_MODEL],
+                                                 int /*sample_index*/,
+                                                 RefLnSiteTag /*site*/,
+                                                 int /*site_call_index*/,
+                                                 int /*token_index*/,
+                                                 fp32_ref_t y[D_MODEL]) {
+  double sum = 0.0;
+  for (int i = 0; i < D_MODEL; ++i) {
+    sum += static_cast<double>(x[i].to_float());
+  }
+  const double mean = sum / static_cast<double>(D_MODEL);
+
+  double var_acc = 0.0;
+  for (int i = 0; i < D_MODEL; ++i) {
+    const double d = static_cast<double>(x[i].to_float()) - mean;
+    var_acc += d * d;
+  }
+  const double var = var_acc / static_cast<double>(D_MODEL);
+  const double inv_std = 1.0 / std::sqrt(var + static_cast<double>(LN_EPS_F32));
+
+  for (int i = 0; i < D_MODEL; ++i) {
+    const double xv = static_cast<double>(x[i].to_float());
+    const double xn = (xv - mean) * inv_std;
+    const double yi = (xn * w[i]) + b[i];
+    y[i] = fp32_ref_t(static_cast<float>(yi));
+  }
+}
 // LN_APPROX_END
 
 static void apply_layernorm_tokens(const fp32_ref_t x_in[TOKENS_T][D_MODEL],
@@ -1117,6 +1147,8 @@ static void apply_layernorm_tokens(const fp32_ref_t x_in[TOKENS_T][D_MODEL],
   for (int t = 0; t < TOKENS_T; ++t) {
     if (ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
       layernorm_32_sum_sumsq_approx(x_in[t], w, b, sample_index, site, site_call_index, t, x_out[t]);
+    } else if (ln_mode == RefLayerNormMode::LN_EXACT_REFERENCE) {
+      layernorm_32_exact_reference(x_in[t], w, b, sample_index, site, site_call_index, t, x_out[t]);
     } else {
       layernorm_32_baseline(x_in[t], w, b, sample_index, site, site_call_index, t, x_out[t]);
     }
@@ -1481,6 +1513,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
                             fp32_ref_t post_concat[TOKENS_T][D_MODEL]) {
   const fp32_ref_t inv_sqrt_dh = fp32_ref_t(0.5f); // 1/sqrt(4)
   const fp32_ref_t neg_inf = fp32_ref_t(-std::numeric_limits<float>::infinity());
+  const bool use_softmax_exact = (run_cfg.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
   for (int h = 0; h < HEADS; ++h) {
     for (int i = 0; i < TOKENS_T; ++i) {
@@ -1514,14 +1547,16 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
           stats,
           "attention_score");
         scores[h][i][j] = score;
-        online_softmax_update(
-          online_init,
-          score,
-          &v[j][base],
-          online_max,
-          online_sumexp,
-          acc_vec
-        );
+        if (!use_softmax_exact) {
+          online_softmax_update(
+            online_init,
+            score,
+            &v[j][base],
+            online_max,
+            online_sumexp,
+            acc_vec
+          );
+        }
       }
 
       if (!has_valid) {
@@ -1531,36 +1566,97 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
         continue;
       }
 
-      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
-
-      // Trace-only probability materialization from final online state.
-      for (int j = 0; j < TOKENS_T; ++j) {
-        if (mask[i][j]) {
-          probs[h][i][j] = fp32_ref_t(0.0f);
-          continue;
+      if (use_softmax_exact) {
+        fp32_ref_t max_score = neg_inf;
+        for (int j = 0; j < TOKENS_T; ++j) {
+          if (!mask[i][j] && scores[h][i][j] > max_score) {
+            max_score = scores[h][i][j];
+          }
         }
-        const fp32_ref_t w = stress_roundtrip_e4m3(
-          ref_softmax_exp_lut(scores[h][i][j] - online_max),
-          run_cfg,
-          RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
-          stats,
-          "softmax_weight"
-        );
-        probs[h][i][j] = stress_roundtrip_e4m3(
-          w * inv_sumexp,
-          run_cfg,
-          RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
-          stats,
-          "softmax_prob");
-      }
 
-      for (int dh = 0; dh < D_HEAD; ++dh) {
-        ctx[h][i][dh] = stress_roundtrip_e4m3(
-          acc_vec[dh] * inv_sumexp,
-          run_cfg,
-          RefFragGroup::G3_ATTN_CONTEXT,
-          stats,
-          "attention_ctx");
+        fp32_ref_t w_unorm[TOKENS_T];
+        fp32_ref_t sumexp = fp32_ref_t(0.0f);
+        for (int j = 0; j < TOKENS_T; ++j) {
+          if (mask[i][j]) {
+            w_unorm[j] = fp32_ref_t(0.0f);
+            continue;
+          }
+          const fp32_ref_t w_exact = fp32_ref_t(std::exp((scores[h][i][j] - max_score).to_float()));
+          const fp32_ref_t w = stress_roundtrip_e4m3(
+            w_exact,
+            run_cfg,
+            RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
+            stats,
+            "softmax_weight");
+          w_unorm[j] = w;
+          sumexp += w;
+        }
+
+        fp32_ref_t inv_sumexp = fp32_ref_t(0.0f);
+        if (sumexp > fp32_ref_t(0.0f)) {
+          inv_sumexp = fp32_ref_t(1.0f) / sumexp;
+        }
+
+        fp32_ref_t ctx_acc[D_HEAD];
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          ctx_acc[dh] = fp32_ref_t(0.0f);
+        }
+        for (int j = 0; j < TOKENS_T; ++j) {
+          if (mask[i][j]) {
+            probs[h][i][j] = fp32_ref_t(0.0f);
+            continue;
+          }
+          const fp32_ref_t p = stress_roundtrip_e4m3(
+            w_unorm[j] * inv_sumexp,
+            run_cfg,
+            RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
+            stats,
+            "softmax_prob");
+          probs[h][i][j] = p;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            ctx_acc[dh] += p * v[j][base + dh];
+          }
+        }
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          ctx[h][i][dh] = stress_roundtrip_e4m3(
+            ctx_acc[dh],
+            run_cfg,
+            RefFragGroup::G3_ATTN_CONTEXT,
+            stats,
+            "attention_ctx");
+        }
+      } else {
+        const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+
+        // Trace-only probability materialization from final online state.
+        for (int j = 0; j < TOKENS_T; ++j) {
+          if (mask[i][j]) {
+            probs[h][i][j] = fp32_ref_t(0.0f);
+            continue;
+          }
+          const fp32_ref_t w = stress_roundtrip_e4m3(
+            ref_softmax_exp_lut(scores[h][i][j] - online_max),
+            run_cfg,
+            RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
+            stats,
+            "softmax_weight"
+          );
+          probs[h][i][j] = stress_roundtrip_e4m3(
+            w * inv_sumexp,
+            run_cfg,
+            RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
+            stats,
+            "softmax_prob");
+        }
+
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          ctx[h][i][dh] = stress_roundtrip_e4m3(
+            acc_vec[dh] * inv_sumexp,
+            run_cfg,
+            RefFragGroup::G3_ATTN_CONTEXT,
+            stats,
+            "attention_ctx");
+        }
       }
     }
   }
@@ -2021,8 +2117,9 @@ void RefModel::infer_step0(const RefModelIO& io) const {
   const int N_out = (N < VAR_N) ? N : VAR_N;
 
   assert(io.input_y_fp32 != nullptr && "input_y_fp32 must be provided for alignment mode");
-  if (run_cfg_.algo_variant != RefAlgoVariant::BASELINE_SPEC_FLOW) {
-    std::printf("[warn] Unsupported algo variant %s. Fallback to BASELINE_SPEC_FLOW.\n",
+  if (run_cfg_.algo_variant != RefAlgoVariant::BASELINE_SPEC_FLOW &&
+      run_cfg_.algo_variant != RefAlgoVariant::RESERVED_SOFTMAX_ALT) {
+    std::printf("[warn] Unsupported algo variant %s. Behavior is only validated for BASELINE_SPEC_FLOW and RESERVED_SOFTMAX_ALT.\n",
       to_string(run_cfg_.algo_variant));
   }
 

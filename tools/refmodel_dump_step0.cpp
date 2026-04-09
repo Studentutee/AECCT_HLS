@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -31,16 +32,62 @@ static int parse_int(const char* s, const char* name) {
     return static_cast<int>(v);
 }
 
+static aecct_ref::RefAlgoVariant parse_algo_variant(const char* s) {
+    if (std::strcmp(s, "baseline") == 0) {
+        return aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
+    }
+    if (std::strcmp(s, "softmax_exact") == 0) {
+        return aecct_ref::RefAlgoVariant::RESERVED_SOFTMAX_ALT;
+    }
+    std::printf("ERROR: unsupported --algo value: %s (use baseline|softmax_exact)\n", s);
+    std::exit(1);
+}
+
+static aecct_ref::RefLayerNormMode parse_ln_mode(const char* s) {
+    if (std::strcmp(s, "baseline") == 0) {
+        return aecct_ref::RefLayerNormMode::LN_BASELINE;
+    }
+    if (std::strcmp(s, "sum_sumsq_approx") == 0) {
+        return aecct_ref::RefLayerNormMode::LN_SUM_SUMSQ_APPROX;
+    }
+    if (std::strcmp(s, "exact") == 0) {
+        return aecct_ref::RefLayerNormMode::LN_EXACT_REFERENCE;
+    }
+    std::printf("ERROR: unsupported --ln value: %s (use baseline|sum_sumsq_approx|exact)\n", s);
+    std::exit(1);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::printf("Usage: refmodel_dump_step0 <sample_index> <dump_dir>\n");
+        std::printf("Usage: refmodel_dump_step0 <sample_index> <dump_dir> [--algo baseline|softmax_exact] [--ln baseline|sum_sumsq_approx|exact]\n");
         return 1;
     }
 
     const int sample_index = parse_int(argv[1], "sample_index");
     const std::string dump_dir = argv[2];
+    aecct_ref::RefAlgoVariant algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
+    aecct_ref::RefLayerNormMode ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
+
+    for (int i = 3; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--algo") == 0) {
+            if (i + 1 >= argc) {
+                fail("missing value for --algo");
+            }
+            algo_variant = parse_algo_variant(argv[++i]);
+            continue;
+        }
+        if (std::strcmp(argv[i], "--ln") == 0) {
+            if (i + 1 >= argc) {
+                fail("missing value for --ln");
+            }
+            ln_mode = parse_ln_mode(argv[++i]);
+            continue;
+        }
+        std::printf("ERROR: unknown option: %s\n", argv[i]);
+        return 1;
+    }
 
     if (trace_input_y_step0_tensor_ndim != 2 ||
         trace_output_logits_step0_tensor_ndim != 2 ||
@@ -75,7 +122,9 @@ int main(int argc, char** argv) {
     }
 
     aecct_ref::RefModel model;
-    const aecct_ref::RefRunConfig cfg = aecct_ref::make_fp32_baseline_run_config();
+    aecct_ref::RefRunConfig cfg = aecct_ref::make_fp32_baseline_run_config();
+    cfg.algo_variant = algo_variant;
+    cfg.ln_mode = ln_mode;
     model.set_run_config(cfg);
 
     aecct_ref::RefDumpConfig dump_cfg{};
@@ -108,12 +157,13 @@ int main(int argc, char** argv) {
     }
 
     std::printf(
-        "refmodel_dump_step0 sample=%d n=%d dump_dir=%s logits_max_abs=%.9e xpred_mismatch=%d\n",
+        "refmodel_dump_step0 sample=%d n=%d algo=%s ln=%s dump_dir=%s logits_max_abs=%.9e xpred_mismatch=%d\n",
         sample_index,
         n,
+        aecct_ref::to_string(algo_variant),
+        aecct_ref::to_string(ln_mode),
         dump_dir.c_str(),
         logits_max_abs,
         xpred_mismatch);
     return 0;
 }
-
