@@ -38,6 +38,7 @@ static const uint32_t kContractSample0 = 0u;
 static const uint32_t kContractIdx0 = 6u;
 static const uint32_t kW2DirectProbeSampleCount = 5u;
 static const uint32_t kW2DirectProbeSamples[kW2DirectProbeSampleCount] = { 5u, 7u, 23u, 16u, 27u };
+static const uint32_t kRefRawQuantTraceFocusDims = 3u;
 static const uint32_t kDebugPayloadReadbackWords = 64u;
 static const uint32_t kDebugPayloadWindowWords = 16u;
 
@@ -1471,6 +1472,11 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_layer0_relu_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer0_ffn2_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_ffn_w2_quant_raw_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_qx((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_weight_scaled((uint32_t)D_MODEL * (uint32_t)D_FFN, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_bias_domain((uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_partial_acc_focus(
+        (uint32_t)N_NODES * kRefRawQuantTraceFocusDims * ((uint32_t)D_FFN + 1u), 0.0);
     std::vector<double> ref_layer0_attn_input((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_post_concat((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_attn_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
@@ -1502,6 +1508,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_layer0_relu_out = ref_layer0_relu_out.data();
     ref_io.out_layer0_ffn2_out = ref_layer0_ffn2_out.data();
     ref_io.out_layer0_ffn_w2_quant_raw_out = ref_layer0_ffn_w2_quant_raw_out.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_qx = ref_layer0_ffn_w2_quant_raw_qx.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_weight_scaled = ref_layer0_ffn_w2_quant_raw_weight_scaled.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_bias_domain = ref_layer0_ffn_w2_quant_raw_bias_domain.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_partial_acc_focus = ref_layer0_ffn_w2_quant_raw_partial_acc_focus.data();
     ref_io.out_layer0_attn_input = ref_layer0_attn_input.data();
     ref_io.out_layer0_post_concat = ref_layer0_post_concat.data();
     ref_io.out_layer0_attn_out = ref_layer0_attn_out.data();
@@ -3027,6 +3037,197 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (unsigned)w2_scan_same_semantic_cmp.dut_bits,
             (unsigned)w2_scan_same_semantic_cmp.ref_bits,
             (unsigned)(w2_scan_quant_rebuild_cmp.exact ? 1u : 0u));
+
+        struct RawTraceCmp {
+            bool exact;
+            uint32_t token;
+            uint32_t dim;
+            uint32_t index;
+            uint32_t dut_bits;
+            uint32_t ref_bits;
+        };
+        auto make_raw_trace_cmp_pass = []() -> RawTraceCmp {
+            RawTraceCmp c;
+            c.exact = true;
+            c.token = 0u;
+            c.dim = 0u;
+            c.index = 0u;
+            c.dut_bits = 0u;
+            c.ref_bits = 0u;
+            return c;
+        };
+        auto mark_raw_trace_cmp = [&](RawTraceCmp& c,
+                                      uint32_t token,
+                                      uint32_t dim,
+                                      uint32_t index,
+                                      uint32_t dut_bits,
+                                      uint32_t ref_bits) {
+            if (c.exact) {
+                c.exact = false;
+                c.token = token;
+                c.dim = dim;
+                c.index = index;
+                c.dut_bits = dut_bits;
+                c.ref_bits = ref_bits;
+            }
+        };
+
+        RawTraceCmp qx_cmp = make_raw_trace_cmp_pass();
+        RawTraceCmp weight_scaled_cmp = make_raw_trace_cmp_pass();
+        RawTraceCmp bias_domain_cmp = make_raw_trace_cmp_pass();
+        RawTraceCmp partial_acc_cmp = make_raw_trace_cmp_pass();
+        const uint32_t partial_acc_steps = d_ffn + 1u;
+
+        W2_RAW_TRACE_QX_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+            const uint32_t ffn_row = t * d_ffn;
+            W2_RAW_TRACE_QX_COL_LOOP: for (uint32_t c = 0u; c < d_ffn; ++c) {
+                const uint32_t ref_input_bits = f32_to_bits((float)ref_layer0_relu_out[ffn_row + c]);
+                const aecct::fp32_t x_fp = aecct::fp32_from_bits((aecct::u32_t)ref_input_bits);
+                const aecct::fp32_t qx_fp = aecct::ffn_quantize_int8_symmetric(x_fp, layer0_w2_sx_fp);
+                const uint32_t dut_qx_bits = (uint32_t)aecct::bits_from_fp32(qx_fp).to_uint();
+                const uint32_t ref_qx_bits = f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_qx[ffn_row + c]);
+                if (dut_qx_bits != ref_qx_bits) {
+                    mark_raw_trace_cmp(qx_cmp, t, 0u, c, dut_qx_bits, ref_qx_bits);
+                    break;
+                }
+            }
+            if (!qx_cmp.exact) {
+                break;
+            }
+        }
+
+        W2_RAW_TRACE_WEIGHT_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            W2_RAW_TRACE_WEIGHT_COL_LOOP: for (uint32_t c = 0u; c < d_ffn; ++c) {
+                const uint32_t ref_weight_bits = (uint32_t)sram[layer0_w2_weight_base + d * d_ffn + c].to_uint();
+                const aecct::fp32_t w_fp = aecct::fp32_from_bits((aecct::u32_t)ref_weight_bits);
+                const aecct::fp32_t dut_weight_scaled_fp = w_fp * layer0_w2_inv_scale_fp;
+                const uint32_t dut_weight_scaled_bits = (uint32_t)aecct::bits_from_fp32(dut_weight_scaled_fp).to_uint();
+                const uint32_t ref_weight_scaled_bits =
+                    f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_weight_scaled[d * d_ffn + c]);
+                if (dut_weight_scaled_bits != ref_weight_scaled_bits) {
+                    mark_raw_trace_cmp(weight_scaled_cmp, 0u, d, c, dut_weight_scaled_bits, ref_weight_scaled_bits);
+                    break;
+                }
+            }
+            if (!weight_scaled_cmp.exact) {
+                break;
+            }
+        }
+
+        W2_RAW_TRACE_BIAS_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t dut_bias_bits = (uint32_t)sram[layer0_w2_bias_base + d].to_uint();
+            const uint32_t ref_bias_bits = f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_bias_domain[d]);
+            if (dut_bias_bits != ref_bias_bits) {
+                mark_raw_trace_cmp(bias_domain_cmp, 0u, d, 0u, dut_bias_bits, ref_bias_bits);
+                break;
+            }
+        }
+
+        W2_RAW_TRACE_PARTIAL_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+            const uint32_t ffn_row = t * d_ffn;
+            W2_RAW_TRACE_PARTIAL_FOCUS_DIM_LOOP: for (uint32_t fd = 0u; fd < kRefRawQuantTraceFocusDims && fd < d_model; ++fd) {
+                const uint32_t d = fd;
+                const uint32_t dut_bias_bits = (uint32_t)sram[layer0_w2_bias_base + d].to_uint();
+                aecct::fp32_t dut_acc_fp = aecct::fp32_from_bits((aecct::u32_t)dut_bias_bits);
+                const uint32_t ref_partial_base = (t * kRefRawQuantTraceFocusDims + fd) * partial_acc_steps;
+                const uint32_t dut_step0_bits = (uint32_t)aecct::bits_from_fp32(dut_acc_fp).to_uint();
+                const uint32_t ref_step0_bits = f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_partial_acc_focus[ref_partial_base]);
+                if (dut_step0_bits != ref_step0_bits) {
+                    mark_raw_trace_cmp(partial_acc_cmp, t, d, 0u, dut_step0_bits, ref_step0_bits);
+                    break;
+                }
+                W2_RAW_TRACE_PARTIAL_COL_LOOP: for (uint32_t c = 0u; c < d_ffn; ++c) {
+                    const uint32_t ref_input_bits = f32_to_bits((float)ref_layer0_relu_out[ffn_row + c]);
+                    const aecct::fp32_t x_fp = aecct::fp32_from_bits((aecct::u32_t)ref_input_bits);
+                    const aecct::fp32_t qx_fp = aecct::ffn_quantize_int8_symmetric(x_fp, layer0_w2_sx_fp);
+                    const uint32_t ref_weight_bits = (uint32_t)sram[layer0_w2_weight_base + d * d_ffn + c].to_uint();
+                    const aecct::fp32_t w_fp = aecct::fp32_from_bits((aecct::u32_t)ref_weight_bits);
+                    dut_acc_fp += qx_fp * (w_fp * layer0_w2_inv_scale_fp);
+                    const uint32_t dut_partial_bits = (uint32_t)aecct::bits_from_fp32(dut_acc_fp).to_uint();
+                    const uint32_t ref_partial_bits =
+                        f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_partial_acc_focus[ref_partial_base + (c + 1u)]);
+                    if (dut_partial_bits != ref_partial_bits) {
+                        mark_raw_trace_cmp(partial_acc_cmp, t, d, c + 1u, dut_partial_bits, ref_partial_bits);
+                        break;
+                    }
+                }
+                if (!partial_acc_cmp.exact) {
+                    break;
+                }
+            }
+            if (!partial_acc_cmp.exact) {
+                break;
+            }
+        }
+
+        const bool final_raw_exact = w2_scan_same_semantic_cmp.exact;
+        const char* raw_quant_first_divergence = "none";
+        if (!qx_cmp.exact) {
+            raw_quant_first_divergence = "qx";
+        } else if (!weight_scaled_cmp.exact) {
+            raw_quant_first_divergence = "weight_scaled";
+        } else if (!bias_domain_cmp.exact) {
+            raw_quant_first_divergence = "bias_domain";
+        } else if (!partial_acc_cmp.exact) {
+            raw_quant_first_divergence = "partial_acc";
+        } else if (!final_raw_exact) {
+            raw_quant_first_divergence = "final_raw_out";
+        }
+
+        std::printf(
+            "[backup_io8][refmodel_raw_quant_trace] sample=%u qx_exact=%u weight_scaled_exact=%u bias_domain_exact=%u partial_acc_exact=%u final_raw_exact=%u first_divergence=%s\n",
+            (unsigned)sample_idx,
+            (unsigned)(qx_cmp.exact ? 1u : 0u),
+            (unsigned)(weight_scaled_cmp.exact ? 1u : 0u),
+            (unsigned)(bias_domain_cmp.exact ? 1u : 0u),
+            (unsigned)(partial_acc_cmp.exact ? 1u : 0u),
+            (unsigned)(final_raw_exact ? 1u : 0u),
+            raw_quant_first_divergence);
+        if (!qx_cmp.exact) {
+            std::printf(
+                "[backup_io8][refmodel_raw_quant_trace][qx] sample=%u first_mismatch_token=%u input_col=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)sample_idx,
+                (unsigned)qx_cmp.token,
+                (unsigned)qx_cmp.index,
+                (unsigned)qx_cmp.dut_bits,
+                (unsigned)qx_cmp.ref_bits);
+        }
+        if (!weight_scaled_cmp.exact) {
+            std::printf(
+                "[backup_io8][refmodel_raw_quant_trace][weight_scaled] sample=%u first_mismatch_dim=%u input_col=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)sample_idx,
+                (unsigned)weight_scaled_cmp.dim,
+                (unsigned)weight_scaled_cmp.index,
+                (unsigned)weight_scaled_cmp.dut_bits,
+                (unsigned)weight_scaled_cmp.ref_bits);
+        }
+        if (!bias_domain_cmp.exact) {
+            std::printf(
+                "[backup_io8][refmodel_raw_quant_trace][bias_domain] sample=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)sample_idx,
+                (unsigned)bias_domain_cmp.dim,
+                (unsigned)bias_domain_cmp.dut_bits,
+                (unsigned)bias_domain_cmp.ref_bits);
+        }
+        if (!partial_acc_cmp.exact) {
+            std::printf(
+                "[backup_io8][refmodel_raw_quant_trace][partial_acc] sample=%u first_mismatch_token=%u dim=%u step=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)sample_idx,
+                (unsigned)partial_acc_cmp.token,
+                (unsigned)partial_acc_cmp.dim,
+                (unsigned)partial_acc_cmp.index,
+                (unsigned)partial_acc_cmp.dut_bits,
+                (unsigned)partial_acc_cmp.ref_bits);
+        }
+        if (!final_raw_exact) {
+            std::printf(
+                "[backup_io8][refmodel_raw_quant_trace][final_raw_out] sample=%u first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)sample_idx,
+                (unsigned)w2_scan_same_semantic_cmp.token,
+                (unsigned)w2_scan_same_semantic_cmp.dim,
+                (unsigned)w2_scan_same_semantic_cmp.dut_bits,
+                (unsigned)w2_scan_same_semantic_cmp.ref_bits);
+        }
 
         const bool alternative_exact =
             w2_scan_same_semantic_cmp.exact ||

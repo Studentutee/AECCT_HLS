@@ -614,6 +614,9 @@ static inline float quantize_int8_symmetric_f32(float x, float s_x) {
   return q;
 }
 
+static constexpr int kW2RawTraceFocusDims = 3;
+static constexpr int kW2RawTraceAccSteps = FF_DIM + 1;
+
 static inline int32_t clamp_int32(int32_t x, int32_t lo, int32_t hi) {
   return (x < lo) ? lo : ((x > hi) ? hi : x);
 }
@@ -1313,17 +1316,42 @@ static void quant_linear_75x128_to32_dut_aligned_raw(const fp32_ref_t x[TOKENS_T
                                                      const double b[D_MODEL],
                                                      float s_x,
                                                      float s_w,
-                                                     fp32_ref_t y[TOKENS_T][D_MODEL]) {
+                                                     fp32_ref_t y[TOKENS_T][D_MODEL],
+                                                     float (*qx_trace_out)[FF_DIM] = nullptr,
+                                                     float (*weight_scaled_trace_out)[FF_DIM] = nullptr,
+                                                     float* bias_domain_trace_out = nullptr,
+                                                     float (*partial_acc_focus_trace_out)[kW2RawTraceFocusDims][kW2RawTraceAccSteps] = nullptr) {
+  static_assert(kW2RawTraceFocusDims <= D_MODEL, "kW2RawTraceFocusDims must be <= D_MODEL");
   const float inv_scale = 1.0f / (s_x * s_w);
   for (int t = 0; t < TOKENS_T; ++t) {
+    float qx_cache[FF_DIM];
+    for (int i = 0; i < FF_DIM; ++i) {
+      const float x_fp = x[t][i].to_float();
+      const float qx = quantize_int8_symmetric_f32(x_fp, s_x);
+      qx_cache[i] = qx;
+      if (qx_trace_out != nullptr) {
+        qx_trace_out[t][i] = qx;
+      }
+    }
     for (int o = 0; o < D_MODEL; ++o) {
       float acc = static_cast<float>(b[o]);
+      if (bias_domain_trace_out != nullptr) {
+        bias_domain_trace_out[o] = acc;
+      }
+      if (partial_acc_focus_trace_out != nullptr && o < kW2RawTraceFocusDims) {
+        partial_acc_focus_trace_out[t][o][0] = acc;
+      }
       const int base = o * FF_DIM;
       for (int i = 0; i < FF_DIM; ++i) {
-        const float x_fp = x[t][i].to_float();
-        const float qx = quantize_int8_symmetric_f32(x_fp, s_x);
         const float w_fp = static_cast<float>(w[base + i]);
-        acc += qx * (w_fp * inv_scale);
+        const float weight_scaled = w_fp * inv_scale;
+        if (weight_scaled_trace_out != nullptr) {
+          weight_scaled_trace_out[o][i] = weight_scaled;
+        }
+        acc += qx_cache[i] * weight_scaled;
+        if (partial_acc_focus_trace_out != nullptr && o < kW2RawTraceFocusDims) {
+          partial_acc_focus_trace_out[t][o][i + 1] = acc;
+        }
       }
       y[t][o] = fp32_ref_t(acc);
     }
@@ -1534,7 +1562,11 @@ static void run_layer(const int layer_idx,
                       fp32_ref_t ffn_ln_out[TOKENS_T][D_MODEL],
                       fp32_ref_t (*ffn_ln_sum_out)[D_MODEL] = nullptr,
                       fp32_ref_t (*ffn_ln_in_out)[D_MODEL] = nullptr,
-                      fp32_ref_t (*ffn_w2_quant_raw_out)[D_MODEL] = nullptr) {
+                      fp32_ref_t (*ffn_w2_quant_raw_out)[D_MODEL] = nullptr,
+                      float (*ffn_w2_quant_raw_qx_out)[FF_DIM] = nullptr,
+                      float (*ffn_w2_quant_raw_weight_scaled_out)[FF_DIM] = nullptr,
+                      float* ffn_w2_quant_raw_bias_domain_out = nullptr,
+                      float (*ffn_w2_quant_raw_partial_acc_focus_out)[kW2RawTraceFocusDims][kW2RawTraceAccSteps] = nullptr) {
   const bool strict_int16 = use_full_e4m3_nonlinear_stress(run_cfg);
   const double* w_q = nullptr;
   const double* b_q = nullptr;
@@ -1754,7 +1786,11 @@ static void run_layer(const int layer_idx,
       b_ff2,
       s_x_ff2,
       static_cast<float>(sw_ff2[0]),
-      ffn_w2_quant_raw_out);
+      ffn_w2_quant_raw_out,
+      ffn_w2_quant_raw_qx_out,
+      ffn_w2_quant_raw_weight_scaled_out,
+      ffn_w2_quant_raw_bias_domain_out,
+      ffn_w2_quant_raw_partial_acc_focus_out);
   }
 
   if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
@@ -1966,6 +2002,10 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer0_act[TOKENS_T][FF_DIM];
     static fp32_ref_t layer0_ffn2[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_w2_quant_raw[TOKENS_T][D_MODEL];
+    static float layer0_ffn_w2_quant_raw_qx[TOKENS_T][FF_DIM];
+    static float layer0_ffn_w2_quant_raw_weight_scaled[D_MODEL][FF_DIM];
+    static float layer0_ffn_w2_quant_raw_bias_domain[D_MODEL];
+    static float layer0_ffn_w2_quant_raw_partial_acc_focus[TOKENS_T][kW2RawTraceFocusDims][kW2RawTraceAccSteps];
     static fp32_ref_t layer0_ffn_residual_sum[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_in[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
@@ -1993,7 +2033,11 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer0_ffn_ln_out,
               layer0_ffn_residual_sum,
               layer0_ffn_ln_in,
-              layer0_ffn_w2_quant_raw);
+              layer0_ffn_w2_quant_raw,
+              layer0_ffn_w2_quant_raw_qx,
+              layer0_ffn_w2_quant_raw_weight_scaled,
+              layer0_ffn_w2_quant_raw_bias_domain,
+              layer0_ffn_w2_quant_raw_partial_acc_focus);
 
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_q", layer0_q);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_k", layer0_k);
@@ -2080,6 +2124,43 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         for (int d = 0; d < D_MODEL; ++d) {
           io.out_layer0_ffn_w2_quant_raw_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_w2_quant_raw[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_qx != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int i = 0; i < FF_DIM; ++i) {
+          io.out_layer0_ffn_w2_quant_raw_qx[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + i] =
+            static_cast<double>(layer0_ffn_w2_quant_raw_qx[t][i]);
+        }
+      }
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_weight_scaled != nullptr) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        for (int i = 0; i < FF_DIM; ++i) {
+          io.out_layer0_ffn_w2_quant_raw_weight_scaled[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
+            static_cast<double>(layer0_ffn_w2_quant_raw_weight_scaled[d][i]);
+        }
+      }
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_bias_domain != nullptr) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        io.out_layer0_ffn_w2_quant_raw_bias_domain[(b * D_MODEL) + d] =
+          static_cast<double>(layer0_ffn_w2_quant_raw_bias_domain[d]);
+      }
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_partial_acc_focus != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int fd = 0; fd < kW2RawTraceFocusDims; ++fd) {
+          for (int step = 0; step < kW2RawTraceAccSteps; ++step) {
+            const int flat =
+              (b * TOKENS_T * kW2RawTraceFocusDims * kW2RawTraceAccSteps) +
+              (t * kW2RawTraceFocusDims * kW2RawTraceAccSteps) +
+              (fd * kW2RawTraceAccSteps) +
+              step;
+            io.out_layer0_ffn_w2_quant_raw_partial_acc_focus[flat] =
+              static_cast<double>(layer0_ffn_w2_quant_raw_partial_acc_focus[t][fd][step]);
+          }
         }
       }
     }
