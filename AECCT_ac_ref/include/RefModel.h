@@ -69,8 +69,14 @@ struct RefModelIO {
   double* out_layer0_ln_out = nullptr;
   // optional layer0 residual add sum dump: [B, 75, 32], row-major
   double* out_layer0_residual_add_out = nullptr;
+  // optional layer0 residual add sum dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer0_residual_add_dut_aligned_out = nullptr;
   // optional layer0 sublayer1 LN input dump: [B, 75, 32], row-major
   double* out_layer0_sublayer1_ln_in = nullptr;
+  // optional layer0 sublayer1 LN input dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer0_sublayer1_ln_in_dut_aligned = nullptr;
+  // optional layer0 sublayer1 LN output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer0_sublayer1_ln_out_dut_aligned = nullptr;
   // optional layer1_ffn2_out dump: [B, 75, 32], row-major
   double* out_layer1_ffn2_out = nullptr;
   // optional layer1_sublayer0_attn_out dump: [B, 75, 32], row-major

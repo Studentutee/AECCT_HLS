@@ -1617,7 +1617,10 @@ static void run_layer(const int layer_idx,
                       uint32_t* ffn_w2_raw_sw_bits_out = nullptr,
                       uint32_t* ffn_w2_raw_inv_bits_out = nullptr,
                       uint32_t (*ffn_w2_raw_weight_bits_out)[FF_DIM] = nullptr,
-                      uint32_t (*ffn_w2_raw_weight_scaled_bits_out)[FF_DIM] = nullptr) {
+                      uint32_t (*ffn_w2_raw_weight_scaled_bits_out)[FF_DIM] = nullptr,
+                      fp32_ref_t (*ffn_ln_sum_dut_aligned_out)[D_MODEL] = nullptr,
+                      fp32_ref_t (*ffn_ln_in_dut_aligned_out)[D_MODEL] = nullptr,
+                      fp32_ref_t (*ffn_ln_out_dut_aligned_out)[D_MODEL] = nullptr) {
   const bool strict_int16 = use_full_e4m3_nonlinear_stress(run_cfg);
   const double* w_q = nullptr;
   const double* b_q = nullptr;
@@ -1905,6 +1908,60 @@ static void run_layer(const int layer_idx,
       }
     }
   }
+
+  // Debug-only DUT-aligned residual/LN compare chain. This does not alter the formal
+  // RefModel mainline outputs and is only used for same-semantic compare-side probing.
+  if (ffn_w2_quant_raw_out != nullptr &&
+      (ffn_ln_sum_dut_aligned_out != nullptr ||
+       ffn_ln_in_dut_aligned_out != nullptr ||
+       ffn_ln_out_dut_aligned_out != nullptr)) {
+    fp32_ref_t ffn_ln_assembly_sum_dut_aligned[TOKENS_T][D_MODEL];
+    fp32_ref_t ffn_ln_in_dut_aligned[TOKENS_T][D_MODEL];
+    fp32_ref_t ffn_ln_out_dut_aligned[TOKENS_T][D_MODEL];
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        ffn_ln_assembly_sum_dut_aligned[t][d] = ffn_w2_quant_raw_out[t][d] + ln_out[t][d];
+        // Keep ln-in carrier aligned to DUT residual-add writeback semantics (direct sum bits).
+        ffn_ln_in_dut_aligned[t][d] = ffn_ln_assembly_sum_dut_aligned[t][d];
+      }
+    }
+    apply_layernorm_tokens(
+      ffn_ln_in_dut_aligned, ln1_w, ln1_b, run_cfg.ln_mode, sample_index, ln1_site, ffn_ln_out_dut_aligned);
+    if (use_full_e4m3_nonlinear_stress(run_cfg) ||
+        should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          ffn_ln_out_dut_aligned[t][d] = stress_roundtrip_e4m3(
+            ffn_ln_out_dut_aligned[t][d],
+            run_cfg,
+            RefFragGroup::G1_LAYERNORM,
+            stats,
+            "ffn_ln_out_dut_aligned");
+        }
+      }
+    }
+    if (ffn_ln_sum_dut_aligned_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          ffn_ln_sum_dut_aligned_out[t][d] = ffn_ln_assembly_sum_dut_aligned[t][d];
+        }
+      }
+    }
+    if (ffn_ln_in_dut_aligned_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          ffn_ln_in_dut_aligned_out[t][d] = ffn_ln_in_dut_aligned[t][d];
+        }
+      }
+    }
+    if (ffn_ln_out_dut_aligned_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          ffn_ln_out_dut_aligned_out[t][d] = ffn_ln_out_dut_aligned[t][d];
+        }
+      }
+    }
+  }
 }
 
 } // namespace
@@ -2073,6 +2130,9 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer0_ffn_residual_sum[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_in[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_residual_sum_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_ln_in_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_ln_out_dut_aligned[TOKENS_T][D_MODEL];
 
     run_layer(0,
               b,
@@ -2109,7 +2169,10 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               &layer0_ffn_w2_quant_raw_sw_bits,
               &layer0_ffn_w2_quant_raw_inv_bits,
               layer0_ffn_w2_quant_raw_weight_bits,
-              layer0_ffn_w2_quant_raw_weight_scaled_bits);
+              layer0_ffn_w2_quant_raw_weight_scaled_bits,
+              layer0_ffn_residual_sum_dut_aligned,
+              layer0_ffn_ln_in_dut_aligned,
+              layer0_ffn_ln_out_dut_aligned);
 
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_q", layer0_q);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_k", layer0_k);
@@ -2167,6 +2230,9 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_residual_sum", layer0_ffn_residual_sum);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_in", layer0_ffn_ln_in);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_out", layer0_ffn_ln_out);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_residual_sum_dut_aligned", layer0_ffn_residual_sum_dut_aligned);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_in_dut_aligned", layer0_ffn_ln_in_dut_aligned);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_out_dut_aligned", layer0_ffn_ln_out_dut_aligned);
     if (io.out_layer0_ffn1_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < FF_DIM; ++d) {
@@ -2269,6 +2335,14 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
       }
     }
+    if (io.out_layer0_residual_add_dut_aligned_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_residual_add_dut_aligned_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_ffn_residual_sum_dut_aligned[t][d].to_float());
+        }
+      }
+    }
     if (io.out_layer0_sublayer1_ln_in != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
@@ -2277,11 +2351,27 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
       }
     }
+    if (io.out_layer0_sublayer1_ln_in_dut_aligned != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_sublayer1_ln_in_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_ffn_ln_in_dut_aligned[t][d].to_float());
+        }
+      }
+    }
     if (io.out_layer0_ffn_ln_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
           io.out_layer0_ffn_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_ln_out[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer0_sublayer1_ln_out_dut_aligned != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_sublayer1_ln_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_ffn_ln_out_dut_aligned[t][d].to_float());
         }
       }
     }
