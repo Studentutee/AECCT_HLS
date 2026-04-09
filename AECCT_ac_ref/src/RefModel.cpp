@@ -607,6 +607,13 @@ static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
   return q;
 }
 
+static inline float quantize_int8_symmetric_f32(float x, float s_x) {
+  float q = std::round(x * s_x);
+  if (q > 127.0f) q = 127.0f;
+  if (q < -127.0f) q = -127.0f;
+  return q;
+}
+
 static inline int32_t clamp_int32(int32_t x, int32_t lo, int32_t hi) {
   return (x < lo) ? lo : ((x > hi) ? hi : x);
 }
@@ -1301,6 +1308,28 @@ static void quant_linear_75x128_to32(const fp32_ref_t x[TOKENS_T][FF_DIM],
   }
 }
 
+static void quant_linear_75x128_to32_dut_aligned_raw(const fp32_ref_t x[TOKENS_T][FF_DIM],
+                                                     const double w[D_MODEL * FF_DIM],
+                                                     const double b[D_MODEL],
+                                                     float s_x,
+                                                     float s_w,
+                                                     fp32_ref_t y[TOKENS_T][D_MODEL]) {
+  const float inv_scale = 1.0f / (s_x * s_w);
+  for (int t = 0; t < TOKENS_T; ++t) {
+    for (int o = 0; o < D_MODEL; ++o) {
+      float acc = static_cast<float>(b[o]);
+      const int base = o * FF_DIM;
+      for (int i = 0; i < FF_DIM; ++i) {
+        const float x_fp = x[t][i].to_float();
+        const float qx = quantize_int8_symmetric_f32(x_fp, s_x);
+        const float w_fp = static_cast<float>(w[base + i]);
+        acc += qx * (w_fp * inv_scale);
+      }
+      y[t][o] = fp32_ref_t(acc);
+    }
+  }
+}
+
 static void build_masks(bool one_ring[TOKENS_T][TOKENS_T],
                         bool second_ring[TOKENS_T][TOKENS_T]) {
   bool src[TOKENS_T][TOKENS_T];
@@ -1504,7 +1533,8 @@ static void run_layer(const int layer_idx,
                       fp32_ref_t ffn2_out[TOKENS_T][D_MODEL],
                       fp32_ref_t ffn_ln_out[TOKENS_T][D_MODEL],
                       fp32_ref_t (*ffn_ln_sum_out)[D_MODEL] = nullptr,
-                      fp32_ref_t (*ffn_ln_in_out)[D_MODEL] = nullptr) {
+                      fp32_ref_t (*ffn_ln_in_out)[D_MODEL] = nullptr,
+                      fp32_ref_t (*ffn_w2_quant_raw_out)[D_MODEL] = nullptr) {
   const bool strict_int16 = use_full_e4m3_nonlinear_stress(run_cfg);
   const double* w_q = nullptr;
   const double* b_q = nullptr;
@@ -1717,6 +1747,15 @@ static void run_layer(const int layer_idx,
                            strict_int16,
                            stats,
                            "Wff2");
+  if (ffn_w2_quant_raw_out != nullptr) {
+    quant_linear_75x128_to32_dut_aligned_raw(
+      act_out,
+      w_ff2,
+      b_ff2,
+      s_x_ff2,
+      static_cast<float>(sw_ff2[0]),
+      ffn_w2_quant_raw_out);
+  }
 
   if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -1926,6 +1965,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer0_ffn1[TOKENS_T][FF_DIM];
     static fp32_ref_t layer0_act[TOKENS_T][FF_DIM];
     static fp32_ref_t layer0_ffn2[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_w2_quant_raw[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_residual_sum[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_in[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
@@ -1952,7 +1992,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer0_ffn2,
               layer0_ffn_ln_out,
               layer0_ffn_residual_sum,
-              layer0_ffn_ln_in);
+              layer0_ffn_ln_in,
+              layer0_ffn_w2_quant_raw);
 
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_q", layer0_q);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_k", layer0_k);
@@ -2006,6 +2047,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer0_ffn1_out", layer0_ffn1);
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer0_act_out", layer0_act);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn2_out", layer0_ffn2);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_w2_quant_raw_out", layer0_ffn_w2_quant_raw);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_residual_sum", layer0_ffn_residual_sum);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_in", layer0_ffn_ln_in);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_out", layer0_ffn_ln_out);
@@ -2030,6 +2072,14 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         for (int d = 0; d < D_MODEL; ++d) {
           io.out_layer0_ffn2_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn2[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_out != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_ffn_w2_quant_raw_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer0_ffn_w2_quant_raw[t][d].to_float());
         }
       }
     }

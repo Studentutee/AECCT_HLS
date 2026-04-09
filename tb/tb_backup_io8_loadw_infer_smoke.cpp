@@ -1470,6 +1470,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_layer0_ffn1_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer0_relu_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer0_ffn2_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_attn_input((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_post_concat((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_attn_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
@@ -1500,6 +1501,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_layer0_ffn1_out = ref_layer0_ffn1_out.data();
     ref_io.out_layer0_relu_out = ref_layer0_relu_out.data();
     ref_io.out_layer0_ffn2_out = ref_layer0_ffn2_out.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_out = ref_layer0_ffn_w2_quant_raw_out.data();
     ref_io.out_layer0_attn_input = ref_layer0_attn_input.data();
     ref_io.out_layer0_post_concat = ref_layer0_post_concat.data();
     ref_io.out_layer0_attn_out = ref_layer0_attn_out.data();
@@ -2963,6 +2965,8 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             return cmp;
         };
         const Layer0StageCmp w2_scan_current_target_cmp = layer0_w2_final_store_cmp;
+        const Layer0StageCmp w2_scan_same_semantic_cmp =
+            compare_w2_final_against_ref(ref_layer0_ffn_w2_quant_raw_out);
         const Layer0StageCmp w2_scan_residual_add_cmp = compare_w2_final_against_ref(ref_layer0_residual_add_out);
         const Layer0StageCmp w2_scan_sublayer1_ln_in_cmp = compare_w2_final_against_ref(ref_layer0_sublayer1_ln_in);
         const Layer0StageCmp w2_scan_ffn_ln_out_cmp = compare_w2_final_against_ref(ref_layer0_ffn_ln_out);
@@ -3008,12 +3012,24 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
                 (unsigned)cmp.ref_bits);
         };
         emit_w2_semantic_candidate("layer0_ffn2_out", w2_scan_current_target_cmp);
+        emit_w2_semantic_candidate("layer0_ffn_w2_quant_raw_out", w2_scan_same_semantic_cmp);
         emit_w2_semantic_candidate("layer0_residual_add_out", w2_scan_residual_add_cmp);
         emit_w2_semantic_candidate("layer0_sublayer1_ln_in", w2_scan_sublayer1_ln_in_cmp);
         emit_w2_semantic_candidate("layer0_ffn_ln_out", w2_scan_ffn_ln_out_cmp);
         emit_w2_semantic_candidate("quant_contract_rebuild", w2_scan_quant_rebuild_cmp);
 
+        std::printf(
+            "[backup_io8][w2_same_semantic] sample=%u new_ref_target=layer0_ffn_w2_quant_raw_out new_ref_exact=%u first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X quant_contract_rebuild_exact=%u\n",
+            (unsigned)sample_idx,
+            (unsigned)(w2_scan_same_semantic_cmp.exact ? 1u : 0u),
+            (unsigned)w2_scan_same_semantic_cmp.token,
+            (unsigned)w2_scan_same_semantic_cmp.dim,
+            (unsigned)w2_scan_same_semantic_cmp.dut_bits,
+            (unsigned)w2_scan_same_semantic_cmp.ref_bits,
+            (unsigned)(w2_scan_quant_rebuild_cmp.exact ? 1u : 0u));
+
         const bool alternative_exact =
+            w2_scan_same_semantic_cmp.exact ||
             w2_scan_residual_add_cmp.exact ||
             w2_scan_sublayer1_ln_in_cmp.exact ||
             w2_scan_ffn_ln_out_cmp.exact;
@@ -3022,6 +3038,8 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         const char* best_ref_candidate = "none";
         if (w2_scan_current_target_cmp.exact) {
             best_ref_candidate = "layer0_ffn2_out";
+        } else if (w2_scan_same_semantic_cmp.exact) {
+            best_ref_candidate = "layer0_ffn_w2_quant_raw_out";
         } else if (w2_scan_residual_add_cmp.exact) {
             best_ref_candidate = "layer0_residual_add_out";
         } else if (w2_scan_sublayer1_ln_in_cmp.exact) {
@@ -3031,7 +3049,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         }
 
         const char* semantic_decision = "inconclusive";
-        if (!w2_scan_current_target_cmp.exact && alternative_exact) {
+        if (!w2_scan_current_target_cmp.exact && w2_scan_same_semantic_cmp.exact) {
+            semantic_decision = "same_semantic_golden_exact";
+        } else if (!w2_scan_current_target_cmp.exact && alternative_exact) {
             semantic_decision = "compare_target_selection_bug";
         } else if (!any_ref_candidate_exact && w2_scan_quant_rebuild_cmp.exact) {
             semantic_decision = "ref_semantic_gap_or_missing_golden";

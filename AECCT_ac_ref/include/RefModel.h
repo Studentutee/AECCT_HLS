@@ -34,6 +34,8 @@ struct RefModelIO {
   double* out_layer0_relu_out = nullptr;
   // optional layer0_ffn2_out dump: [B, 75, 32], row-major
   double* out_layer0_ffn2_out = nullptr;
+  // optional layer0 W2 quant-contract raw out dump (pre-residual): [B, 75, 32], row-major
+  double* out_layer0_ffn_w2_quant_raw_out = nullptr;
   // optional layer0_sublayer0_attn_input dump: [B, 75, 32], row-major
   double* out_layer0_attn_input = nullptr;
   // optional layer0_attention_post_concat dump: [B, 75, 32], row-major
