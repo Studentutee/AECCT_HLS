@@ -1322,38 +1322,37 @@ static void quant_linear_75x128_to32_dut_aligned_raw(const fp32_ref_t x[TOKENS_T
                                                      float* bias_domain_trace_out = nullptr,
                                                      float (*partial_acc_focus_trace_out)[kW2RawTraceFocusDims][kW2RawTraceAccSteps] = nullptr) {
   static_assert(kW2RawTraceFocusDims <= D_MODEL, "kW2RawTraceFocusDims must be <= D_MODEL");
-  const float inv_scale = 1.0f / (s_x * s_w);
+  const fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   for (int t = 0; t < TOKENS_T; ++t) {
-    float qx_cache[FF_DIM];
+    fp32_ref_t qx_cache[FF_DIM];
     for (int i = 0; i < FF_DIM; ++i) {
-      const float x_fp = x[t][i].to_float();
-      const float qx = quantize_int8_symmetric_f32(x_fp, s_x);
-      qx_cache[i] = qx;
+      const fp32_ref_t qx_fp = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
+      qx_cache[i] = qx_fp;
       if (qx_trace_out != nullptr) {
-        qx_trace_out[t][i] = qx;
+        qx_trace_out[t][i] = qx_fp.to_float();
       }
     }
     for (int o = 0; o < D_MODEL; ++o) {
-      float acc = static_cast<float>(b[o]);
+      fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
       if (bias_domain_trace_out != nullptr) {
-        bias_domain_trace_out[o] = acc;
+        bias_domain_trace_out[o] = acc.to_float();
       }
       if (partial_acc_focus_trace_out != nullptr && o < kW2RawTraceFocusDims) {
-        partial_acc_focus_trace_out[t][o][0] = acc;
+        partial_acc_focus_trace_out[t][o][0] = acc.to_float();
       }
       const int base = o * FF_DIM;
       for (int i = 0; i < FF_DIM; ++i) {
-        const float w_fp = static_cast<float>(w[base + i]);
-        const float weight_scaled = w_fp * inv_scale;
+        const fp32_ref_t w_fp = fp32_ref_t(static_cast<float>(w[base + i]));
+        const fp32_ref_t weight_scaled_fp = w_fp * inv;
         if (weight_scaled_trace_out != nullptr) {
-          weight_scaled_trace_out[o][i] = weight_scaled;
+          weight_scaled_trace_out[o][i] = weight_scaled_fp.to_float();
         }
-        acc += qx_cache[i] * weight_scaled;
+        acc += qx_cache[i] * weight_scaled_fp;
         if (partial_acc_focus_trace_out != nullptr && o < kW2RawTraceFocusDims) {
-          partial_acc_focus_trace_out[t][o][i + 1] = acc;
+          partial_acc_focus_trace_out[t][o][i + 1] = acc.to_float();
         }
       }
-      y[t][o] = fp32_ref_t(acc);
+      y[t][o] = acc;
     }
   }
 }
