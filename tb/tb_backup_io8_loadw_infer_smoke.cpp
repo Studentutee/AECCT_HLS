@@ -2212,7 +2212,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (uint32_t)N_NODES,
         d_model,
         layer0_x_words,
-        ref_layer0_ffn2_out,
+        ref_layer0_ffn_w2_quant_raw_out,
         [&](uint32_t flat) -> uint32_t {
             return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn2_out_word((aecct::u32_t)flat).to_uint();
         });
@@ -2284,7 +2284,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (uint32_t)N_NODES,
             d_model,
             layer0_x_words,
-            ref_layer0_ffn2_out,
+            ref_layer0_ffn_w2_quant_raw_out,
             [&](uint32_t flat) -> uint32_t {
                 return (uint32_t)aecct::transformer_layer_debug_peek_layer0_w2_out_word((aecct::u32_t)flat).to_uint();
             });
@@ -2292,7 +2292,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (uint32_t)N_NODES,
             d_model,
             layer0_x_words,
-            ref_layer0_ffn2_out,
+            ref_layer0_ffn_w2_quant_raw_out,
             [&](uint32_t flat) -> uint32_t {
                 return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn2_out_word((aecct::u32_t)flat).to_uint();
             });
@@ -2349,7 +2349,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (uint32_t)N_NODES,
             d_model,
             layer0_x_words,
-            ref_layer0_ffn2_out,
+            ref_layer0_ffn_w2_quant_raw_out,
             [&](uint32_t flat) -> uint32_t {
                 return (uint32_t)aecct::transformer_layer_debug_peek_layer0_residual_rhs_word((aecct::u32_t)flat).to_uint();
             });
@@ -2772,7 +2772,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
                 layer0_w2_prewrite_to_final_cmp.dut_bits = dut_prewrite_bits;
                 layer0_w2_prewrite_to_final_cmp.ref_bits = dut_final_store_bits;
             }
-            const uint32_t ref_final_store_bits = f32_to_bits((float)ref_layer0_ffn2_out[flat]);
+            const uint32_t ref_final_store_bits = f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_out[flat]);
             if (layer0_w2_final_store_cmp.exact && dut_final_store_bits != ref_final_store_bits) {
                 layer0_w2_final_store_cmp.exact = false;
                 layer0_w2_final_store_cmp.token = t;
@@ -2881,7 +2881,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer0_w2_input_fallback_preload_count = layer0_w2_input_fallback_preload_count;
 
     std::printf(
-        "[backup_io8][w2_path][round1] sample=%u A_input_exact=%u B_weight_row_exact=%u C_bias_exact=%u D_internal_prewrite_exact=%u E_final_store_exact=%u focus_dim=%u mainline_input_count=%u fallback_input_count=%u\n",
+        "[backup_io8][w2_path][round1] sample=%u A_input_exact=%u B_weight_row_exact=%u C_bias_exact=%u D_internal_prewrite_exact=%u E_final_store_exact=%u focus_dim=%u mainline_input_count=%u fallback_input_count=%u authoritative_target=layer0_ffn_w2_quant_raw_out\n",
         (unsigned)sample_idx,
         (unsigned)(r.layer0_w2_input_exact ? 1u : 0u),
         (unsigned)(r.layer0_w2_weight_row_exact ? 1u : 0u),
@@ -2948,7 +2948,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     }
     if (!r.layer0_w2_writeback_exact) {
         std::printf(
-            "[backup_io8][w2_path][E_final_store] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X prewrite_to_final_exact=%u\n",
+            "[backup_io8][w2_path][E_final_store] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X prewrite_to_final_exact=%u authoritative_target=layer0_ffn_w2_quant_raw_out\n",
             (unsigned)sample_idx,
             (unsigned)r.layer0_w2_writeback_first_mismatch_token,
             (unsigned)r.layer0_w2_writeback_first_mismatch_dim,
@@ -2957,7 +2957,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (unsigned)(r.layer0_w2_prewrite_to_final_exact ? 1u : 0u));
     } else {
         std::printf(
-            "[backup_io8][w2_path][E_final_store] sample=%u exact=1 prewrite_to_final_exact=%u\n",
+            "[backup_io8][w2_path][E_final_store] sample=%u exact=1 prewrite_to_final_exact=%u authoritative_target=layer0_ffn_w2_quant_raw_out\n",
             (unsigned)sample_idx,
             (unsigned)(r.layer0_w2_prewrite_to_final_exact ? 1u : 0u));
     }
@@ -2993,17 +2993,17 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             }
             return cmp;
         };
-        const Layer0StageCmp w2_scan_current_target_cmp = layer0_w2_final_store_cmp;
-        const Layer0StageCmp w2_scan_same_semantic_cmp =
-            compare_w2_final_against_ref(ref_layer0_ffn_w2_quant_raw_out);
+        const Layer0StageCmp w2_scan_authoritative_cmp = layer0_w2_final_store_cmp;
+        const Layer0StageCmp w2_scan_same_semantic_cmp = w2_scan_authoritative_cmp;
+        const Layer0StageCmp w2_scan_legacy_ffn2_cmp = compare_w2_final_against_ref(ref_layer0_ffn2_out);
         const Layer0StageCmp w2_scan_residual_add_cmp = compare_w2_final_against_ref(ref_layer0_residual_add_out);
         const Layer0StageCmp w2_scan_sublayer1_ln_in_cmp = compare_w2_final_against_ref(ref_layer0_sublayer1_ln_in);
         const Layer0StageCmp w2_scan_ffn_ln_out_cmp = compare_w2_final_against_ref(ref_layer0_ffn_ln_out);
         const Layer0StageCmp w2_scan_quant_rebuild_cmp = layer0_w2_final_vs_rebuild_cmp;
 
-        uint32_t anchor_token = w2_scan_current_target_cmp.token;
-        uint32_t anchor_dim = w2_scan_current_target_cmp.dim;
-        if (w2_scan_current_target_cmp.exact) {
+        uint32_t anchor_token = w2_scan_authoritative_cmp.token;
+        uint32_t anchor_dim = w2_scan_authoritative_cmp.dim;
+        if (w2_scan_authoritative_cmp.exact) {
             anchor_token = 0u;
             anchor_dim = 0u;
         }
@@ -3016,18 +3016,24 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (anchor_flat < layer0_w2_probe_words) ?
             (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_final_store_word((aecct::u32_t)anchor_flat).to_uint() :
             0u;
-        const uint32_t anchor_ref_current_bits = f32_to_bits((float)ref_layer0_ffn2_out[anchor_flat]);
+        const uint32_t anchor_ref_authoritative_bits = f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_out[anchor_flat]);
+        const uint32_t anchor_ref_legacy_ffn2_bits = f32_to_bits((float)ref_layer0_ffn2_out[anchor_flat]);
 
         std::printf(
-            "[backup_io8][w2_semantic_scan] sample=%u anchor_token=%u anchor_dim=%u dut_prewrite=0x%08X dut_final=0x%08X current_target=layer0_ffn2_out current_exact=%u current_ref=0x%08X quant_contract_rebuild_exact=%u\n",
+            "[backup_io8][w2_semantic_scan] sample=%u anchor_token=%u anchor_dim=%u dut_prewrite=0x%08X dut_final=0x%08X authoritative_target=layer0_ffn_w2_quant_raw_out authoritative_exact=%u authoritative_ref=0x%08X legacy_target=layer0_ffn2_out legacy_exact=%u legacy_ref=0x%08X quant_contract_rebuild_exact=%u\n",
             (unsigned)sample_idx,
             (unsigned)anchor_token,
             (unsigned)anchor_dim,
             (unsigned)anchor_dut_prewrite_bits,
             (unsigned)anchor_dut_final_bits,
-            (unsigned)(w2_scan_current_target_cmp.exact ? 1u : 0u),
-            (unsigned)anchor_ref_current_bits,
+            (unsigned)(w2_scan_authoritative_cmp.exact ? 1u : 0u),
+            (unsigned)anchor_ref_authoritative_bits,
+            (unsigned)(w2_scan_legacy_ffn2_cmp.exact ? 1u : 0u),
+            (unsigned)anchor_ref_legacy_ffn2_bits,
             (unsigned)(w2_scan_quant_rebuild_cmp.exact ? 1u : 0u));
+        std::printf(
+            "[backup_io8][w2_semantic_scan][policy] sample=%u authoritative_target=layer0_ffn_w2_quant_raw_out diagnostic_only_targets=layer0_ffn2_out,layer0_residual_add_out,layer0_sublayer1_ln_in,layer0_ffn_ln_out\n",
+            (unsigned)sample_idx);
 
         auto emit_w2_semantic_candidate = [&](const char* name, const Layer0StageCmp& cmp) {
             std::printf(
@@ -3040,15 +3046,15 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
                 (unsigned)cmp.dut_bits,
                 (unsigned)cmp.ref_bits);
         };
-        emit_w2_semantic_candidate("layer0_ffn2_out", w2_scan_current_target_cmp);
-        emit_w2_semantic_candidate("layer0_ffn_w2_quant_raw_out", w2_scan_same_semantic_cmp);
-        emit_w2_semantic_candidate("layer0_residual_add_out", w2_scan_residual_add_cmp);
-        emit_w2_semantic_candidate("layer0_sublayer1_ln_in", w2_scan_sublayer1_ln_in_cmp);
-        emit_w2_semantic_candidate("layer0_ffn_ln_out", w2_scan_ffn_ln_out_cmp);
+        emit_w2_semantic_candidate("authoritative.layer0_ffn_w2_quant_raw_out", w2_scan_same_semantic_cmp);
+        emit_w2_semantic_candidate("diagnostic.layer0_ffn2_out", w2_scan_legacy_ffn2_cmp);
+        emit_w2_semantic_candidate("diagnostic.layer0_residual_add_out", w2_scan_residual_add_cmp);
+        emit_w2_semantic_candidate("diagnostic.layer0_sublayer1_ln_in", w2_scan_sublayer1_ln_in_cmp);
+        emit_w2_semantic_candidate("diagnostic.layer0_ffn_ln_out", w2_scan_ffn_ln_out_cmp);
         emit_w2_semantic_candidate("quant_contract_rebuild", w2_scan_quant_rebuild_cmp);
 
         std::printf(
-            "[backup_io8][w2_same_semantic] sample=%u new_ref_target=layer0_ffn_w2_quant_raw_out new_ref_exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X quant_contract_rebuild_exact=%u\n",
+            "[backup_io8][w2_same_semantic] sample=%u authoritative_target=layer0_ffn_w2_quant_raw_out authoritative_exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X quant_contract_rebuild_exact=%u\n",
             (unsigned)sample_idx,
             (unsigned)(w2_scan_same_semantic_cmp.exact ? 1u : 0u),
             (unsigned)w2_scan_same_semantic_cmp.token,
@@ -3297,47 +3303,43 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
                 (unsigned)w2_scan_same_semantic_cmp.ref_bits);
         }
 
-        const bool alternative_exact =
-            w2_scan_same_semantic_cmp.exact ||
+        const bool diagnostic_only_exact =
+            w2_scan_legacy_ffn2_cmp.exact ||
             w2_scan_residual_add_cmp.exact ||
             w2_scan_sublayer1_ln_in_cmp.exact ||
             w2_scan_ffn_ln_out_cmp.exact;
         const bool any_ref_candidate_exact =
-            w2_scan_current_target_cmp.exact || alternative_exact;
+            w2_scan_authoritative_cmp.exact || diagnostic_only_exact;
         const char* best_ref_candidate = "none";
-        if (w2_scan_current_target_cmp.exact) {
-            best_ref_candidate = "layer0_ffn2_out";
-        } else if (w2_scan_same_semantic_cmp.exact) {
+        if (w2_scan_authoritative_cmp.exact) {
             best_ref_candidate = "layer0_ffn_w2_quant_raw_out";
+        } else if (w2_scan_legacy_ffn2_cmp.exact) {
+            best_ref_candidate = "layer0_ffn2_out(diagnostic)";
         } else if (w2_scan_residual_add_cmp.exact) {
-            best_ref_candidate = "layer0_residual_add_out";
+            best_ref_candidate = "layer0_residual_add_out(diagnostic)";
         } else if (w2_scan_sublayer1_ln_in_cmp.exact) {
-            best_ref_candidate = "layer0_sublayer1_ln_in";
+            best_ref_candidate = "layer0_sublayer1_ln_in(diagnostic)";
         } else if (w2_scan_ffn_ln_out_cmp.exact) {
-            best_ref_candidate = "layer0_ffn_ln_out";
+            best_ref_candidate = "layer0_ffn_ln_out(diagnostic)";
         }
 
         const char* semantic_decision = "inconclusive";
-        if (w2_scan_same_semantic_cmp.exact && !w2_scan_current_target_cmp.exact) {
-            semantic_decision = "current_compare_target_insufficient_or_wrong";
-        } else if (w2_scan_same_semantic_cmp.exact) {
-            semantic_decision = "same_semantic_golden_exact";
+        if (w2_scan_authoritative_cmp.exact) {
+            semantic_decision = "authoritative_same_semantic_baseline_exact";
         } else if (!w2_scan_same_semantic_cmp.exact && w2_scan_quant_rebuild_cmp.exact) {
-            semantic_decision = "refmodel_contract_gap_after_raw_dump";
-        } else if (!w2_scan_current_target_cmp.exact && alternative_exact) {
-            semantic_decision = "current_compare_target_insufficient_or_wrong";
+            semantic_decision = "authoritative_baseline_mismatch_quant_rebuild_exact";
+        } else if (!w2_scan_authoritative_cmp.exact && diagnostic_only_exact) {
+            semantic_decision = "diagnostic_only_target_exact_authoritative_gap";
         } else if (!any_ref_candidate_exact && w2_scan_quant_rebuild_cmp.exact) {
             semantic_decision = "refmodel_contract_gap_after_raw_dump";
-        } else if (w2_scan_current_target_cmp.exact) {
-            semantic_decision = "current_target_correct";
         } else if (!any_ref_candidate_exact && !w2_scan_quant_rebuild_cmp.exact) {
             semantic_decision = "possible_design_side_or_probe_contract_gap";
         }
         std::printf(
-            "[backup_io8][w2_semantic_scan][decision] sample=%u current_target_exact=%u alternative_exact=%u best_ref_candidate=%s quant_rebuild_exact=%u result=%s\n",
+            "[backup_io8][w2_semantic_scan][decision] sample=%u authoritative_exact=%u diagnostic_only_exact=%u best_ref_candidate=%s quant_rebuild_exact=%u result=%s\n",
             (unsigned)sample_idx,
-            (unsigned)(w2_scan_current_target_cmp.exact ? 1u : 0u),
-            (unsigned)(alternative_exact ? 1u : 0u),
+            (unsigned)(w2_scan_authoritative_cmp.exact ? 1u : 0u),
+            (unsigned)(diagnostic_only_exact ? 1u : 0u),
             best_ref_candidate,
             (unsigned)(w2_scan_quant_rebuild_cmp.exact ? 1u : 0u),
             semantic_decision);
