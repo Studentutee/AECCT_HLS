@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <cstddef>
+#include <cstdint>
 
 #include "RefAlgoVariant.h"
 #include "RefFragGroupConfig.h"
@@ -40,10 +41,22 @@ struct RefModelIO {
   double* out_layer0_ffn_w2_quant_raw_qx = nullptr;
   // optional layer0 W2 raw-quant weight*inv_scale trace: [B, 32, 128], row-major
   double* out_layer0_ffn_w2_quant_raw_weight_scaled = nullptr;
+  // optional layer0 W2 raw-quant weight bits trace: [B, 32, 128], row-major
+  double* out_layer0_ffn_w2_quant_raw_weight_bits = nullptr;
+  // optional layer0 W2 raw-quant weight*inv_scale bits trace: [B, 32, 128], row-major
+  double* out_layer0_ffn_w2_quant_raw_weight_scaled_bits = nullptr;
   // optional layer0 W2 raw-quant bias-domain trace: [B, 32], row-major
   double* out_layer0_ffn_w2_quant_raw_bias_domain = nullptr;
   // optional layer0 W2 raw-quant partial-acc trace (focus dims 0..2): [B, 75, 3, 129], row-major
   double* out_layer0_ffn_w2_quant_raw_partial_acc_focus = nullptr;
+  // optional layer0 W2 raw-quant scale bits trace: [B]
+  double* out_layer0_ffn_w2_quant_raw_sx_bits = nullptr;
+  double* out_layer0_ffn_w2_quant_raw_sw_bits = nullptr;
+  double* out_layer0_ffn_w2_quant_raw_inv_bits = nullptr;
+  // optional authoritative override for layer0 W2 raw helper scale bits
+  bool layer0_w2_raw_scale_bits_override_valid = false;
+  uint32_t layer0_w2_raw_sx_bits_override = 0u;
+  uint32_t layer0_w2_raw_inv_bits_override = 0u;
   // optional layer0_sublayer0_attn_input dump: [B, 75, 32], row-major
   double* out_layer0_attn_input = nullptr;
   // optional layer0_attention_post_concat dump: [B, 75, 32], row-major

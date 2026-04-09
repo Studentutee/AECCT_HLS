@@ -1459,6 +1459,12 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     if ((uint32_t)got_words.size() != (uint32_t)EXP_LEN_OUT_XPRED_WORDS) {
         fail("ref model probe output words mismatch EXP_LEN_OUT_XPRED_WORDS");
     }
+    const bool layer0_w2_quant_contract_valid_for_refio =
+        aecct::transformer_layer_debug_layer0_ffn_w2_quant_contract_valid();
+    const uint32_t layer0_w2_sx_bits_for_refio =
+        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_sx_bits().to_uint();
+    const uint32_t layer0_w2_inv_scale_bits_for_refio =
+        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_inv_scale_bits().to_uint();
 
     std::vector<double> ref_input_fp32((uint32_t)EXP_LEN_INFER_IN_WORDS, 0.0);
     REF_INPUT_CONVERT_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_INFER_IN_WORDS; ++i) {
@@ -1474,9 +1480,14 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_layer0_ffn_w2_quant_raw_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_ffn_w2_quant_raw_qx((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer0_ffn_w2_quant_raw_weight_scaled((uint32_t)D_MODEL * (uint32_t)D_FFN, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_weight_bits((uint32_t)D_MODEL * (uint32_t)D_FFN, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_weight_scaled_bits((uint32_t)D_MODEL * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer0_ffn_w2_quant_raw_bias_domain((uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_ffn_w2_quant_raw_partial_acc_focus(
         (uint32_t)N_NODES * kRefRawQuantTraceFocusDims * ((uint32_t)D_FFN + 1u), 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_sx_bits(1u, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_sw_bits(1u, 0.0);
+    std::vector<double> ref_layer0_ffn_w2_quant_raw_inv_bits(1u, 0.0);
     std::vector<double> ref_layer0_attn_input((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_post_concat((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_attn_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
@@ -1510,8 +1521,16 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_layer0_ffn_w2_quant_raw_out = ref_layer0_ffn_w2_quant_raw_out.data();
     ref_io.out_layer0_ffn_w2_quant_raw_qx = ref_layer0_ffn_w2_quant_raw_qx.data();
     ref_io.out_layer0_ffn_w2_quant_raw_weight_scaled = ref_layer0_ffn_w2_quant_raw_weight_scaled.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_weight_bits = ref_layer0_ffn_w2_quant_raw_weight_bits.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_weight_scaled_bits = ref_layer0_ffn_w2_quant_raw_weight_scaled_bits.data();
     ref_io.out_layer0_ffn_w2_quant_raw_bias_domain = ref_layer0_ffn_w2_quant_raw_bias_domain.data();
     ref_io.out_layer0_ffn_w2_quant_raw_partial_acc_focus = ref_layer0_ffn_w2_quant_raw_partial_acc_focus.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_sx_bits = ref_layer0_ffn_w2_quant_raw_sx_bits.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_sw_bits = ref_layer0_ffn_w2_quant_raw_sw_bits.data();
+    ref_io.out_layer0_ffn_w2_quant_raw_inv_bits = ref_layer0_ffn_w2_quant_raw_inv_bits.data();
+    ref_io.layer0_w2_raw_scale_bits_override_valid = layer0_w2_quant_contract_valid_for_refio;
+    ref_io.layer0_w2_raw_sx_bits_override = layer0_w2_sx_bits_for_refio;
+    ref_io.layer0_w2_raw_inv_bits_override = layer0_w2_inv_scale_bits_for_refio;
     ref_io.out_layer0_attn_input = ref_layer0_attn_input.data();
     ref_io.out_layer0_post_concat = ref_layer0_post_concat.data();
     ref_io.out_layer0_attn_out = ref_layer0_attn_out.data();
@@ -3073,10 +3092,22 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         };
 
         RawTraceCmp qx_cmp = make_raw_trace_cmp_pass();
+        RawTraceCmp weight_bits_cmp = make_raw_trace_cmp_pass();
         RawTraceCmp weight_scaled_cmp = make_raw_trace_cmp_pass();
         RawTraceCmp bias_domain_cmp = make_raw_trace_cmp_pass();
         RawTraceCmp partial_acc_cmp = make_raw_trace_cmp_pass();
         const uint32_t partial_acc_steps = d_ffn + 1u;
+        const uint32_t layer0_w2_inv_sw_base =
+            w_base_word + kParamMeta[kQuantLinearMeta[(uint32_t)QLM_L0_WFF2].inv_sw_param_id].offset_w;
+        const uint32_t dut_sx_bits = layer0_w2_sx_bits;
+        const uint32_t dut_sw_bits = (uint32_t)sram[layer0_w2_inv_sw_base].to_uint();
+        const uint32_t dut_inv_bits = layer0_w2_inv_scale_bits;
+        const uint32_t ref_sx_bits = (uint32_t)ref_layer0_ffn_w2_quant_raw_sx_bits[0];
+        const uint32_t ref_sw_bits = (uint32_t)ref_layer0_ffn_w2_quant_raw_sw_bits[0];
+        const uint32_t ref_inv_bits = (uint32_t)ref_layer0_ffn_w2_quant_raw_inv_bits[0];
+        const bool sx_bits_exact = (dut_sx_bits == ref_sx_bits);
+        const bool sw_bits_exact = (dut_sw_bits == ref_sw_bits);
+        const bool inv_bits_exact = (dut_inv_bits == ref_inv_bits);
 
         W2_RAW_TRACE_QX_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
             const uint32_t ffn_row = t * d_ffn;
@@ -3099,15 +3130,24 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         W2_RAW_TRACE_WEIGHT_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
             W2_RAW_TRACE_WEIGHT_COL_LOOP: for (uint32_t c = 0u; c < d_ffn; ++c) {
                 const uint32_t ref_weight_bits = (uint32_t)sram[layer0_w2_weight_base + d * d_ffn + c].to_uint();
+                const uint32_t ref_weight_trace_bits =
+                    (uint32_t)ref_layer0_ffn_w2_quant_raw_weight_bits[d * d_ffn + c];
+                if (ref_weight_bits != ref_weight_trace_bits) {
+                    mark_raw_trace_cmp(weight_bits_cmp, 0u, d, c, ref_weight_bits, ref_weight_trace_bits);
+                    break;
+                }
                 const aecct::fp32_t w_fp = aecct::fp32_from_bits((aecct::u32_t)ref_weight_bits);
                 const aecct::fp32_t dut_weight_scaled_fp = w_fp * layer0_w2_inv_scale_fp;
                 const uint32_t dut_weight_scaled_bits = (uint32_t)aecct::bits_from_fp32(dut_weight_scaled_fp).to_uint();
                 const uint32_t ref_weight_scaled_bits =
-                    f32_to_bits((float)ref_layer0_ffn_w2_quant_raw_weight_scaled[d * d_ffn + c]);
+                    (uint32_t)ref_layer0_ffn_w2_quant_raw_weight_scaled_bits[d * d_ffn + c];
                 if (dut_weight_scaled_bits != ref_weight_scaled_bits) {
                     mark_raw_trace_cmp(weight_scaled_cmp, 0u, d, c, dut_weight_scaled_bits, ref_weight_scaled_bits);
                     break;
                 }
+            }
+            if (!weight_bits_cmp.exact) {
+                break;
             }
             if (!weight_scaled_cmp.exact) {
                 break;
@@ -3162,8 +3202,12 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
 
         const bool final_raw_exact = w2_scan_same_semantic_cmp.exact;
         const char* raw_quant_first_divergence = "none";
-        if (!qx_cmp.exact) {
+        if (!inv_bits_exact) {
+            raw_quant_first_divergence = "inv_bits";
+        } else if (!qx_cmp.exact) {
             raw_quant_first_divergence = "qx";
+        } else if (!weight_bits_cmp.exact) {
+            raw_quant_first_divergence = "weight";
         } else if (!weight_scaled_cmp.exact) {
             raw_quant_first_divergence = "weight_scaled";
         } else if (!bias_domain_cmp.exact) {
@@ -3175,14 +3219,29 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         }
 
         std::printf(
-            "[backup_io8][refmodel_raw_quant_trace] sample=%u qx_exact=%u weight_scaled_exact=%u bias_domain_exact=%u partial_acc_exact=%u final_raw_exact=%u first_divergence=%s\n",
+            "[backup_io8][refmodel_raw_quant_trace] sample=%u sx_bits_exact=%u sw_bits_exact=%u inv_bits_exact=%u qx_exact=%u weight_scaled_exact=%u bias_domain_exact=%u partial_acc_exact=%u final_raw_exact=%u first_divergence=%s\n",
             (unsigned)sample_idx,
+            (unsigned)(sx_bits_exact ? 1u : 0u),
+            (unsigned)(sw_bits_exact ? 1u : 0u),
+            (unsigned)(inv_bits_exact ? 1u : 0u),
             (unsigned)(qx_cmp.exact ? 1u : 0u),
             (unsigned)(weight_scaled_cmp.exact ? 1u : 0u),
             (unsigned)(bias_domain_cmp.exact ? 1u : 0u),
             (unsigned)(partial_acc_cmp.exact ? 1u : 0u),
             (unsigned)(final_raw_exact ? 1u : 0u),
             raw_quant_first_divergence);
+        std::printf(
+            "[backup_io8][refmodel_raw_quant_trace][scale_bits] sample=%u sx_bits_exact=%u sw_bits_exact=%u inv_bits_exact=%u dut_sx=0x%08X ref_sx=0x%08X dut_sw=0x%08X ref_sw=0x%08X dut_inv=0x%08X ref_inv=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)(sx_bits_exact ? 1u : 0u),
+            (unsigned)(sw_bits_exact ? 1u : 0u),
+            (unsigned)(inv_bits_exact ? 1u : 0u),
+            (unsigned)dut_sx_bits,
+            (unsigned)ref_sx_bits,
+            (unsigned)dut_sw_bits,
+            (unsigned)ref_sw_bits,
+            (unsigned)dut_inv_bits,
+            (unsigned)ref_inv_bits);
         if (!qx_cmp.exact) {
             std::printf(
                 "[backup_io8][refmodel_raw_quant_trace][qx] sample=%u first_mismatch_token=%u input_col=%u dut=0x%08X ref=0x%08X\n",
@@ -3191,6 +3250,15 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
                 (unsigned)qx_cmp.index,
                 (unsigned)qx_cmp.dut_bits,
                 (unsigned)qx_cmp.ref_bits);
+        }
+        if (!weight_bits_cmp.exact) {
+            std::printf(
+                "[backup_io8][refmodel_raw_quant_trace][weight] sample=%u first_mismatch_dim=%u input_col=%u dut=0x%08X ref=0x%08X\n",
+                (unsigned)sample_idx,
+                (unsigned)weight_bits_cmp.dim,
+                (unsigned)weight_bits_cmp.index,
+                (unsigned)weight_bits_cmp.dut_bits,
+                (unsigned)weight_bits_cmp.ref_bits);
         }
         if (!weight_scaled_cmp.exact) {
             std::printf(

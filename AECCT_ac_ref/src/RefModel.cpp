@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -612,6 +613,18 @@ static inline float quantize_int8_symmetric_f32(float x, float s_x) {
   if (q > 127.0f) q = 127.0f;
   if (q < -127.0f) q = -127.0f;
   return q;
+}
+
+static inline uint32_t ref_f32_to_bits(float x) {
+  uint32_t u = 0u;
+  std::memcpy(&u, &x, sizeof(u));
+  return u;
+}
+
+static inline float ref_bits_to_f32(uint32_t bits) {
+  float x = 0.0f;
+  std::memcpy(&x, &bits, sizeof(x));
+  return x;
 }
 
 static constexpr int kW2RawTraceFocusDims = 3;
@@ -1320,13 +1333,38 @@ static void quant_linear_75x128_to32_dut_aligned_raw(const fp32_ref_t x[TOKENS_T
                                                      float (*qx_trace_out)[FF_DIM] = nullptr,
                                                      float (*weight_scaled_trace_out)[FF_DIM] = nullptr,
                                                      float* bias_domain_trace_out = nullptr,
-                                                     float (*partial_acc_focus_trace_out)[kW2RawTraceFocusDims][kW2RawTraceAccSteps] = nullptr) {
+                                                     float (*partial_acc_focus_trace_out)[kW2RawTraceFocusDims][kW2RawTraceAccSteps] = nullptr,
+                                                     bool scale_bits_override_valid = false,
+                                                     uint32_t sx_bits_override = 0u,
+                                                     uint32_t inv_bits_override = 0u,
+                                                     uint32_t* sx_bits_trace_out = nullptr,
+                                                     uint32_t* sw_bits_trace_out = nullptr,
+                                                     uint32_t* inv_bits_trace_out = nullptr,
+                                                     uint32_t (*weight_bits_trace_out)[FF_DIM] = nullptr,
+                                                     uint32_t (*weight_scaled_bits_trace_out)[FF_DIM] = nullptr) {
   static_assert(kW2RawTraceFocusDims <= D_MODEL, "kW2RawTraceFocusDims must be <= D_MODEL");
-  const fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
+  fp32_ref_t sx_q = fp32_ref_t(s_x);
+  fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
+  if (scale_bits_override_valid) {
+    sx_q = fp32_ref_t(ref_bits_to_f32(sx_bits_override));
+    inv = fp32_ref_t(ref_bits_to_f32(inv_bits_override));
+  }
+  const uint32_t sx_bits_used = ref_f32_to_bits(sx_q.to_float());
+  const uint32_t sw_bits_used = ref_f32_to_bits(s_w);
+  const uint32_t inv_bits_used = ref_f32_to_bits(inv.to_float());
+  if (sx_bits_trace_out != nullptr) {
+    *sx_bits_trace_out = sx_bits_used;
+  }
+  if (sw_bits_trace_out != nullptr) {
+    *sw_bits_trace_out = sw_bits_used;
+  }
+  if (inv_bits_trace_out != nullptr) {
+    *inv_bits_trace_out = inv_bits_used;
+  }
   for (int t = 0; t < TOKENS_T; ++t) {
     fp32_ref_t qx_cache[FF_DIM];
     for (int i = 0; i < FF_DIM; ++i) {
-      const fp32_ref_t qx_fp = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
+      const fp32_ref_t qx_fp = quantize_int8_symmetric(x[t][i], sx_q);
       qx_cache[i] = qx_fp;
       if (qx_trace_out != nullptr) {
         qx_trace_out[t][i] = qx_fp.to_float();
@@ -1344,6 +1382,12 @@ static void quant_linear_75x128_to32_dut_aligned_raw(const fp32_ref_t x[TOKENS_T
       for (int i = 0; i < FF_DIM; ++i) {
         const fp32_ref_t w_fp = fp32_ref_t(static_cast<float>(w[base + i]));
         const fp32_ref_t weight_scaled_fp = w_fp * inv;
+        if (weight_bits_trace_out != nullptr) {
+          weight_bits_trace_out[o][i] = ref_f32_to_bits(w_fp.to_float());
+        }
+        if (weight_scaled_bits_trace_out != nullptr) {
+          weight_scaled_bits_trace_out[o][i] = ref_f32_to_bits(weight_scaled_fp.to_float());
+        }
         if (weight_scaled_trace_out != nullptr) {
           weight_scaled_trace_out[o][i] = weight_scaled_fp.to_float();
         }
@@ -1565,7 +1609,15 @@ static void run_layer(const int layer_idx,
                       float (*ffn_w2_quant_raw_qx_out)[FF_DIM] = nullptr,
                       float (*ffn_w2_quant_raw_weight_scaled_out)[FF_DIM] = nullptr,
                       float* ffn_w2_quant_raw_bias_domain_out = nullptr,
-                      float (*ffn_w2_quant_raw_partial_acc_focus_out)[kW2RawTraceFocusDims][kW2RawTraceAccSteps] = nullptr) {
+                      float (*ffn_w2_quant_raw_partial_acc_focus_out)[kW2RawTraceFocusDims][kW2RawTraceAccSteps] = nullptr,
+                      bool ffn_w2_raw_scale_bits_override_valid = false,
+                      uint32_t ffn_w2_raw_sx_bits_override = 0u,
+                      uint32_t ffn_w2_raw_inv_bits_override = 0u,
+                      uint32_t* ffn_w2_raw_sx_bits_out = nullptr,
+                      uint32_t* ffn_w2_raw_sw_bits_out = nullptr,
+                      uint32_t* ffn_w2_raw_inv_bits_out = nullptr,
+                      uint32_t (*ffn_w2_raw_weight_bits_out)[FF_DIM] = nullptr,
+                      uint32_t (*ffn_w2_raw_weight_scaled_bits_out)[FF_DIM] = nullptr) {
   const bool strict_int16 = use_full_e4m3_nonlinear_stress(run_cfg);
   const double* w_q = nullptr;
   const double* b_q = nullptr;
@@ -1789,7 +1841,15 @@ static void run_layer(const int layer_idx,
       ffn_w2_quant_raw_qx_out,
       ffn_w2_quant_raw_weight_scaled_out,
       ffn_w2_quant_raw_bias_domain_out,
-      ffn_w2_quant_raw_partial_acc_focus_out);
+      ffn_w2_quant_raw_partial_acc_focus_out,
+      ffn_w2_raw_scale_bits_override_valid,
+      ffn_w2_raw_sx_bits_override,
+      ffn_w2_raw_inv_bits_override,
+      ffn_w2_raw_sx_bits_out,
+      ffn_w2_raw_sw_bits_out,
+      ffn_w2_raw_inv_bits_out,
+      ffn_w2_raw_weight_bits_out,
+      ffn_w2_raw_weight_scaled_bits_out);
   }
 
   if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
@@ -2003,8 +2063,13 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer0_ffn_w2_quant_raw[TOKENS_T][D_MODEL];
     static float layer0_ffn_w2_quant_raw_qx[TOKENS_T][FF_DIM];
     static float layer0_ffn_w2_quant_raw_weight_scaled[D_MODEL][FF_DIM];
+    static uint32_t layer0_ffn_w2_quant_raw_weight_bits[D_MODEL][FF_DIM];
+    static uint32_t layer0_ffn_w2_quant_raw_weight_scaled_bits[D_MODEL][FF_DIM];
     static float layer0_ffn_w2_quant_raw_bias_domain[D_MODEL];
     static float layer0_ffn_w2_quant_raw_partial_acc_focus[TOKENS_T][kW2RawTraceFocusDims][kW2RawTraceAccSteps];
+    static uint32_t layer0_ffn_w2_quant_raw_sx_bits = 0u;
+    static uint32_t layer0_ffn_w2_quant_raw_sw_bits = 0u;
+    static uint32_t layer0_ffn_w2_quant_raw_inv_bits = 0u;
     static fp32_ref_t layer0_ffn_residual_sum[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_in[TOKENS_T][D_MODEL];
     static fp32_ref_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
@@ -2036,7 +2101,15 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer0_ffn_w2_quant_raw_qx,
               layer0_ffn_w2_quant_raw_weight_scaled,
               layer0_ffn_w2_quant_raw_bias_domain,
-              layer0_ffn_w2_quant_raw_partial_acc_focus);
+              layer0_ffn_w2_quant_raw_partial_acc_focus,
+              io.layer0_w2_raw_scale_bits_override_valid,
+              io.layer0_w2_raw_sx_bits_override,
+              io.layer0_w2_raw_inv_bits_override,
+              &layer0_ffn_w2_quant_raw_sx_bits,
+              &layer0_ffn_w2_quant_raw_sw_bits,
+              &layer0_ffn_w2_quant_raw_inv_bits,
+              layer0_ffn_w2_quant_raw_weight_bits,
+              layer0_ffn_w2_quant_raw_weight_scaled_bits);
 
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_q", layer0_q);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_k", layer0_k);
@@ -2142,6 +2215,22 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
       }
     }
+    if (io.out_layer0_ffn_w2_quant_raw_weight_bits != nullptr) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        for (int i = 0; i < FF_DIM; ++i) {
+          io.out_layer0_ffn_w2_quant_raw_weight_bits[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
+            static_cast<double>(layer0_ffn_w2_quant_raw_weight_bits[d][i]);
+        }
+      }
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_weight_scaled_bits != nullptr) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        for (int i = 0; i < FF_DIM; ++i) {
+          io.out_layer0_ffn_w2_quant_raw_weight_scaled_bits[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
+            static_cast<double>(layer0_ffn_w2_quant_raw_weight_scaled_bits[d][i]);
+        }
+      }
+    }
     if (io.out_layer0_ffn_w2_quant_raw_bias_domain != nullptr) {
       for (int d = 0; d < D_MODEL; ++d) {
         io.out_layer0_ffn_w2_quant_raw_bias_domain[(b * D_MODEL) + d] =
@@ -2162,6 +2251,15 @@ void RefModel::infer_step0(const RefModelIO& io) const {
           }
         }
       }
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_sx_bits != nullptr) {
+      io.out_layer0_ffn_w2_quant_raw_sx_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_sx_bits);
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_sw_bits != nullptr) {
+      io.out_layer0_ffn_w2_quant_raw_sw_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_sw_bits);
+    }
+    if (io.out_layer0_ffn_w2_quant_raw_inv_bits != nullptr) {
+      io.out_layer0_ffn_w2_quant_raw_inv_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_inv_bits);
     }
     if (io.out_layer0_residual_add_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
