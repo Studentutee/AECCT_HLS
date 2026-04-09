@@ -19,6 +19,7 @@
 #include "output_x_pred_step0.h"
 #include "output_logits_step0.h"
 #include "RefModel.h"
+#include "common/backup_io8_compare_common.h"
 
 namespace {
 
@@ -133,6 +134,9 @@ struct RefModelStageCompareResult {
     bool layer1_sublayer1_ln_in_exact;
     bool layer1_sublayer1_ln_affine_out_exact;
     bool layer1_sublayer1_ln_writeback_exact;
+    bool end_norm_old_baseline_exact;
+    bool st_old_baseline_exact;
+    bool logit_old_baseline_exact;
     bool end_norm_exact;
     bool st_exact;
     bool logit_exact;
@@ -320,6 +324,12 @@ struct RefModelStageCompareResult {
     uint32_t earliest_e1_first_mismatch_dim;
     uint32_t earliest_e1_first_mismatch_dut_bits;
     uint32_t earliest_e1_first_mismatch_ref_bits;
+    uint32_t end_norm_old_baseline_mismatch_count;
+    uint32_t end_norm_dut_aligned_mismatch_count;
+    uint32_t st_old_baseline_mismatch_count;
+    uint32_t st_dut_aligned_mismatch_count;
+    uint32_t logit_old_baseline_mismatch_count;
+    uint32_t logit_dut_aligned_mismatch_count;
     uint32_t end_norm_first_mismatch_token;
     uint32_t end_norm_first_mismatch_dim;
     uint32_t end_norm_dut_bits;
@@ -1295,6 +1305,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer1_sublayer1_ln_in_exact = true;
     r.layer1_sublayer1_ln_affine_out_exact = true;
     r.layer1_sublayer1_ln_writeback_exact = true;
+    r.end_norm_old_baseline_exact = true;
+    r.st_old_baseline_exact = true;
+    r.logit_old_baseline_exact = true;
     r.end_norm_exact = true;
     r.st_exact = true;
     r.logit_exact = true;
@@ -1482,6 +1495,12 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.earliest_e1_first_mismatch_dim = 0u;
     r.earliest_e1_first_mismatch_dut_bits = 0u;
     r.earliest_e1_first_mismatch_ref_bits = 0u;
+    r.end_norm_old_baseline_mismatch_count = 0u;
+    r.end_norm_dut_aligned_mismatch_count = 0u;
+    r.st_old_baseline_mismatch_count = 0u;
+    r.st_dut_aligned_mismatch_count = 0u;
+    r.logit_old_baseline_mismatch_count = 0u;
+    r.logit_dut_aligned_mismatch_count = 0u;
     r.end_norm_first_mismatch_token = 0u;
     r.end_norm_first_mismatch_dim = 0u;
     r.end_norm_dut_bits = 0u;
@@ -1654,6 +1673,13 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (uint32_t)aecct::default_ffn_scratch().w2_out_base_word.to_uint();
     const uint32_t final_scalar_base = (uint32_t)sram_map::SCR_FINAL_SCALAR_BASE_W;
     const uint32_t logits_base = (uint32_t)aecct::top_peek_infer_logits_base_word().to_uint();
+    const aecct::u32_t top_w_base_word = aecct::top_peek_w_base_word();
+    const uint32_t w_base_word = (uint32_t)top_w_base_word.to_uint();
+    const aecct::HeadParamBase hp = aecct::make_head_param_base(top_w_base_word);
+    const uint32_t ffn1_w_base = (uint32_t)hp.ffn1_w_base_word.to_uint();
+    const uint32_t ffn1_b_base = (uint32_t)hp.ffn1_b_base_word.to_uint();
+    const uint32_t out_fc_w_base = (uint32_t)hp.out_fc_w_base_word.to_uint();
+    const uint32_t out_fc_b_base = (uint32_t)hp.out_fc_b_base_word.to_uint();
     const uint32_t d_model = (uint32_t)D_MODEL;
     const uint32_t d_ffn = (uint32_t)D_FFN;
     const uint32_t layer0_x_words = (uint32_t)aecct::transformer_layer_debug_layer0_x_words_valid().to_uint();
@@ -2456,55 +2482,168 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact ? 1u : 0u),
         layer1_sublayer1_ln_affine_first_subbucket);
 
-    REF_END_NORM_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
-        const uint32_t row_base = x_end_base + t * d_model;
-        REF_END_NORM_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
-            const uint32_t dut_bits = (uint32_t)sram[row_base + d].to_uint();
-            const uint32_t ref_bits = f32_to_bits((float)ref_end_norm[t * d_model + d]);
-            if (dut_bits != ref_bits) {
+    const ac_int<32, true> end_d_model_i = (ac_int<32, true>)((d_model == 0u) ? 1u : d_model);
+    const aecct::fp32_t end_d_model_den(end_d_model_i);
+    const aecct::fp32_t end_ln_eps_fp = aecct::fp32_from_bits(aecct::LN_EPS_BITS);
+    const uint32_t end_norm_gamma_base = w_base_word + kParamMeta[64u].offset_w;
+    const uint32_t end_norm_beta_base = w_base_word + kParamMeta[16u].offset_w;
+    std::vector<uint32_t> end_norm_dut_aligned_words((uint32_t)N_NODES * d_model, 0u);
+    backup_io8_compare_common::DualCompareSummary end_norm_dual_cmp =
+        backup_io8_compare_common::make_dual_compare_summary();
+    bool end_norm_old_first_mismatch_valid = false;
+    uint32_t end_norm_old_first_mismatch_token = 0u;
+    uint32_t end_norm_old_first_mismatch_dim = 0u;
+    uint32_t end_norm_old_first_mismatch_dut_bits = 0u;
+    uint32_t end_norm_old_first_mismatch_ref_bits = 0u;
+    END_NORM_DUT_ALIGNED_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        aecct::fp32_t sum_fp = aecct::fp32_zero();
+        END_NORM_DUT_ALIGNED_SUM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t ln_in_bits =
+                (uint32_t)aecct::top_peek_infer_endln_input_word(row_base + d).to_uint();
+            const aecct::fp32_t ln_in_raw = tb_fp32_from_u32_bits(ln_in_bits);
+            const aecct::fp32_t ln_in_sanitized = aecct::layernorm_fp32_sanitize_input(ln_in_raw);
+            sum_fp += ln_in_sanitized;
+        }
+        const aecct::fp32_t mean_fp = sum_fp / end_d_model_den;
+        aecct::fp32_t var_acc_fp = aecct::fp32_zero();
+        END_NORM_DUT_ALIGNED_VAR_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t ln_in_bits =
+                (uint32_t)aecct::top_peek_infer_endln_input_word(row_base + d).to_uint();
+            const aecct::fp32_t ln_in_raw = tb_fp32_from_u32_bits(ln_in_bits);
+            const aecct::fp32_t ln_in_sanitized = aecct::layernorm_fp32_sanitize_input(ln_in_raw);
+            const aecct::fp32_t delta = ln_in_sanitized - mean_fp;
+            var_acc_fp += (delta * delta);
+        }
+        const aecct::fp32_t var_fp = var_acc_fp / end_d_model_den;
+        aecct::fp32_t var_plus_eps_fp = var_fp + end_ln_eps_fp;
+        if (!aecct::layernorm_fp32_is_finite(var_plus_eps_fp) || var_plus_eps_fp <= aecct::fp32_zero()) {
+            var_plus_eps_fp = end_ln_eps_fp;
+        }
+        if (!aecct::layernorm_fp32_is_finite(var_plus_eps_fp) || var_plus_eps_fp <= aecct::fp32_zero()) {
+            var_plus_eps_fp = aecct::fp32_one();
+        }
+        const aecct::fp32_t inv_std_fp = aecct::layernorm_refstyle_inv_sqrt_approx(var_plus_eps_fp);
+        END_NORM_DUT_ALIGNED_AFFINE_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const uint32_t ln_in_bits =
+                (uint32_t)aecct::top_peek_infer_endln_input_word(flat).to_uint();
+            const aecct::fp32_t ln_in_raw = tb_fp32_from_u32_bits(ln_in_bits);
+            const aecct::fp32_t ln_in_sanitized = aecct::layernorm_fp32_sanitize_input(ln_in_raw);
+            const aecct::fp32_t gamma_fp =
+                tb_fp32_from_u32_bits((uint32_t)sram[end_norm_gamma_base + d].to_uint());
+            const aecct::fp32_t beta_fp =
+                tb_fp32_from_u32_bits((uint32_t)sram[end_norm_beta_base + d].to_uint());
+            const aecct::fp32_t y_fp = ((ln_in_sanitized - mean_fp) * inv_std_fp) * gamma_fp + beta_fp;
+            const uint32_t dut_aligned_bits = tb_u32_bits_from_fp32(y_fp);
+            end_norm_dut_aligned_words[flat] = dut_aligned_bits;
+
+            const uint32_t dut_bits = (uint32_t)sram[x_end_base + flat].to_uint();
+            const uint32_t old_ref_bits = f32_to_bits((float)ref_end_norm[flat]);
+            if (!end_norm_old_first_mismatch_valid && dut_bits != old_ref_bits) {
+                end_norm_old_first_mismatch_valid = true;
+                end_norm_old_first_mismatch_token = t;
+                end_norm_old_first_mismatch_dim = d;
+                end_norm_old_first_mismatch_dut_bits = dut_bits;
+                end_norm_old_first_mismatch_ref_bits = old_ref_bits;
+            }
+            backup_io8_compare_common::dual_compare_update(
+                end_norm_dual_cmp,
+                dut_bits == old_ref_bits,
+                dut_bits == dut_aligned_bits
+            );
+            if (r.end_norm_exact && dut_bits != dut_aligned_bits) {
                 r.end_norm_exact = false;
                 r.end_norm_first_mismatch_token = t;
                 r.end_norm_first_mismatch_dim = d;
                 r.end_norm_dut_bits = dut_bits;
-                r.end_norm_ref_bits = ref_bits;
-                break;
+                r.end_norm_ref_bits = dut_aligned_bits;
             }
         }
-        if (!r.end_norm_exact) {
-            break;
-        }
+    }
+    r.end_norm_old_baseline_mismatch_count = end_norm_dual_cmp.old_baseline_mismatch_count;
+    r.end_norm_dut_aligned_mismatch_count = end_norm_dual_cmp.dut_aligned_mismatch_count;
+    r.end_norm_old_baseline_exact = backup_io8_compare_common::dual_compare_old_exact(end_norm_dual_cmp);
+    r.end_norm_exact = backup_io8_compare_common::dual_compare_aligned_exact(end_norm_dual_cmp);
+    if (r.end_norm_exact) {
+        r.end_norm_dut_bits = (uint32_t)sram[x_end_base + focused_idx * d_model].to_uint();
+        r.end_norm_ref_bits = end_norm_dut_aligned_words[focused_idx * d_model];
     }
 
-    REF_ST_COMPARE_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+    std::vector<uint32_t> st_dut_aligned_words((uint32_t)N_NODES, 0u);
+    backup_io8_compare_common::DualCompareSummary st_dual_cmp =
+        backup_io8_compare_common::make_dual_compare_summary();
+    ST_DUT_ALIGNED_GEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        aecct::fp32_t st_acc_fp = tb_fp32_from_u32_bits((uint32_t)sram[ffn1_b_base + 0u].to_uint());
+        ST_DUT_ALIGNED_DOT_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
+            const aecct::fp32_t xv_fp = tb_fp32_from_u32_bits(end_norm_dut_aligned_words[row_base + i]);
+            const aecct::fp32_t wv_fp = tb_fp32_from_u32_bits((uint32_t)sram[ffn1_w_base + i].to_uint());
+            st_acc_fp += (xv_fp * wv_fp);
+        }
+        st_dut_aligned_words[t] = tb_u32_bits_from_fp32(st_acc_fp);
+    }
+    REF_ST_DUAL_COMPARE_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t dut_bits = (uint32_t)sram[final_scalar_base + t].to_uint();
-        const uint32_t ref_bits = f32_to_bits((float)ref_st[t]);
-        if (dut_bits != ref_bits) {
+        const uint32_t old_ref_bits = f32_to_bits((float)ref_st[t]);
+        const uint32_t dut_aligned_bits = st_dut_aligned_words[t];
+        backup_io8_compare_common::dual_compare_update(
+            st_dual_cmp,
+            dut_bits == old_ref_bits,
+            dut_bits == dut_aligned_bits
+        );
+        if (r.st_exact && dut_bits != dut_aligned_bits) {
             r.st_exact = false;
             r.st_first_mismatch_idx = t;
             r.st_dut_bits = dut_bits;
-            r.st_ref_bits = ref_bits;
-            break;
+            r.st_ref_bits = dut_aligned_bits;
         }
     }
+    r.st_old_baseline_mismatch_count = st_dual_cmp.old_baseline_mismatch_count;
+    r.st_dut_aligned_mismatch_count = st_dual_cmp.dut_aligned_mismatch_count;
+    r.st_old_baseline_exact = backup_io8_compare_common::dual_compare_old_exact(st_dual_cmp);
+    r.st_exact = backup_io8_compare_common::dual_compare_aligned_exact(st_dual_cmp);
     if (r.st_exact) {
         r.st_dut_bits = (uint32_t)sram[final_scalar_base + focused_idx].to_uint();
-        r.st_ref_bits = f32_to_bits((float)ref_st[focused_idx]);
+        r.st_ref_bits = st_dut_aligned_words[focused_idx];
     }
 
-    REF_LOGIT_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_OUT_LOGITS_WORDS; ++i) {
+    std::vector<uint32_t> logits_dut_aligned_words((uint32_t)EXP_LEN_OUT_LOGITS_WORDS, 0u);
+    backup_io8_compare_common::DualCompareSummary logit_dual_cmp =
+        backup_io8_compare_common::make_dual_compare_summary();
+    LOGIT_DUT_ALIGNED_GEN_LOOP: for (uint32_t c = 0u; c < (uint32_t)EXP_LEN_OUT_LOGITS_WORDS; ++c) {
+        aecct::fp32_t acc_fp = tb_fp32_from_u32_bits((uint32_t)sram[out_fc_b_base + c].to_uint());
+        LOGIT_DUT_ALIGNED_TOKEN_REDUCE_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+            const aecct::fp32_t st_fp = tb_fp32_from_u32_bits(st_dut_aligned_words[t]);
+            const aecct::fp32_t w_fp =
+                tb_fp32_from_u32_bits((uint32_t)sram[out_fc_w_base + c * (uint32_t)N_NODES + t].to_uint());
+            acc_fp += (w_fp * st_fp);
+        }
+        logits_dut_aligned_words[c] = tb_u32_bits_from_fp32(acc_fp);
+    }
+    REF_LOGIT_DUAL_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_OUT_LOGITS_WORDS; ++i) {
         const uint32_t dut_bits = (uint32_t)sram[logits_base + i].to_uint();
-        const uint32_t ref_bits = f32_to_bits((float)ref_logits[i]);
-        if (dut_bits != ref_bits) {
+        const uint32_t old_ref_bits = f32_to_bits((float)ref_logits[i]);
+        const uint32_t dut_aligned_bits = logits_dut_aligned_words[i];
+        backup_io8_compare_common::dual_compare_update(
+            logit_dual_cmp,
+            dut_bits == old_ref_bits,
+            dut_bits == dut_aligned_bits
+        );
+        if (r.logit_exact && dut_bits != dut_aligned_bits) {
             r.logit_exact = false;
             r.logit_first_mismatch_idx = i;
             r.logit_dut_bits = dut_bits;
-            r.logit_ref_bits = ref_bits;
-            break;
+            r.logit_ref_bits = dut_aligned_bits;
         }
     }
+    r.logit_old_baseline_mismatch_count = logit_dual_cmp.old_baseline_mismatch_count;
+    r.logit_dut_aligned_mismatch_count = logit_dual_cmp.dut_aligned_mismatch_count;
+    r.logit_old_baseline_exact = backup_io8_compare_common::dual_compare_old_exact(logit_dual_cmp);
+    r.logit_exact = backup_io8_compare_common::dual_compare_aligned_exact(logit_dual_cmp);
     if (r.logit_exact) {
         r.logit_dut_bits = (uint32_t)sram[logits_base + focused_idx].to_uint();
-        r.logit_ref_bits = f32_to_bits((float)ref_logits[focused_idx]);
+        r.logit_ref_bits = logits_dut_aligned_words[focused_idx];
     }
 
     REF_XPRED_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_OUT_XPRED_WORDS; ++i) {
@@ -3152,7 +3291,6 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     const uint32_t layer0_w1_focus_dim =
         (!layer0_w1_writeback_cmp.exact && layer0_w1_writeback_cmp.dim < d_ffn) ?
         layer0_w1_writeback_cmp.dim : 0u;
-    const uint32_t w_base_word = (uint32_t)aecct::top_peek_w_base_word().to_uint();
     const uint32_t layer0_w1_weight_base = w_base_word + kParamMeta[36].offset_w;
     const uint32_t layer0_w1_bias_base = w_base_word + kParamMeta[4].offset_w;
     Layer0StageCmp layer0_w1_weight_row_cmp = make_layer0_cmp_pass();
@@ -4346,9 +4484,11 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     }
 
     const uint32_t focused_dut_st = (uint32_t)sram[final_scalar_base + focused_idx].to_uint();
-    const uint32_t focused_ref_st = f32_to_bits((float)ref_st[focused_idx]);
+    const uint32_t focused_ref_st = st_dut_aligned_words[focused_idx];
+    const uint32_t focused_ref_st_old = f32_to_bits((float)ref_st[focused_idx]);
     const uint32_t focused_dut_logit = (uint32_t)sram[logits_base + focused_idx].to_uint();
-    const uint32_t focused_ref_logit = f32_to_bits((float)ref_logits[focused_idx]);
+    const uint32_t focused_ref_logit = logits_dut_aligned_words[focused_idx];
+    const uint32_t focused_ref_logit_old = f32_to_bits((float)ref_logits[focused_idx]);
     const uint32_t focused_trace_logit = trace_logits_words[focused_idx];
     const uint32_t focused_dut_xpred = got_words[focused_idx];
     const uint32_t focused_ref_xpred = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
@@ -4415,7 +4555,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         f32_to_bits((float)ref_layer1_sublayer1_ln_out_dut_aligned[focused_idx * d_model + focused_end_d]);
     const uint32_t focused_dut_end_norm_bits =
         (uint32_t)sram[x_end_base + focused_idx * d_model + focused_end_d].to_uint();
-    const uint32_t focused_ref_end_norm_bits =
+    const uint32_t focused_ref_end_norm_old_bits =
         f32_to_bits((float)ref_end_norm[focused_idx * d_model + focused_end_d]);
     std::printf(
         "[backup_io8][ref_model_layer0_ffn_ln_out_writeback] sample=%u focus_token=%u focus_dim=%u dut=0x%08X ref_model=0x%08X exact=%u\n",
@@ -4699,11 +4839,29 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)focused_idx,
         (unsigned)focused_end_d,
         (unsigned)focused_dut_end_norm_bits,
-        (unsigned)focused_ref_end_norm_bits,
-        (unsigned)(focused_dut_end_norm_bits == focused_ref_end_norm_bits ? 1u : 0u));
+        (unsigned)focused_ref_end_norm_old_bits,
+        (unsigned)(focused_dut_end_norm_bits == focused_ref_end_norm_old_bits ? 1u : 0u));
+    backup_io8_compare_common::print_dual_compare_summary(
+        "end_norm_dual_compare",
+        sample_idx,
+        end_norm_dual_cmp
+    );
+    if (end_norm_old_first_mismatch_valid) {
+        std::printf(
+            "[backup_io8][ref_model_end_norm][diagnostic_old] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref_model=0x%08X\n",
+            (unsigned)sample_idx,
+            (unsigned)end_norm_old_first_mismatch_token,
+            (unsigned)end_norm_old_first_mismatch_dim,
+            (unsigned)end_norm_old_first_mismatch_dut_bits,
+            (unsigned)end_norm_old_first_mismatch_ref_bits);
+    } else {
+        std::printf(
+            "[backup_io8][ref_model_end_norm][diagnostic_old] sample=%u exact=1\n",
+            (unsigned)sample_idx);
+    }
     if (!r.end_norm_exact) {
         std::printf(
-            "[backup_io8][ref_model_end_norm] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref_model=0x%08X\n",
+            "[backup_io8][ref_model_end_norm][authoritative] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X dut_aligned_ref=0x%08X\n",
             (unsigned)sample_idx,
             (unsigned)r.end_norm_first_mismatch_token,
             (unsigned)r.end_norm_first_mismatch_dim,
@@ -4711,23 +4869,27 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (unsigned)r.end_norm_ref_bits);
     } else {
         std::printf(
-            "[backup_io8][ref_model_end_norm] sample=%u exact=1\n",
+            "[backup_io8][ref_model_end_norm][authoritative] sample=%u exact=1\n",
             (unsigned)sample_idx);
     }
+    backup_io8_compare_common::print_dual_compare_summary("st_dual_compare", sample_idx, st_dual_cmp);
+    backup_io8_compare_common::print_dual_compare_summary("logit_dual_compare", sample_idx, logit_dual_cmp);
     std::printf(
-        "[backup_io8][ref_model_probe] sample=%u idx=%u dut_st=0x%08X ref_model_st=0x%08X dut_logit=0x%08X ref_model_logit=0x%08X trace_logit=0x%08X dut_xpred=0x%08X ref_model_xpred=0x%08X trace_xpred=0x%08X\n",
+        "[backup_io8][ref_model_probe] sample=%u idx=%u dut_st=0x%08X ref_model_st=0x%08X ref_model_st_old=0x%08X dut_logit=0x%08X ref_model_logit=0x%08X ref_model_logit_old=0x%08X trace_logit=0x%08X dut_xpred=0x%08X ref_model_xpred=0x%08X trace_xpred=0x%08X\n",
         (unsigned)sample_idx,
         (unsigned)focused_idx,
         (unsigned)focused_dut_st,
         (unsigned)focused_ref_st,
+        (unsigned)focused_ref_st_old,
         (unsigned)focused_dut_logit,
         (unsigned)focused_ref_logit,
+        (unsigned)focused_ref_logit_old,
         (unsigned)focused_trace_logit,
         (unsigned)focused_dut_xpred,
         (unsigned)focused_ref_xpred,
         (unsigned)focused_trace_xpred);
     std::printf(
-        "[backup_io8][ref_model_probe] sample=%u layer1_attn_input_exact=%u layer1_post_concat_exact=%u layer1_q_exact=%u layer1_attn_out_exact=%u layer1_pre_ln_input_exact=%u layer1_ln_out_exact=%u layer1_ffn1_out_exact=%u layer1_relu_out_exact=%u layer1_ffn2_exact=%u layer1_ffn_ln_out_exact=%u end_norm_exact=%u st_exact=%u logit_exact=%u xpred_exact=%u first_st_mismatch_idx=%u first_logit_mismatch_idx=%u first_xpred_mismatch_idx=%u boundary_class=%u\n",
+        "[backup_io8][ref_model_probe] sample=%u layer1_attn_input_exact=%u layer1_post_concat_exact=%u layer1_q_exact=%u layer1_attn_out_exact=%u layer1_pre_ln_input_exact=%u layer1_ln_out_exact=%u layer1_ffn1_out_exact=%u layer1_relu_out_exact=%u layer1_ffn2_exact=%u layer1_ffn_ln_out_exact=%u end_norm_exact=%u st_exact=%u logit_exact=%u xpred_exact=%u end_norm_old_exact=%u st_old_exact=%u logit_old_exact=%u first_st_mismatch_idx=%u first_logit_mismatch_idx=%u first_xpred_mismatch_idx=%u boundary_class=%u\n",
         (unsigned)sample_idx,
         (unsigned)(r.layer1_attn_input_exact ? 1u : 0u),
         (unsigned)(r.layer1_post_concat_exact ? 1u : 0u),
@@ -4743,6 +4905,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)(r.st_exact ? 1u : 0u),
         (unsigned)(r.logit_exact ? 1u : 0u),
         (unsigned)(r.xpred_exact ? 1u : 0u),
+        (unsigned)(r.end_norm_old_baseline_exact ? 1u : 0u),
+        (unsigned)(r.st_old_baseline_exact ? 1u : 0u),
+        (unsigned)(r.logit_old_baseline_exact ? 1u : 0u),
         (unsigned)r.st_first_mismatch_idx,
         (unsigned)r.logit_first_mismatch_idx,
         (unsigned)r.xpred_first_mismatch_idx,
@@ -5665,6 +5830,20 @@ int main() {
             (unsigned)(w2_probe.layer1_sublayer1_ln_affine_subbucket_normed_before_affine_exact ? 1u : 0u),
             (unsigned)(w2_probe.layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact ? 1u : 0u),
             first_subbucket);
+        backup_io8_compare_common::print_fixed_sample_summary(
+            sample_id,
+            w2_probe.boundary_bucket,
+            w2_probe.end_norm_old_baseline_mismatch_count,
+            w2_probe.end_norm_dut_aligned_mismatch_count,
+            w2_probe.st_old_baseline_mismatch_count,
+            w2_probe.st_dut_aligned_mismatch_count,
+            w2_probe.logit_old_baseline_mismatch_count,
+            w2_probe.logit_dut_aligned_mismatch_count,
+            w2_probe.end_norm_exact,
+            w2_probe.st_exact,
+            w2_probe.logit_exact,
+            w2_probe.xpred_exact
+        );
     }
 
     Io8Top io_probe;
