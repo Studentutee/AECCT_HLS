@@ -77,6 +77,8 @@ struct RefModelIO {
   double* out_layer0_sublayer1_ln_in_dut_aligned = nullptr;
   // optional layer0 sublayer1 LN output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
   double* out_layer0_sublayer1_ln_out_dut_aligned = nullptr;
+  // optional layer0 mid_norm output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer0_mid_norm_dut_aligned = nullptr;
   // optional layer1_ffn2_out dump: [B, 75, 32], row-major
   double* out_layer1_ffn2_out = nullptr;
   // optional layer1_sublayer0_attn_out dump: [B, 75, 32], row-major
@@ -87,6 +89,8 @@ struct RefModelIO {
   double* out_layer1_q = nullptr;
   // optional layer1_attn_input(mid_norm) dump: [B, 75, 32], row-major
   double* out_layer1_attn_input = nullptr;
+  // optional layer1_attn_input dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer1_attn_input_dut_aligned = nullptr;
   // optional layer1_sublayer0_pre_ln_input dump: [B, 75, 32], row-major
   double* out_layer1_pre_ln_input = nullptr;
   // optional layer1_sublayer0_ln_out dump (FFN input): [B, 75, 32], row-major

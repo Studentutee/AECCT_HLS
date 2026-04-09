@@ -1498,7 +1498,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_layer0_sublayer1_ln_in((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_sublayer1_ln_in_dut_aligned((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer0_sublayer1_ln_out_dut_aligned((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer0_mid_norm_dut_aligned((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_attn_input((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer1_attn_input_dut_aligned((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_post_concat((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_q((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_attn_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
@@ -1544,7 +1546,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_layer0_sublayer1_ln_in = ref_layer0_sublayer1_ln_in.data();
     ref_io.out_layer0_sublayer1_ln_in_dut_aligned = ref_layer0_sublayer1_ln_in_dut_aligned.data();
     ref_io.out_layer0_sublayer1_ln_out_dut_aligned = ref_layer0_sublayer1_ln_out_dut_aligned.data();
+    ref_io.out_layer0_mid_norm_dut_aligned = ref_layer0_mid_norm_dut_aligned.data();
     ref_io.out_layer1_attn_input = ref_layer1_attn_input.data();
+    ref_io.out_layer1_attn_input_dut_aligned = ref_layer1_attn_input_dut_aligned.data();
     ref_io.out_layer1_post_concat = ref_layer1_post_concat.data();
     ref_io.out_layer1_q = ref_layer1_q.data();
     ref_io.out_layer1_attn_out = ref_layer1_attn_out.data();
@@ -1659,6 +1663,23 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         fail("bounded debug taps missing (layer0 tail recursive split / mid_norm_output / layer1...)");
     }
 
+    struct SameSemanticCmp {
+        bool exact;
+        uint32_t token;
+        uint32_t dim;
+        uint32_t dut_bits;
+        uint32_t ref_bits;
+    };
+    auto make_same_semantic_cmp_pass = []() -> SameSemanticCmp {
+        SameSemanticCmp c;
+        c.exact = true;
+        c.token = 0u;
+        c.dim = 0u;
+        c.dut_bits = 0u;
+        c.ref_bits = 0u;
+        return c;
+    };
+
     REF_LAYER0_FFN_LN_OUT_WRITEBACK_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = t * d_model;
         REF_LAYER0_FFN_LN_OUT_WRITEBACK_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
@@ -1686,7 +1707,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             const uint32_t flat = row_base + d;
             const uint32_t dut_bits =
                 (uint32_t)aecct::top_peek_infer_mid_norm_output_word(flat).to_uint();
-            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_attn_input[flat]);
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer0_mid_norm_dut_aligned[flat]);
             if (dut_bits != ref_bits) {
                 r.mid_norm_output_writeback_exact = false;
                 r.mid_norm_output_writeback_first_mismatch_token = t;
@@ -1700,6 +1721,27 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             break;
         }
     }
+    SameSemanticCmp mid_norm_diag_cmp = make_same_semantic_cmp_pass();
+    MID_NORM_DIAG_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        MID_NORM_DIAG_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const uint32_t dut_bits =
+                (uint32_t)aecct::top_peek_infer_mid_norm_output_word(flat).to_uint();
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_attn_input[flat]);
+            if (dut_bits != ref_bits) {
+                mid_norm_diag_cmp.exact = false;
+                mid_norm_diag_cmp.token = t;
+                mid_norm_diag_cmp.dim = d;
+                mid_norm_diag_cmp.dut_bits = dut_bits;
+                mid_norm_diag_cmp.ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!mid_norm_diag_cmp.exact) {
+            break;
+        }
+    }
 
     REF_LAYER1_ATTN_INPUT_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = t * d_model;
@@ -1707,7 +1749,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             const uint32_t flat = row_base + d;
             const uint32_t dut_bits = (flat < layer1_x_words) ?
                 (uint32_t)aecct::transformer_layer_debug_peek_layer1_attn_input_word((aecct::u32_t)flat).to_uint() : 0u;
-            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_attn_input[flat]);
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_attn_input_dut_aligned[flat]);
             if (dut_bits != ref_bits) {
                 r.layer1_attn_input_readback_exact = false;
                 r.layer1_attn_input_readback_first_mismatch_token = t;
@@ -1726,6 +1768,45 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             break;
         }
     }
+    SameSemanticCmp layer1_attn_input_diag_cmp = make_same_semantic_cmp_pass();
+    LAYER1_ATTN_INPUT_DIAG_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        LAYER1_ATTN_INPUT_DIAG_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const uint32_t dut_bits = (flat < layer1_x_words) ?
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_attn_input_word((aecct::u32_t)flat).to_uint() : 0u;
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_attn_input[flat]);
+            if (dut_bits != ref_bits) {
+                layer1_attn_input_diag_cmp.exact = false;
+                layer1_attn_input_diag_cmp.token = t;
+                layer1_attn_input_diag_cmp.dim = d;
+                layer1_attn_input_diag_cmp.dut_bits = dut_bits;
+                layer1_attn_input_diag_cmp.ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!layer1_attn_input_diag_cmp.exact) {
+            break;
+        }
+    }
+    std::printf(
+        "[backup_io8][mid_norm_same_semantic] sample=%u authoritative_target=layer0_mid_norm_dut_aligned_out authoritative_exact=%u diagnostic_target=layer1_attn_input diagnostic_only_exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.mid_norm_output_writeback_exact ? 1u : 0u),
+        (unsigned)(mid_norm_diag_cmp.exact ? 1u : 0u),
+        (unsigned)r.mid_norm_output_writeback_first_mismatch_token,
+        (unsigned)r.mid_norm_output_writeback_first_mismatch_dim,
+        (unsigned)r.mid_norm_output_writeback_dut_bits,
+        (unsigned)r.mid_norm_output_writeback_ref_bits);
+    std::printf(
+        "[backup_io8][layer1_attn_input_same_semantic] sample=%u authoritative_target=layer1_attn_input_dut_aligned authoritative_exact=%u diagnostic_target=layer1_attn_input diagnostic_only_exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.layer1_attn_input_readback_exact ? 1u : 0u),
+        (unsigned)(layer1_attn_input_diag_cmp.exact ? 1u : 0u),
+        (unsigned)r.layer1_attn_input_readback_first_mismatch_token,
+        (unsigned)r.layer1_attn_input_readback_first_mismatch_dim,
+        (unsigned)r.layer1_attn_input_readback_dut_bits,
+        (unsigned)r.layer1_attn_input_readback_ref_bits);
 
     REF_LAYER1_POST_CONCAT_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = t * d_model;
@@ -3825,12 +3906,12 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (uint32_t)aecct::top_peek_infer_mid_norm_output_word(
             focused_idx * d_model + focused_end_d).to_uint();
     const uint32_t focused_ref_mid_norm_output_writeback_bits =
-        f32_to_bits((float)ref_layer1_attn_input[focused_idx * d_model + focused_end_d]);
+        f32_to_bits((float)ref_layer0_mid_norm_dut_aligned[focused_idx * d_model + focused_end_d]);
     const uint32_t focused_dut_layer1_attn_input_bits =
         (uint32_t)aecct::transformer_layer_debug_peek_layer1_attn_input_word(
             (aecct::u32_t)(focused_idx * d_model + focused_end_d)).to_uint();
     const uint32_t focused_ref_layer1_attn_input_bits =
-        f32_to_bits((float)ref_layer1_attn_input[focused_idx * d_model + focused_end_d]);
+        f32_to_bits((float)ref_layer1_attn_input_dut_aligned[focused_idx * d_model + focused_end_d]);
     const uint32_t focused_dut_layer1_post_concat_bits =
         (uint32_t)aecct::transformer_layer_debug_peek_layer1_post_concat_word(
             (aecct::u32_t)(focused_idx * d_model + focused_end_d)).to_uint();

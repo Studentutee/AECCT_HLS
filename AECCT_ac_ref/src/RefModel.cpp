@@ -2377,6 +2377,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     }
 
     static fp32_ref_t mid_norm[TOKENS_T][D_MODEL];
+    static fp32_ref_t mid_norm_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_attn_input_dut_aligned[TOKENS_T][D_MODEL];
     apply_layernorm_tokens(layer0_ffn_ln_out,
                            w_decoder_norm2_weight,
                            w_decoder_norm2_bias,
@@ -2395,6 +2397,31 @@ void RefModel::infer_step0(const RefModelIO& io) const {
             &local_stats,
             "mid_norm");
         }
+      }
+    }
+    apply_layernorm_tokens(layer0_ffn_ln_out_dut_aligned,
+                           w_decoder_norm2_weight,
+                           w_decoder_norm2_bias,
+                           run_cfg_.ln_mode,
+                           b,
+                           RefLnSiteTag::MID_NORM,
+                           mid_norm_dut_aligned);
+    if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
+        should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          mid_norm_dut_aligned[t][d] = stress_roundtrip_e4m3(
+            mid_norm_dut_aligned[t][d],
+            run_cfg_,
+            RefFragGroup::G1_LAYERNORM,
+            &local_stats,
+            "mid_norm_dut_aligned");
+        }
+      }
+    }
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        layer1_attn_input_dut_aligned[t][d] = mid_norm_dut_aligned[t][d];
       }
     }
 
@@ -2434,12 +2461,30 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer1_act,
               layer1_ffn2,
               layer1_ffn_ln_out);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_mid_norm_dut_aligned", mid_norm_dut_aligned);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_attn_input_dut_aligned", layer1_attn_input_dut_aligned);
 
     if (io.out_layer1_attn_input != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
           io.out_layer1_attn_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(mid_norm[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer0_mid_norm_dut_aligned != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer0_mid_norm_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(mid_norm_dut_aligned[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer1_attn_input_dut_aligned != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_attn_input_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_attn_input_dut_aligned[t][d].to_float());
         }
       }
     }
