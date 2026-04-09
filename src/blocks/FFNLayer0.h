@@ -57,6 +57,88 @@ static inline uint32_t ffn_w2_sx_slot_for_layer(bool use_layer1) {
     return use_layer1 ? 7u : 3u;
 }
 
+#ifndef __SYNTHESIS__
+// local-only W2 internal probe for layer0 direct-proof triage.
+// This capture surface is debug-only and does not alter functional ownership.
+static u32_t g_ffn_layer0_w2_prewrite_acc_shadow[FFN_X_WORDS];
+static u32_t g_ffn_layer0_w2_final_store_shadow[FFN_X_WORDS];
+static bool g_ffn_layer0_w2_probe_valid = false;
+static bool g_ffn_layer0_w2_quant_contract_valid = false;
+static u32_t g_ffn_layer0_w2_words_valid = (u32_t)0u;
+static u32_t g_ffn_layer0_w2_sx_bits = (u32_t)0u;
+static u32_t g_ffn_layer0_w2_inv_scale_bits = (u32_t)0u;
+
+static inline void ffn_layer0_debug_clear_w2_internal_probe() {
+    g_ffn_layer0_w2_probe_valid = false;
+    g_ffn_layer0_w2_quant_contract_valid = false;
+    g_ffn_layer0_w2_words_valid = (u32_t)0u;
+    g_ffn_layer0_w2_sx_bits = (u32_t)0u;
+    g_ffn_layer0_w2_inv_scale_bits = (u32_t)0u;
+}
+
+static inline void ffn_layer0_debug_capture_layer0_w2_meta(
+    bool quant_contract_valid,
+    fp32_t s_x,
+    fp32_t inv_scale,
+    uint32_t words_valid
+) {
+    ffn_layer0_debug_clear_w2_internal_probe();
+    uint32_t clamped_words = words_valid;
+    if (clamped_words > (uint32_t)FFN_X_WORDS) {
+        clamped_words = (uint32_t)FFN_X_WORDS;
+    }
+    g_ffn_layer0_w2_quant_contract_valid = quant_contract_valid;
+    g_ffn_layer0_w2_words_valid = (u32_t)clamped_words;
+    g_ffn_layer0_w2_sx_bits = bits_from_fp32(s_x);
+    g_ffn_layer0_w2_inv_scale_bits = bits_from_fp32(inv_scale);
+    g_ffn_layer0_w2_probe_valid = true;
+}
+
+static inline void ffn_layer0_debug_capture_layer0_w2_word(
+    uint32_t flat_idx,
+    u32_t prewrite_bits,
+    u32_t final_store_bits
+) {
+    if (flat_idx < (uint32_t)FFN_X_WORDS) {
+        g_ffn_layer0_w2_prewrite_acc_shadow[flat_idx] = prewrite_bits;
+        g_ffn_layer0_w2_final_store_shadow[flat_idx] = final_store_bits;
+    }
+}
+
+static inline bool ffn_layer0_debug_layer0_w2_probe_valid() { return g_ffn_layer0_w2_probe_valid; }
+static inline bool ffn_layer0_debug_layer0_w2_quant_contract_valid() {
+    return g_ffn_layer0_w2_quant_contract_valid;
+}
+static inline u32_t ffn_layer0_debug_layer0_w2_words_valid() { return g_ffn_layer0_w2_words_valid; }
+static inline u32_t ffn_layer0_debug_layer0_w2_sx_bits() { return g_ffn_layer0_w2_sx_bits; }
+static inline u32_t ffn_layer0_debug_layer0_w2_inv_scale_bits() { return g_ffn_layer0_w2_inv_scale_bits; }
+static inline u32_t ffn_layer0_debug_peek_layer0_w2_prewrite_acc_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) {
+        return g_ffn_layer0_w2_prewrite_acc_shadow[i];
+    }
+    return (u32_t)0u;
+}
+static inline u32_t ffn_layer0_debug_peek_layer0_w2_final_store_word(u32_t idx) {
+    const uint32_t i = (uint32_t)idx.to_uint();
+    if (i < (uint32_t)FFN_X_WORDS) {
+        return g_ffn_layer0_w2_final_store_shadow[i];
+    }
+    return (u32_t)0u;
+}
+#else
+static inline void ffn_layer0_debug_clear_w2_internal_probe() {}
+static inline void ffn_layer0_debug_capture_layer0_w2_meta(bool, fp32_t, fp32_t, uint32_t) {}
+static inline void ffn_layer0_debug_capture_layer0_w2_word(uint32_t, u32_t, u32_t) {}
+static inline bool ffn_layer0_debug_layer0_w2_probe_valid() { return false; }
+static inline bool ffn_layer0_debug_layer0_w2_quant_contract_valid() { return false; }
+static inline u32_t ffn_layer0_debug_layer0_w2_words_valid() { return (u32_t)0u; }
+static inline u32_t ffn_layer0_debug_layer0_w2_sx_bits() { return (u32_t)0u; }
+static inline u32_t ffn_layer0_debug_layer0_w2_inv_scale_bits() { return (u32_t)0u; }
+static inline u32_t ffn_layer0_debug_peek_layer0_w2_prewrite_acc_word(u32_t) { return (u32_t)0u; }
+static inline u32_t ffn_layer0_debug_peek_layer0_w2_final_store_word(u32_t) { return (u32_t)0u; }
+#endif
+
 template<typename SramView>
 static inline bool ffn_quant_linear_contract_ok(
     SramView& sram,
@@ -386,6 +468,18 @@ static inline void FFNLayer0CoreWindow(
         ffn_w2_sx_slot_for_layer(use_layer1),
         w2_s_x,
         w2_inv_scale);
+#ifndef __SYNTHESIS__
+    const bool layer0_w2_internal_probe_capture_enable =
+        (!use_layer1) && (STAGE_MODE == FFN_STAGE_W2 || STAGE_MODE == FFN_STAGE_FULL);
+    if (layer0_w2_internal_probe_capture_enable) {
+        ffn_layer0_debug_capture_layer0_w2_meta(
+            w2_quant_contract_ok,
+            w2_s_x,
+            w2_inv_scale,
+            token_count * d_model
+        );
+    }
+#endif
 
     if (STAGE_MODE == FFN_STAGE_W1 || STAGE_MODE == FFN_STAGE_FULL) {
         // Tightened fallback policy: caller can require fully ready W1 descriptors.
@@ -577,11 +671,16 @@ static inline void FFNLayer0CoreWindow(
                         acc = ffn_block_mac_tile(meta, a_tile, w_tile, acc);
                     }
                 }
-                if (w2_quant_contract_ok) {
-                    sram[y_row + i] = bits_from_fp32(acc_fp);
-                } else {
-                    sram[y_row + i] = quant_bits_from_acc(acc);
+                const u32_t prewrite_bits =
+                    w2_quant_contract_ok ? bits_from_fp32(acc_fp) : quant_bits_from_acc(acc);
+                const u32_t final_store_bits = prewrite_bits;
+#ifndef __SYNTHESIS__
+                if (layer0_w2_internal_probe_capture_enable) {
+                    const uint32_t flat_idx = t * d_model + i;
+                    ffn_layer0_debug_capture_layer0_w2_word(flat_idx, prewrite_bits, final_store_bits);
                 }
+#endif
+                sram[y_row + i] = final_store_bits;
             }
         }
     }

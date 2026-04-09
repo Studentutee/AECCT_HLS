@@ -36,6 +36,8 @@ static const uint32_t kDebugPreferredSampleId = 5u;
 static const uint32_t kDebugFocusedIdx = 31u;
 static const uint32_t kContractSample0 = 0u;
 static const uint32_t kContractIdx0 = 6u;
+static const uint32_t kW2DirectProbeSampleCount = 5u;
+static const uint32_t kW2DirectProbeSamples[kW2DirectProbeSampleCount] = { 5u, 7u, 23u, 16u, 27u };
 static const uint32_t kDebugPayloadReadbackWords = 64u;
 static const uint32_t kDebugPayloadWindowWords = 16u;
 
@@ -221,8 +223,11 @@ struct RefModelStageCompareResult {
     bool layer0_w2_input_exact;
     bool layer0_w2_weight_row_exact;
     bool layer0_w2_bias_exact;
-    bool layer0_w2_mac_acc_exact;
-    bool layer0_w2_writeback_exact;
+    bool layer0_w2_mac_acc_exact; // D_internal_prewrite_exact
+    bool layer0_w2_writeback_exact; // E_final_store_exact
+    bool layer0_w2_internal_probe_valid;
+    bool layer0_w2_quant_contract_valid;
+    bool layer0_w2_prewrite_to_final_exact;
     uint32_t layer0_w1_input_first_mismatch_token;
     uint32_t layer0_w1_input_first_mismatch_dim;
     uint32_t layer0_w1_input_dut_bits;
@@ -264,11 +269,18 @@ struct RefModelStageCompareResult {
     uint32_t layer0_w2_mac_dut_term_bits;
     uint32_t layer0_w2_mac_ref_term_bits;
     bool layer0_w2_mac_operand_mismatch_first;
+    uint32_t layer0_w2_internal_words_valid;
+    uint32_t layer0_w2_sx_bits;
+    uint32_t layer0_w2_inv_scale_bits;
+    uint32_t layer0_w2_prewrite_to_final_first_mismatch_token;
+    uint32_t layer0_w2_prewrite_to_final_first_mismatch_dim;
+    uint32_t layer0_w2_prewrite_to_final_dut_bits;
+    uint32_t layer0_w2_prewrite_to_final_ref_bits;
     uint32_t layer0_w2_writeback_first_mismatch_token;
     uint32_t layer0_w2_writeback_first_mismatch_dim;
     uint32_t layer0_w2_writeback_dut_bits;
     uint32_t layer0_w2_writeback_ref_bits;
-    uint32_t layer0_w2_first_divergence_class; // 0=none,1=upstream_before_w2_compute,2=param_load_or_addressing,3=w2_mac_compute,4=w2_writeback
+    uint32_t layer0_w2_first_divergence_class; // 0=none,1=upstream_before_w2_compute,2=param_load_or_addressing,3=w2_internal_prewrite,4=w2_final_writeback
     uint32_t layer0_w2_input_mainline_taken_count;
     uint32_t layer0_w2_input_fallback_preload_count;
     uint32_t earliest_e0_first_divergence_bucket; // 0=none,1=attention_tail_producer,2=residual_add0_or_pre_ln0_add,3=residual_add0_or_ln0_input_staging,4=ln0_core_or_ln0_writeback,5=ffn_input_base_page_or_consume,6=w1_dispatch_or_input_copy
@@ -1320,6 +1332,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer0_w2_bias_exact = true;
     r.layer0_w2_mac_acc_exact = true;
     r.layer0_w2_writeback_exact = true;
+    r.layer0_w2_internal_probe_valid = false;
+    r.layer0_w2_quant_contract_valid = false;
+    r.layer0_w2_prewrite_to_final_exact = true;
     r.layer0_w1_input_first_mismatch_token = 0u;
     r.layer0_w1_input_first_mismatch_dim = 0u;
     r.layer0_w1_input_dut_bits = 0u;
@@ -1361,6 +1376,13 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer0_w2_mac_dut_term_bits = 0u;
     r.layer0_w2_mac_ref_term_bits = 0u;
     r.layer0_w2_mac_operand_mismatch_first = false;
+    r.layer0_w2_internal_words_valid = 0u;
+    r.layer0_w2_sx_bits = 0u;
+    r.layer0_w2_inv_scale_bits = 0u;
+    r.layer0_w2_prewrite_to_final_first_mismatch_token = 0u;
+    r.layer0_w2_prewrite_to_final_first_mismatch_dim = 0u;
+    r.layer0_w2_prewrite_to_final_dut_bits = 0u;
+    r.layer0_w2_prewrite_to_final_ref_bits = 0u;
     r.layer0_w2_writeback_first_mismatch_token = 0u;
     r.layer0_w2_writeback_first_mismatch_dim = 0u;
     r.layer0_w2_writeback_dut_bits = 0u;
@@ -1515,8 +1537,16 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_weight_words_valid().to_uint();
     const uint32_t layer0_w2_bias_words =
         (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_bias_words_valid().to_uint();
-    const uint32_t layer0_w2_mac_cols =
-        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_mac_cols_valid().to_uint();
+    const bool layer0_w2_internal_probe_valid =
+        aecct::transformer_layer_debug_layer0_ffn_w2_internal_probe_valid();
+    const bool layer0_w2_quant_contract_valid =
+        aecct::transformer_layer_debug_layer0_ffn_w2_quant_contract_valid();
+    const uint32_t layer0_w2_internal_words =
+        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_internal_words_valid().to_uint();
+    const uint32_t layer0_w2_sx_bits =
+        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_sx_bits().to_uint();
+    const uint32_t layer0_w2_inv_scale_bits =
+        (uint32_t)aecct::transformer_layer_debug_layer0_ffn_w2_inv_scale_bits().to_uint();
     const uint32_t layer0_w2_input_mainline_taken_count =
         (uint32_t)aecct::transformer_layer_debug_layer0_w2_input_mainline_taken_count().to_uint();
     const uint32_t layer0_w2_input_fallback_preload_count =
@@ -1551,6 +1581,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         !aecct::transformer_layer_debug_layer0_ffn_w2_weight_valid() ||
         !aecct::transformer_layer_debug_layer0_ffn_w2_bias_valid() ||
         !aecct::transformer_layer_debug_layer0_ffn_w2_mac_psum_valid() ||
+        !layer0_w2_internal_probe_valid ||
         !aecct::transformer_layer_debug_layer0_pre_concat_valid() ||
         !aecct::transformer_layer_debug_layer0_post_concat_valid() ||
         !layer0_ctx_valid ||
@@ -2669,19 +2700,78 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         [&](uint32_t flat) -> uint32_t {
             return (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_input_word((aecct::u32_t)flat).to_uint();
         });
-    const Layer0StageCmp layer0_w2_writeback_cmp = compare_tensor_stage(
-        (uint32_t)N_NODES,
-        d_model,
-        layer0_x_words,
-        ref_layer0_ffn2_out,
-        [&](uint32_t flat) -> uint32_t {
-            return (uint32_t)aecct::transformer_layer_debug_peek_layer0_w2_out_word((aecct::u32_t)flat).to_uint();
-        });
-    const uint32_t layer0_w2_focus_dim =
-        (!layer0_w2_writeback_cmp.exact && layer0_w2_writeback_cmp.dim < d_model) ?
-        layer0_w2_writeback_cmp.dim : 0u;
     const uint32_t layer0_w2_weight_base = w_base_word + kParamMeta[39].offset_w;
     const uint32_t layer0_w2_bias_base = w_base_word + kParamMeta[5].offset_w;
+    Layer0StageCmp layer0_w2_internal_prewrite_cmp = make_layer0_cmp_pass();
+    Layer0StageCmp layer0_w2_final_store_cmp = make_layer0_cmp_pass();
+    Layer0StageCmp layer0_w2_prewrite_to_final_cmp = make_layer0_cmp_pass();
+    const uint32_t layer0_w2_ref_words = (uint32_t)N_NODES * d_model;
+    const uint32_t layer0_w2_probe_words =
+        (layer0_w2_internal_words == 0u || layer0_w2_internal_words > layer0_w2_ref_words) ?
+        layer0_w2_ref_words : layer0_w2_internal_words;
+    const aecct::fp32_t layer0_w2_sx_fp = aecct::fp32_from_bits((aecct::u32_t)layer0_w2_sx_bits);
+    const aecct::fp32_t layer0_w2_inv_scale_fp = aecct::fp32_from_bits((aecct::u32_t)layer0_w2_inv_scale_bits);
+    for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t model_row = t * d_model;
+        const uint32_t ffn_row = t * d_ffn;
+        for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = model_row + d;
+            const uint32_t dut_prewrite_bits =
+                (flat < layer0_w2_probe_words) ?
+                (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_prewrite_acc_word((aecct::u32_t)flat).to_uint() :
+                0u;
+            const uint32_t dut_final_store_bits =
+                (flat < layer0_w2_probe_words) ?
+                (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_final_store_word((aecct::u32_t)flat).to_uint() :
+                0u;
+            if (layer0_w2_prewrite_to_final_cmp.exact && dut_prewrite_bits != dut_final_store_bits) {
+                layer0_w2_prewrite_to_final_cmp.exact = false;
+                layer0_w2_prewrite_to_final_cmp.token = t;
+                layer0_w2_prewrite_to_final_cmp.dim = d;
+                layer0_w2_prewrite_to_final_cmp.dut_bits = dut_prewrite_bits;
+                layer0_w2_prewrite_to_final_cmp.ref_bits = dut_final_store_bits;
+            }
+            const uint32_t ref_final_store_bits = f32_to_bits((float)ref_layer0_ffn2_out[flat]);
+            if (layer0_w2_final_store_cmp.exact && dut_final_store_bits != ref_final_store_bits) {
+                layer0_w2_final_store_cmp.exact = false;
+                layer0_w2_final_store_cmp.token = t;
+                layer0_w2_final_store_cmp.dim = d;
+                layer0_w2_final_store_cmp.dut_bits = dut_final_store_bits;
+                layer0_w2_final_store_cmp.ref_bits = ref_final_store_bits;
+            }
+
+            const uint32_t bias_bits = (uint32_t)sram[layer0_w2_bias_base + d].to_uint();
+            aecct::fp32_t ref_prewrite_acc_fp = aecct::fp32_from_bits((aecct::u32_t)bias_bits);
+            for (uint32_t c = 0u; c < d_ffn; ++c) {
+                const uint32_t ref_input_bits = f32_to_bits((float)ref_layer0_relu_out[ffn_row + c]);
+                const aecct::fp32_t x_fp = aecct::fp32_from_bits((aecct::u32_t)ref_input_bits);
+                const aecct::fp32_t qx_fp = aecct::ffn_quantize_int8_symmetric(x_fp, layer0_w2_sx_fp);
+                const uint32_t ref_weight_bits = (uint32_t)sram[layer0_w2_weight_base + d * d_ffn + c].to_uint();
+                const aecct::fp32_t w_fp = aecct::fp32_from_bits((aecct::u32_t)ref_weight_bits);
+                ref_prewrite_acc_fp += qx_fp * (w_fp * layer0_w2_inv_scale_fp);
+            }
+            const uint32_t ref_prewrite_bits = (uint32_t)aecct::bits_from_fp32(ref_prewrite_acc_fp).to_uint();
+            if (layer0_w2_internal_prewrite_cmp.exact && dut_prewrite_bits != ref_prewrite_bits) {
+                layer0_w2_internal_prewrite_cmp.exact = false;
+                layer0_w2_internal_prewrite_cmp.token = t;
+                layer0_w2_internal_prewrite_cmp.dim = d;
+                layer0_w2_internal_prewrite_cmp.dut_bits = dut_prewrite_bits;
+                layer0_w2_internal_prewrite_cmp.ref_bits = ref_prewrite_bits;
+            }
+        }
+    }
+    if (!layer0_w2_quant_contract_valid && layer0_w2_internal_prewrite_cmp.exact) {
+        layer0_w2_internal_prewrite_cmp.exact = false;
+        layer0_w2_internal_prewrite_cmp.token = 0u;
+        layer0_w2_internal_prewrite_cmp.dim = 0u;
+        layer0_w2_internal_prewrite_cmp.dut_bits =
+            (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_prewrite_acc_word((aecct::u32_t)0u).to_uint();
+        layer0_w2_internal_prewrite_cmp.ref_bits = 0u;
+    }
+    const uint32_t layer0_w2_focus_dim =
+        (!layer0_w2_final_store_cmp.exact && layer0_w2_final_store_cmp.dim < d_model) ? layer0_w2_final_store_cmp.dim :
+        ((!layer0_w2_internal_prewrite_cmp.exact && layer0_w2_internal_prewrite_cmp.dim < d_model) ?
+            layer0_w2_internal_prewrite_cmp.dim : 0u);
     Layer0StageCmp layer0_w2_weight_row_cmp = make_layer0_cmp_pass();
     for (uint32_t c = 0u; c < d_ffn; ++c) {
         const uint32_t flat = layer0_w2_focus_dim * d_ffn + c;
@@ -2701,43 +2791,6 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_bias_word((aecct::u32_t)layer0_w2_focus_dim).to_uint() : 0u;
     const uint32_t layer0_w2_bias_ref_bits = (uint32_t)sram[layer0_w2_bias_base + layer0_w2_focus_dim].to_uint();
     const bool layer0_w2_bias_exact = (layer0_w2_bias_dut_bits == layer0_w2_bias_ref_bits);
-    Layer0StageCmp layer0_w2_mac_cmp = make_layer0_cmp_pass();
-    uint32_t layer0_w2_mac_dut_term_bits = 0u;
-    uint32_t layer0_w2_mac_ref_term_bits = 0u;
-    bool layer0_w2_mac_operand_mismatch_first = false;
-    const uint32_t w2_mac_cols = (layer0_w2_mac_cols == 0u || layer0_w2_mac_cols > d_ffn) ? d_ffn : layer0_w2_mac_cols;
-    float ref_w2_partial = bits_to_f32(layer0_w2_bias_ref_bits);
-    for (uint32_t c = 0u; c < w2_mac_cols; ++c) {
-        const uint32_t weight_flat = layer0_w2_focus_dim * d_ffn + c;
-        const uint32_t dut_input_bits =
-            (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_input_word((aecct::u32_t)c).to_uint();
-        const uint32_t ref_input_bits = f32_to_bits((float)ref_layer0_relu_out[c]);
-        const uint32_t dut_weight_bits = (weight_flat < layer0_w2_weight_words) ?
-            (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_weight_word((aecct::u32_t)weight_flat).to_uint() : 0u;
-        const uint32_t ref_weight_bits = (uint32_t)sram[layer0_w2_weight_base + weight_flat].to_uint();
-        const float ref_w2_term = bits_to_f32(ref_input_bits) * bits_to_f32(ref_weight_bits);
-        ref_w2_partial += ref_w2_term;
-        const uint32_t ref_partial_bits = f32_to_bits(ref_w2_partial);
-        const uint32_t dut_partial_bits =
-            (uint32_t)aecct::transformer_layer_debug_peek_layer0_ffn_w2_mac_psum_word(
-                (aecct::u32_t)layer0_w2_focus_dim,
-                (aecct::u32_t)c).to_uint();
-        if (dut_partial_bits != ref_partial_bits) {
-            layer0_w2_mac_cmp.exact = false;
-            layer0_w2_mac_cmp.token = 0u;
-            layer0_w2_mac_cmp.dim = c;
-            layer0_w2_mac_cmp.dut_bits = dut_partial_bits;
-            layer0_w2_mac_cmp.ref_bits = ref_partial_bits;
-            const float dut_w2_term = bits_to_f32(dut_input_bits) * bits_to_f32(dut_weight_bits);
-            layer0_w2_mac_dut_term_bits = f32_to_bits(dut_w2_term);
-            layer0_w2_mac_ref_term_bits = f32_to_bits(ref_w2_term);
-            layer0_w2_mac_operand_mismatch_first =
-                (dut_input_bits != ref_input_bits) ||
-                (dut_weight_bits != ref_weight_bits) ||
-                (layer0_w2_bias_dut_bits != layer0_w2_bias_ref_bits);
-            break;
-        }
-    }
 
     r.layer0_w2_input_exact = layer0_w2_input_cmp.exact;
     r.layer0_w2_input_first_mismatch_token = layer0_w2_input_cmp.token;
@@ -2753,24 +2806,34 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer0_w2_bias_dim = layer0_w2_focus_dim;
     r.layer0_w2_bias_dut_bits = layer0_w2_bias_dut_bits;
     r.layer0_w2_bias_ref_bits = layer0_w2_bias_ref_bits;
-    r.layer0_w2_mac_acc_exact = layer0_w2_mac_cmp.exact;
-    r.layer0_w2_mac_dim = layer0_w2_focus_dim;
-    r.layer0_w2_mac_first_mismatch_col = layer0_w2_mac_cmp.dim;
-    r.layer0_w2_mac_dut_partial_bits = layer0_w2_mac_cmp.dut_bits;
-    r.layer0_w2_mac_ref_partial_bits = layer0_w2_mac_cmp.ref_bits;
-    r.layer0_w2_mac_dut_term_bits = layer0_w2_mac_dut_term_bits;
-    r.layer0_w2_mac_ref_term_bits = layer0_w2_mac_ref_term_bits;
-    r.layer0_w2_mac_operand_mismatch_first = layer0_w2_mac_operand_mismatch_first;
-    r.layer0_w2_writeback_exact = layer0_w2_writeback_cmp.exact;
-    r.layer0_w2_writeback_first_mismatch_token = layer0_w2_writeback_cmp.token;
-    r.layer0_w2_writeback_first_mismatch_dim = layer0_w2_writeback_cmp.dim;
-    r.layer0_w2_writeback_dut_bits = layer0_w2_writeback_cmp.dut_bits;
-    r.layer0_w2_writeback_ref_bits = layer0_w2_writeback_cmp.ref_bits;
+    r.layer0_w2_mac_acc_exact = layer0_w2_internal_prewrite_cmp.exact;
+    r.layer0_w2_mac_dim = layer0_w2_internal_prewrite_cmp.dim;
+    r.layer0_w2_mac_first_mismatch_col = layer0_w2_internal_prewrite_cmp.token;
+    r.layer0_w2_mac_dut_partial_bits = layer0_w2_internal_prewrite_cmp.dut_bits;
+    r.layer0_w2_mac_ref_partial_bits = layer0_w2_internal_prewrite_cmp.ref_bits;
+    r.layer0_w2_mac_dut_term_bits = layer0_w2_sx_bits;
+    r.layer0_w2_mac_ref_term_bits = layer0_w2_inv_scale_bits;
+    r.layer0_w2_mac_operand_mismatch_first = !layer0_w2_quant_contract_valid;
+    r.layer0_w2_internal_probe_valid = layer0_w2_internal_probe_valid;
+    r.layer0_w2_quant_contract_valid = layer0_w2_quant_contract_valid;
+    r.layer0_w2_internal_words_valid = layer0_w2_probe_words;
+    r.layer0_w2_sx_bits = layer0_w2_sx_bits;
+    r.layer0_w2_inv_scale_bits = layer0_w2_inv_scale_bits;
+    r.layer0_w2_prewrite_to_final_exact = layer0_w2_prewrite_to_final_cmp.exact;
+    r.layer0_w2_prewrite_to_final_first_mismatch_token = layer0_w2_prewrite_to_final_cmp.token;
+    r.layer0_w2_prewrite_to_final_first_mismatch_dim = layer0_w2_prewrite_to_final_cmp.dim;
+    r.layer0_w2_prewrite_to_final_dut_bits = layer0_w2_prewrite_to_final_cmp.dut_bits;
+    r.layer0_w2_prewrite_to_final_ref_bits = layer0_w2_prewrite_to_final_cmp.ref_bits;
+    r.layer0_w2_writeback_exact = layer0_w2_final_store_cmp.exact;
+    r.layer0_w2_writeback_first_mismatch_token = layer0_w2_final_store_cmp.token;
+    r.layer0_w2_writeback_first_mismatch_dim = layer0_w2_final_store_cmp.dim;
+    r.layer0_w2_writeback_dut_bits = layer0_w2_final_store_cmp.dut_bits;
+    r.layer0_w2_writeback_ref_bits = layer0_w2_final_store_cmp.ref_bits;
     r.layer0_w2_input_mainline_taken_count = layer0_w2_input_mainline_taken_count;
     r.layer0_w2_input_fallback_preload_count = layer0_w2_input_fallback_preload_count;
 
     std::printf(
-        "[backup_io8][w2_path][round1] sample=%u A_input_exact=%u B_weight_row_exact=%u C_bias_exact=%u D_mac_acc_exact=%u E_writeback_exact=%u focus_dim=%u mainline_input_count=%u fallback_input_count=%u\n",
+        "[backup_io8][w2_path][round1] sample=%u A_input_exact=%u B_weight_row_exact=%u C_bias_exact=%u D_internal_prewrite_exact=%u E_final_store_exact=%u focus_dim=%u mainline_input_count=%u fallback_input_count=%u\n",
         (unsigned)sample_idx,
         (unsigned)(r.layer0_w2_input_exact ? 1u : 0u),
         (unsigned)(r.layer0_w2_weight_row_exact ? 1u : 0u),
@@ -2818,33 +2881,45 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             (unsigned)sample_idx,
             (unsigned)r.layer0_w2_bias_dim);
     }
+    std::printf(
+        "[backup_io8][w2_path][D_internal_prewrite] sample=%u exact=%u probe_valid=%u quant_contract_valid=%u sx_bits=0x%08X inv_scale_bits=0x%08X words_valid=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.layer0_w2_mac_acc_exact ? 1u : 0u),
+        (unsigned)(r.layer0_w2_internal_probe_valid ? 1u : 0u),
+        (unsigned)(r.layer0_w2_quant_contract_valid ? 1u : 0u),
+        (unsigned)r.layer0_w2_sx_bits,
+        (unsigned)r.layer0_w2_inv_scale_bits,
+        (unsigned)r.layer0_w2_internal_words_valid);
     if (!r.layer0_w2_mac_acc_exact) {
         std::printf(
-            "[backup_io8][w2_path][D_mac_acc] sample=%u exact=0 dim=%u first_partial_mismatch_col=%u dut_partial=0x%08X ref_partial=0x%08X dut_term=0x%08X ref_term=0x%08X operand_mismatch_first=%u\n",
-            (unsigned)sample_idx,
-            (unsigned)r.layer0_w2_mac_dim,
+            "[backup_io8][w2_path][D_internal_prewrite] first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
             (unsigned)r.layer0_w2_mac_first_mismatch_col,
+            (unsigned)r.layer0_w2_mac_dim,
             (unsigned)r.layer0_w2_mac_dut_partial_bits,
-            (unsigned)r.layer0_w2_mac_ref_partial_bits,
-            (unsigned)r.layer0_w2_mac_dut_term_bits,
-            (unsigned)r.layer0_w2_mac_ref_term_bits,
-            (unsigned)(r.layer0_w2_mac_operand_mismatch_first ? 1u : 0u));
-    } else {
-        std::printf(
-            "[backup_io8][w2_path][D_mac_acc] sample=%u exact=1 dim=%u\n",
-            (unsigned)sample_idx,
-            (unsigned)r.layer0_w2_mac_dim);
+            (unsigned)r.layer0_w2_mac_ref_partial_bits);
     }
     if (!r.layer0_w2_writeback_exact) {
         std::printf(
-            "[backup_io8][w2_path][E_writeback] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+            "[backup_io8][w2_path][E_final_store] sample=%u exact=0 first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X prewrite_to_final_exact=%u\n",
             (unsigned)sample_idx,
             (unsigned)r.layer0_w2_writeback_first_mismatch_token,
             (unsigned)r.layer0_w2_writeback_first_mismatch_dim,
             (unsigned)r.layer0_w2_writeback_dut_bits,
-            (unsigned)r.layer0_w2_writeback_ref_bits);
+            (unsigned)r.layer0_w2_writeback_ref_bits,
+            (unsigned)(r.layer0_w2_prewrite_to_final_exact ? 1u : 0u));
     } else {
-        std::printf("[backup_io8][w2_path][E_writeback] sample=%u exact=1\n", (unsigned)sample_idx);
+        std::printf(
+            "[backup_io8][w2_path][E_final_store] sample=%u exact=1 prewrite_to_final_exact=%u\n",
+            (unsigned)sample_idx,
+            (unsigned)(r.layer0_w2_prewrite_to_final_exact ? 1u : 0u));
+    }
+    if (!r.layer0_w2_prewrite_to_final_exact) {
+        std::printf(
+            "[backup_io8][w2_path][E_final_store] prewrite_vs_final_first_mismatch_token=%u dim=%u prewrite=0x%08X final=0x%08X\n",
+            (unsigned)r.layer0_w2_prewrite_to_final_first_mismatch_token,
+            (unsigned)r.layer0_w2_prewrite_to_final_first_mismatch_dim,
+            (unsigned)r.layer0_w2_prewrite_to_final_dut_bits,
+            (unsigned)r.layer0_w2_prewrite_to_final_ref_bits);
     }
 
     if (!r.layer0_w2_input_exact) {
@@ -3780,9 +3855,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     } else if (r.layer0_w2_first_divergence_class == 2u) {
         w2_divergence_class = "param_load_or_addressing";
     } else if (r.layer0_w2_first_divergence_class == 3u) {
-        w2_divergence_class = "w2_mac_compute";
+        w2_divergence_class = "w2_internal_prewrite";
     } else if (r.layer0_w2_first_divergence_class == 4u) {
-        w2_divergence_class = "w2_writeback";
+        w2_divergence_class = "w2_final_writeback";
     }
     std::printf(
         "[backup_io8][w2_path][decision] sample=%u first_divergence=%s class=%u mainline_input_count=%u fallback_input_count=%u\n",
@@ -3793,11 +3868,20 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)r.layer0_w2_input_fallback_preload_count);
     if (r.layer0_w2_first_divergence_class == 3u) {
         std::printf(
-            "[backup_io8][w2_path][decision] mac_first_partial_mismatch_col=%u operand_mismatch_first=%u dut_partial=0x%08X ref_partial=0x%08X\n",
+            "[backup_io8][w2_path][decision] prewrite_first_mismatch_token=%u dim=%u quant_contract_valid=%u dut_prewrite=0x%08X ref_prewrite=0x%08X\n",
             (unsigned)r.layer0_w2_mac_first_mismatch_col,
-            (unsigned)(r.layer0_w2_mac_operand_mismatch_first ? 1u : 0u),
+            (unsigned)r.layer0_w2_mac_dim,
+            (unsigned)(r.layer0_w2_quant_contract_valid ? 1u : 0u),
             (unsigned)r.layer0_w2_mac_dut_partial_bits,
             (unsigned)r.layer0_w2_mac_ref_partial_bits);
+    } else if (r.layer0_w2_first_divergence_class == 4u) {
+        std::printf(
+            "[backup_io8][w2_path][decision] final_store_first_mismatch_token=%u dim=%u dut_final=0x%08X ref_final=0x%08X prewrite_to_final_exact=%u\n",
+            (unsigned)r.layer0_w2_writeback_first_mismatch_token,
+            (unsigned)r.layer0_w2_writeback_first_mismatch_dim,
+            (unsigned)r.layer0_w2_writeback_dut_bits,
+            (unsigned)r.layer0_w2_writeback_ref_bits,
+            (unsigned)(r.layer0_w2_prewrite_to_final_exact ? 1u : 0u));
     }
     const char* earliest_e0_name = "none";
     switch (r.earliest_e0_first_divergence_bucket) {
@@ -4510,6 +4594,20 @@ int main() {
     RefModelStageCompareResult ref_probe = ref_probe_s5;
     if (ref_probe_s5.all_exact) {
         ref_probe = run_one_ref_model_stage_probe(io_debug, kContractSample0, kContractIdx0);
+    }
+    Io8Top io_w2_samples;
+    run_setup_cfg_loadw(io_w2_samples, param_words, "w2_sample_check");
+    W2_DIRECT_PROBE_SAMPLE_LOOP: for (uint32_t i = 0u; i < kW2DirectProbeSampleCount; ++i) {
+        const uint32_t sample_id = kW2DirectProbeSamples[i];
+        const RefModelStageCompareResult w2_probe =
+            run_one_ref_model_stage_probe(io_w2_samples, sample_id, kDebugFocusedIdx);
+        std::printf(
+            "[backup_io8][w2_path][sample_check] sample=%u class=%u D_internal_prewrite_exact=%u E_final_store_exact=%u prewrite_to_final_exact=%u\n",
+            (unsigned)sample_id,
+            (unsigned)w2_probe.layer0_w2_first_divergence_class,
+            (unsigned)(w2_probe.layer0_w2_mac_acc_exact ? 1u : 0u),
+            (unsigned)(w2_probe.layer0_w2_writeback_exact ? 1u : 0u),
+            (unsigned)(w2_probe.layer0_w2_prewrite_to_final_exact ? 1u : 0u));
     }
 
     Io8Top io_probe;
