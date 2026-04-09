@@ -186,6 +186,17 @@ struct RefModelStageCompareResult {
     uint32_t layer1_sublayer1_ln_affine_out_first_mismatch_dim;
     uint32_t layer1_sublayer1_ln_affine_out_dut_bits;
     uint32_t layer1_sublayer1_ln_affine_out_ref_bits;
+    bool layer1_sublayer1_ln_affine_subbucket_sum_exact;
+    bool layer1_sublayer1_ln_affine_subbucket_var_acc_exact;
+    bool layer1_sublayer1_ln_affine_subbucket_normed_before_affine_exact;
+    bool layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact;
+    uint32_t layer1_sublayer1_ln_affine_host_tb_mismatch_count;
+    uint32_t layer1_sublayer1_ln_affine_dut_style_mismatch_count;
+    uint32_t layer1_sublayer1_ln_affine_subbucket_first_bucket; // 0=none,1=sum,2=var_acc,3=normed_before_affine,4=affine_mul_add
+    uint32_t layer1_sublayer1_ln_affine_subbucket_first_token;
+    uint32_t layer1_sublayer1_ln_affine_subbucket_first_dim;
+    uint32_t layer1_sublayer1_ln_affine_subbucket_host_bits;
+    uint32_t layer1_sublayer1_ln_affine_subbucket_dut_style_bits;
     uint32_t layer1_sublayer1_ln_writeback_first_mismatch_token;
     uint32_t layer1_sublayer1_ln_writeback_first_mismatch_dim;
     uint32_t layer1_sublayer1_ln_writeback_dut_bits;
@@ -363,6 +374,25 @@ static float bits_to_f32(uint32_t u) {
     } cvt;
     cvt.u = u;
     return cvt.f;
+}
+
+static aecct::fp32_t tb_fp32_from_u32_bits(uint32_t bits) {
+    return aecct::fp32_from_bits((aecct::u32_t)bits);
+}
+
+static uint32_t tb_u32_bits_from_fp32(const aecct::fp32_t& v) {
+    return (uint32_t)aecct::bits_from_fp32(v).to_uint();
+}
+
+static const char* layer1_sublayer1_ln_affine_subbucket_name(uint32_t bucket) {
+    switch (bucket) {
+        case 1u: return "sum";
+        case 2u: return "var_acc";
+        case 3u: return "normed_before_affine";
+        case 4u: return "affine_mul_add";
+        default: break;
+    }
+    return "none";
 }
 
 static uint32_t fnv1a_u32_words(const std::vector<uint32_t>& words) {
@@ -1318,6 +1348,17 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer1_sublayer1_ln_affine_out_first_mismatch_dim = 0u;
     r.layer1_sublayer1_ln_affine_out_dut_bits = 0u;
     r.layer1_sublayer1_ln_affine_out_ref_bits = 0u;
+    r.layer1_sublayer1_ln_affine_subbucket_sum_exact = true;
+    r.layer1_sublayer1_ln_affine_subbucket_var_acc_exact = true;
+    r.layer1_sublayer1_ln_affine_subbucket_normed_before_affine_exact = true;
+    r.layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact = true;
+    r.layer1_sublayer1_ln_affine_host_tb_mismatch_count = 0u;
+    r.layer1_sublayer1_ln_affine_dut_style_mismatch_count = 0u;
+    r.layer1_sublayer1_ln_affine_subbucket_first_bucket = 0u;
+    r.layer1_sublayer1_ln_affine_subbucket_first_token = 0u;
+    r.layer1_sublayer1_ln_affine_subbucket_first_dim = 0u;
+    r.layer1_sublayer1_ln_affine_subbucket_host_bits = 0u;
+    r.layer1_sublayer1_ln_affine_subbucket_dut_style_bits = 0u;
     r.layer1_sublayer1_ln_writeback_first_mismatch_token = 0u;
     r.layer1_sublayer1_ln_writeback_first_mismatch_dim = 0u;
     r.layer1_sublayer1_ln_writeback_dut_bits = 0u;
@@ -2107,53 +2148,187 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         }
     }
 
+    const float host_ln_eps = 1.0e-5f;
+    const float host_ln_inv_d_model = (d_model == 0u) ? 0.0f : (1.0f / (float)d_model);
+    const ac_int<32, true> ln_d_model_i = (ac_int<32, true>)((d_model == 0u) ? 1u : d_model);
+    const aecct::fp32_t ln_d_model_den(ln_d_model_i);
+    const aecct::fp32_t ln_eps_fp = aecct::fp32_from_bits(aecct::LN_EPS_BITS);
+    bool ln_subbucket_sum_exact = true;
+    bool ln_subbucket_var_acc_exact = true;
+    bool ln_subbucket_normed_exact = true;
+    bool ln_subbucket_affine_exact = true;
+    uint32_t ln_subbucket_sum_token = 0u;
+    uint32_t ln_subbucket_sum_host_bits = 0u;
+    uint32_t ln_subbucket_sum_dut_bits = 0u;
+    uint32_t ln_subbucket_var_token = 0u;
+    uint32_t ln_subbucket_var_host_bits = 0u;
+    uint32_t ln_subbucket_var_dut_bits = 0u;
+    uint32_t ln_subbucket_normed_token = 0u;
+    uint32_t ln_subbucket_normed_dim = 0u;
+    uint32_t ln_subbucket_normed_host_bits = 0u;
+    uint32_t ln_subbucket_normed_dut_bits = 0u;
+    uint32_t ln_subbucket_affine_token = 0u;
+    uint32_t ln_subbucket_affine_dim = 0u;
+    uint32_t ln_subbucket_affine_host_bits = 0u;
+    uint32_t ln_subbucket_affine_dut_bits = 0u;
     REF_LAYER1_SUBLAYER1_LN_AFFINE_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = t * d_model;
-        float dut_sum = 0.0f;
-        for (uint32_t d = 0u; d < d_model; ++d) {
+        float host_sum = 0.0f;
+        aecct::fp32_t dut_sum_fp = aecct::fp32_zero();
+        REF_LAYER1_SUBLAYER1_LN_AFFINE_SUM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
             const uint32_t flat = row_base + d;
-            const float dut_ffn2 = bits_to_f32((uint32_t)sram[layer1_ffn2_base + flat].to_uint());
-            const float dut_ln0 = bits_to_f32(
-                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint());
-            dut_sum += (dut_ffn2 + dut_ln0);
+            const uint32_t dut_ffn2_bits = (uint32_t)sram[layer1_ffn2_base + flat].to_uint();
+            const uint32_t dut_ln0_bits =
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint();
+            const float host_x = bits_to_f32(dut_ffn2_bits) + bits_to_f32(dut_ln0_bits);
+            host_sum += host_x;
+
+            const aecct::fp32_t dut_ln_in_raw = tb_fp32_from_u32_bits(dut_ffn2_bits) + tb_fp32_from_u32_bits(dut_ln0_bits);
+            const aecct::fp32_t dut_ln_in_sanitized = aecct::layernorm_fp32_sanitize_input(dut_ln_in_raw);
+            dut_sum_fp += dut_ln_in_sanitized;
         }
-        const float inv_d_model = (d_model == 0u) ? 0.0f : (1.0f / (float)d_model);
-        const float dut_mean = dut_sum * inv_d_model;
-        float dut_var_acc = 0.0f;
-        for (uint32_t d = 0u; d < d_model; ++d) {
+        const float host_mean = host_sum * host_ln_inv_d_model;
+        const uint32_t host_sum_bits = f32_to_bits(host_sum);
+        const uint32_t dut_sum_bits = tb_u32_bits_from_fp32(dut_sum_fp);
+        if (host_sum_bits != dut_sum_bits) {
+            if (ln_subbucket_sum_exact) {
+                ln_subbucket_sum_token = t;
+                ln_subbucket_sum_host_bits = host_sum_bits;
+                ln_subbucket_sum_dut_bits = dut_sum_bits;
+            }
+            ln_subbucket_sum_exact = false;
+        }
+
+        float host_var_acc = 0.0f;
+        const aecct::fp32_t dut_mean_fp = dut_sum_fp / ln_d_model_den;
+        aecct::fp32_t dut_var_acc_fp = aecct::fp32_zero();
+        REF_LAYER1_SUBLAYER1_LN_AFFINE_VAR_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
             const uint32_t flat = row_base + d;
-            const float dut_ffn2 = bits_to_f32((uint32_t)sram[layer1_ffn2_base + flat].to_uint());
-            const float dut_ln0 = bits_to_f32(
-                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint());
-            const float dut_x = dut_ffn2 + dut_ln0;
-            const float dut_delta = dut_x - dut_mean;
-            dut_var_acc += dut_delta * dut_delta;
+            const uint32_t dut_ffn2_bits = (uint32_t)sram[layer1_ffn2_base + flat].to_uint();
+            const uint32_t dut_ln0_bits =
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint();
+            const float host_x = bits_to_f32(dut_ffn2_bits) + bits_to_f32(dut_ln0_bits);
+            const float host_delta = host_x - host_mean;
+            host_var_acc += host_delta * host_delta;
+
+            const aecct::fp32_t dut_ln_in_raw = tb_fp32_from_u32_bits(dut_ffn2_bits) + tb_fp32_from_u32_bits(dut_ln0_bits);
+            const aecct::fp32_t dut_ln_in_sanitized = aecct::layernorm_fp32_sanitize_input(dut_ln_in_raw);
+            const aecct::fp32_t dut_delta = dut_ln_in_sanitized - dut_mean_fp;
+            dut_var_acc_fp += (dut_delta * dut_delta);
         }
-        const float dut_var = dut_var_acc * inv_d_model;
-        const float eps = 1.0e-5f;
+        const float host_var = host_var_acc * host_ln_inv_d_model;
+        const uint32_t host_var_acc_bits = f32_to_bits(host_var_acc);
+        const uint32_t dut_var_acc_bits = tb_u32_bits_from_fp32(dut_var_acc_fp);
+        if (host_var_acc_bits != dut_var_acc_bits) {
+            if (ln_subbucket_var_acc_exact) {
+                ln_subbucket_var_token = t;
+                ln_subbucket_var_host_bits = host_var_acc_bits;
+                ln_subbucket_var_dut_bits = dut_var_acc_bits;
+            }
+            ln_subbucket_var_acc_exact = false;
+        }
+
+        const aecct::fp32_t dut_var_fp = dut_var_acc_fp / ln_d_model_den;
+        aecct::fp32_t dut_var_plus_eps_fp = dut_var_fp + ln_eps_fp;
+        if (!aecct::layernorm_fp32_is_finite(dut_var_plus_eps_fp) || dut_var_plus_eps_fp <= aecct::fp32_zero()) {
+            dut_var_plus_eps_fp = ln_eps_fp;
+        }
+        if (!aecct::layernorm_fp32_is_finite(dut_var_plus_eps_fp) || dut_var_plus_eps_fp <= aecct::fp32_zero()) {
+            dut_var_plus_eps_fp = aecct::fp32_one();
+        }
+        const aecct::fp32_t dut_inv_std_fp = aecct::layernorm_refstyle_inv_sqrt_approx(dut_var_plus_eps_fp);
         REF_LAYER1_SUBLAYER1_LN_AFFINE_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
             const uint32_t flat = row_base + d;
-            const float dut_ffn2 = bits_to_f32((uint32_t)sram[layer1_ffn2_base + flat].to_uint());
-            const float dut_ln0 = bits_to_f32(
-                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint());
-            const float dut_x = dut_ffn2 + dut_ln0;
-            const float dut_normed = (dut_x - dut_mean) / std::sqrt(dut_var + eps);
+            const uint32_t dut_ffn2_bits = (uint32_t)sram[layer1_ffn2_base + flat].to_uint();
+            const uint32_t dut_ln0_bits =
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint();
+
+            const float host_x = bits_to_f32(dut_ffn2_bits) + bits_to_f32(dut_ln0_bits);
+            const float host_normed = (host_x - host_mean) / std::sqrt(host_var + host_ln_eps);
             const float gamma = (float)w_decoder_layers_1_sublayer_1_norm_weight[d];
             const float beta = (float)w_decoder_layers_1_sublayer_1_norm_bias[d];
-            const uint32_t dut_bits = f32_to_bits(dut_normed * gamma + beta);
+            const float host_affine = host_normed * gamma + beta;
+            const uint32_t host_normed_bits = f32_to_bits(host_normed);
+            const uint32_t host_affine_bits = f32_to_bits(host_affine);
+
+            const aecct::fp32_t dut_ln_in_raw = tb_fp32_from_u32_bits(dut_ffn2_bits) + tb_fp32_from_u32_bits(dut_ln0_bits);
+            const aecct::fp32_t dut_ln_in_sanitized = aecct::layernorm_fp32_sanitize_input(dut_ln_in_raw);
+            const aecct::fp32_t dut_normed_fp = (dut_ln_in_sanitized - dut_mean_fp) * dut_inv_std_fp;
+            const aecct::fp32_t gamma_fp = tb_fp32_from_u32_bits(f32_to_bits(gamma));
+            const aecct::fp32_t beta_fp = tb_fp32_from_u32_bits(f32_to_bits(beta));
+            const aecct::fp32_t dut_affine_fp = (dut_normed_fp * gamma_fp) + beta_fp;
+            const uint32_t dut_normed_bits = tb_u32_bits_from_fp32(dut_normed_fp);
+            const uint32_t dut_affine_bits = tb_u32_bits_from_fp32(dut_affine_fp);
+
+            if (host_normed_bits != dut_normed_bits) {
+                if (ln_subbucket_normed_exact) {
+                    ln_subbucket_normed_token = t;
+                    ln_subbucket_normed_dim = d;
+                    ln_subbucket_normed_host_bits = host_normed_bits;
+                    ln_subbucket_normed_dut_bits = dut_normed_bits;
+                }
+                ln_subbucket_normed_exact = false;
+            }
+            if (host_affine_bits != dut_affine_bits) {
+                if (ln_subbucket_affine_exact) {
+                    ln_subbucket_affine_token = t;
+                    ln_subbucket_affine_dim = d;
+                    ln_subbucket_affine_host_bits = host_affine_bits;
+                    ln_subbucket_affine_dut_bits = dut_affine_bits;
+                }
+                ln_subbucket_affine_exact = false;
+            }
+
             const uint32_t ref_bits = f32_to_bits((float)ref_layer1_sublayer1_ln_affine_out_dut_aligned[flat]);
-            if (dut_bits != ref_bits) {
-                r.layer1_sublayer1_ln_affine_out_exact = false;
-                r.layer1_sublayer1_ln_affine_out_first_mismatch_token = t;
-                r.layer1_sublayer1_ln_affine_out_first_mismatch_dim = d;
-                r.layer1_sublayer1_ln_affine_out_dut_bits = dut_bits;
-                r.layer1_sublayer1_ln_affine_out_ref_bits = ref_bits;
-                break;
+            if (host_affine_bits != ref_bits) {
+                r.layer1_sublayer1_ln_affine_host_tb_mismatch_count += 1u;
+            }
+            if (dut_affine_bits != ref_bits) {
+                r.layer1_sublayer1_ln_affine_dut_style_mismatch_count += 1u;
+                if (r.layer1_sublayer1_ln_affine_out_exact) {
+                    r.layer1_sublayer1_ln_affine_out_exact = false;
+                    r.layer1_sublayer1_ln_affine_out_first_mismatch_token = t;
+                    r.layer1_sublayer1_ln_affine_out_first_mismatch_dim = d;
+                    r.layer1_sublayer1_ln_affine_out_dut_bits = dut_affine_bits;
+                    r.layer1_sublayer1_ln_affine_out_ref_bits = ref_bits;
+                }
             }
         }
-        if (!r.layer1_sublayer1_ln_affine_out_exact) {
-            break;
-        }
+    }
+    r.layer1_sublayer1_ln_affine_subbucket_sum_exact = ln_subbucket_sum_exact;
+    r.layer1_sublayer1_ln_affine_subbucket_var_acc_exact = ln_subbucket_var_acc_exact;
+    r.layer1_sublayer1_ln_affine_subbucket_normed_before_affine_exact = ln_subbucket_normed_exact;
+    r.layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact = ln_subbucket_affine_exact;
+    if (!ln_subbucket_sum_exact) {
+        r.layer1_sublayer1_ln_affine_subbucket_first_bucket = 1u;
+        r.layer1_sublayer1_ln_affine_subbucket_first_token = ln_subbucket_sum_token;
+        r.layer1_sublayer1_ln_affine_subbucket_first_dim = 0u;
+        r.layer1_sublayer1_ln_affine_subbucket_host_bits = ln_subbucket_sum_host_bits;
+        r.layer1_sublayer1_ln_affine_subbucket_dut_style_bits = ln_subbucket_sum_dut_bits;
+    } else if (!ln_subbucket_var_acc_exact) {
+        r.layer1_sublayer1_ln_affine_subbucket_first_bucket = 2u;
+        r.layer1_sublayer1_ln_affine_subbucket_first_token = ln_subbucket_var_token;
+        r.layer1_sublayer1_ln_affine_subbucket_first_dim = 0u;
+        r.layer1_sublayer1_ln_affine_subbucket_host_bits = ln_subbucket_var_host_bits;
+        r.layer1_sublayer1_ln_affine_subbucket_dut_style_bits = ln_subbucket_var_dut_bits;
+    } else if (!ln_subbucket_normed_exact) {
+        r.layer1_sublayer1_ln_affine_subbucket_first_bucket = 3u;
+        r.layer1_sublayer1_ln_affine_subbucket_first_token = ln_subbucket_normed_token;
+        r.layer1_sublayer1_ln_affine_subbucket_first_dim = ln_subbucket_normed_dim;
+        r.layer1_sublayer1_ln_affine_subbucket_host_bits = ln_subbucket_normed_host_bits;
+        r.layer1_sublayer1_ln_affine_subbucket_dut_style_bits = ln_subbucket_normed_dut_bits;
+    } else if (!ln_subbucket_affine_exact) {
+        r.layer1_sublayer1_ln_affine_subbucket_first_bucket = 4u;
+        r.layer1_sublayer1_ln_affine_subbucket_first_token = ln_subbucket_affine_token;
+        r.layer1_sublayer1_ln_affine_subbucket_first_dim = ln_subbucket_affine_dim;
+        r.layer1_sublayer1_ln_affine_subbucket_host_bits = ln_subbucket_affine_host_bits;
+        r.layer1_sublayer1_ln_affine_subbucket_dut_style_bits = ln_subbucket_affine_dut_bits;
+    } else {
+        r.layer1_sublayer1_ln_affine_subbucket_first_bucket = 0u;
+        r.layer1_sublayer1_ln_affine_subbucket_first_token = 0u;
+        r.layer1_sublayer1_ln_affine_subbucket_first_dim = 0u;
+        r.layer1_sublayer1_ln_affine_subbucket_host_bits = 0u;
+        r.layer1_sublayer1_ln_affine_subbucket_dut_style_bits = 0u;
     }
 
     REF_LAYER1_OUT_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
@@ -2234,6 +2409,27 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         layer1_sublayer1_ln_first_dut_bits = r.layer1_sublayer1_ln_writeback_dut_bits;
         layer1_sublayer1_ln_first_ref_bits = r.layer1_sublayer1_ln_writeback_ref_bits;
     }
+    const char* layer1_sublayer1_ln_affine_first_subbucket =
+        layer1_sublayer1_ln_affine_subbucket_name(r.layer1_sublayer1_ln_affine_subbucket_first_bucket);
+    std::printf(
+        "[backup_io8][layer1_sublayer1_ln_affine_dual_compare] sample=%u host_tb_mismatch=%u dut_style_mismatch=%u host_tb_exact=%u dut_style_exact=%u\n",
+        (unsigned)sample_idx,
+        (unsigned)r.layer1_sublayer1_ln_affine_host_tb_mismatch_count,
+        (unsigned)r.layer1_sublayer1_ln_affine_dut_style_mismatch_count,
+        (unsigned)(r.layer1_sublayer1_ln_affine_host_tb_mismatch_count == 0u ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_dut_style_mismatch_count == 0u ? 1u : 0u));
+    std::printf(
+        "[backup_io8][layer1_sublayer1_ln_affine_subbucket] sample=%u sum_exact=%u var_acc_exact=%u normed_before_affine_exact=%u affine_mul_add_exact=%u first_subbucket_divergence=%s first_mismatch_token=%u first_mismatch_dim=%u host=0x%08X dut_style=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_sum_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_var_acc_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_normed_before_affine_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact ? 1u : 0u),
+        layer1_sublayer1_ln_affine_first_subbucket,
+        (unsigned)r.layer1_sublayer1_ln_affine_subbucket_first_token,
+        (unsigned)r.layer1_sublayer1_ln_affine_subbucket_first_dim,
+        (unsigned)r.layer1_sublayer1_ln_affine_subbucket_host_bits,
+        (unsigned)r.layer1_sublayer1_ln_affine_subbucket_dut_style_bits);
     std::printf(
         "[backup_io8][layer1_sublayer1_ln_same_semantic] sample=%u authoritative_target=layer1_sublayer1_ln_out_dut_aligned authoritative_exact=%u diagnostic_target=layer1_ffn_ln_out diagnostic_only_exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
         (unsigned)sample_idx,
@@ -2244,7 +2440,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)layer1_sublayer1_ln_first_dut_bits,
         (unsigned)layer1_sublayer1_ln_first_ref_bits);
     std::printf(
-        "[backup_io8][layer1_sublayer1_ln_bucket] sample=%u pre_ln_input_exact=%u affine_out_exact=%u writeback_exact=%u first_divergence=%s first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
+        "[backup_io8][layer1_sublayer1_ln_bucket] sample=%u pre_ln_input_exact=%u affine_out_exact=%u writeback_exact=%u first_divergence=%s first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X sum_exact=%u var_acc_exact=%u normed_before_affine_exact=%u affine_mul_add_exact=%u first_subbucket_divergence=%s\n",
         (unsigned)sample_idx,
         (unsigned)(r.layer1_sublayer1_ln_in_exact ? 1u : 0u),
         (unsigned)(r.layer1_sublayer1_ln_affine_out_exact ? 1u : 0u),
@@ -2253,7 +2449,12 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         (unsigned)layer1_sublayer1_ln_first_token,
         (unsigned)layer1_sublayer1_ln_first_dim,
         (unsigned)layer1_sublayer1_ln_first_dut_bits,
-        (unsigned)layer1_sublayer1_ln_first_ref_bits);
+        (unsigned)layer1_sublayer1_ln_first_ref_bits,
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_sum_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_var_acc_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_normed_before_affine_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact ? 1u : 0u),
+        layer1_sublayer1_ln_affine_first_subbucket);
 
     REF_END_NORM_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = x_end_base + t * d_model;
@@ -5445,6 +5646,8 @@ int main() {
         const uint32_t sample_id = kW2DirectProbeSamples[i];
         const RefModelStageCompareResult w2_probe =
             run_one_ref_model_stage_probe(io_w2_samples, sample_id, kDebugFocusedIdx);
+        const char* first_subbucket =
+            layer1_sublayer1_ln_affine_subbucket_name(w2_probe.layer1_sublayer1_ln_affine_subbucket_first_bucket);
         std::printf(
             "[backup_io8][w2_path][sample_check] sample=%u class=%u D_internal_prewrite_exact=%u E_final_store_exact=%u prewrite_to_final_exact=%u\n",
             (unsigned)sample_id,
@@ -5452,6 +5655,16 @@ int main() {
             (unsigned)(w2_probe.layer0_w2_mac_acc_exact ? 1u : 0u),
             (unsigned)(w2_probe.layer0_w2_writeback_exact ? 1u : 0u),
             (unsigned)(w2_probe.layer0_w2_prewrite_to_final_exact ? 1u : 0u));
+        std::printf(
+            "[backup_io8][layer1_sublayer1_ln_affine_summary] sample=%u host_tb_mismatch=%u dut_style_mismatch=%u sum_exact=%u var_acc_exact=%u normed_before_affine_exact=%u affine_mul_add_exact=%u first_subbucket_divergence=%s\n",
+            (unsigned)sample_id,
+            (unsigned)w2_probe.layer1_sublayer1_ln_affine_host_tb_mismatch_count,
+            (unsigned)w2_probe.layer1_sublayer1_ln_affine_dut_style_mismatch_count,
+            (unsigned)(w2_probe.layer1_sublayer1_ln_affine_subbucket_sum_exact ? 1u : 0u),
+            (unsigned)(w2_probe.layer1_sublayer1_ln_affine_subbucket_var_acc_exact ? 1u : 0u),
+            (unsigned)(w2_probe.layer1_sublayer1_ln_affine_subbucket_normed_before_affine_exact ? 1u : 0u),
+            (unsigned)(w2_probe.layer1_sublayer1_ln_affine_subbucket_affine_mul_add_exact ? 1u : 0u),
+            first_subbucket);
     }
 
     Io8Top io_probe;
