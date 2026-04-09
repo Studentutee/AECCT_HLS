@@ -3002,7 +3002,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
 
         auto emit_w2_semantic_candidate = [&](const char* name, const Layer0StageCmp& cmp) {
             std::printf(
-                "[backup_io8][w2_semantic_scan] sample=%u candidate=%s exact=%u first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                "[backup_io8][w2_semantic_scan] sample=%u candidate=%s exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
                 (unsigned)sample_idx,
                 name,
                 (unsigned)(cmp.exact ? 1u : 0u),
@@ -3019,7 +3019,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         emit_w2_semantic_candidate("quant_contract_rebuild", w2_scan_quant_rebuild_cmp);
 
         std::printf(
-            "[backup_io8][w2_same_semantic] sample=%u new_ref_target=layer0_ffn_w2_quant_raw_out new_ref_exact=%u first_mismatch_token=%u dim=%u dut=0x%08X ref=0x%08X quant_contract_rebuild_exact=%u\n",
+            "[backup_io8][w2_same_semantic] sample=%u new_ref_target=layer0_ffn_w2_quant_raw_out new_ref_exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X quant_contract_rebuild_exact=%u\n",
             (unsigned)sample_idx,
             (unsigned)(w2_scan_same_semantic_cmp.exact ? 1u : 0u),
             (unsigned)w2_scan_same_semantic_cmp.token,
@@ -3049,12 +3049,16 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         }
 
         const char* semantic_decision = "inconclusive";
-        if (!w2_scan_current_target_cmp.exact && w2_scan_same_semantic_cmp.exact) {
+        if (w2_scan_same_semantic_cmp.exact && !w2_scan_current_target_cmp.exact) {
+            semantic_decision = "current_compare_target_insufficient_or_wrong";
+        } else if (w2_scan_same_semantic_cmp.exact) {
             semantic_decision = "same_semantic_golden_exact";
+        } else if (!w2_scan_same_semantic_cmp.exact && w2_scan_quant_rebuild_cmp.exact) {
+            semantic_decision = "refmodel_contract_gap_after_raw_dump";
         } else if (!w2_scan_current_target_cmp.exact && alternative_exact) {
-            semantic_decision = "compare_target_selection_bug";
+            semantic_decision = "current_compare_target_insufficient_or_wrong";
         } else if (!any_ref_candidate_exact && w2_scan_quant_rebuild_cmp.exact) {
-            semantic_decision = "ref_semantic_gap_or_missing_golden";
+            semantic_decision = "refmodel_contract_gap_after_raw_dump";
         } else if (w2_scan_current_target_cmp.exact) {
             semantic_decision = "current_target_correct";
         } else if (!any_ref_candidate_exact && !w2_scan_quant_rebuild_cmp.exact) {
