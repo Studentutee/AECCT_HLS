@@ -103,6 +103,12 @@ struct RefModelIO {
   double* out_layer1_ffn1_out = nullptr;
   // optional layer1_relu_out dump: [B, 75, 128], row-major
   double* out_layer1_relu_out = nullptr;
+  // optional layer1 sublayer1 LN input dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer1_sublayer1_ln_in_dut_aligned = nullptr;
+  // optional layer1 sublayer1 LN affine output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer1_sublayer1_ln_affine_out_dut_aligned = nullptr;
+  // optional layer1 sublayer1 LN writeback output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
+  double* out_layer1_sublayer1_ln_out_dut_aligned = nullptr;
 
   int B = 0;
   int N = 0;

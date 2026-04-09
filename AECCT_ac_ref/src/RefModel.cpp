@@ -2441,6 +2441,9 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t layer1_act[TOKENS_T][FF_DIM];
     static fp32_ref_t layer1_ffn2[TOKENS_T][D_MODEL];
     static fp32_ref_t layer1_ffn_ln_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_sublayer1_ln_in_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_sublayer1_ln_affine_out_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_sublayer1_ln_out_dut_aligned[TOKENS_T][D_MODEL];
 
     run_layer(1,
               b,
@@ -2493,10 +2496,45 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
       }
     }
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        const fp32_ref_t residual_sum = layer1_ffn2[t][d] + layer1_ln0_out_dut_aligned[t][d];
+        // Keep sublayer1 LN input carrier aligned to DUT residual writeback semantics.
+        layer1_sublayer1_ln_in_dut_aligned[t][d] = residual_sum;
+      }
+    }
+    apply_layernorm_tokens(layer1_sublayer1_ln_in_dut_aligned,
+                           w_decoder_layers_1_sublayer_1_norm_weight,
+                           w_decoder_layers_1_sublayer_1_norm_bias,
+                           run_cfg_.ln_mode,
+                           b,
+                           RefLnSiteTag::L1_SUB1,
+                           layer1_sublayer1_ln_affine_out_dut_aligned);
+    for (int t = 0; t < TOKENS_T; ++t) {
+      for (int d = 0; d < D_MODEL; ++d) {
+        layer1_sublayer1_ln_out_dut_aligned[t][d] = layer1_sublayer1_ln_affine_out_dut_aligned[t][d];
+      }
+    }
+    if (use_full_e4m3_nonlinear_stress(run_cfg_) ||
+        should_apply_e4m3_group_roundtrip(run_cfg_, RefFragGroup::G1_LAYERNORM)) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          layer1_sublayer1_ln_out_dut_aligned[t][d] = stress_roundtrip_e4m3(
+            layer1_sublayer1_ln_out_dut_aligned[t][d],
+            run_cfg_,
+            RefFragGroup::G1_LAYERNORM,
+            &local_stats,
+            "layer1_sublayer1_ln_out_dut_aligned");
+        }
+      }
+    }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_mid_norm_dut_aligned", mid_norm_dut_aligned);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_attn_input_dut_aligned", layer1_attn_input_dut_aligned);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_pre_ln_input_dut_aligned", layer1_pre_ln_input_dut_aligned);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ln0_out_dut_aligned", layer1_ln0_out_dut_aligned);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_sublayer1_ln_in_dut_aligned", layer1_sublayer1_ln_in_dut_aligned);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_sublayer1_ln_affine_out_dut_aligned", layer1_sublayer1_ln_affine_out_dut_aligned);
+    dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_sublayer1_ln_out_dut_aligned", layer1_sublayer1_ln_out_dut_aligned);
 
     if (io.out_layer1_attn_input != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
@@ -2535,6 +2573,30 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         for (int d = 0; d < D_MODEL; ++d) {
           io.out_layer1_ln0_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_ln0_out_dut_aligned[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer1_sublayer1_ln_in_dut_aligned != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_sublayer1_ln_in_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_sublayer1_ln_in_dut_aligned[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer1_sublayer1_ln_affine_out_dut_aligned != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_sublayer1_ln_affine_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_sublayer1_ln_affine_out_dut_aligned[t][d].to_float());
+        }
+      }
+    }
+    if (io.out_layer1_sublayer1_ln_out_dut_aligned != nullptr) {
+      for (int t = 0; t < TOKENS_T; ++t) {
+        for (int d = 0; d < D_MODEL; ++d) {
+          io.out_layer1_sublayer1_ln_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+            static_cast<double>(layer1_sublayer1_ln_out_dut_aligned[t][d].to_float());
         }
       }
     }

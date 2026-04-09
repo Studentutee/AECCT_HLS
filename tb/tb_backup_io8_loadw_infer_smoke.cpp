@@ -130,6 +130,9 @@ struct RefModelStageCompareResult {
     bool layer1_relu_out_exact;
     bool layer1_ffn2_exact;
     bool layer1_ffn_ln_out_exact;
+    bool layer1_sublayer1_ln_in_exact;
+    bool layer1_sublayer1_ln_affine_out_exact;
+    bool layer1_sublayer1_ln_writeback_exact;
     bool end_norm_exact;
     bool st_exact;
     bool logit_exact;
@@ -175,6 +178,18 @@ struct RefModelStageCompareResult {
     uint32_t layer1_ffn_ln_out_first_mismatch_dim;
     uint32_t layer1_ffn_ln_out_dut_bits;
     uint32_t layer1_ffn_ln_out_ref_bits;
+    uint32_t layer1_sublayer1_ln_in_first_mismatch_token;
+    uint32_t layer1_sublayer1_ln_in_first_mismatch_dim;
+    uint32_t layer1_sublayer1_ln_in_dut_bits;
+    uint32_t layer1_sublayer1_ln_in_ref_bits;
+    uint32_t layer1_sublayer1_ln_affine_out_first_mismatch_token;
+    uint32_t layer1_sublayer1_ln_affine_out_first_mismatch_dim;
+    uint32_t layer1_sublayer1_ln_affine_out_dut_bits;
+    uint32_t layer1_sublayer1_ln_affine_out_ref_bits;
+    uint32_t layer1_sublayer1_ln_writeback_first_mismatch_token;
+    uint32_t layer1_sublayer1_ln_writeback_first_mismatch_dim;
+    uint32_t layer1_sublayer1_ln_writeback_dut_bits;
+    uint32_t layer1_sublayer1_ln_writeback_ref_bits;
     uint32_t layer0_ffn_ln_out_writeback_first_mismatch_token;
     uint32_t layer0_ffn_ln_out_writeback_first_mismatch_dim;
     uint32_t layer0_ffn_ln_out_writeback_dut_bits;
@@ -307,6 +322,7 @@ struct RefModelStageCompareResult {
     uint32_t xpred_first_mismatch_idx;
     uint32_t xpred_dut_bits;
     uint32_t xpred_ref_bits;
+    uint32_t layer1_sublayer1_ln_bucket; // 0=none,1=pre_ln_input,2=affine_out,3=writeback
     uint32_t boundary_bucket; // 0=attn_input(mid_norm),1=q,2=post_concat,3=attn_out,4=residual/preln,5=ln0,6=ffn1,7=relu,8=ffn2,9=sublayer1_ln,10=endLN,11=s_t,12=logit,13=x_pred,14=none
 };
 
@@ -1246,6 +1262,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer1_relu_out_exact = true;
     r.layer1_ffn2_exact = true;
     r.layer1_ffn_ln_out_exact = true;
+    r.layer1_sublayer1_ln_in_exact = true;
+    r.layer1_sublayer1_ln_affine_out_exact = true;
+    r.layer1_sublayer1_ln_writeback_exact = true;
     r.end_norm_exact = true;
     r.st_exact = true;
     r.logit_exact = true;
@@ -1291,6 +1310,18 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.layer1_ffn_ln_out_first_mismatch_dim = 0u;
     r.layer1_ffn_ln_out_dut_bits = 0u;
     r.layer1_ffn_ln_out_ref_bits = 0u;
+    r.layer1_sublayer1_ln_in_first_mismatch_token = 0u;
+    r.layer1_sublayer1_ln_in_first_mismatch_dim = 0u;
+    r.layer1_sublayer1_ln_in_dut_bits = 0u;
+    r.layer1_sublayer1_ln_in_ref_bits = 0u;
+    r.layer1_sublayer1_ln_affine_out_first_mismatch_token = 0u;
+    r.layer1_sublayer1_ln_affine_out_first_mismatch_dim = 0u;
+    r.layer1_sublayer1_ln_affine_out_dut_bits = 0u;
+    r.layer1_sublayer1_ln_affine_out_ref_bits = 0u;
+    r.layer1_sublayer1_ln_writeback_first_mismatch_token = 0u;
+    r.layer1_sublayer1_ln_writeback_first_mismatch_dim = 0u;
+    r.layer1_sublayer1_ln_writeback_dut_bits = 0u;
+    r.layer1_sublayer1_ln_writeback_ref_bits = 0u;
     r.layer0_ffn_ln_out_writeback_first_mismatch_token = 0u;
     r.layer0_ffn_ln_out_writeback_first_mismatch_dim = 0u;
     r.layer0_ffn_ln_out_writeback_dut_bits = 0u;
@@ -1423,6 +1454,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.xpred_first_mismatch_idx = 0u;
     r.xpred_dut_bits = 0u;
     r.xpred_ref_bits = 0u;
+    r.layer1_sublayer1_ln_bucket = 0u;
     r.boundary_bucket = 14u;
 
     std::vector<uint32_t> infer_words;
@@ -1512,6 +1544,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     std::vector<double> ref_layer1_relu_out((uint32_t)N_NODES * (uint32_t)D_FFN, 0.0);
     std::vector<double> ref_layer1_ffn2_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_layer1_ffn_ln_out((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer1_sublayer1_ln_in_dut_aligned((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer1_sublayer1_ln_affine_out_dut_aligned((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
+    std::vector<double> ref_layer1_sublayer1_ln_out_dut_aligned((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
     std::vector<double> ref_end_norm((uint32_t)N_NODES * (uint32_t)D_MODEL, 0.0);
 
     aecct_ref::RefModel ref_model;
@@ -1562,6 +1597,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     ref_io.out_layer1_relu_out = ref_layer1_relu_out.data();
     ref_io.out_layer1_ffn2_out = ref_layer1_ffn2_out.data();
     ref_io.out_layer1_ffn_ln_out = ref_layer1_ffn_ln_out.data();
+    ref_io.out_layer1_sublayer1_ln_in_dut_aligned = ref_layer1_sublayer1_ln_in_dut_aligned.data();
+    ref_io.out_layer1_sublayer1_ln_affine_out_dut_aligned = ref_layer1_sublayer1_ln_affine_out_dut_aligned.data();
+    ref_io.out_layer1_sublayer1_ln_out_dut_aligned = ref_layer1_sublayer1_ln_out_dut_aligned.data();
     ref_io.out_end_norm = ref_end_norm.data();
     ref_io.B = 1;
     ref_io.N = (int)EXP_LEN_OUT_XPRED_WORDS;
@@ -2046,18 +2084,95 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         }
     }
 
+    REF_LAYER1_SUBLAYER1_LN_IN_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        REF_LAYER1_SUBLAYER1_LN_IN_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const float dut_ffn2 = bits_to_f32((uint32_t)sram[layer1_ffn2_base + flat].to_uint());
+            const float dut_ln0 = bits_to_f32(
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint());
+            const uint32_t dut_bits = f32_to_bits(dut_ffn2 + dut_ln0);
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_sublayer1_ln_in_dut_aligned[flat]);
+            if (dut_bits != ref_bits) {
+                r.layer1_sublayer1_ln_in_exact = false;
+                r.layer1_sublayer1_ln_in_first_mismatch_token = t;
+                r.layer1_sublayer1_ln_in_first_mismatch_dim = d;
+                r.layer1_sublayer1_ln_in_dut_bits = dut_bits;
+                r.layer1_sublayer1_ln_in_ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!r.layer1_sublayer1_ln_in_exact) {
+            break;
+        }
+    }
+
+    REF_LAYER1_SUBLAYER1_LN_AFFINE_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        float dut_sum = 0.0f;
+        for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const float dut_ffn2 = bits_to_f32((uint32_t)sram[layer1_ffn2_base + flat].to_uint());
+            const float dut_ln0 = bits_to_f32(
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint());
+            dut_sum += (dut_ffn2 + dut_ln0);
+        }
+        const float inv_d_model = (d_model == 0u) ? 0.0f : (1.0f / (float)d_model);
+        const float dut_mean = dut_sum * inv_d_model;
+        float dut_var_acc = 0.0f;
+        for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const float dut_ffn2 = bits_to_f32((uint32_t)sram[layer1_ffn2_base + flat].to_uint());
+            const float dut_ln0 = bits_to_f32(
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint());
+            const float dut_x = dut_ffn2 + dut_ln0;
+            const float dut_delta = dut_x - dut_mean;
+            dut_var_acc += dut_delta * dut_delta;
+        }
+        const float dut_var = dut_var_acc * inv_d_model;
+        const float eps = 1.0e-5f;
+        REF_LAYER1_SUBLAYER1_LN_AFFINE_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const float dut_ffn2 = bits_to_f32((uint32_t)sram[layer1_ffn2_base + flat].to_uint());
+            const float dut_ln0 = bits_to_f32(
+                (uint32_t)aecct::transformer_layer_debug_peek_layer1_ln0_out_word((aecct::u32_t)flat).to_uint());
+            const float dut_x = dut_ffn2 + dut_ln0;
+            const float dut_normed = (dut_x - dut_mean) / std::sqrt(dut_var + eps);
+            const float gamma = (float)w_decoder_layers_1_sublayer_1_norm_weight[d];
+            const float beta = (float)w_decoder_layers_1_sublayer_1_norm_bias[d];
+            const uint32_t dut_bits = f32_to_bits(dut_normed * gamma + beta);
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_sublayer1_ln_affine_out_dut_aligned[flat]);
+            if (dut_bits != ref_bits) {
+                r.layer1_sublayer1_ln_affine_out_exact = false;
+                r.layer1_sublayer1_ln_affine_out_first_mismatch_token = t;
+                r.layer1_sublayer1_ln_affine_out_first_mismatch_dim = d;
+                r.layer1_sublayer1_ln_affine_out_dut_bits = dut_bits;
+                r.layer1_sublayer1_ln_affine_out_ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!r.layer1_sublayer1_ln_affine_out_exact) {
+            break;
+        }
+    }
+
     REF_LAYER1_OUT_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = t * d_model;
         REF_LAYER1_OUT_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
             const uint32_t dut_bits =
                 (uint32_t)aecct::top_peek_infer_endln_input_word(row_base + d).to_uint();
-            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_ffn_ln_out[row_base + d]);
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_sublayer1_ln_out_dut_aligned[row_base + d]);
             if (dut_bits != ref_bits) {
                 r.layer1_ffn_ln_out_exact = false;
                 r.layer1_ffn_ln_out_first_mismatch_token = t;
                 r.layer1_ffn_ln_out_first_mismatch_dim = d;
                 r.layer1_ffn_ln_out_dut_bits = dut_bits;
                 r.layer1_ffn_ln_out_ref_bits = ref_bits;
+                r.layer1_sublayer1_ln_writeback_exact = false;
+                r.layer1_sublayer1_ln_writeback_first_mismatch_token = t;
+                r.layer1_sublayer1_ln_writeback_first_mismatch_dim = d;
+                r.layer1_sublayer1_ln_writeback_dut_bits = dut_bits;
+                r.layer1_sublayer1_ln_writeback_ref_bits = ref_bits;
                 break;
             }
         }
@@ -2065,6 +2180,80 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
             break;
         }
     }
+    SameSemanticCmp layer1_sublayer1_ln_diag_cmp = make_same_semantic_cmp_pass();
+    LAYER1_SUBLAYER1_LN_DIAG_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
+        const uint32_t row_base = t * d_model;
+        LAYER1_SUBLAYER1_LN_DIAG_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < d_model; ++d) {
+            const uint32_t flat = row_base + d;
+            const uint32_t dut_bits =
+                (uint32_t)aecct::top_peek_infer_endln_input_word(flat).to_uint();
+            const uint32_t ref_bits = f32_to_bits((float)ref_layer1_ffn_ln_out[flat]);
+            if (dut_bits != ref_bits) {
+                layer1_sublayer1_ln_diag_cmp.exact = false;
+                layer1_sublayer1_ln_diag_cmp.token = t;
+                layer1_sublayer1_ln_diag_cmp.dim = d;
+                layer1_sublayer1_ln_diag_cmp.dut_bits = dut_bits;
+                layer1_sublayer1_ln_diag_cmp.ref_bits = ref_bits;
+                break;
+            }
+        }
+        if (!layer1_sublayer1_ln_diag_cmp.exact) {
+            break;
+        }
+    }
+    if (!r.layer1_sublayer1_ln_in_exact) {
+        r.layer1_sublayer1_ln_bucket = 1u;
+    } else if (!r.layer1_sublayer1_ln_affine_out_exact) {
+        r.layer1_sublayer1_ln_bucket = 2u;
+    } else if (!r.layer1_sublayer1_ln_writeback_exact) {
+        r.layer1_sublayer1_ln_bucket = 3u;
+    } else {
+        r.layer1_sublayer1_ln_bucket = 0u;
+    }
+    const char* layer1_sublayer1_ln_first_divergence = "none";
+    uint32_t layer1_sublayer1_ln_first_token = 0u;
+    uint32_t layer1_sublayer1_ln_first_dim = 0u;
+    uint32_t layer1_sublayer1_ln_first_dut_bits = 0u;
+    uint32_t layer1_sublayer1_ln_first_ref_bits = 0u;
+    if (r.layer1_sublayer1_ln_bucket == 1u) {
+        layer1_sublayer1_ln_first_divergence = "layer1_sublayer1_ln_in";
+        layer1_sublayer1_ln_first_token = r.layer1_sublayer1_ln_in_first_mismatch_token;
+        layer1_sublayer1_ln_first_dim = r.layer1_sublayer1_ln_in_first_mismatch_dim;
+        layer1_sublayer1_ln_first_dut_bits = r.layer1_sublayer1_ln_in_dut_bits;
+        layer1_sublayer1_ln_first_ref_bits = r.layer1_sublayer1_ln_in_ref_bits;
+    } else if (r.layer1_sublayer1_ln_bucket == 2u) {
+        layer1_sublayer1_ln_first_divergence = "layer1_sublayer1_ln_affine_out";
+        layer1_sublayer1_ln_first_token = r.layer1_sublayer1_ln_affine_out_first_mismatch_token;
+        layer1_sublayer1_ln_first_dim = r.layer1_sublayer1_ln_affine_out_first_mismatch_dim;
+        layer1_sublayer1_ln_first_dut_bits = r.layer1_sublayer1_ln_affine_out_dut_bits;
+        layer1_sublayer1_ln_first_ref_bits = r.layer1_sublayer1_ln_affine_out_ref_bits;
+    } else if (r.layer1_sublayer1_ln_bucket == 3u) {
+        layer1_sublayer1_ln_first_divergence = "layer1_sublayer1_ln_writeback";
+        layer1_sublayer1_ln_first_token = r.layer1_sublayer1_ln_writeback_first_mismatch_token;
+        layer1_sublayer1_ln_first_dim = r.layer1_sublayer1_ln_writeback_first_mismatch_dim;
+        layer1_sublayer1_ln_first_dut_bits = r.layer1_sublayer1_ln_writeback_dut_bits;
+        layer1_sublayer1_ln_first_ref_bits = r.layer1_sublayer1_ln_writeback_ref_bits;
+    }
+    std::printf(
+        "[backup_io8][layer1_sublayer1_ln_same_semantic] sample=%u authoritative_target=layer1_sublayer1_ln_out_dut_aligned authoritative_exact=%u diagnostic_target=layer1_ffn_ln_out diagnostic_only_exact=%u first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.layer1_sublayer1_ln_writeback_exact ? 1u : 0u),
+        (unsigned)(layer1_sublayer1_ln_diag_cmp.exact ? 1u : 0u),
+        (unsigned)layer1_sublayer1_ln_first_token,
+        (unsigned)layer1_sublayer1_ln_first_dim,
+        (unsigned)layer1_sublayer1_ln_first_dut_bits,
+        (unsigned)layer1_sublayer1_ln_first_ref_bits);
+    std::printf(
+        "[backup_io8][layer1_sublayer1_ln_bucket] sample=%u pre_ln_input_exact=%u affine_out_exact=%u writeback_exact=%u first_divergence=%s first_mismatch_token=%u first_mismatch_dim=%u dut=0x%08X ref=0x%08X\n",
+        (unsigned)sample_idx,
+        (unsigned)(r.layer1_sublayer1_ln_in_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_affine_out_exact ? 1u : 0u),
+        (unsigned)(r.layer1_sublayer1_ln_writeback_exact ? 1u : 0u),
+        layer1_sublayer1_ln_first_divergence,
+        (unsigned)layer1_sublayer1_ln_first_token,
+        (unsigned)layer1_sublayer1_ln_first_dim,
+        (unsigned)layer1_sublayer1_ln_first_dut_bits,
+        (unsigned)layer1_sublayer1_ln_first_ref_bits);
 
     REF_END_NORM_COMPARE_TOKEN_LOOP: for (uint32_t t = 0u; t < (uint32_t)N_NODES; ++t) {
         const uint32_t row_base = x_end_base + t * d_model;
@@ -3906,6 +4095,9 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         r.layer1_ffn1_out_exact &&
         r.layer1_relu_out_exact &&
         r.layer1_ffn2_exact &&
+        r.layer1_sublayer1_ln_in_exact &&
+        r.layer1_sublayer1_ln_affine_out_exact &&
+        r.layer1_sublayer1_ln_writeback_exact &&
         r.layer1_ffn_ln_out_exact &&
         r.end_norm_exact &&
         r.st_exact &&
@@ -3938,7 +4130,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         r.boundary_bucket = 7u;
     } else if (!r.layer1_ffn2_exact) {
         r.boundary_bucket = 8u;
-    } else if (!r.layer1_ffn_ln_out_exact) {
+    } else if (r.layer1_sublayer1_ln_bucket != 0u) {
         r.boundary_bucket = 9u;
     } else if (!r.end_norm_exact) {
         r.boundary_bucket = 10u;
@@ -4019,7 +4211,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     const uint32_t focused_dut_layer1_bits =
         (uint32_t)aecct::top_peek_infer_endln_input_word(focused_idx * d_model + focused_end_d).to_uint();
     const uint32_t focused_ref_layer1_bits =
-        f32_to_bits((float)ref_layer1_ffn_ln_out[focused_idx * d_model + focused_end_d]);
+        f32_to_bits((float)ref_layer1_sublayer1_ln_out_dut_aligned[focused_idx * d_model + focused_end_d]);
     const uint32_t focused_dut_end_norm_bits =
         (uint32_t)sram[x_end_base + focused_idx * d_model + focused_end_d].to_uint();
     const uint32_t focused_ref_end_norm_bits =
@@ -4680,12 +4872,35 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
                 (unsigned)r.layer1_ffn2_dut_bits,
                 (unsigned)r.layer1_ffn2_ref_bits);
         } else if (r.boundary_bucket == 9u) {
-            std::printf(
-                "[backup_io8][ref_model_probe] first_divergence=layer1_sublayer1_ln token=%u dim=%u dut=0x%08X ref=0x%08X\n",
-                (unsigned)r.layer1_ffn_ln_out_first_mismatch_token,
-                (unsigned)r.layer1_ffn_ln_out_first_mismatch_dim,
-                (unsigned)r.layer1_ffn_ln_out_dut_bits,
-                (unsigned)r.layer1_ffn_ln_out_ref_bits);
+            if (r.layer1_sublayer1_ln_bucket == 1u) {
+                std::printf(
+                    "[backup_io8][ref_model_probe] first_divergence=layer1_sublayer1_ln_in token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                    (unsigned)r.layer1_sublayer1_ln_in_first_mismatch_token,
+                    (unsigned)r.layer1_sublayer1_ln_in_first_mismatch_dim,
+                    (unsigned)r.layer1_sublayer1_ln_in_dut_bits,
+                    (unsigned)r.layer1_sublayer1_ln_in_ref_bits);
+            } else if (r.layer1_sublayer1_ln_bucket == 2u) {
+                std::printf(
+                    "[backup_io8][ref_model_probe] first_divergence=layer1_sublayer1_ln_affine_out token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                    (unsigned)r.layer1_sublayer1_ln_affine_out_first_mismatch_token,
+                    (unsigned)r.layer1_sublayer1_ln_affine_out_first_mismatch_dim,
+                    (unsigned)r.layer1_sublayer1_ln_affine_out_dut_bits,
+                    (unsigned)r.layer1_sublayer1_ln_affine_out_ref_bits);
+            } else if (r.layer1_sublayer1_ln_bucket == 3u) {
+                std::printf(
+                    "[backup_io8][ref_model_probe] first_divergence=layer1_sublayer1_ln_writeback token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                    (unsigned)r.layer1_sublayer1_ln_writeback_first_mismatch_token,
+                    (unsigned)r.layer1_sublayer1_ln_writeback_first_mismatch_dim,
+                    (unsigned)r.layer1_sublayer1_ln_writeback_dut_bits,
+                    (unsigned)r.layer1_sublayer1_ln_writeback_ref_bits);
+            } else {
+                std::printf(
+                    "[backup_io8][ref_model_probe] first_divergence=layer1_sublayer1_ln token=%u dim=%u dut=0x%08X ref=0x%08X\n",
+                    (unsigned)r.layer1_ffn_ln_out_first_mismatch_token,
+                    (unsigned)r.layer1_ffn_ln_out_first_mismatch_dim,
+                    (unsigned)r.layer1_ffn_ln_out_dut_bits,
+                    (unsigned)r.layer1_ffn_ln_out_ref_bits);
+            }
         } else if (r.boundary_bucket == 10u) {
             std::printf(
                 "[backup_io8][ref_model_probe] first_divergence=endln_core token=%u dim=%u dut=0x%08X ref=0x%08X\n",
