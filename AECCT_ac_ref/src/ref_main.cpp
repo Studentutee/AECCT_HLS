@@ -114,6 +114,7 @@ struct CliOptions {
   bool ln_var_debug;
   bool ln_input_debug;
   bool ln_upstream_debug;
+  bool xpred_focused_inspect;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
   aecct_ref::RefSoftmaxExpMode softmax_exp_mode;
@@ -468,6 +469,7 @@ static void print_usage() {
   std::printf("  --ln-var-debug\n");
   std::printf("  --ln-input-debug\n");
   std::printf("  --ln-upstream-debug\n");
+  std::printf("  --xpred-focused-inspect (debug-only: print x_pred one-bit positions for single-pattern run)\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
   std::printf("  --softmax-exp-mode baseline_nearest_lut|v2_lerp_lut|v3_base2_reserved\n");
@@ -712,6 +714,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.ln_var_debug = false;
   opts.ln_input_debug = false;
   opts.ln_upstream_debug = false;
+  opts.xpred_focused_inspect = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
   opts.softmax_exp_mode = aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
@@ -802,6 +805,10 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
     }
     if (std::strcmp(arg, "--ln-upstream-debug") == 0) {
       opts.ln_upstream_debug = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--xpred-focused-inspect") == 0) {
+      opts.xpred_focused_inspect = true;
       continue;
     }
     if (std::strcmp(arg, "--frag-group") == 0) {
@@ -3669,6 +3676,42 @@ static int run_single_mode(
   int n_vars,
   const CliOptions& opts
 ) {
+  auto append_bits_from_trace = [n_vars](int pattern, std::vector<int>& out_bits) {
+    out_bits.clear();
+    for (int i = 0; i < n_vars; ++i) {
+      const bool t = trace_output_x_pred_step0_tensor[(pattern * n_vars) + i] != 0.0;
+      if (t) out_bits.push_back(i);
+    }
+  };
+  auto append_bits_from_pred = [n_vars](const std::vector<aecct_ref::bit1_t>& pred, std::vector<int>& out_bits) {
+    out_bits.clear();
+    const int lim = static_cast<int>(pred.size());
+    const int n = (n_vars < lim) ? n_vars : lim;
+    for (int i = 0; i < n; ++i) {
+      if (static_cast<int>(pred[static_cast<std::size_t>(i)]) != 0) out_bits.push_back(i);
+    }
+  };
+  auto append_mismatch_bits = [n_vars](int pattern, const std::vector<aecct_ref::bit1_t>& pred, std::vector<int>& out_bits) {
+    out_bits.clear();
+    const int lim = static_cast<int>(pred.size());
+    const int n = (n_vars < lim) ? n_vars : lim;
+    for (int i = 0; i < n; ++i) {
+      const bool t = trace_output_x_pred_step0_tensor[(pattern * n_vars) + i] != 0.0;
+      const bool p = static_cast<int>(pred[static_cast<std::size_t>(i)]) != 0;
+      if (t != p) out_bits.push_back(i);
+    }
+  };
+  auto format_bits = [](const std::vector<int>& bits) -> std::string {
+    std::ostringstream oss;
+    oss << "[";
+    for (std::size_t i = 0; i < bits.size(); ++i) {
+      if (i > 0U) oss << ",";
+      oss << bits[i];
+    }
+    oss << "]";
+    return oss.str();
+  };
+
   aecct_ref::RefModel model;
   aecct_ref::RefRunConfig cfg = aecct_ref::make_fp32_baseline_run_config();
   cfg.precision_mode = precision_mode;
@@ -3688,6 +3731,24 @@ static int run_single_mode(
     run_ref_single_pattern(model, p, n_vars, run);
     if (range.count == 1) {
       print_vs_golden_summary(tag, run);
+      if (opts.xpred_focused_inspect) {
+        std::vector<int> trace_ones;
+        std::vector<int> pred_ones;
+        std::vector<int> mismatch_bits;
+        std::vector<int> gt_error_bits;
+        append_bits_from_trace(p, trace_ones);
+        append_bits_from_pred(run.x_pred, pred_ones);
+        append_mismatch_bits(p, run.x_pred, mismatch_bits);
+        append_bits_from_pred(run.x_pred, gt_error_bits);
+        std::printf("[xpred-focused][pattern %d][%s] trace_ones=%s\n",
+          p, tag, format_bits(trace_ones).c_str());
+        std::printf("[xpred-focused][pattern %d][%s] pred_ones=%s\n",
+          p, tag, format_bits(pred_ones).c_str());
+        std::printf("[xpred-focused][pattern %d][%s] mismatch_vs_trace_bits=%s\n",
+          p, tag, format_bits(mismatch_bits).c_str());
+        std::printf("[xpred-focused][pattern %d][%s] error_vs_all_zero_gt_bits=%s\n",
+          p, tag, format_bits(gt_error_bits).c_str());
+      }
     } else {
       std::printf("[pattern %d][%s] logits_mse=%.9e logits_maxabs=%.9e x_pred_match=%zu/%zu\n",
         p, tag, run.logits_vs_golden.mse, run.logits_vs_golden.max_abs,
