@@ -120,6 +120,7 @@ struct CliOptions {
   aecct_ref::RefLayerNormMode experiment_ln_mode;
   aecct_ref::RefFinalHeadExploreStage finalhead_stage;
   aecct_ref::RefPrecisionMode experiment_precision_mode;
+  bool experiment_precision_explicit;
   aecct_ref::RefFragGroup frag_group;
 };
 
@@ -433,6 +434,14 @@ static const char* run_mode_to_string(CliRunMode mode) {
   }
 }
 
+static bool run_mode_uses_experiment_config(CliRunMode mode) {
+  return mode == CliRunMode::EXPERIMENT_ONLY ||
+         mode == CliRunMode::COMPARE ||
+         mode == CliRunMode::EVAL_EXPERIMENT ||
+         mode == CliRunMode::EVAL_COMPARE ||
+         mode == CliRunMode::EXPLORE;
+}
+
 static void print_usage() {
   std::printf("Usage: ref_sim [pattern_index] [options]\n");
   std::printf("Options:\n");
@@ -441,7 +450,10 @@ static void print_usage() {
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
-  std::printf("  --precision-exp baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2|fp16_replace_fp32_global\n");
+  std::printf("  --precision-exp MODE\n");
+  std::printf("      baseline_fp32 = baseline (default)\n");
+  std::printf("      generic_e4m3_* / full_e4m3_* / int8_fixedexp_* / fp16_replace_fp32_global = experiment-only\n");
+  std::printf("      values: baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2|fp16_replace_fp32_global\n");
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
@@ -678,7 +690,8 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.experiment_ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
-  opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
+  opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+  opts.experiment_precision_explicit = false;
   opts.frag_group = aecct_ref::RefFragGroup::NONE;
 
   bool positional_pattern_used = false;
@@ -783,6 +796,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
         std::printf("Unsupported --precision-exp value: %s\n", argv[i]);
         return CliParseResult::ERROR;
       }
+      opts.experiment_precision_explicit = true;
       continue;
     }
     if (std::strcmp(arg, "--summary-csv") == 0) {
@@ -3704,14 +3718,23 @@ int main(int argc, char** argv) {
     anchor_baseline_for_compare
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
+  const bool use_experiment_banner_cfg = run_mode_uses_experiment_config(opts.run_mode);
+  const aecct_ref::RefPrecisionMode banner_precision_mode =
+    use_experiment_banner_cfg ? opts.experiment_precision_mode : effective_baseline_precision;
+  const aecct_ref::RefLayerNormMode banner_ln_mode =
+    use_experiment_banner_cfg ? opts.experiment_ln_mode : opts.ln_mode;
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
+  std::printf("  precision_mode : %s%s\n",
+              aecct_ref::to_string(banner_precision_mode),
+              (use_experiment_banner_cfg && !opts.experiment_precision_explicit) ? " (default)" : "");
+  std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
+  std::printf("  ln_mode        : %s\n", aecct_ref::to_string(banner_ln_mode));
   std::printf("  precision(base): %s\n", aecct_ref::to_string(effective_baseline_precision));
   std::printf("  precision(exp) : %s\n", aecct_ref::to_string(opts.experiment_precision_mode));
   std::printf("  ln_mode(base)  : %s\n", aecct_ref::to_string(opts.ln_mode));
   std::printf("  ln_mode(exp)   : %s\n", aecct_ref::to_string(opts.experiment_ln_mode));
   std::printf("  finalhead_stage: %s\n", aecct_ref::to_string(opts.finalhead_stage));
   std::printf("  frag_group     : %s\n", aecct_ref::to_string(opts.frag_group));
-  std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
   std::printf("  pattern_range  : begin=%d count=%d\n", range.begin, range.count);
   std::printf("  topk           : %d\n", opts.topk);
   std::printf("  summary_only   : %d\n", opts.summary_only ? 1 : 0);
