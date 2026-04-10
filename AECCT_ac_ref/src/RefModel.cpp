@@ -1471,7 +1471,8 @@ static inline void online_softmax_update(
   const fp32_ref_t v_head[D_HEAD],
   fp32_ref_t &max_score,
   fp32_ref_t &sumexp,
-  fp32_ref_t acc_vec[D_HEAD]
+  fp32_ref_t acc_vec[D_HEAD],
+  RefSoftmaxExpMode exp_mode
 ) {
   if (!is_init) {
     max_score = score;
@@ -1484,7 +1485,7 @@ static inline void online_softmax_update(
   }
 
   if (score > max_score) {
-    const fp32_ref_t rescale = ref_softmax_exp_lut(max_score - score);
+    const fp32_ref_t rescale = ref_softmax_exp_dispatch(max_score - score, exp_mode);
     sumexp = (sumexp * rescale) + fp32_ref_t(1.0f);
     for (int dh = 0; dh < D_HEAD; ++dh) {
       acc_vec[dh] = (acc_vec[dh] * rescale) + v_head[dh];
@@ -1493,7 +1494,7 @@ static inline void online_softmax_update(
     return;
   }
 
-  const fp32_ref_t w = ref_softmax_exp_lut(score - max_score);
+  const fp32_ref_t w = ref_softmax_exp_dispatch(score - max_score, exp_mode);
   sumexp += w;
   for (int dh = 0; dh < D_HEAD; ++dh) {
     acc_vec[dh] += w * v_head[dh];
@@ -1513,6 +1514,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
                             fp32_ref_t post_concat[TOKENS_T][D_MODEL]) {
   const fp32_ref_t inv_sqrt_dh = fp32_ref_t(0.5f); // 1/sqrt(4)
   const fp32_ref_t neg_inf = fp32_ref_t(-std::numeric_limits<float>::infinity());
+  // Ref-side bounded numeric experiment: exp leaf-kernel can vary; reciprocal/row-state/exact path stay fixed.
   const bool use_softmax_exact = (run_cfg.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
   for (int h = 0; h < HEADS; ++h) {
@@ -1554,7 +1556,8 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
             &v[j][base],
             online_max,
             online_sumexp,
-            acc_vec
+            acc_vec,
+            run_cfg.softmax_exp_mode
           );
         }
       }
@@ -1635,7 +1638,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
             continue;
           }
           const fp32_ref_t w = stress_roundtrip_e4m3(
-            ref_softmax_exp_lut(scores[h][i][j] - online_max),
+            ref_softmax_exp_dispatch(scores[h][i][j] - online_max, run_cfg.softmax_exp_mode),
             run_cfg,
             RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
             stats,

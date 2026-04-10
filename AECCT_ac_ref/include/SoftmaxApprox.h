@@ -2,6 +2,7 @@
 #define AECCT_REF_SOFTMAX_APPROX_H
 
 #include "ac_std_float.h"
+#include "RefSoftmaxExpMode.h"
 #include "SoftmaxApproxLutData.h"
 
 namespace aecct_ref {
@@ -36,6 +37,53 @@ static inline ref_softmax_fp32_t ref_softmax_exp_lut(ref_softmax_fp32_t x) {
   ref_softmax_fp32_t xc = ref_softmax_clamp_x(x);
   int idx = ref_softmax_exp_idx(xc);
   return ref_softmax_fp32_t(g_ref_softmax_exp_lut[idx]);
+}
+
+static inline ref_softmax_fp32_t ref_softmax_exp_lerp_lut(ref_softmax_fp32_t x) {
+  const int last_idx = REF_SOFTMAX_EXP_LUT_SIZE - 1;
+  ref_softmax_fp32_t xc = ref_softmax_clamp_x(x);
+  ref_softmax_fp32_t mag = ref_softmax_fp32_t(0.0f) - xc;
+  ref_softmax_fp32_t idxf = mag * ref_softmax_fp32_t(REF_SOFTMAX_EXP_IDX_SCALE);
+
+  if (idxf < ref_softmax_fp32_t(0.0f)) {
+    idxf = ref_softmax_fp32_t(0.0f);
+  }
+  if (idxf > ref_softmax_fp32_t(static_cast<float>(last_idx))) {
+    idxf = ref_softmax_fp32_t(static_cast<float>(last_idx));
+  }
+
+  int idx_lo = idxf.to_float();
+  if (idx_lo < 0) idx_lo = 0;
+  if (idx_lo > last_idx) idx_lo = last_idx;
+
+  int idx_hi = idx_lo + 1;
+  if (idx_hi > last_idx) idx_hi = last_idx;
+
+  const ref_softmax_fp32_t y_lo = ref_softmax_fp32_t(g_ref_softmax_exp_lut[idx_lo]);
+  if (idx_hi == idx_lo) {
+    return y_lo;
+  }
+
+  const ref_softmax_fp32_t y_hi = ref_softmax_fp32_t(g_ref_softmax_exp_lut[idx_hi]);
+  const ref_softmax_fp32_t frac = idxf - ref_softmax_fp32_t(static_cast<float>(idx_lo));
+  return y_lo + ((y_hi - y_lo) * frac);
+}
+
+// Leaf-kernel selector only: keep reciprocal LUT, online row-state, and exact path semantics unchanged.
+static inline ref_softmax_fp32_t ref_softmax_exp_dispatch(
+  ref_softmax_fp32_t x,
+  RefSoftmaxExpMode mode
+) {
+  switch (mode) {
+    case RefSoftmaxExpMode::BASELINE_NEAREST_LUT:
+      return ref_softmax_exp_lut(x);
+    case RefSoftmaxExpMode::V2_LERP_LUT:
+      return ref_softmax_exp_lerp_lut(x);
+    case RefSoftmaxExpMode::V3_BASE2_RESERVED:
+      return ref_softmax_exp_lut(x);
+    default:
+      return ref_softmax_exp_lut(x);
+  }
 }
 
 static inline int ref_softmax_rcp_idx(ref_softmax_fp32_t s) {

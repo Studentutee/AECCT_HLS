@@ -116,6 +116,7 @@ struct CliOptions {
   bool ln_upstream_debug;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
+  aecct_ref::RefSoftmaxExpMode softmax_exp_mode;
   aecct_ref::RefLayerNormMode ln_mode;
   aecct_ref::RefLayerNormMode experiment_ln_mode;
   aecct_ref::RefFinalHeadExploreStage finalhead_stage;
@@ -442,6 +443,12 @@ static bool run_mode_uses_experiment_config(CliRunMode mode) {
          mode == CliRunMode::EXPLORE;
 }
 
+static bool run_mode_has_dual_path(CliRunMode mode) {
+  return mode == CliRunMode::COMPARE ||
+         mode == CliRunMode::EVAL_COMPARE ||
+         mode == CliRunMode::EXPLORE;
+}
+
 static void print_usage() {
   std::printf("Usage: ref_sim [pattern_index] [options]\n");
   std::printf("Options:\n");
@@ -463,6 +470,10 @@ static void print_usage() {
   std::printf("  --ln-upstream-debug\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
+  std::printf("  --softmax-exp-mode baseline_nearest_lut|v2_lerp_lut|v3_base2_reserved\n");
+  std::printf("      baseline_nearest_lut = current baseline (default)\n");
+  std::printf("      v2_lerp_lut = softmax_v2 candidate 2\n");
+  std::printf("      v3_base2_reserved = reserved, not used in this task\n");
   std::printf("  --ln-mode ln_baseline|ln_sum_sumsq_approx\n");
   std::printf("  --ln-mode-exp ln_baseline|ln_sum_sumsq_approx\n");
   std::printf("  --help\n");
@@ -515,6 +526,22 @@ static bool parse_algo_variant(const char* text, aecct_ref::RefAlgoVariant& vari
   }
   if (std::strcmp(text, "reserved_finalhead_alt") == 0) {
     variant = aecct_ref::RefAlgoVariant::RESERVED_FINALHEAD_ALT;
+    return true;
+  }
+  return false;
+}
+
+static bool parse_softmax_exp_mode(const char* text, aecct_ref::RefSoftmaxExpMode& mode) {
+  if (std::strcmp(text, "baseline_nearest_lut") == 0) {
+    mode = aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
+    return true;
+  }
+  if (std::strcmp(text, "v2_lerp_lut") == 0) {
+    mode = aecct_ref::RefSoftmaxExpMode::V2_LERP_LUT;
+    return true;
+  }
+  if (std::strcmp(text, "v3_base2_reserved") == 0) {
+    mode = aecct_ref::RefSoftmaxExpMode::V3_BASE2_RESERVED;
     return true;
   }
   return false;
@@ -687,6 +714,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.ln_upstream_debug = false;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
+  opts.softmax_exp_mode = aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
   opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.experiment_ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
@@ -814,6 +842,17 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
       }
       if (!parse_algo_variant(argv[++i], opts.algo_variant)) {
         std::printf("Unsupported algo variant: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
+      continue;
+    }
+    if (std::strcmp(arg, "--softmax-exp-mode") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --softmax-exp-mode\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_softmax_exp_mode(argv[++i], opts.softmax_exp_mode)) {
+        std::printf("Unsupported --softmax-exp-mode value: %s\n", argv[i]);
         return CliParseResult::ERROR;
       }
       continue;
@@ -3637,6 +3676,7 @@ static int run_single_mode(
   cfg.ln_mode = ln_mode;
   cfg.finalhead_stage = opts.finalhead_stage;
   cfg.frag_group = opts.frag_group;
+  cfg.softmax_exp_mode = opts.softmax_exp_mode;
   model.set_run_config(cfg);
 
   GoldenAggregateMetrics agg{};
@@ -3719,6 +3759,12 @@ int main(int argc, char** argv) {
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
   const bool use_experiment_banner_cfg = run_mode_uses_experiment_config(opts.run_mode);
+  const bool run_has_dual_path = run_mode_has_dual_path(opts.run_mode);
+  const aecct_ref::RefSoftmaxExpMode baseline_softmax_mode =
+    run_has_dual_path ? aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT : opts.softmax_exp_mode;
+  const aecct_ref::RefSoftmaxExpMode experiment_softmax_mode = opts.softmax_exp_mode;
+  const aecct_ref::RefSoftmaxExpMode banner_softmax_mode =
+    use_experiment_banner_cfg ? experiment_softmax_mode : baseline_softmax_mode;
   const aecct_ref::RefPrecisionMode banner_precision_mode =
     use_experiment_banner_cfg ? opts.experiment_precision_mode : effective_baseline_precision;
   const aecct_ref::RefLayerNormMode banner_ln_mode =
@@ -3728,9 +3774,12 @@ int main(int argc, char** argv) {
               aecct_ref::to_string(banner_precision_mode),
               (use_experiment_banner_cfg && !opts.experiment_precision_explicit) ? " (default)" : "");
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
+  std::printf("  softmax_exp_mode: %s\n", aecct_ref::to_string(banner_softmax_mode));
   std::printf("  ln_mode        : %s\n", aecct_ref::to_string(banner_ln_mode));
   std::printf("  precision(base): %s\n", aecct_ref::to_string(effective_baseline_precision));
   std::printf("  precision(exp) : %s\n", aecct_ref::to_string(opts.experiment_precision_mode));
+  std::printf("  softmax_exp_mode(base): %s\n", aecct_ref::to_string(baseline_softmax_mode));
+  std::printf("  softmax_exp_mode(exp) : %s\n", aecct_ref::to_string(experiment_softmax_mode));
   std::printf("  ln_mode(base)  : %s\n", aecct_ref::to_string(opts.ln_mode));
   std::printf("  ln_mode(exp)   : %s\n", aecct_ref::to_string(opts.experiment_ln_mode));
   std::printf("  finalhead_stage: %s\n", aecct_ref::to_string(opts.finalhead_stage));
@@ -3955,6 +4004,8 @@ int main(int argc, char** argv) {
       precision_mode_anchors_to_finalhead_s0(opts.experiment_precision_mode);
     const bool use_frag_group_for_experiment =
       precision_mode_requires_frag_group(opts.experiment_precision_mode);
+    const bool need_experiment_outputs =
+      (opts.run_mode == CliRunMode::EVAL_EXPERIMENT || opts.run_mode == CliRunMode::EVAL_COMPARE);
     aecct_ref::RefModel baseline_model_eval;
     aecct_ref::RefRunConfig baseline_cfg_eval = aecct_ref::make_fp32_baseline_run_config();
     baseline_cfg_eval.precision_mode = anchor_finalhead_s0
@@ -3966,6 +4017,8 @@ int main(int argc, char** argv) {
       ? aecct_ref::RefFinalHeadExploreStage::S0
       : opts.finalhead_stage;
     baseline_cfg_eval.frag_group = aecct_ref::RefFragGroup::NONE;
+    baseline_cfg_eval.softmax_exp_mode =
+      need_experiment_outputs ? aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT : opts.softmax_exp_mode;
     baseline_model_eval.set_run_config(baseline_cfg_eval);
 
     std::vector<double> baseline_logits_batch;
@@ -3974,9 +4027,6 @@ int main(int argc, char** argv) {
     std::vector<double> experiment_logits_batch;
     std::vector<aecct_ref::bit1_t> experiment_x_pred_batch;
     aecct_ref::RefFullQuantStats experiment_full_stats{};
-
-    const bool need_experiment_outputs =
-      (opts.run_mode == CliRunMode::EVAL_EXPERIMENT || opts.run_mode == CliRunMode::EVAL_COMPARE);
     const bool experiment_use_reconstruct =
       need_experiment_outputs &&
       (opts.experiment_precision_mode == aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD) &&
@@ -4027,6 +4077,7 @@ int main(int argc, char** argv) {
         experiment_cfg_eval.frag_group = use_frag_group_for_experiment
           ? opts.frag_group
           : aecct_ref::RefFragGroup::NONE;
+        experiment_cfg_eval.softmax_exp_mode = opts.softmax_exp_mode;
         experiment_model_eval.set_run_config(experiment_cfg_eval);
         run_ref_batch(
           experiment_model_eval,
@@ -4241,6 +4292,7 @@ int main(int argc, char** argv) {
     ? aecct_ref::RefFinalHeadExploreStage::S0
     : opts.finalhead_stage;
   baseline_cfg.frag_group = aecct_ref::RefFragGroup::NONE;
+  baseline_cfg.softmax_exp_mode = aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
   baseline_model.set_run_config(baseline_cfg);
 
   BatchCompareSummary batch{};
@@ -4345,6 +4397,7 @@ int main(int argc, char** argv) {
     experiment_cfg.frag_group = use_frag_group_for_experiment
       ? opts.frag_group
       : aecct_ref::RefFragGroup::NONE;
+    experiment_cfg.softmax_exp_mode = opts.softmax_exp_mode;
     experiment_model.set_run_config(experiment_cfg);
     run_ref_batch(
       experiment_model,

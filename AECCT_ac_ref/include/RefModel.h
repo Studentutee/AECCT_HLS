@@ -6,6 +6,7 @@
 #include "RefFragGroupConfig.h"
 #include "RefLayerNormMode.h"
 #include "RefPrecisionMode.h"
+#include "RefSoftmaxExpMode.h"
 #include "RefStageConfig.h"
 #include "RefTypes.h"
 
@@ -123,6 +124,8 @@ struct RefDumpConfig {
 struct RefRunConfig {
   RefPrecisionMode precision_mode = RefPrecisionMode::BASELINE_FP32;
   RefAlgoVariant algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
+  // Leaf-kernel selector for softmax exp only. Reciprocal/row-state/exact-path stay unchanged.
+  RefSoftmaxExpMode softmax_exp_mode = RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
   RefLayerNormMode ln_mode = RefLayerNormMode::LN_BASELINE;
   RefFinalHeadExploreStage finalhead_stage = RefFinalHeadExploreStage::S0;
   RefFragGroup frag_group = RefFragGroup::NONE;
