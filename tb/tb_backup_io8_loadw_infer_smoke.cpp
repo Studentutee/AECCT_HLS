@@ -32,6 +32,10 @@ struct Io8Top {
 
 static const uint32_t kTracePatternCount = 8u;
 static const uint32_t kTraceSampleIds[kTracePatternCount] = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 9u };
+static const uint32_t kDutRefFocusedSampleCount = 8u;
+static const uint32_t kDutRefFocusedSampleIds[kDutRefFocusedSampleCount] = {
+    20u, 21u, 22u, 23u, 60u, 61u, 62u, 63u
+};
 static const uint32_t kDebugMaxXpredOneSamples = 1u;
 static const uint32_t kDebugPreferredSampleId = 5u;
 static const uint32_t kDebugFocusedIdx = 31u;
@@ -343,6 +347,10 @@ struct RefModelStageCompareResult {
     uint32_t xpred_first_mismatch_idx;
     uint32_t xpred_dut_bits;
     uint32_t xpred_ref_bits;
+    uint32_t xpred_mismatch_count;
+    uint64_t xpred_mismatch_mask;
+    uint64_t xpred_dut_one_mask;
+    uint64_t xpred_ref_one_mask;
     uint32_t layer1_sublayer1_ln_bucket; // 0=none,1=pre_ln_input,2=affine_out,3=writeback
     uint32_t boundary_bucket; // 0=attn_input(mid_norm),1=q,2=post_concat,3=attn_out,4=residual/preln,5=ln0,6=ffn1,7=relu,8=ffn2,9=sublayer1_ln,10=endLN,11=s_t,12=logit,13=x_pred,14=none
 };
@@ -424,6 +432,22 @@ static void print_indices_line(const std::vector<uint32_t>& indices) {
         if (i + 1u < (uint32_t)indices.size()) {
             std::printf(",");
         }
+    }
+}
+
+static void print_mask_indices_line(uint64_t mask, uint32_t width) {
+    bool printed = false;
+    MASK_PRINT_LOOP: for (uint32_t i = 0u; i < width && i < 64u; ++i) {
+        if (((mask >> i) & 1ULL) != 0ULL) {
+            if (printed) {
+                std::printf(",");
+            }
+            std::printf("%u", (unsigned)i);
+            printed = true;
+        }
+    }
+    if (!printed) {
+        std::printf("none");
     }
 }
 
@@ -1514,6 +1538,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.xpred_first_mismatch_idx = 0u;
     r.xpred_dut_bits = 0u;
     r.xpred_ref_bits = 0u;
+    r.xpred_mismatch_count = 0u;
+    r.xpred_mismatch_mask = 0ULL;
+    r.xpred_dut_one_mask = 0ULL;
+    r.xpred_ref_one_mask = 0ULL;
     r.layer1_sublayer1_ln_bucket = 0u;
     r.boundary_bucket = 14u;
 
@@ -2646,20 +2674,44 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         r.logit_ref_bits = logits_dut_aligned_words[focused_idx];
     }
 
+    const uint32_t xpred_zero_bits = f32_to_bits(0.0f);
+    const uint32_t xpred_one_bits = f32_to_bits(1.0f);
     REF_XPRED_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)EXP_LEN_OUT_XPRED_WORDS; ++i) {
         const uint32_t dut_bits = got_words[i];
         const uint32_t ref_bits = ref_xpred_bit_to_word_bits(ref_xpred[i]);
+        if (i < 64u) {
+            if (dut_bits != xpred_zero_bits) {
+                r.xpred_dut_one_mask |= (1ULL << i);
+            }
+            if (ref_bits != xpred_zero_bits) {
+                r.xpred_ref_one_mask |= (1ULL << i);
+            }
+        }
         if (dut_bits != ref_bits) {
-            r.xpred_exact = false;
-            r.xpred_first_mismatch_idx = i;
-            r.xpred_dut_bits = dut_bits;
-            r.xpred_ref_bits = ref_bits;
-            break;
+            if (r.xpred_exact) {
+                r.xpred_exact = false;
+                r.xpred_first_mismatch_idx = i;
+                r.xpred_dut_bits = dut_bits;
+                r.xpred_ref_bits = ref_bits;
+            }
+            r.xpred_mismatch_count += 1u;
+            if (i < 64u) {
+                r.xpred_mismatch_mask |= (1ULL << i);
+            }
         }
     }
     if (r.xpred_exact) {
         r.xpred_dut_bits = got_words[focused_idx];
         r.xpred_ref_bits = ref_xpred_bit_to_word_bits(ref_xpred[focused_idx]);
+    } else if (r.xpred_mismatch_mask == 0ULL) {
+        // Defensive fallback for widths beyond 64 bits (not expected in this profile).
+        const uint32_t bit_index = r.xpred_first_mismatch_idx;
+        if (bit_index < 64u) {
+            r.xpred_mismatch_mask |= (1ULL << bit_index);
+        }
+    }
+    if (xpred_one_bits == 0u) {
+        fail("unexpected xpred one-bit encoding");
     }
 
     struct Layer0StageCmp {
@@ -5892,6 +5944,84 @@ int main() {
         (unsigned)ref_probe.layer0_w1_first_divergence_class,
         (unsigned)ref_probe.earliest_e0_first_divergence_bucket,
         (unsigned)ref_probe.earliest_e1_first_divergence_bucket);
+
+    Io8Top io_dut_ref_gate;
+    run_setup_cfg_loadw(io_dut_ref_gate, param_words, "dut_ref_focused_gate");
+    uint32_t dut_ref_matched_samples = 0u;
+    uint32_t dut_ref_mismatched_samples = 0u;
+    uint32_t dut_ref_mismatched_bits = 0u;
+    bool dut_ref_first_mismatch_valid = false;
+    uint32_t dut_ref_first_mismatch_sample = 0u;
+    uint64_t dut_ref_first_mismatch_mask = 0ULL;
+    bool logits_all_exact = true;
+    bool logits_first_mismatch_valid = false;
+    uint32_t logits_first_mismatch_sample = 0u;
+    uint32_t logits_first_mismatch_idx = 0u;
+    uint32_t logits_first_mismatch_dut = 0u;
+    uint32_t logits_first_mismatch_ref = 0u;
+    DUT_REF_FOCUSED_SAMPLE_LOOP: for (uint32_t i = 0u; i < kDutRefFocusedSampleCount; ++i) {
+        const uint32_t sample_id = kDutRefFocusedSampleIds[i];
+        const RefModelStageCompareResult gate_probe =
+            run_one_ref_model_stage_probe(io_dut_ref_gate, sample_id, kDebugFocusedIdx);
+        if (gate_probe.xpred_exact) {
+            dut_ref_matched_samples += 1u;
+        } else {
+            dut_ref_mismatched_samples += 1u;
+            dut_ref_mismatched_bits += gate_probe.xpred_mismatch_count;
+            if (!dut_ref_first_mismatch_valid) {
+                dut_ref_first_mismatch_valid = true;
+                dut_ref_first_mismatch_sample = sample_id;
+                dut_ref_first_mismatch_mask = gate_probe.xpred_mismatch_mask;
+            }
+        }
+        if (!gate_probe.logit_exact) {
+            logits_all_exact = false;
+            if (!logits_first_mismatch_valid) {
+                logits_first_mismatch_valid = true;
+                logits_first_mismatch_sample = sample_id;
+                logits_first_mismatch_idx = gate_probe.logit_first_mismatch_idx;
+                logits_first_mismatch_dut = gate_probe.logit_dut_bits;
+                logits_first_mismatch_ref = gate_probe.logit_ref_bits;
+            }
+        }
+        std::printf(
+            "[backup_io8][dut_ref_gate_sample] sample=%u xpred_exact=%u mismatch_count=%u mismatch_bits=",
+            (unsigned)sample_id,
+            (unsigned)(gate_probe.xpred_exact ? 1u : 0u),
+            (unsigned)gate_probe.xpred_mismatch_count);
+        print_mask_indices_line(gate_probe.xpred_mismatch_mask, (uint32_t)EXP_LEN_OUT_XPRED_WORDS);
+        std::printf(" dut_ones=");
+        print_mask_indices_line(gate_probe.xpred_dut_one_mask, (uint32_t)EXP_LEN_OUT_XPRED_WORDS);
+        std::printf(" ref_ones=");
+        print_mask_indices_line(gate_probe.xpred_ref_one_mask, (uint32_t)EXP_LEN_OUT_XPRED_WORDS);
+        std::printf(" logits_exact=%u\n", (unsigned)(gate_probe.logit_exact ? 1u : 0u));
+    }
+    std::printf(
+        "[backup_io8][dut_ref_gate_summary] samples=%u matched_samples=%u mismatched_samples=%u mismatched_bits=%u xpred_verdict=%s\n",
+        (unsigned)kDutRefFocusedSampleCount,
+        (unsigned)dut_ref_matched_samples,
+        (unsigned)dut_ref_mismatched_samples,
+        (unsigned)dut_ref_mismatched_bits,
+        (dut_ref_mismatched_samples == 0u) ? "PASS" : "FAIL");
+    if (dut_ref_first_mismatch_valid) {
+        std::printf(
+            "[backup_io8][dut_ref_gate_first_mismatch] sample=%u mismatch_bits=",
+            (unsigned)dut_ref_first_mismatch_sample);
+        print_mask_indices_line(dut_ref_first_mismatch_mask, (uint32_t)EXP_LEN_OUT_XPRED_WORDS);
+        std::printf("\n");
+    } else {
+        std::printf("[backup_io8][dut_ref_gate_first_mismatch] sample=none mismatch_bits=none\n");
+    }
+    if (logits_all_exact) {
+        std::printf("[backup_io8][dut_ref_gate_logits] exact=PASS first_mismatch=none\n");
+    } else {
+        std::printf(
+            "[backup_io8][dut_ref_gate_logits] exact=FAIL first_mismatch_sample=%u first_mismatch_idx=%u dut=0x%08X ref=0x%08X\n",
+            (unsigned)logits_first_mismatch_sample,
+            (unsigned)logits_first_mismatch_idx,
+            (unsigned)logits_first_mismatch_dut,
+            (unsigned)logits_first_mismatch_ref);
+    }
 
     std::vector<uint32_t> readmem_payload_prefix_post;
     std::vector<uint32_t> direct_payload_prefix_post;
