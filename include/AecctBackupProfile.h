@@ -40,19 +40,47 @@ static const bool BACKUP_PROFILE_LN_ONEPASS = false;
 // -----------------------------------------------------------------------------
 // External / internal transport targets
 // -----------------------------------------------------------------------------
-static const uint32_t BACKUP_DATA_IO_BITS = 8;
-static const uint32_t BACKUP_SRAM_LANE_BITS = 16;
-static const uint32_t BACKUP_SRAM_WORD_LANES = 8;
-static const uint32_t BACKUP_SRAM_WORD_BITS =
-    BACKUP_SRAM_LANE_BITS * BACKUP_SRAM_WORD_LANES;
-static const uint32_t BACKUP_SRAM_WORD_BYTES = BACKUP_SRAM_WORD_BITS / 8u;
+// v12.1 branch posture:
+// - core data transport is io16
+// - optional outer wrapper may serialize to io8
+// - shared SRAM storage word is 16 bits
+// - one SRAM beat = 8 storage words = 128 bits
+static const uint32_t BACKUP_CORE_DATA_IO_BITS = 16u;
+static const uint32_t BACKUP_OPTIONAL_WRAPPER_IO_BITS = 8u;
+static const uint32_t BACKUP_DATA_IO_BITS = BACKUP_CORE_DATA_IO_BITS;
 
-// For IO8 serialization:
-// - one fp16 lane = 2 bytes
-// - one 128-bit SRAM word = 16 bytes
-static const uint32_t BACKUP_IO_BYTES_PER_FP16 = 2;
-static const uint32_t BACKUP_IO_BYTES_PER_SRAM_WORD = BACKUP_SRAM_WORD_BYTES;
-static const uint32_t BACKUP_FP16_LANES_PER_SRAM_WORD = BACKUP_SRAM_WORD_LANES;
+static const uint32_t BACKUP_SRAM_STORAGE_WORD_BITS = 16u;
+static const uint32_t BACKUP_SRAM_STORAGE_WORD_BYTES = BACKUP_SRAM_STORAGE_WORD_BITS / 8u;
+static const uint32_t BACKUP_SRAM_WORDS_PER_BEAT = 8u;
+static const uint32_t BACKUP_SRAM_BEAT_BITS =
+    BACKUP_SRAM_STORAGE_WORD_BITS * BACKUP_SRAM_WORDS_PER_BEAT;
+static const uint32_t BACKUP_SRAM_BEAT_BYTES = BACKUP_SRAM_BEAT_BITS / 8u;
+
+// Legacy bring-up metadata still uses logical 32-bit records in several places.
+// Keep the width explicit so loader/ref-model migration code can bridge it
+// without calling a 128-bit beat a "word".
+static const uint32_t BACKUP_LEGACY_PARAM_WORD_BITS = 32u;
+static const uint32_t BACKUP_LEGACY_PARAM_WORD_BYTES = BACKUP_LEGACY_PARAM_WORD_BITS / 8u;
+static const uint32_t BACKUP_IO16_BEATS_PER_LOGICAL_U32 =
+    BACKUP_LEGACY_PARAM_WORD_BITS / BACKUP_CORE_DATA_IO_BITS;
+static const uint32_t BACKUP_STORAGE_WORDS_PER_LOGICAL_U32 =
+    BACKUP_LEGACY_PARAM_WORD_BITS / BACKUP_SRAM_STORAGE_WORD_BITS;
+static const uint32_t BACKUP_LEGACY_PARAM_WORDS_PER_BEAT =
+    BACKUP_SRAM_BEAT_BYTES / BACKUP_LEGACY_PARAM_WORD_BYTES;
+
+static_assert(BACKUP_SRAM_STORAGE_WORD_BITS == BACKUP_CORE_DATA_IO_BITS,
+              "Core io16 beat must match 16-bit SRAM storage word.");
+static_assert(BACKUP_SRAM_WORDS_PER_BEAT * BACKUP_SRAM_STORAGE_WORD_BITS == BACKUP_SRAM_BEAT_BITS,
+              "Beat size mismatch in backup profile.");
+static_assert(BACKUP_IO16_BEATS_PER_LOGICAL_U32 == 2u,
+              "Logical u32 metadata must split into two io16 beats.");
+static_assert(BACKUP_STORAGE_WORDS_PER_LOGICAL_U32 == 2u,
+              "Logical u32 record must occupy two 16-bit SRAM storage words.");
+
+// Common payload reminders used by ref-model / loader bridge helpers.
+static const uint32_t BACKUP_IO_BYTES_PER_FP16 = 2u;
+static const uint32_t BACKUP_IO_BYTES_PER_SRAM_BEAT = BACKUP_SRAM_BEAT_BYTES;
+static const uint32_t BACKUP_FP16_LANES_PER_SRAM_BEAT = BACKUP_SRAM_WORDS_PER_BEAT;
 
 // -----------------------------------------------------------------------------
 // Current frozen-shape accumulator assumptions

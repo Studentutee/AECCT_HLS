@@ -8,6 +8,8 @@
 // English:
 // - Testbench-only payload streamer for v11.4 unified PARAM.
 // - Converts weights.h tensors to u32 raw stream following WeightStreamOrder.h.
+// - This patch keeps the legacy helpers intact and adds v12.1 bridge helpers for
+//   io16 transport and 16-bit SRAM storage words.
 //
 // Generated on: 2026-02-24
 // ============================================================
@@ -65,6 +67,18 @@ template <class TDATA>
 static inline void tb_write_u32(ac_channel<TDATA> &ch, const uint32_t w) {
   const TDATA t = (TDATA)w;
   ch.write(t);
+}
+
+template <class TDATA>
+static inline void tb_write_u16(ac_channel<TDATA> &ch, const uint16_t w) {
+  const TDATA t = (TDATA)w;
+  ch.write(t);
+}
+
+template <class TDATA>
+static inline void tb_write_logical_u32_as_io16(ac_channel<TDATA> &ch, const uint32_t w) {
+  tb_write_u16(ch, (uint16_t)(w & 0xFFFFu));
+  tb_write_u16(ch, (uint16_t)((w >> 16) & 0xFFFFu));
 }
 
 template <class TCTRL>
@@ -196,6 +210,13 @@ static inline void tb_emit_padding_zeros(ac_channel<TDATA> &data_in, const uint3
 }
 
 template <class TDATA>
+static inline void tb_emit_padding_zeros_io16(ac_channel<TDATA> &data_in, const uint32_t n_words16) {
+  for (uint32_t i = 0; i < n_words16; ++i) {
+    tb_write_u16(data_in, 0u);
+  }
+}
+
+template <class TDATA>
 static inline void tb_emit_fp32_words_from_fp64(ac_channel<TDATA> &data_in,
                                                const double *src,
                                                const uint32_t src_numel,
@@ -207,6 +228,21 @@ static inline void tb_emit_fp32_words_from_fp64(ac_channel<TDATA> &data_in,
   }
   if (stream_len_w > src_numel) {
     tb_emit_padding_zeros(data_in, stream_len_w - src_numel);
+  }
+}
+
+template <class TDATA>
+static inline void tb_emit_fp32_words_as_io16(ac_channel<TDATA> &data_in,
+                                              const double *src,
+                                              const uint32_t src_numel,
+                                              const uint32_t stream_len_words16) {
+  uint32_t out_words16 = 0u;
+  for (uint32_t i = 0u; i < src_numel; ++i) {
+    tb_write_logical_u32_as_io16(data_in, tb_fp32_bits_from_double(src[i]));
+    out_words16 += 2u;
+  }
+  if (stream_len_words16 > out_words16) {
+    tb_emit_padding_zeros_io16(data_in, stream_len_words16 - out_words16);
   }
 }
 
@@ -294,6 +330,51 @@ static inline bool tb_pack_ternary_words_from_fp64(const double *src,
   return true;
 }
 
+static inline bool tb_pack_ternary_storage_words_from_fp64(const double *src,
+                                                           const uint32_t src_numel,
+                                                           const uint32_t expected_num_weights,
+                                                           uint16_t *out_payload,
+                                                           const uint32_t out_capacity_words16,
+                                                           uint32_t& out_payload_words16,
+                                                           uint32_t& out_last_word_valid_count16) {
+  out_payload_words16 = 0u;
+  out_last_word_valid_count16 = 0u;
+  if (!src || !out_payload) {
+    return false;
+  }
+  if (expected_num_weights == 0u || src_numel != expected_num_weights) {
+    return false;
+  }
+
+  out_payload_words16 = ternary_payload_storage_words_2b(expected_num_weights);
+  out_last_word_valid_count16 = ternary_last_storage_word_valid_count(expected_num_weights);
+  if (out_capacity_words16 < out_payload_words16) {
+    return false;
+  }
+
+  for (uint32_t w = 0u; w < out_payload_words16; ++w) {
+    out_payload[w] = 0u;
+  }
+
+  for (uint32_t idx = 0u; idx < expected_num_weights; ++idx) {
+    uint32_t code = 0u;
+    if (!tb_ternary_code_from_fp64(src[idx], code)) {
+      return false;
+    }
+    const uint32_t word_idx = (idx >> 3);      // /8
+    const uint32_t shift = ((idx & 7u) << 1);  // *2
+    out_payload[word_idx] = (uint16_t)(out_payload[word_idx] | ((uint16_t)(code & 0x3u) << shift));
+  }
+
+  if (out_last_word_valid_count16 < 8u) {
+    const uint32_t valid_bits = (out_last_word_valid_count16 << 1);
+    const uint16_t mask = (uint16_t)((1u << valid_bits) - 1u);
+    out_payload[out_payload_words16 - 1u] = (uint16_t)(out_payload[out_payload_words16 - 1u] & mask);
+  }
+
+  return true;
+}
+
 static inline bool tb_decode_ternary_code_at(const uint32_t* payload,
                                            const uint32_t payload_words,
                                            const uint32_t weight_idx,
@@ -317,7 +398,6 @@ static inline void tb_emit_bitpack_words(ac_channel<TDATA> &data_in,
                                         const uint32_t stream_len_w) {
   // Packing rule: bit0 -> word0 bit0 (LSB), then increasing bit index.
   const uint32_t need_words = (num_bits + 31u) >> 5; // ceil(num_bits/32)
-  uint32_t w = 0;
   uint32_t out_words = 0;
   uint32_t bit_idx = 0;
 
@@ -336,6 +416,32 @@ static inline void tb_emit_bitpack_words(ac_channel<TDATA> &data_in,
   // If stream_len_w > need_words, pad remaining words with zeros (must be zeros).
   if (stream_len_w > out_words) {
     tb_emit_padding_zeros(data_in, stream_len_w - out_words);
+  }
+}
+
+template <class TDATA>
+static inline void tb_emit_bitpack_words_as_io16(ac_channel<TDATA> &data_in,
+                                                 const ac_int<1,false> *bits,
+                                                 const uint32_t num_bits,
+                                                 const uint32_t stream_len_words16) {
+  const uint32_t need_words16 = storage_words_bits(num_bits);
+  uint32_t out_words16 = 0u;
+  uint32_t bit_idx = 0u;
+
+  for (uint32_t word_i = 0u; word_i < need_words16; ++word_i) {
+    uint16_t word = 0u;
+    for (uint32_t b = 0u; b < 16u; ++b) {
+      if (bit_idx < num_bits) {
+        const uint32_t bit = (uint32_t)(bits[bit_idx].to_int());
+        word = (uint16_t)(word | ((bit & 1u) << b));
+      }
+      ++bit_idx;
+    }
+    tb_write_u16(data_in, word);
+    ++out_words16;
+  }
+  if (stream_len_words16 > out_words16) {
+    tb_emit_padding_zeros_io16(data_in, stream_len_words16 - out_words16);
   }
 }
 

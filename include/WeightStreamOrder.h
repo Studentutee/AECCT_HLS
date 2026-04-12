@@ -20,14 +20,18 @@
 // TB and Top MUST follow the chosen order to match SRAM layout.
 //
 // Dtypes:
-//   dtype = 0 -> FP32 (1 element = 1 u32 word)
-//   dtype = 1 -> BITPACK (32 bits per u32 word, row-major packing)
+//   dtype = 0 -> FP32 legacy stream words (1 element = 1 logical u32 word)
+//   dtype = 1 -> BITPACK legacy stream words (32 bits per logical u32 word)
+// Bridge note:
+//   - v12.1 storage uses 16-bit SRAM words.
+//   - Use the *_storage_word* helpers below when converting PARAM metadata to
+//     ref-model / loader / READ_MEM storage layout.
 // ============================================================
 
 // [legacy] Meta used by separated LOAD_BIAS / LOAD_W flows (kept for compatibility)
 struct TensorMeta {
-  uint32_t offset_w;   // offset in words from the chosen base (v11.4: param_base_word; legacy: BASE_BIAS_W or BASE_W_W)
-  uint32_t len_w;      // length in words
+  uint32_t offset_w;   // offset in legacy logical u32 words from the chosen base
+  uint32_t len_w;      // length in legacy logical u32 words
   uint32_t ndims;      // number of valid dims
   uint32_t d0;         // dim0 (列(Row))
   uint32_t d1;         // dim1 (行(Colume))
@@ -52,9 +56,9 @@ enum ParamDType : uint32_t {
 struct ParamMeta {
   uint32_t id;         // param id (stable index)
   uint32_t dtype;      // ParamDType
-  uint32_t offset_w;   // offset in words from param_base_word
-  uint32_t len_w;      // length in words
-  uint32_t valid_bits; // BITPACK only: valid bits in last word (1..32); FP32: must be 0
+  uint32_t offset_w;   // offset in legacy logical u32 words from param_base_word
+  uint32_t len_w;      // length in legacy logical u32 words
+  uint32_t valid_bits; // BITPACK only: valid bits in last legacy u32 word (1..32); FP32: must be 0
   uint32_t ndims;      // number of valid dims
   uint32_t d0;         // dim0 (列(Row))
   uint32_t d1;         // dim1 (行(Colume))
@@ -111,6 +115,39 @@ static inline constexpr uint32_t ternary_payload_words_2b(const uint32_t num_wei
 static inline constexpr uint32_t ternary_last_word_valid_count(const uint32_t num_weights) {
   const uint32_t rem = (num_weights % 16u);
   return (rem == 0u) ? 16u : rem;
+}
+
+static inline constexpr uint32_t storage_words_from_param_words(const uint32_t words) {
+  return words * SRAM_STORAGE_WORDS_PER_LEGACY_WORD;
+}
+
+static inline constexpr uint32_t storage_bits_from_param_valid_bits(const uint32_t valid_bits) {
+  return valid_bits;
+}
+
+static inline constexpr uint32_t ternary_payload_storage_words_2b(const uint32_t num_weights) {
+  return (num_weights + 7u) / 8u;
+}
+
+static inline constexpr uint32_t ternary_last_storage_word_valid_count(const uint32_t num_weights) {
+  const uint32_t rem = (num_weights % 8u);
+  return (rem == 0u) ? 8u : rem;
+}
+
+static inline constexpr uint32_t tensor_offset_storage_words(const TensorMeta& meta) {
+  return storage_words_from_param_words(meta.offset_w);
+}
+
+static inline constexpr uint32_t tensor_length_storage_words(const TensorMeta& meta) {
+  return storage_words_from_param_words(meta.len_w);
+}
+
+static inline constexpr uint32_t param_offset_storage_words(const ParamMeta& meta) {
+  return storage_words_from_param_words(meta.offset_w);
+}
+
+static inline constexpr uint32_t param_length_storage_words(const ParamMeta& meta) {
+  return storage_words_from_param_words(meta.len_w);
 }
 
 
@@ -234,6 +271,10 @@ static const TensorMeta kWeightMeta[WEIGHT_COUNT] = {
 // [legacy] Word address in SRAM for a WEIGHT tensor (separated flow)
 static inline uint32_t weight_addr_word(WeightId id) {
   return sram_map::BASE_W_W + kWeightMeta[(uint32_t)id].offset_w;
+}
+
+static inline uint32_t weight_addr_storage_word(WeightId id) {
+  return sram_map::legacy_words_to_storage_words(weight_addr_word(id));
 }
 
 // ----------------------------
@@ -579,6 +620,10 @@ static inline const char* quant_linear_matrix_id_name(const uint32_t matrix_id) 
 // [legacy] Word address in SRAM for a BIAS tensor (separated flow)
 static inline uint32_t bias_addr_word(BiasId id) {
   return sram_map::BASE_BIAS_W + kBiasMeta[(uint32_t)id].offset_w;
+}
+
+static inline uint32_t bias_addr_storage_word(BiasId id) {
+  return sram_map::legacy_words_to_storage_words(bias_addr_word(id));
 }
 
 // ----------------------------

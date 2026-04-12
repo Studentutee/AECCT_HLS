@@ -23,10 +23,19 @@ enum RefStep0ErrorMsg : uint32_t {
 };
 
 struct RefStep0RunReport {
+  // Legacy bridge-word fields retained for compatibility with existing reports.
   uint32_t final_scalar_base_word;
   uint32_t final_scalar_words;
   uint32_t scratch_base_word;
   uint32_t scratch_words;
+
+  // v12.1 storage-word view (16-bit words, 8-word beats).
+  uint32_t final_scalar_base_word16;
+  uint32_t final_scalar_words16;
+  uint32_t scratch_base_word16;
+  uint32_t scratch_words16;
+  uint32_t final_scalar_beats16;
+  uint32_t scratch_beats16;
 
   bool final_scalar_in_scratch;
   bool final_scalar_range_ok;
@@ -44,6 +53,9 @@ struct RefStep0RunReport {
 
   bool pass_b_executed;
   uint32_t output_words;
+  uint32_t output_words16;
+  bool final_scalar_base_word16_aligned;
+  bool scratch_base_word16_aligned;
 
   bool has_error;
   uint32_t error_code;

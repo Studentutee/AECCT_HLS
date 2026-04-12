@@ -80,6 +80,48 @@ namespace aecct {
 
   // -------------------- ctrl word pack/unpack helpers --------------------
   typedef ac_int<16, false> ctrl_word_t;
+  typedef ac_int<16, false> data_io_word_t;
+
+  static const uint32_t DATA_IO_BITS = 16u;
+  static const uint32_t DATA_IO_BYTES = 2u;
+  static const uint32_t LOGICAL_U32_IO16_BEATS = 2u;
+
+  static inline data_io_word_t pack_data_io_u16(uint16_t value_u16) {
+    data_io_word_t w = 0;
+    w.set_slc(0, (ac_int<16, false>)value_u16);
+    return w;
+  }
+
+  static inline uint16_t unpack_data_io_u16(const data_io_word_t& w) {
+    return (uint16_t)w.to_uint();
+  }
+
+  static inline void pack_logical_u32_to_io16(const uint32_t value_u32,
+                                              data_io_word_t& beat0_lo16,
+                                              data_io_word_t& beat1_hi16) {
+    beat0_lo16 = pack_data_io_u16((uint16_t)(value_u32 & 0xFFFFu));
+    beat1_hi16 = pack_data_io_u16((uint16_t)((value_u32 >> 16) & 0xFFFFu));
+  }
+
+  static inline uint32_t unpack_logical_u32_from_io16(const data_io_word_t& beat0_lo16,
+                                                      const data_io_word_t& beat1_hi16) {
+    return (uint32_t)unpack_data_io_u16(beat0_lo16) |
+           ((uint32_t)unpack_data_io_u16(beat1_hi16) << 16);
+  }
+
+  static inline data_io_word_t pack_io16_from_bytes(const uint8_t byte_lo, const uint8_t byte_hi) {
+    data_io_word_t w = 0;
+    w.set_slc(0, (ac_int<8, false>)byte_lo);
+    w.set_slc(8, (ac_int<8, false>)byte_hi);
+    return w;
+  }
+
+  static inline void unpack_io16_to_bytes(const data_io_word_t& w,
+                                          uint8_t& byte_lo,
+                                          uint8_t& byte_hi) {
+    byte_lo = (uint8_t)w.template slc<8>(0).to_uint();
+    byte_hi = (uint8_t)w.template slc<8>(8).to_uint();
+  }
 
   static inline ctrl_word_t pack_ctrl_cmd(uint8_t opcode_u8) {
     // [7:0]=opcode, [15:8]=0
