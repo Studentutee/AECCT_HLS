@@ -6,11 +6,21 @@
 // ============================================================
 // SramMap.h (legacy aggregate-word bridge + v12.1 storage-word helpers)
 // ------------------------------------------------------------
-// - Existing *_W symbols stay in legacy aggregate words to avoid a broad refactor.
-// - New *_WORD16 / *_STORAGE_* helpers expose v12.1 semantics:
+// - Existing *_W symbols stay in legacy logical u32 words to avoid a broad
+//   refactor of current bring-up code paths.
+// - New *_WORD16 / *_STORAGE_* helpers expose the v12.1 storage contract:
 //     * SRAM word = 16 bits
 //     * SRAM beat = 8 words = 128 bits
 //     * base_word / len_words for the new profile should use 16-bit storage words.
+//
+// Readability / usage intent:
+// - This file now separates three things that were previously easy to mix:
+//     1) logical windows (for example X_WORK / W_REGION / SCRATCH)
+//     2) concrete physical sub-sections (for example SCR_K / SCR_V /
+//        FINAL_SCALAR_BUF)
+//     3) actual payload words versus padded region capacity
+// - The goal is to make later LOAD_W correctness and READ_MEM / compare-side
+//   boundary checks easier to reason about without changing the DUT math path.
 //
 // Step2 convergence note:
 // - Baseline storage semantics are single-X_WORK:
@@ -21,7 +31,7 @@
 //
 // Notes:
 // - X_WORK is the only baseline shared working area.
-// - SCR_K / SCR_V / FINAL_SCALAR are SCRATCH sub-regions.
+// - SCR_K / SCR_V / FINAL_SCALAR_BUF are SCRATCH sub-regions.
 // - [compat] X_PAGE0 / X_PAGE1 names remain aliases; they are not a separate
 //   baseline taxonomy in this step.
 // - No dedicated DEBUG SRAM region (D1 debug is "halt + READ_MEM").
@@ -42,9 +52,13 @@ static_assert(::SRAM_BEAT_BITS == 128u, "v12.1 beat must be 128 bits");
 static_assert(SRAM_STORAGE_WORDS_PER_LEGACY_WORD == 2u,
               "Legacy u32 word must map to two 16-bit storage words.");
 
-// Alignment unit remains legacy aggregate-word addressed in the old map.
+// Alignment unit remains legacy logical-word addressed in the old map.
 static const uint32_t ALIGN_WORDS = 16u;
+static const uint32_t ALIGN_STORAGE_WORD16 =
+    (ALIGN_WORDS * SRAM_STORAGE_WORDS_PER_LEGACY_WORD);
 static_assert((ALIGN_WORDS % W_LANES) == 0, "ALIGN_WORDS must be a multiple of W_LANES");
+static_assert((ALIGN_STORAGE_WORD16 % SRAM_STORAGE_WORDS_PER_BEAT) == 0u,
+              "Legacy alignment must stay beat-aligned after u32->word16 conversion.");
 
 constexpr uint32_t align_up_words(uint32_t x, uint32_t a) {
   return ((x + a - 1u) / a) * a;
@@ -88,6 +102,37 @@ enum AliasGroup : uint8_t {
   ALIAS_INVALID = 255
 };
 
+// Describes what kind of bytes a section/window is expected to hold.
+// This is intentionally small and synth-safe: later checkers can convert it
+// to human-readable strings outside of design code.
+enum PayloadClass : uint8_t {
+  PAYLOAD_FP32_TENSOR = 0,
+  PAYLOAD_FP32_VECTOR = 1,
+  PAYLOAD_BITPACK = 2,
+  PAYLOAD_PARAM_STREAM = 3,
+  PAYLOAD_EMPTY = 4,
+  PAYLOAD_COMPAT_ALIAS = 5,
+  PAYLOAD_RUNTIME_SCRATCH = 6,
+  PAYLOAD_MIXED_PERSIST = 7,
+  PAYLOAD_INVALID = 255
+};
+
+// Distinguish concrete non-overlapping sub-sections from logical overlay
+// windows such as X_WORK / SCRATCH / W_REGION / PARAM_STREAM_DEFAULT.
+enum SectionKind : uint8_t {
+  SECTION_PHYSICAL = 0,
+  SECTION_LOGICAL = 1
+};
+
+enum SectionFlags : uint32_t {
+  SECTION_FLAG_NONE = 0u,
+  SECTION_FLAG_LOAD_W_CRITICAL = 1u << 0,
+  SECTION_FLAG_READ_MEM_VISIBLE = 1u << 1,
+  SECTION_FLAG_COMPARE_CRITICAL = 1u << 2,
+  SECTION_FLAG_LEGACY_COMPAT = 1u << 3,
+  SECTION_FLAG_PADDING_PRESENT = 1u << 4
+};
+
 // ------------------------------------------------------------
 // Legacy compatibility region decode classes
 // ------------------------------------------------------------
@@ -97,6 +142,46 @@ enum SramRegion : uint8_t {
   REG_SCRATCH = 2,
   REG_W_REGION = 3,
   REG_INVALID = 255
+};
+
+// Fine-grain section IDs used by focused checkers / READ_MEM audits.
+// Overlapping logical windows are allowed; use section_kind()/section_flags()
+// to understand whether the entry is a concrete non-overlapping sub-section or
+// a logical coverage window.
+enum SectionId : uint8_t {
+  SEC_X_PAGE0_COMPAT = 0,
+  SEC_X_PAGE1_COMPAT = 1,
+  SEC_X_WORK = 2,
+  SEC_SCR_K = 3,
+  SEC_SCR_V = 4,
+  SEC_FINAL_SCALAR_BUF = 5,
+  SEC_SCRATCH = 6,
+  SEC_BIAS_LEGACY = 7,
+  SEC_WEIGHT_LEGACY = 8,
+  SEC_W_REGION = 9,
+  SEC_PARAM_STREAM_DEFAULT = 10,
+  SEC_IO_REGION = 11,
+  SEC_BACKUP_RUNTIME_SCRATCH = 12,
+  SEC_INVALID = 255
+};
+
+struct SectionDesc {
+  uint8_t id;
+  uint8_t kind;
+  uint8_t storage_class;
+  uint8_t alias_group;
+  uint8_t payload_class;
+  uint8_t reserved0;
+  uint16_t reserved1;
+  uint32_t base_w;
+  uint32_t words_w;
+  uint32_t base_word16;
+  uint32_t words_word16;
+  uint32_t align_words;
+  uint32_t align_word16;
+  uint32_t payload_words_w;
+  uint32_t payload_words_word16;
+  uint32_t flags;
 };
 
 // ----------------------------
@@ -126,7 +211,7 @@ static const uint32_t X_PAGE1_WORDS  = SIZE_X_PONG_W;
 // ----------------------------
 // SCR_K: fp32 [N_NODES, D_MODEL]
 // SCR_V: fp32 [N_NODES, D_MODEL]
-// SCR_FINAL_SCALAR: fp32 [N_NODES]
+// FINAL_SCALAR_BUF: fp32 [N_NODES]
 static const uint32_t BASE_SCRATCH_W = BASE_X_PONG_W + SIZE_X_PONG_W;
 
 static const uint32_t BASE_SCR_K_W = align_up_words(BASE_SCRATCH_W, ALIGN_WORDS);
@@ -144,6 +229,10 @@ static const uint32_t SCR_FINAL_SCALAR_BASE_W = BASE_SCR_FINAL_SCALAR_W;
 static const uint32_t SCR_FINAL_SCALAR_WORDS = SIZE_SCR_FINAL_SCALAR_W;
 static const uint32_t SCR_FINAL_SCALAR_BASE = SCR_FINAL_SCALAR_BASE_W;
 
+// New explicit BUF aliases for readability on the storage/debug side.
+static const uint32_t FINAL_SCALAR_BUF_BASE_W = BASE_SCR_FINAL_SCALAR_W;
+static const uint32_t FINAL_SCALAR_BUF_WORDS = SIZE_SCR_FINAL_SCALAR_W;
+
 static const uint32_t SIZE_SCRATCH_W =
   (BASE_SCR_FINAL_SCALAR_W + SIZE_SCR_FINAL_SCALAR_W) - BASE_SCRATCH_W;
 
@@ -151,7 +240,9 @@ static const uint32_t SIZE_SCRATCH_W =
 // [legacy] BIAS region (fp32 words)
 // ----------------------------
 static const uint32_t BASE_BIAS_W = align_up_words(BASE_SCRATCH_W + SIZE_SCRATCH_W, ALIGN_WORDS);
-static const uint32_t SIZE_BIAS_W = align_up_words(EXP_LEN_BIAS_WORDS, ALIGN_WORDS);
+static const uint32_t SIZE_BIAS_PAYLOAD_W = EXP_LEN_BIAS_WORDS;
+static const uint32_t SIZE_BIAS_W = align_up_words(SIZE_BIAS_PAYLOAD_W, ALIGN_WORDS);
+static const uint32_t SIZE_BIAS_PADDING_W = (SIZE_BIAS_W - SIZE_BIAS_PAYLOAD_W);
 
 // ----------------------------
 // [legacy] WEIGHT region
@@ -161,7 +252,9 @@ static const uint32_t SIZE_BIAS_W = align_up_words(EXP_LEN_BIAS_WORDS, ALIGN_WOR
 // - then model weights (fp32)
 // - plus src_mask (bitpack) and other fp32 tensors
 static const uint32_t BASE_W_W = BASE_BIAS_W + SIZE_BIAS_W;
-static const uint32_t SIZE_W_W = align_up_words(EXP_LEN_W_WORDS, ALIGN_WORDS);
+static const uint32_t SIZE_WEIGHT_PAYLOAD_W = EXP_LEN_W_WORDS;
+static const uint32_t SIZE_W_W = align_up_words(SIZE_WEIGHT_PAYLOAD_W, ALIGN_WORDS);
+static const uint32_t SIZE_WEIGHT_PADDING_W = (SIZE_W_W - SIZE_WEIGHT_PAYLOAD_W);
 
 // ----------------------------
 // W_REGION (v11.4+ main path)
@@ -170,9 +263,16 @@ static const uint32_t SIZE_W_W = align_up_words(EXP_LEN_W_WORDS, ALIGN_WORDS);
 // SET_W_BASE must range-check param_base_word against this allowed region.
 static const uint32_t W_REGION_BASE  = BASE_BIAS_W;
 static const uint32_t W_REGION_WORDS = (SIZE_BIAS_W + SIZE_W_W);
+static const uint32_t W_REGION_PAYLOAD_WORDS = (SIZE_BIAS_PAYLOAD_W + SIZE_WEIGHT_PAYLOAD_W);
+static const uint32_t W_REGION_PADDING_WORDS = (W_REGION_WORDS - W_REGION_PAYLOAD_WORDS);
 
 // Suggested default for TB bring-up (if no special placement is needed).
 static const uint32_t PARAM_BASE_DEFAULT = W_REGION_BASE;
+
+// Explicit default PARAM stream window inside W_REGION.
+// This is the actual LOAD_W payload length, not the padded capacity of W_REGION.
+static const uint32_t PARAM_STREAM_DEFAULT_BASE_W = PARAM_BASE_DEFAULT;
+static const uint32_t PARAM_STREAM_DEFAULT_WORDS = W_REGION_PAYLOAD_WORDS;
 
 // ----------------------------
 // END / sizing
@@ -192,7 +292,7 @@ static const uint32_t BACKUP_RUNTIME_SCRATCH_WORDS = align_up_words(65536u, ALIG
 static const uint32_t IO_REGION_BASE_W = END_W;
 static const uint32_t IO_REGION_WORDS = 0;
 
-// Minimum required SRAM depth (words) for this memory map.
+// Minimum required SRAM depth (legacy u32 words) for this memory map.
 static const uint32_t SRAM_WORDS_MIN_REQUIRED = END_W;
 
 // NOTE: Your actual SRAM depth may be larger.
@@ -203,6 +303,10 @@ static const uint32_t SRAM_WORDS_TOTAL =
 // v12.1 storage-word aliases for ref-model / loader migration.
 static const uint32_t BASE_X_WORK_WORD16 = legacy_words_to_storage_words(BASE_X_WORK_W);
 static const uint32_t SIZE_X_WORK_WORD16 = legacy_words_to_storage_words(SIZE_X_WORK_W);
+static const uint32_t X_PAGE0_BASE_WORD16 = legacy_words_to_storage_words(X_PAGE0_BASE_W);
+static const uint32_t X_PAGE0_WORDS_WORD16 = legacy_words_to_storage_words(X_PAGE0_WORDS);
+static const uint32_t X_PAGE1_BASE_WORD16 = legacy_words_to_storage_words(X_PAGE1_BASE_W);
+static const uint32_t X_PAGE1_WORDS_WORD16 = legacy_words_to_storage_words(X_PAGE1_WORDS);
 static const uint32_t BASE_SCRATCH_WORD16 = legacy_words_to_storage_words(BASE_SCRATCH_W);
 static const uint32_t SIZE_SCRATCH_WORD16 = legacy_words_to_storage_words(SIZE_SCRATCH_W);
 static const uint32_t BASE_SCR_K_WORD16 = legacy_words_to_storage_words(BASE_SCR_K_W);
@@ -211,19 +315,217 @@ static const uint32_t BASE_SCR_V_WORD16 = legacy_words_to_storage_words(BASE_SCR
 static const uint32_t SIZE_SCR_V_WORD16 = legacy_words_to_storage_words(SIZE_SCR_V_W);
 static const uint32_t SCR_FINAL_SCALAR_BASE_WORD16 = legacy_words_to_storage_words(SCR_FINAL_SCALAR_BASE_W);
 static const uint32_t SCR_FINAL_SCALAR_WORDS_WORD16 = legacy_words_to_storage_words(SCR_FINAL_SCALAR_WORDS);
+static const uint32_t FINAL_SCALAR_BUF_BASE_WORD16 = legacy_words_to_storage_words(FINAL_SCALAR_BUF_BASE_W);
+static const uint32_t FINAL_SCALAR_BUF_WORDS_WORD16 = legacy_words_to_storage_words(FINAL_SCALAR_BUF_WORDS);
+static const uint32_t BASE_BIAS_WORD16 = legacy_words_to_storage_words(BASE_BIAS_W);
+static const uint32_t SIZE_BIAS_PAYLOAD_WORD16 = legacy_words_to_storage_words(SIZE_BIAS_PAYLOAD_W);
+static const uint32_t SIZE_BIAS_WORD16 = legacy_words_to_storage_words(SIZE_BIAS_W);
+static const uint32_t SIZE_BIAS_PADDING_WORD16 = legacy_words_to_storage_words(SIZE_BIAS_PADDING_W);
+static const uint32_t BASE_WEIGHT_WORD16 = legacy_words_to_storage_words(BASE_W_W);
+static const uint32_t SIZE_WEIGHT_PAYLOAD_WORD16 = legacy_words_to_storage_words(SIZE_WEIGHT_PAYLOAD_W);
+static const uint32_t SIZE_WEIGHT_WORD16 = legacy_words_to_storage_words(SIZE_W_W);
+static const uint32_t SIZE_WEIGHT_PADDING_WORD16 = legacy_words_to_storage_words(SIZE_WEIGHT_PADDING_W);
 static const uint32_t W_REGION_BASE_WORD16 = legacy_words_to_storage_words(W_REGION_BASE);
 static const uint32_t W_REGION_WORDS_WORD16 = legacy_words_to_storage_words(W_REGION_WORDS);
+static const uint32_t W_REGION_PAYLOAD_WORDS_WORD16 = legacy_words_to_storage_words(W_REGION_PAYLOAD_WORDS);
+static const uint32_t W_REGION_PADDING_WORDS_WORD16 = legacy_words_to_storage_words(W_REGION_PADDING_WORDS);
 static const uint32_t PARAM_BASE_DEFAULT_WORD16 = legacy_words_to_storage_words(PARAM_BASE_DEFAULT);
+static const uint32_t PARAM_STREAM_DEFAULT_BASE_WORD16 = legacy_words_to_storage_words(PARAM_STREAM_DEFAULT_BASE_W);
+static const uint32_t PARAM_STREAM_DEFAULT_WORDS_WORD16 = legacy_words_to_storage_words(PARAM_STREAM_DEFAULT_WORDS);
+static const uint32_t IO_REGION_BASE_WORD16 = legacy_words_to_storage_words(IO_REGION_BASE_W);
+static const uint32_t IO_REGION_WORDS_WORD16 = legacy_words_to_storage_words(IO_REGION_WORDS);
+static const uint32_t BACKUP_RUNTIME_SCRATCH_BASE_WORD16 = legacy_words_to_storage_words(BACKUP_RUNTIME_SCRATCH_BASE_W);
+static const uint32_t BACKUP_RUNTIME_SCRATCH_WORDS_WORD16 = legacy_words_to_storage_words(BACKUP_RUNTIME_SCRATCH_WORDS);
 static const uint32_t SRAM_STORAGE_WORDS_MIN_REQUIRED = legacy_words_to_storage_words(SRAM_WORDS_MIN_REQUIRED);
 static const uint32_t SRAM_STORAGE_WORDS_TOTAL = legacy_words_to_storage_words(SRAM_WORDS_TOTAL);
 
+static_assert(PARAM_STREAM_DEFAULT_WORDS == (EXP_LEN_BIAS_WORDS + EXP_LEN_W_WORDS),
+              "PARAM stream words must match unified BIAS+WEIGHT payload.");
+static_assert(W_REGION_BASE == PARAM_BASE_DEFAULT,
+              "Default PARAM base must stay at the start of W_REGION.");
+static_assert((PARAM_STREAM_DEFAULT_BASE_W + PARAM_STREAM_DEFAULT_WORDS) <= (W_REGION_BASE + W_REGION_WORDS),
+              "Default PARAM stream must fit inside W_REGION.");
+static_assert(FINAL_SCALAR_BUF_BASE_W == SCR_FINAL_SCALAR_BASE_W,
+              "FINAL_SCALAR_BUF alias must match legacy SCR_FINAL_SCALAR base.");
+static_assert(FINAL_SCALAR_BUF_WORDS == SCR_FINAL_SCALAR_WORDS,
+              "FINAL_SCALAR_BUF alias must match legacy SCR_FINAL_SCALAR words.");
+
+static constexpr SectionDesc kSectionTable[] = {
+  { SEC_X_PAGE0_COMPAT, SECTION_PHYSICAL, CLASS_X_WORK, ALIAS_X_WORK, PAYLOAD_COMPAT_ALIAS, 0u, 0u,
+    X_PAGE0_BASE_W, X_PAGE0_WORDS, X_PAGE0_BASE_WORD16, X_PAGE0_WORDS_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    X_PAGE0_WORDS, X_PAGE0_WORDS_WORD16,
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL | SECTION_FLAG_LEGACY_COMPAT },
+  { SEC_X_PAGE1_COMPAT, SECTION_PHYSICAL, CLASS_X_WORK, ALIAS_X_WORK, PAYLOAD_COMPAT_ALIAS, 0u, 0u,
+    X_PAGE1_BASE_W, X_PAGE1_WORDS, X_PAGE1_BASE_WORD16, X_PAGE1_WORDS_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    X_PAGE1_WORDS, X_PAGE1_WORDS_WORD16,
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL | SECTION_FLAG_LEGACY_COMPAT },
+  { SEC_X_WORK, SECTION_LOGICAL, CLASS_X_WORK, ALIAS_X_WORK, PAYLOAD_FP32_TENSOR, 0u, 0u,
+    BASE_X_WORK_W, SIZE_X_WORK_W, BASE_X_WORK_WORD16, SIZE_X_WORK_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    SIZE_X_WORK_W, SIZE_X_WORK_WORD16,
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
+  { SEC_SCR_K, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_SCR_K, PAYLOAD_FP32_TENSOR, 0u, 0u,
+    BASE_SCR_K_W, SIZE_SCR_K_W, BASE_SCR_K_WORD16, SIZE_SCR_K_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    SIZE_SCR_K_W, SIZE_SCR_K_WORD16,
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
+  { SEC_SCR_V, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_SCR_V, PAYLOAD_FP32_TENSOR, 0u, 0u,
+    BASE_SCR_V_W, SIZE_SCR_V_W, BASE_SCR_V_WORD16, SIZE_SCR_V_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    SIZE_SCR_V_W, SIZE_SCR_V_WORD16,
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
+  { SEC_FINAL_SCALAR_BUF, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_FINAL_SCALAR, PAYLOAD_FP32_VECTOR, 0u, 0u,
+    FINAL_SCALAR_BUF_BASE_W, FINAL_SCALAR_BUF_WORDS,
+    FINAL_SCALAR_BUF_BASE_WORD16, FINAL_SCALAR_BUF_WORDS_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    N_NODES, storage_words_fp32(N_NODES),
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL | SECTION_FLAG_PADDING_PRESENT },
+  { SEC_SCRATCH, SECTION_LOGICAL, CLASS_SCRATCH, ALIAS_LOCAL_ONLY, PAYLOAD_RUNTIME_SCRATCH, 0u, 0u,
+    BASE_SCRATCH_W, SIZE_SCRATCH_W, BASE_SCRATCH_WORD16, SIZE_SCRATCH_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    SIZE_SCRATCH_W, SIZE_SCRATCH_WORD16,
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
+  { SEC_BIAS_LEGACY, SECTION_PHYSICAL, CLASS_W_REGION, ALIAS_W_PERSIST, PAYLOAD_MIXED_PERSIST, 0u, 0u,
+    BASE_BIAS_W, SIZE_BIAS_W, BASE_BIAS_WORD16, SIZE_BIAS_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    SIZE_BIAS_PAYLOAD_W, SIZE_BIAS_PAYLOAD_WORD16,
+    SECTION_FLAG_LOAD_W_CRITICAL | SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_PADDING_PRESENT | SECTION_FLAG_LEGACY_COMPAT },
+  { SEC_WEIGHT_LEGACY, SECTION_PHYSICAL, CLASS_W_REGION, ALIAS_W_PERSIST, PAYLOAD_MIXED_PERSIST, 0u, 0u,
+    BASE_W_W, SIZE_W_W, BASE_WEIGHT_WORD16, SIZE_WEIGHT_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    SIZE_WEIGHT_PAYLOAD_W, SIZE_WEIGHT_PAYLOAD_WORD16,
+    SECTION_FLAG_LOAD_W_CRITICAL | SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_PADDING_PRESENT | SECTION_FLAG_LEGACY_COMPAT },
+  { SEC_W_REGION, SECTION_LOGICAL, CLASS_W_REGION, ALIAS_W_PERSIST, PAYLOAD_MIXED_PERSIST, 0u, 0u,
+    W_REGION_BASE, W_REGION_WORDS, W_REGION_BASE_WORD16, W_REGION_WORDS_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    W_REGION_PAYLOAD_WORDS, W_REGION_PAYLOAD_WORDS_WORD16,
+    SECTION_FLAG_LOAD_W_CRITICAL | SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_PADDING_PRESENT },
+  { SEC_PARAM_STREAM_DEFAULT, SECTION_LOGICAL, CLASS_W_REGION, ALIAS_W_PERSIST, PAYLOAD_PARAM_STREAM, 0u, 0u,
+    PARAM_STREAM_DEFAULT_BASE_W, PARAM_STREAM_DEFAULT_WORDS,
+    PARAM_STREAM_DEFAULT_BASE_WORD16, PARAM_STREAM_DEFAULT_WORDS_WORD16,
+    W_LANES, legacy_words_to_storage_words(W_LANES),
+    PARAM_STREAM_DEFAULT_WORDS, PARAM_STREAM_DEFAULT_WORDS_WORD16,
+    SECTION_FLAG_LOAD_W_CRITICAL | SECTION_FLAG_READ_MEM_VISIBLE },
+  { SEC_IO_REGION, SECTION_LOGICAL, CLASS_IO_REGION, ALIAS_IO_STAGING, PAYLOAD_EMPTY, 0u, 0u,
+    IO_REGION_BASE_W, IO_REGION_WORDS, IO_REGION_BASE_WORD16, IO_REGION_WORDS_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    IO_REGION_WORDS, IO_REGION_WORDS_WORD16,
+    SECTION_FLAG_NONE },
+  { SEC_BACKUP_RUNTIME_SCRATCH, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_LOCAL_ONLY, PAYLOAD_RUNTIME_SCRATCH, 0u, 0u,
+    BACKUP_RUNTIME_SCRATCH_BASE_W, BACKUP_RUNTIME_SCRATCH_WORDS,
+    BACKUP_RUNTIME_SCRATCH_BASE_WORD16, BACKUP_RUNTIME_SCRATCH_WORDS_WORD16,
+    ALIGN_WORDS, ALIGN_STORAGE_WORD16,
+    BACKUP_RUNTIME_SCRATCH_WORDS, BACKUP_RUNTIME_SCRATCH_WORDS_WORD16,
+    SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL | SECTION_FLAG_LEGACY_COMPAT }
+};
+
+static const uint32_t SECTION_COUNT =
+  (uint32_t)(sizeof(kSectionTable) / sizeof(kSectionTable[0]));
+
 // ------------------------------------------------------------
-// Region decode helpers (purely by addr_word range)
+// Generic helpers
 // ------------------------------------------------------------
 static inline bool in_range(uint32_t addr_w, uint32_t base_w, uint32_t size_w) {
   return (addr_w >= base_w) && (addr_w < (base_w + size_w));
 }
 
+static inline bool range_fits(uint32_t base_w, uint32_t words_w,
+                              uint32_t container_base_w, uint32_t container_words_w) {
+  const unsigned long long begin = (unsigned long long)base_w;
+  const unsigned long long end_excl = begin + (unsigned long long)words_w;
+  const unsigned long long container_begin = (unsigned long long)container_base_w;
+  const unsigned long long container_end_excl = container_begin + (unsigned long long)container_words_w;
+  return (begin >= container_begin) && (end_excl <= container_end_excl);
+}
+
+static inline bool is_legacy_word_aligned(uint32_t addr_w, uint32_t align_words) {
+  return (align_words == 0u) ? true : ((addr_w % align_words) == 0u);
+}
+
+static inline bool is_storage_word_aligned(uint32_t addr_word16, uint32_t align_word16) {
+  return (align_word16 == 0u) ? true : ((addr_word16 % align_word16) == 0u);
+}
+
+static inline bool is_storage_beat_aligned_word16(uint32_t addr_word16) {
+  return ((addr_word16 % SRAM_STORAGE_WORDS_PER_BEAT) == 0u);
+}
+
+static inline const SectionDesc& section_desc(const SectionId id) {
+  const uint32_t idx = (uint32_t)id;
+  if (idx < SECTION_COUNT) {
+    return kSectionTable[idx];
+  }
+  return kSectionTable[0];
+}
+
+static inline uint32_t section_flags(const SectionId id) {
+  const uint32_t idx = (uint32_t)id;
+  if (idx < SECTION_COUNT) {
+    return kSectionTable[idx].flags;
+  }
+  return SECTION_FLAG_NONE;
+}
+
+static inline bool section_has_flag(const SectionId id, const uint32_t flag) {
+  return ((section_flags(id) & flag) != 0u);
+}
+
+static inline bool section_affects_load_w(const SectionId id) {
+  return section_has_flag(id, SECTION_FLAG_LOAD_W_CRITICAL);
+}
+
+static inline bool section_affects_compare(const SectionId id) {
+  return section_has_flag(id, SECTION_FLAG_COMPARE_CRITICAL);
+}
+
+static inline bool section_is_read_mem_visible(const SectionId id) {
+  return section_has_flag(id, SECTION_FLAG_READ_MEM_VISIBLE);
+}
+
+static inline bool section_is_logical_window(const SectionId id) {
+  const uint32_t idx = (uint32_t)id;
+  return (idx < SECTION_COUNT) ? (kSectionTable[idx].kind == SECTION_LOGICAL) : false;
+}
+
+static inline bool section_contains_addr(const SectionId id, uint32_t addr_w) {
+  const uint32_t idx = (uint32_t)id;
+  if (idx >= SECTION_COUNT) {
+    return false;
+  }
+  return in_range(addr_w, kSectionTable[idx].base_w, kSectionTable[idx].words_w);
+}
+
+static inline bool section_payload_fits_capacity(const SectionId id) {
+  const uint32_t idx = (uint32_t)id;
+  if (idx >= SECTION_COUNT) {
+    return false;
+  }
+  return (kSectionTable[idx].payload_words_w <= kSectionTable[idx].words_w);
+}
+
+static inline bool default_param_stream_fits_w_region(void) {
+  return range_fits(PARAM_STREAM_DEFAULT_BASE_W, PARAM_STREAM_DEFAULT_WORDS,
+                    W_REGION_BASE, W_REGION_WORDS);
+}
+
+// Decode the most specific non-overlapping physical section first.
+static inline SectionId physical_section_of_addr(uint32_t addr_w) {
+  if (in_range(addr_w, X_PAGE0_BASE_W, X_PAGE0_WORDS)) return SEC_X_PAGE0_COMPAT;
+  if (in_range(addr_w, X_PAGE1_BASE_W, X_PAGE1_WORDS)) return SEC_X_PAGE1_COMPAT;
+  if (in_range(addr_w, BASE_SCR_K_W, SIZE_SCR_K_W)) return SEC_SCR_K;
+  if (in_range(addr_w, BASE_SCR_V_W, SIZE_SCR_V_W)) return SEC_SCR_V;
+  if (in_range(addr_w, FINAL_SCALAR_BUF_BASE_W, FINAL_SCALAR_BUF_WORDS)) return SEC_FINAL_SCALAR_BUF;
+  if (in_range(addr_w, BASE_BIAS_W, SIZE_BIAS_W)) return SEC_BIAS_LEGACY;
+  if (in_range(addr_w, BASE_W_W, SIZE_W_W)) return SEC_WEIGHT_LEGACY;
+  if (in_range(addr_w, BACKUP_RUNTIME_SCRATCH_BASE_W, BACKUP_RUNTIME_SCRATCH_WORDS)) return SEC_BACKUP_RUNTIME_SCRATCH;
+  return SEC_INVALID;
+}
+
+// ------------------------------------------------------------
+// Region decode helpers (purely by addr_word range)
+// ------------------------------------------------------------
 static inline SramRegion region_of_addr(uint32_t addr_w) {
   if (in_range(addr_w, X_PAGE0_BASE_W, X_PAGE0_WORDS)) return REG_X_PAGE0;
   if (in_range(addr_w, X_PAGE1_BASE_W, X_PAGE1_WORDS)) return REG_X_PAGE1;
