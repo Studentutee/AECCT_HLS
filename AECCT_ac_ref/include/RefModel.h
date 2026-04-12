@@ -136,7 +136,7 @@ struct RefStep0Io16Image {
 };
 
 struct RefRunConfig {
-  RefPrecisionMode precision_mode = RefPrecisionMode::BASELINE_FP32;
+  RefPrecisionMode precision_mode = RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
   RefAlgoVariant algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
   // Leaf-kernel selector for softmax exp only. Reciprocal/row-state/exact-path stay unchanged.
   RefSoftmaxExpMode softmax_exp_mode = RefSoftmaxExpMode::BASELINE_NEAREST_LUT;

@@ -2199,7 +2199,7 @@ RefRunConfig make_fp16_experiment_run_config() {
 }
 
 RefModel::RefModel() {
-  run_cfg_ = make_fp32_baseline_run_config();
+  run_cfg_ = make_fp16_experiment_run_config();
   dump_cfg_.enabled = false;
   dump_cfg_.dump_dir = nullptr;
   dump_cfg_.pattern_index = -1;

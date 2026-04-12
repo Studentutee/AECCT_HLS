@@ -720,7 +720,7 @@ static bool parse_io16_output_mode(const char* text, aecct_ref::RefStep0OutputMo
 }
 
 static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
-  opts.run_mode = CliRunMode::COMPARE;
+  opts.run_mode = CliRunMode::EXPERIMENT_ONLY;
   opts.pattern_index = -1;
   opts.pattern_begin = -1;
   opts.pattern_count = -1;
@@ -739,7 +739,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.experiment_ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
-  opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
+  opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
   opts.experiment_precision_explicit = false;
   opts.frag_group = aecct_ref::RefFragGroup::NONE;
 
