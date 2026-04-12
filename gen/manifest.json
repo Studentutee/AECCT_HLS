@@ -6,7 +6,7 @@
     "WeightStreamOrder.h"
   ],
   "generator": "tools/gen_headers.py",
-  "input_hash": "092b63033ed6b7d143ae093a052e7bd15ac167d7f8d38c2e16b099af5602a5d9",
+  "input_hash": "e8f38e0cf5f268a9f8653269a6947eed47536f0f1fd3394924fc5a9a5d2c3a0a",
   "inputs": [
     {
       "bytes": 2138,
@@ -19,14 +19,14 @@
       "sha256": "ff14b03ea99239e2f59a058133497af713a10fe9cb0fd13962fea4f525d7e274"
     },
     {
-      "bytes": 24965,
+      "bytes": 25786,
       "path": "include/SramMap.h",
-      "sha256": "431d2a1c2e91e760aa18d531c4758b5413e136328232fb85d1749204a998382f"
+      "sha256": "6b3959c7821ca80af46d4d877835742aa19ad4099d8431b774d1fbee16302c5a"
     },
     {
       "bytes": 46305,
       "path": "include/WeightStreamOrder.h",
-      "sha256": "91e96b274c317555a43504ae551f0dfc90ff29655ae851426efffe1724b2329c"
+      "sha256": "3ff2bf7bf1ad52cf285ccef65e46dab6baabe54b666fbe889fcbf93a29379736"
     }
   ],
   "outputs": [
@@ -51,9 +51,9 @@
       "sha256": "991e1b3c0b233d9b36dd1dca75ad0400b5fddeb71d7268827e913da8404b6ef6"
     },
     {
-      "bytes": 25096,
+      "bytes": 25917,
       "path": "gen/include/SramMap.h",
-      "sha256": "2786394247ffe8ab3c209d5db18b2adfe00d613a290d9f15ef7fac00ddb88063"
+      "sha256": "7e1aad864a40a5cdd7174436a1fbbb74e762eabb920baa32d9ec86adc2920f16"
     },
     {
       "bytes": 102,
@@ -63,7 +63,7 @@
     {
       "bytes": 46450,
       "path": "gen/include/WeightStreamOrder.h",
-      "sha256": "1a95bf6a65875502562ee6839ae6ae4fb98972a9129b66a1b7df403950121d69"
+      "sha256": "400df9e889f43370140a4ef227f61d56ae26bdb592961b919f7a51803d41b437"
     },
     {
       "bytes": 112,

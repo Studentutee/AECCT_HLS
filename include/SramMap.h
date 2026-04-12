@@ -116,6 +116,7 @@ enum PayloadClass : uint8_t {
   PAYLOAD_RUNTIME_SCRATCH = 6,
   PAYLOAD_MIXED_PERSIST = 7,
   PAYLOAD_FP16_TENSOR = 8,
+  PAYLOAD_FP16_VECTOR = 9,
   PAYLOAD_INVALID = 255
 };
 
@@ -198,20 +199,20 @@ static const uint32_t X_WORK_WORDS  = SIZE_X_WORK_W;
 // ----------------------------
 // SCRATCH (S1: KV cache + FinalHead scalar)
 // ----------------------------
-// SCR_K: fp32 [N_NODES, D_MODEL]
-// SCR_V: fp32 [N_NODES, D_MODEL]
-// FINAL_SCALAR_BUF: fp32 [N_NODES]
+// SCR_K: fp16 [N_NODES, D_MODEL]
+// SCR_V: fp16 [N_NODES, D_MODEL]
+// FINAL_SCALAR_BUF: fp16 [N_NODES]
 static const uint32_t BASE_SCRATCH_W = BASE_X_WORK_W + SIZE_X_WORK_W;
 
 static const uint32_t BASE_SCR_K_W = align_up_words(BASE_SCRATCH_W, ALIGN_WORDS);
-static const uint32_t SIZE_SCR_K_W = align_up_words(WORDS_X_FP32, ALIGN_WORDS);
+static const uint32_t SIZE_SCR_K_W = align_up_words(WORDS_X_FP16_PACKED, ALIGN_WORDS);
 
 static const uint32_t BASE_SCR_V_W = BASE_SCR_K_W + SIZE_SCR_K_W;
-static const uint32_t SIZE_SCR_V_W = align_up_words(WORDS_X_FP32, ALIGN_WORDS);
+static const uint32_t SIZE_SCR_V_W = align_up_words(WORDS_X_FP16_PACKED, ALIGN_WORDS);
 
 static const uint32_t BASE_SCR_FINAL_SCALAR_W =
   align_up_words(BASE_SCR_V_W + SIZE_SCR_V_W, ALIGN_WORDS);
-static const uint32_t SIZE_SCR_FINAL_SCALAR_W = align_up_words(N_NODES, ALIGN_WORDS);
+static const uint32_t SIZE_SCR_FINAL_SCALAR_W = align_up_words(legacy_u32_words_fp16_packed(N_NODES), ALIGN_WORDS);
 
 // Alias names used by v11.12/v12 bridge and reports.
 static const uint32_t SCR_FINAL_SCALAR_BASE_W = BASE_SCR_FINAL_SCALAR_W;
@@ -226,34 +227,53 @@ static const uint32_t SIZE_SCRATCH_W =
   (BASE_SCR_FINAL_SCALAR_W + SIZE_SCR_FINAL_SCALAR_W) - BASE_SCRATCH_W;
 
 // ----------------------------
-// [legacy] BIAS region (fp32 words)
+// FP16 branch bias / weight persistent region
 // ----------------------------
+// Bias tensors and non-linear/plain weights use fp16 storage words (1 value =
+// 1 word16). Quant-linear ternary payload remains packed, and inv_s_w / other
+// metadata lanes also live in word16 space. Legacy u32 views below are kept
+// only as a ceil(word16/2) bridge for existing bring-up code paths.
 static const uint32_t BASE_BIAS_W = align_up_words(BASE_SCRATCH_W + SIZE_SCRATCH_W, ALIGN_WORDS);
-static const uint32_t SIZE_BIAS_PAYLOAD_W = EXP_LEN_BIAS_WORDS;
+static const uint32_t FP16_BRANCH_TOTAL_BIAS_WORDS16 = 832u;
+static const uint32_t FP16_BRANCH_TOTAL_WEIGHT_WORDS16 = 10853u;
+static const uint32_t FP16_BRANCH_TOTAL_PARAM_WORDS16 = 11685u;
+
+static const uint32_t SIZE_BIAS_PAYLOAD_WORD16 = FP16_BRANCH_TOTAL_BIAS_WORDS16;
+static const uint32_t SIZE_BIAS_PAYLOAD_W = storage_words_to_legacy_words_ceil(SIZE_BIAS_PAYLOAD_WORD16);
 static const uint32_t SIZE_BIAS_W = align_up_words(SIZE_BIAS_PAYLOAD_W, ALIGN_WORDS);
 static const uint32_t SIZE_BIAS_PADDING_W = (SIZE_BIAS_W - SIZE_BIAS_PAYLOAD_W);
+static const uint32_t SIZE_BIAS_PADDING_WORD16 =
+    (legacy_words_to_storage_words(SIZE_BIAS_W) - SIZE_BIAS_PAYLOAD_WORD16);
 
 // ----------------------------
-// [legacy] WEIGHT region
+// [branch] WEIGHT region
 // ----------------------------
 // Includes:
-// - BCH parity-check H (bitpack) first
-// - then model weights (fp32)
-// - plus src_mask (bitpack) and other fp32 tensors
+// - BCH parity-check H / SRC_MASK bitpack metadata
+// - Quant-linear ternary payload matrices
+// - fp16 inv_s_w metadata
+// - fp16 non-linear / final-head / plain weights
 static const uint32_t BASE_W_W = BASE_BIAS_W + SIZE_BIAS_W;
-static const uint32_t SIZE_WEIGHT_PAYLOAD_W = EXP_LEN_W_WORDS;
+static const uint32_t SIZE_WEIGHT_PAYLOAD_WORD16 = FP16_BRANCH_TOTAL_WEIGHT_WORDS16;
+static const uint32_t SIZE_WEIGHT_PAYLOAD_W = storage_words_to_legacy_words_ceil(SIZE_WEIGHT_PAYLOAD_WORD16);
 static const uint32_t SIZE_W_W = align_up_words(SIZE_WEIGHT_PAYLOAD_W, ALIGN_WORDS);
 static const uint32_t SIZE_WEIGHT_PADDING_W = (SIZE_W_W - SIZE_WEIGHT_PAYLOAD_W);
+static const uint32_t SIZE_WEIGHT_PADDING_WORD16 =
+    (legacy_words_to_storage_words(SIZE_W_W) - SIZE_WEIGHT_PAYLOAD_WORD16);
 
 // ----------------------------
-// W_REGION (v11.4+ main path)
+// W_REGION (fp16 branch main path)
 // ----------------------------
-// Unified PARAM stream is written starting at runtime param_base_word.
-// SET_W_BASE must range-check param_base_word against this allowed region.
+// Unified PARAM stream keeps using legacy u32 command lengths for transition,
+// but the authoritative storage contract is now expressed in 16-bit words.
 static const uint32_t W_REGION_BASE  = BASE_BIAS_W;
 static const uint32_t W_REGION_WORDS = (SIZE_BIAS_W + SIZE_W_W);
 static const uint32_t W_REGION_PAYLOAD_WORDS = (SIZE_BIAS_PAYLOAD_W + SIZE_WEIGHT_PAYLOAD_W);
 static const uint32_t W_REGION_PADDING_WORDS = (W_REGION_WORDS - W_REGION_PAYLOAD_WORDS);
+static const uint32_t W_REGION_PAYLOAD_WORDS_WORD16 =
+    (SIZE_BIAS_PAYLOAD_WORD16 + SIZE_WEIGHT_PAYLOAD_WORD16);
+static const uint32_t W_REGION_PADDING_WORDS_WORD16 =
+    (legacy_words_to_storage_words(W_REGION_WORDS) - W_REGION_PAYLOAD_WORDS_WORD16);
 
 // Suggested default for TB bring-up (if no special placement is needed).
 static const uint32_t PARAM_BASE_DEFAULT = W_REGION_BASE;
@@ -262,6 +282,7 @@ static const uint32_t PARAM_BASE_DEFAULT = W_REGION_BASE;
 // This is the actual LOAD_W payload length, not the padded capacity of W_REGION.
 static const uint32_t PARAM_STREAM_DEFAULT_BASE_W = PARAM_BASE_DEFAULT;
 static const uint32_t PARAM_STREAM_DEFAULT_WORDS = W_REGION_PAYLOAD_WORDS;
+static const uint32_t PARAM_STREAM_DEFAULT_WORDS_WORD16 = FP16_BRANCH_TOTAL_PARAM_WORDS16;
 
 // ----------------------------
 // END / sizing
@@ -305,20 +326,13 @@ static const uint32_t SCR_FINAL_SCALAR_WORDS_WORD16 = legacy_words_to_storage_wo
 static const uint32_t FINAL_SCALAR_BUF_BASE_WORD16 = legacy_words_to_storage_words(FINAL_SCALAR_BUF_BASE_W);
 static const uint32_t FINAL_SCALAR_BUF_WORDS_WORD16 = legacy_words_to_storage_words(FINAL_SCALAR_BUF_WORDS);
 static const uint32_t BASE_BIAS_WORD16 = legacy_words_to_storage_words(BASE_BIAS_W);
-static const uint32_t SIZE_BIAS_PAYLOAD_WORD16 = legacy_words_to_storage_words(SIZE_BIAS_PAYLOAD_W);
 static const uint32_t SIZE_BIAS_WORD16 = legacy_words_to_storage_words(SIZE_BIAS_W);
-static const uint32_t SIZE_BIAS_PADDING_WORD16 = legacy_words_to_storage_words(SIZE_BIAS_PADDING_W);
 static const uint32_t BASE_WEIGHT_WORD16 = legacy_words_to_storage_words(BASE_W_W);
-static const uint32_t SIZE_WEIGHT_PAYLOAD_WORD16 = legacy_words_to_storage_words(SIZE_WEIGHT_PAYLOAD_W);
 static const uint32_t SIZE_WEIGHT_WORD16 = legacy_words_to_storage_words(SIZE_W_W);
-static const uint32_t SIZE_WEIGHT_PADDING_WORD16 = legacy_words_to_storage_words(SIZE_WEIGHT_PADDING_W);
 static const uint32_t W_REGION_BASE_WORD16 = legacy_words_to_storage_words(W_REGION_BASE);
 static const uint32_t W_REGION_WORDS_WORD16 = legacy_words_to_storage_words(W_REGION_WORDS);
-static const uint32_t W_REGION_PAYLOAD_WORDS_WORD16 = legacy_words_to_storage_words(W_REGION_PAYLOAD_WORDS);
-static const uint32_t W_REGION_PADDING_WORDS_WORD16 = legacy_words_to_storage_words(W_REGION_PADDING_WORDS);
 static const uint32_t PARAM_BASE_DEFAULT_WORD16 = legacy_words_to_storage_words(PARAM_BASE_DEFAULT);
 static const uint32_t PARAM_STREAM_DEFAULT_BASE_WORD16 = legacy_words_to_storage_words(PARAM_STREAM_DEFAULT_BASE_W);
-static const uint32_t PARAM_STREAM_DEFAULT_WORDS_WORD16 = legacy_words_to_storage_words(PARAM_STREAM_DEFAULT_WORDS);
 static const uint32_t IO_REGION_BASE_WORD16 = legacy_words_to_storage_words(IO_REGION_BASE_W);
 static const uint32_t IO_REGION_WORDS_WORD16 = legacy_words_to_storage_words(IO_REGION_WORDS);
 static const uint32_t BACKUP_RUNTIME_SCRATCH_BASE_WORD16 = legacy_words_to_storage_words(BACKUP_RUNTIME_SCRATCH_BASE_W);
@@ -326,8 +340,8 @@ static const uint32_t BACKUP_RUNTIME_SCRATCH_WORDS_WORD16 = legacy_words_to_stor
 static const uint32_t SRAM_STORAGE_WORDS_MIN_REQUIRED = legacy_words_to_storage_words(SRAM_WORDS_MIN_REQUIRED);
 static const uint32_t SRAM_STORAGE_WORDS_TOTAL = legacy_words_to_storage_words(SRAM_WORDS_TOTAL);
 
-static_assert(PARAM_STREAM_DEFAULT_WORDS == (EXP_LEN_BIAS_WORDS + EXP_LEN_W_WORDS),
-              "PARAM stream words must match unified BIAS+WEIGHT payload.");
+static_assert(PARAM_STREAM_DEFAULT_WORDS_WORD16 == FP16_BRANCH_TOTAL_PARAM_WORDS16,
+              "fp16 branch PARAM stream word16 count must match frozen branch contract.");
 static_assert(W_REGION_BASE == PARAM_BASE_DEFAULT,
               "Default PARAM base must stay at the start of W_REGION.");
 static_assert((PARAM_STREAM_DEFAULT_BASE_W + PARAM_STREAM_DEFAULT_WORDS) <= (W_REGION_BASE + W_REGION_WORDS),
@@ -343,21 +357,21 @@ static constexpr SectionDesc kSectionTable[] = {
     ALIGN_WORDS, ALIGN_STORAGE_WORD16,
     WORDS_X_FP16_PACKED, storage_words_fp16(ELEMS_X),
     SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
-  { SEC_SCR_K, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_SCR_K, PAYLOAD_FP32_TENSOR, 0u, 0u,
+  { SEC_SCR_K, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_SCR_K, PAYLOAD_FP16_TENSOR, 0u, 0u,
     BASE_SCR_K_W, SIZE_SCR_K_W, BASE_SCR_K_WORD16, SIZE_SCR_K_WORD16,
     ALIGN_WORDS, ALIGN_STORAGE_WORD16,
-    SIZE_SCR_K_W, SIZE_SCR_K_WORD16,
+    WORDS_X_FP16_PACKED, storage_words_fp16(ELEMS_X),
     SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
-  { SEC_SCR_V, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_SCR_V, PAYLOAD_FP32_TENSOR, 0u, 0u,
+  { SEC_SCR_V, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_SCR_V, PAYLOAD_FP16_TENSOR, 0u, 0u,
     BASE_SCR_V_W, SIZE_SCR_V_W, BASE_SCR_V_WORD16, SIZE_SCR_V_WORD16,
     ALIGN_WORDS, ALIGN_STORAGE_WORD16,
-    SIZE_SCR_V_W, SIZE_SCR_V_WORD16,
+    WORDS_X_FP16_PACKED, storage_words_fp16(ELEMS_X),
     SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
-  { SEC_FINAL_SCALAR_BUF, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_FINAL_SCALAR, PAYLOAD_FP32_VECTOR, 0u, 0u,
+  { SEC_FINAL_SCALAR_BUF, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_FINAL_SCALAR, PAYLOAD_FP16_VECTOR, 0u, 0u,
     FINAL_SCALAR_BUF_BASE_W, FINAL_SCALAR_BUF_WORDS,
     FINAL_SCALAR_BUF_BASE_WORD16, FINAL_SCALAR_BUF_WORDS_WORD16,
     ALIGN_WORDS, ALIGN_STORAGE_WORD16,
-    N_NODES, storage_words_fp32(N_NODES),
+    legacy_u32_words_fp16_packed(N_NODES), storage_words_fp16(N_NODES),
     SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL | SECTION_FLAG_PADDING_PRESENT },
   { SEC_SCRATCH, SECTION_LOGICAL, CLASS_SCRATCH, ALIAS_LOCAL_ONLY, PAYLOAD_RUNTIME_SCRATCH, 0u, 0u,
     BASE_SCRATCH_W, SIZE_SCRATCH_W, BASE_SCRATCH_WORD16, SIZE_SCRATCH_WORD16,

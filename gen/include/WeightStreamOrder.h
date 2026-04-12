@@ -122,7 +122,7 @@ static inline constexpr uint32_t ternary_last_word_valid_count(const uint32_t nu
 }
 
 static inline constexpr uint32_t storage_words_from_param_words(const uint32_t words) {
-  return words * SRAM_STORAGE_WORDS_PER_LEGACY_WORD;
+  return storage_words_from_legacy_u32_words(words);
 }
 
 static inline constexpr uint32_t storage_bits_from_param_valid_bits(const uint32_t valid_bits) {

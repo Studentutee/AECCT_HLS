@@ -67,6 +67,7 @@ static const char* payload_class_name(const uint8_t payload) {
     case sram_map::PAYLOAD_RUNTIME_SCRATCH: return "runtime_scratch";
     case sram_map::PAYLOAD_MIXED_PERSIST: return "mixed_persist";
     case sram_map::PAYLOAD_FP16_TENSOR: return "fp16_tensor";
+    case sram_map::PAYLOAD_FP16_VECTOR: return "fp16_vector";
     default: return "invalid";
   }
 }
@@ -118,9 +119,15 @@ static void print_section_table() {
 
 int main() {
   expect_eq_u32("SECTION_COUNT", sram_map::SECTION_COUNT, 11u);
-  expect_eq_u32("PARAM_STREAM_DEFAULT_WORDS_vs_EXP_LEN_PARAM_WORDS",
-                sram_map::PARAM_STREAM_DEFAULT_WORDS,
-                EXP_LEN_PARAM_WORDS);
+  expect_eq_u32("PARAM_STREAM_DEFAULT_WORDS_WORD16_vs_fp16_branch_total_param_words16",
+                sram_map::PARAM_STREAM_DEFAULT_WORDS_WORD16,
+                fp16_branch_total_param_words16());
+  expect_eq_u32("SIZE_BIAS_PAYLOAD_WORD16_vs_fp16_branch_total_bias_words16",
+                sram_map::SIZE_BIAS_PAYLOAD_WORD16,
+                fp16_branch_total_bias_words16());
+  expect_eq_u32("SIZE_WEIGHT_PAYLOAD_WORD16_vs_fp16_branch_total_weight_words16",
+                sram_map::SIZE_WEIGHT_PAYLOAD_WORD16,
+                fp16_branch_total_weight_words16());
   expect_true("default_param_stream_fits_w_region",
               sram_map::default_param_stream_fits_w_region());
   expect_eq_u32("FINAL_SCALAR_BUF_BASE_alias",
@@ -129,9 +136,9 @@ int main() {
   expect_eq_u32("FINAL_SCALAR_BUF_WORDS_alias",
                 sram_map::FINAL_SCALAR_BUF_WORDS,
                 sram_map::SCR_FINAL_SCALAR_WORDS);
-  expect_eq_u32("BIAS_padding_words", sram_map::SIZE_BIAS_PADDING_W, 8u);
-  expect_eq_u32("WEIGHT_padding_words", sram_map::SIZE_WEIGHT_PADDING_W, 8u);
-  expect_eq_u32("W_REGION_padding_words", sram_map::W_REGION_PADDING_WORDS, 16u);
+  expect_true("BIAS_payload_words16_fits_region", sram_map::SIZE_BIAS_PAYLOAD_WORD16 <= sram_map::SIZE_BIAS_WORD16);
+  expect_true("WEIGHT_payload_words16_fits_region", sram_map::SIZE_WEIGHT_PAYLOAD_WORD16 <= sram_map::SIZE_WEIGHT_WORD16);
+  expect_true("W_REGION_payload_words16_fits_region", sram_map::W_REGION_PAYLOAD_WORDS_WORD16 <= sram_map::W_REGION_WORDS_WORD16);
   expect_true("W_REGION_base_is_legacy_aligned",
               sram_map::is_legacy_word_aligned(sram_map::W_REGION_BASE, ALIGN_WORDS));
   expect_true("W_REGION_base_is_storage_beat_aligned",
@@ -162,6 +169,14 @@ int main() {
               sram_map::section_affects_compare(sram_map::SEC_SCR_K));
   expect_true("sec_final_scalar_is_compare_critical",
               sram_map::section_affects_compare(sram_map::SEC_FINAL_SCALAR_BUF));
+  expect_true("sec_x_work_payload_fp16",
+              sram_map::section_desc(sram_map::SEC_X_WORK).payload_class == sram_map::PAYLOAD_FP16_TENSOR);
+  expect_true("sec_scr_k_payload_fp16",
+              sram_map::section_desc(sram_map::SEC_SCR_K).payload_class == sram_map::PAYLOAD_FP16_TENSOR);
+  expect_true("sec_scr_v_payload_fp16",
+              sram_map::section_desc(sram_map::SEC_SCR_V).payload_class == sram_map::PAYLOAD_FP16_TENSOR);
+  expect_true("sec_final_scalar_payload_fp16",
+              sram_map::section_desc(sram_map::SEC_FINAL_SCALAR_BUF).payload_class == sram_map::PAYLOAD_FP16_VECTOR);
   expect_true("sec_io_region_payload_fits_capacity",
               sram_map::section_payload_fits_capacity(sram_map::SEC_IO_REGION));
   expect_eq_u32("W_REGION_payload_words_word16",
