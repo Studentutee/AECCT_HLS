@@ -553,7 +553,7 @@ static inline void FFNLayer0CoreWindow(
                     }
                 }
                 if (w1_quant_contract_ok) {
-                    sram[h_row + j] = bits_from_fp32(acc_fp);
+                    sram[h_row + j] = bits_from_fp32(fp16_linear_roundtrip(acc_fp));
                 } else {
                     sram[h_row + j] = quant_bits_from_acc(acc);
                 }
@@ -672,7 +672,7 @@ static inline void FFNLayer0CoreWindow(
                     }
                 }
                 const u32_t prewrite_bits =
-                    w2_quant_contract_ok ? bits_from_fp32(acc_fp) : quant_bits_from_acc(acc);
+                    w2_quant_contract_ok ? bits_from_fp32(fp16_linear_roundtrip(acc_fp)) : quant_bits_from_acc(acc);
                 const u32_t final_store_bits = prewrite_bits;
 #ifndef __SYNTHESIS__
                 if (layer0_w2_internal_probe_capture_enable) {

@@ -11,6 +11,7 @@
 namespace aecct {
 
 typedef ac_ieee_float<binary32> fp32_t;
+typedef ac_std_float<16, 5> fp16_t;
 
 static inline uint32_t align_up_u32(uint32_t x, uint32_t align) {
     if (align == 0u) { return x; }
@@ -51,6 +52,16 @@ static inline fp32_t fp32_zero() {
 
 static inline fp32_t fp32_one() {
     return fp32_from_bits((u32_t)0x3F800000u);
+}
+
+// DUT FP16 first cut keeps the external SRAM/data_out contract in FP32-bit words
+// while forcing selected linear-path arithmetic through an FP16 roundtrip.
+// This is intentionally a bounded migration step: arithmetic drift becomes
+// visible without requiring immediate SramMap/layout changes.
+static inline fp32_t fp16_linear_roundtrip(const fp32_t& x) {
+    fp16_t h(x);
+    fp32_t y(h);
+    return y;
 }
 
 } // namespace aecct

@@ -1133,7 +1133,7 @@ static inline void apply_layer_attn_out_projection(
                     const fp32_t w_fp = fp32_from_bits(sram[w_row_base + i]);
                     acc += q_fp * (w_fp * inv_scale);
                 }
-                out_row[o] = bits_from_fp32(acc);
+                out_row[o] = bits_from_fp32(fp16_linear_roundtrip(acc));
             }
             ATTN_OUT_PROJ_WRITEBACK_QUANT_LOOP: for (uint32_t o = 0u; o < wo_meta.rows; ++o) {
                 sram[x_row_base + o] = out_row[o];
@@ -1147,7 +1147,7 @@ static inline void apply_layer_attn_out_projection(
                     const fp32_t w = fp32_from_bits(sram[w_row_base + i]);
                     acc = acc + (x * w);
                 }
-                out_row[o] = bits_from_fp32(acc);
+                out_row[o] = bits_from_fp32(fp16_linear_roundtrip(acc));
             }
             ATTN_OUT_PROJ_WRITEBACK_FP32_LOOP: for (uint32_t o = 0u; o < max_d_model; ++o) {
                 sram[x_row_base + o] = out_row[o];

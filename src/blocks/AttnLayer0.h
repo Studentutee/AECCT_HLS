@@ -226,7 +226,7 @@ static inline bool attn_materialize_qkv_dense_fp32_contract(
                 const fp32_t w_fp = fp32_from_bits(sram[w_row_base + in]);
                 acc += q_fp * (w_fp * inv_scale);
             }
-            const u32_t out_bits = bits_from_fp32(acc);
+            const u32_t out_bits = bits_from_fp32(fp16_linear_roundtrip(acc));
             sram[out_row_base + out] = out_bits;
             sram[out_act_q_row_base + out] = out_bits;
         }
