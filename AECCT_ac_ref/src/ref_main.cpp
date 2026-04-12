@@ -115,6 +115,8 @@ struct CliOptions {
   bool ln_input_debug;
   bool ln_upstream_debug;
   bool xpred_focused_inspect;
+  bool io16_selfcheck;
+  aecct_ref::RefStep0OutputMode io16_output_mode;
   std::string summary_csv_path;
   aecct_ref::RefAlgoVariant algo_variant;
   aecct_ref::RefSoftmaxExpMode softmax_exp_mode;
@@ -470,6 +472,8 @@ static void print_usage() {
   std::printf("  --ln-input-debug\n");
   std::printf("  --ln-upstream-debug\n");
   std::printf("  --xpred-focused-inspect (debug-only: print x_pred one-bit positions for single-pattern run)\n");
+  std::printf("  --io16-selfcheck (single-pattern only: build ref io16 image + readback/unpack selfcheck)\n");
+  std::printf("  --io16-output xpred|logits (default: xpred)\n");
   std::printf("  --summary-csv PATH\n");
   std::printf("  --algo baseline_spec_flow|reserved_softmax_alt|reserved_finalhead_alt\n");
   std::printf("  --softmax-exp-mode baseline_nearest_lut|v2_lerp_lut|v3_base2_reserved\n");
@@ -703,6 +707,18 @@ static bool parse_frag_group(const char* text, aecct_ref::RefFragGroup& g) {
   return false;
 }
 
+static bool parse_io16_output_mode(const char* text, aecct_ref::RefStep0OutputMode& mode) {
+  if (std::strcmp(text, "xpred") == 0 || std::strcmp(text, "x_pred") == 0) {
+    mode = aecct_ref::RefStep0OutputMode::X_PRED;
+    return true;
+  }
+  if (std::strcmp(text, "logits") == 0) {
+    mode = aecct_ref::RefStep0OutputMode::LOGITS;
+    return true;
+  }
+  return false;
+}
+
 static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.run_mode = CliRunMode::COMPARE;
   opts.pattern_index = -1;
@@ -715,6 +731,8 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.ln_input_debug = false;
   opts.ln_upstream_debug = false;
   opts.xpred_focused_inspect = false;
+  opts.io16_selfcheck = false;
+  opts.io16_output_mode = aecct_ref::RefStep0OutputMode::X_PRED;
   opts.summary_csv_path.clear();
   opts.algo_variant = aecct_ref::RefAlgoVariant::BASELINE_SPEC_FLOW;
   opts.softmax_exp_mode = aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
@@ -809,6 +827,21 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
     }
     if (std::strcmp(arg, "--xpred-focused-inspect") == 0) {
       opts.xpred_focused_inspect = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--io16-selfcheck") == 0) {
+      opts.io16_selfcheck = true;
+      continue;
+    }
+    if (std::strcmp(arg, "--io16-output") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --io16-output\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_io16_output_mode(argv[++i], opts.io16_output_mode)) {
+        std::printf("Unsupported --io16-output value: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
       continue;
     }
     if (std::strcmp(arg, "--frag-group") == 0) {
@@ -3668,6 +3701,165 @@ static void print_stage_snapshot_summary(const char* tag, const StageCompareEval
     s.compare_batch.experiment_nonfinite_total.inf_count);
 }
 
+static inline uint32_t local_fp32_bits_from_double(double x) {
+  const float xf = static_cast<float>(x);
+  uint32_t bits = 0u;
+  std::memcpy(&bits, &xf, sizeof(bits));
+  return bits;
+}
+
+static inline double local_fp32_double_from_words16(uint16_t lo16, uint16_t hi16) {
+  const uint32_t bits = static_cast<uint32_t>(lo16) | (static_cast<uint32_t>(hi16) << 16);
+  float xf = 0.0f;
+  std::memcpy(&xf, &bits, sizeof(xf));
+  return static_cast<double>(xf);
+}
+
+static const char* io16_output_mode_to_string(aecct_ref::RefStep0OutputMode mode) {
+  return (mode == aecct_ref::RefStep0OutputMode::LOGITS) ? "logits" : "xpred";
+}
+
+static bool run_io16_single_pattern_selfcheck(
+  aecct_ref::RefModel& model,
+  int pattern_index,
+  int n_vars,
+  const RefRunOutputs& run,
+  aecct_ref::RefStep0OutputMode output_mode,
+  const char* tag
+) {
+  const double* input_ptr = &trace_input_y_step0_tensor[pattern_index * n_vars];
+
+  std::vector<double> image_logits(static_cast<std::size_t>(n_vars), 0.0);
+  std::vector<aecct_ref::bit1_t> image_xpred(static_cast<std::size_t>(n_vars), aecct_ref::bit1_t(0));
+  std::vector<double> image_final_s(static_cast<std::size_t>(STAGE_TOKENS), 0.0);
+
+  aecct_ref::RefModelIO io{};
+  io.input_y = nullptr;
+  io.input_y_fp32 = input_ptr;
+  io.out_logits = image_logits.data();
+  io.out_x_pred = image_xpred.data();
+  io.out_finalhead_s_t = image_final_s.data();
+  io.B = 1;
+  io.N = n_vars;
+
+  aecct_ref::RefStep0Io16Image image{};
+  const bool build_ok = model.build_step0_io16_image(io, output_mode, image);
+  if (!build_ok) {
+    std::printf("[io16-selfcheck][pattern %d][%s] build_ok=0 output_mode=%s\n",
+      pattern_index, tag, io16_output_mode_to_string(output_mode));
+    return false;
+  }
+
+  bool infer_copy_exact = (image_logits.size() == run.logits.size()) &&
+                          (image_xpred.size() == run.x_pred.size());
+  if (infer_copy_exact) {
+    for (std::size_t i = 0; i < image_logits.size(); ++i) {
+      if (local_fp32_bits_from_double(image_logits[i]) != local_fp32_bits_from_double(run.logits[i])) {
+        infer_copy_exact = false;
+        break;
+      }
+    }
+  }
+  if (infer_copy_exact) {
+    for (std::size_t i = 0; i < image_xpred.size(); ++i) {
+      if (image_xpred[i].to_uint() != run.x_pred[i].to_uint()) {
+        infer_copy_exact = false;
+        break;
+      }
+    }
+  }
+
+  std::vector<uint16_t> final_scalar_words16;
+  const bool read_mem_ok = aecct_ref::RefModel::read_mem_words16(
+    image,
+    image.report.final_scalar_base_word16,
+    image.report.final_scalar_words16,
+    final_scalar_words16);
+
+  bool read_mem_exact = false;
+  bool final_scalar_decode_exact = false;
+  if (read_mem_ok) {
+    const std::size_t start = static_cast<std::size_t>(image.report.final_scalar_base_word16);
+    const std::size_t count = static_cast<std::size_t>(image.report.final_scalar_words16);
+    const auto begin_it = image.sram_words16.begin() + static_cast<std::ptrdiff_t>(start);
+    const auto end_it = begin_it + static_cast<std::ptrdiff_t>(count);
+    const std::vector<uint16_t> expect(begin_it, end_it);
+    read_mem_exact = (final_scalar_words16 == expect);
+
+    if (final_scalar_words16.size() >= (static_cast<std::size_t>(STAGE_TOKENS) * 2u)) {
+      final_scalar_decode_exact = true;
+      for (int i = 0; i < STAGE_TOKENS; ++i) {
+        const double decoded = local_fp32_double_from_words16(
+          final_scalar_words16[static_cast<std::size_t>(i) * 2u],
+          final_scalar_words16[static_cast<std::size_t>(i) * 2u + 1u]);
+        if (local_fp32_bits_from_double(decoded) !=
+            local_fp32_bits_from_double(image_final_s[static_cast<std::size_t>(i)])) {
+          final_scalar_decode_exact = false;
+          break;
+        }
+      }
+      if (final_scalar_decode_exact) {
+        for (std::size_t i = static_cast<std::size_t>(STAGE_TOKENS) * 2u; i < final_scalar_words16.size(); ++i) {
+          if (final_scalar_words16[i] != static_cast<uint16_t>(0u)) {
+            final_scalar_decode_exact = false;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  bool output_unpack_ok = false;
+  bool output_exact = false;
+  if (output_mode == aecct_ref::RefStep0OutputMode::LOGITS) {
+    std::vector<double> unpacked_logits;
+    output_unpack_ok = aecct_ref::RefModel::unpack_logits_from_io16(image.data_out_words16, unpacked_logits);
+    output_exact = output_unpack_ok && (unpacked_logits.size() == run.logits.size());
+    if (output_exact) {
+      for (std::size_t i = 0; i < unpacked_logits.size(); ++i) {
+        if (local_fp32_bits_from_double(unpacked_logits[i]) != local_fp32_bits_from_double(run.logits[i])) {
+          output_exact = false;
+          break;
+        }
+      }
+    }
+  } else {
+    std::vector<uint8_t> unpacked_xpred;
+    output_unpack_ok = aecct_ref::RefModel::unpack_xpred_from_io16(image.data_out_words16, n_vars, unpacked_xpred);
+    output_exact = output_unpack_ok && (unpacked_xpred.size() == run.x_pred.size());
+    if (output_exact) {
+      for (std::size_t i = 0; i < unpacked_xpred.size(); ++i) {
+        if (unpacked_xpred[i] != static_cast<uint8_t>(run.x_pred[i].to_uint())) {
+          output_exact = false;
+          break;
+        }
+      }
+    }
+  }
+
+  std::printf("[io16-selfcheck][pattern %d][%s] output_mode=%s build_ok=1 infer_copy_exact=%d read_mem_ok=%d read_mem_exact=%d final_scalar_decode_exact=%d output_unpack_ok=%d output_exact=%d final_scalar_range_ok=%d final_scalar_capacity_ok=%d output_words16=%u final_scalar_base_word16=%u final_scalar_words16=%u scratch_base_word16=%u scratch_words16=%u\n",
+    pattern_index,
+    tag,
+    io16_output_mode_to_string(output_mode),
+    infer_copy_exact ? 1 : 0,
+    read_mem_ok ? 1 : 0,
+    read_mem_exact ? 1 : 0,
+    final_scalar_decode_exact ? 1 : 0,
+    output_unpack_ok ? 1 : 0,
+    output_exact ? 1 : 0,
+    image.report.final_scalar_range_ok ? 1 : 0,
+    image.report.final_scalar_capacity_ok ? 1 : 0,
+    image.report.output_words16,
+    image.report.final_scalar_base_word16,
+    image.report.final_scalar_words16,
+    image.report.scratch_base_word16,
+    image.report.scratch_words16);
+
+  return infer_copy_exact && read_mem_ok && read_mem_exact && final_scalar_decode_exact &&
+         output_unpack_ok && output_exact &&
+         image.report.final_scalar_range_ok && image.report.final_scalar_capacity_ok;
+}
+
 static int run_single_mode(
   aecct_ref::RefPrecisionMode precision_mode,
   aecct_ref::RefLayerNormMode ln_mode,
@@ -3749,6 +3941,13 @@ static int run_single_mode(
         std::printf("[xpred-focused][pattern %d][%s] error_vs_all_zero_gt_bits=%s\n",
           p, tag, format_bits(gt_error_bits).c_str());
       }
+      if (opts.io16_selfcheck) {
+        const bool io16_ok = run_io16_single_pattern_selfcheck(
+          model, p, n_vars, run, opts.io16_output_mode, tag);
+        if (!io16_ok) {
+          return 1;
+        }
+      }
     } else {
       std::printf("[pattern %d][%s] logits_mse=%.9e logits_maxabs=%.9e x_pred_match=%zu/%zu\n",
         p, tag, run.logits_vs_golden.mse, run.logits_vs_golden.max_abs,
@@ -3810,6 +4009,16 @@ int main(int argc, char** argv) {
     std::printf("For generic_e4m3_frag_bisect, --frag-group must be one of G1..G5 or C1..C4\n");
     return 1;
   }
+  if (opts.io16_selfcheck) {
+    if (range.count != 1) {
+      std::printf("--io16-selfcheck requires a single-pattern run (--pattern N or count=1)\n");
+      return 1;
+    }
+    if (!(opts.run_mode == CliRunMode::BASELINE_ONLY || opts.run_mode == CliRunMode::EXPERIMENT_ONLY)) {
+      std::printf("--io16-selfcheck only supports --mode baseline or --mode experiment\n");
+      return 1;
+    }
+  }
 
   std::printf("Run config:\n");
   const bool anchor_baseline_for_compare =
@@ -3852,6 +4061,8 @@ int main(int argc, char** argv) {
   std::printf("  ln_var_debug   : %d\n", opts.ln_var_debug ? 1 : 0);
   std::printf("  ln_input_debug : %d\n", opts.ln_input_debug ? 1 : 0);
   std::printf("  ln_upstream_debug: %d\n", opts.ln_upstream_debug ? 1 : 0);
+  std::printf("  io16_selfcheck : %d\n", opts.io16_selfcheck ? 1 : 0);
+  std::printf("  io16_output    : %s\n", io16_output_mode_to_string(opts.io16_output_mode));
 
   perf.startup_init_s = elapsed_sec(t_program_start, now_tp());
 
