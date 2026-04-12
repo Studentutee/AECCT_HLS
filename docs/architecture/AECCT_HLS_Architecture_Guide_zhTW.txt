@@ -1,6 +1,6 @@
 ﻿AECCT_HLS_Architecture_Guide（繁體中文版）
-Version: 2026-03-15
-Revision: v12.1 guideD（邏輯資料流 + 實體落點／覆蓋方式整編版；補入 native linear quant v1 + 單一 X_WORK + operator selection notes）
+Version: 2026-04-12
+Revision: v12.1 guideE（補入 io8 wrapper / io16 core / 16-bit SRAM word / 8-word beat 語意；direct-read carve-out 與主線共用邊界整編）
 Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_physical_storage_and_overwrite_zhTW.txt + native linear quant v1 決策
 
 ====================================================================
@@ -43,6 +43,21 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - SCRATCH 內的 K/V 子區是否在同 context 內再做 optional ping-pong
 - 各 tile buffer 的切法與上限
 - 任何仍可被替換的 micro-architecture 選項
+
+
+1.4 transport / storage layering（v12.1 guideE 補充）
+- canonical core transport 以 io16 為基線；也就是 core 的 data_in / data_out 以 16-bit transport beat 為主。
+- 若系統整合需要 byte-stream 介面，可在 core 外層再包一層 optional io8 wrapper；wrapper 只負責 8-bit <-> 16-bit 轉接，不改變 core 的 SRAM / base_word / len_words 語意。
+- shared SRAM 的共用語意固定為：
+  - SRAM word = 16 bits
+  - SRAM beat = 8 words = 128 bits
+  - base_word / len_words 以 16-bit SRAM words 為單位
+  - 共享 SRAM region 的 base_word 需 8-word 對齊
+- payload 類型仍必須分開看：
+  - fp16 tensor / activation 可直接以 16-bit word 落地
+  - mask / parity / H matrix / ternary weight 仍依其 bit-packed 規則落在 16-bit words 中
+- backup track 與 mainline 的主要差異，不在於 io16 / 16-bit SRAM word，而在於是否允許 block 在 Top 指派 window 內 direct-read shared SRAM。
+
 
 ====================================================================
 2. 邏輯資料流（整理版）
@@ -103,7 +118,7 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 
 3.1 建議的實體儲存類別
 - W_REGION：權重 / 參數 / metadata 的 persistent 區。
-- W_REGION 內的 ternary 權重以 packed payload 儲存，並帶 per-matrix inv_s_w 與對應 metadata。
+- W_REGION 內的 ternary 權重以 packed payload 儲存，並帶 per-matrix inv_s_w 與對應 metadata；在目前主線共用規格下，ternary payload 落在 16-bit SRAM words，1 word 對應 8 個 2-bit weights。
 - matrix record 在本版是邏輯 section format，不等於手動固定 physical SRAM base offsets。
 - X_WORK：主 token × d 工作區，用於 preproc_x、layer outputs、endLN_out 等主工作矩陣；這些是邏輯值名稱，並非實體儲存名稱。
 - SCRATCH：attention K/V、FinalHead 與其他合法 scratch 子區的共用暫存區；SCR_K / SCR_V / FINAL_SCALAR_BUF 都屬此類。
@@ -120,6 +135,11 @@ Source baseline: AECCT_HLS_v12.1_logical_dataflow_zhTW.txt + AECCT_HLS_v12.1_phy
 - 寬度相關物件不應一律 full-register 化，也不應一律升級成獨立 SRAM 大區；是否放 reg 或 scratch，應看 tile 化、RMW 頻率、共享程度與 lifetime。
 - 單一 token / 單一 head / 單一 tile 的短生命週期狀態，是優先考慮 reg 的對象。
 - v1 的 quant caches 屬於「固定值快取」而非動態追蹤狀態：當前 layer / slot 所需的 s_x / inv_s_x / inv_s_w 可在 block 入口載入 local regs，但不在 run-time 回寫新的 scale table。
+
+- Top-owned direct-read carve-out（backup track）：
+  - Top 仍是唯一 shared SRAM owner。
+  - 若採 backup direct-read track，block 可在 Top 指派的 region/base/len/window 內 direct-read shared SRAM。
+  - 此 carve-out 只放寬資料搬運方式，不放寬 ownership、alias 規則與 arbitration 語意。
 
 3.3 Ternary packed weight 的線性化與 decode 建議
 - 權重矩陣的數學表示維持 W[out][in]；out 是列(Row)、in 是行(Colume)。
@@ -588,9 +608,9 @@ G. DATA_OUT 路徑
   - 建議 `subphase_id` 最小集合：`QSRC / WQ / KVSCAN / MASK / WO / OUT`
   - Phase A / Phase C 若 payload 語意可由固定順序唯一推出，則可維持 sequence-derived 風格
 - 建議 active-chain working tile 粒度：
-  - 預設以 32-bit word 為單位時，採 `4 word = 128 bit` 作為第一優先清理目標
+  - 在目前主線共用規格下，以 16-bit SRAM word 為基線，建議優先收斂到 `8 words = 128 bits` 的 beat-aligned tile
   - 允許最後一個 partial tile（tail tile）
-  - 此處指 block-local compute / window granularity，不等於宣稱所有既有 packet 常數都已同步改成 4-word
+  - 此處指 block-local compute / window granularity，不等於宣稱所有 packet / metadata 常數都必須一次以整 beat 傳輸
 - 讀寫：
   - 讀 X_WORK[q_token][:]
   - 讀 SCRATCH 中的 SCR_K / SCR_V

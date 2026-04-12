@@ -1,5 +1,5 @@
 ﻿PROJECT STATUS (zhTW)
-Version: 2026-03-27
+Version: 2026-04-12
 
 ====================================================================
 1. 文件定位
@@ -15,6 +15,7 @@ Version: 2026-03-27
 - M0 formal closure 已完成（PASS），M0 skeleton/contract/smoke baseline 已具正式證據鏈。
 - Step 2 skeleton / contract bring-up 已收斂，m0 smoke 可重現；m1/m2 在既有任務中屬 compile-compatible 證據。
 - docs baseline 已收斂至 v12.1，含 single-X_WORK、READ_MEM state gating、module/srammap 規範一致化。
+- v12.1 文件基線已再同步更新：canonical core transport 以 io16 為基線、外層可選 io8 wrapper、SRAM word=16 bits、SRAM beat=8 words=128 bits、base_word/len_words 改以 16-bit words 為單位，且僅 `Top-owned / module direct-read` 保留為 backup carve-out。
 - ternary weight SRAM storage 規格已完成 docs-only 凍結（P00-008）；Phase A/B/C 的 non-live 對齊亦已存在。
 - ternary live-cut mainline 已接受至 P00-011AD；P00-011L-A / P00-011L-B / P00-011L-C / P00-011L-D / P00-011M / P00-011N / P00-011O / P00-011P / P00-011Q / P00-011R / P00-011S / P00-011T / P00-011U / P00-011V / P00-011W / P00-011X / P00-011Y / P00-011Z / P00-011AA / P00-011AB / P00-011AC / P00-011AD / P00-011AS / P00-011AT 皆為 local-only 或 compile-first / next-stage run-only accepted progress（repo-tracked path），其中 P00-011R 的定位是 first Catapult-facing compile-prep probe（single-slice representative, local compiler evidence only），P00-011S 的定位是 WK/WV family compile-prep expansion（family representative, local compiler evidence only），P00-011T 的定位是 QKV shape SSOT consolidation（compile-time shape SSOT, runtime validation only, local compiler evidence only），P00-011U 的定位是 QKV payload-metadata SSOT bridge（local-only，runtime metadata guard expectations validate against compile-time SSOT chain），P00-011V 的定位是 QKV WeightStreamOrder continuity fence（local-only，validation-only continuity checks against authoritative local-build metadata），P00-011W 的定位是 QKV exported-artifact / loader-facing continuity fence（local-only，validation-only checks against repo-tracked offline export metadata），P00-011X 的定位是 QKV export-consumer semantic continuity fence（local-only，validation-only semantic checks for matrix_id-driven consumer interpretation），P00-011Y 的定位是 QKV local runtime-handoff fence（local-only，validation-only continuity checks for runtime-facing handoff expectations derived from accepted authority chain），P00-011Z 的定位是 QKV local runtime-consume probe（local-only，read-only runtime-facing consume probe），P00-011AA 的定位是 QKV formal LOAD_W bridge + READ_MEM roundtrip（local-only，formal runtime-path bridge coverage for L0_WQ/L0_WK/L0_WV），P00-011AB 的定位是 Phase-A K/V materialization staging proof（local-only，X_WORK + Wk/Wv -> SCR_K/SCR_V，strict stream/memory ordering + single-read X reuse + exact writeback evidence），P00-011AC 的定位是 Phase-A Top-managed K/V design-mainline wiring finalize（local-only），P00-011AD 的定位是 Q path mainline wiring（local-only，real Top-managed Q path with anti-fallback acceptance evidence），P00-011AT 的定位是 corrected-chain CIN-63 cleanup + compile-first rerun evidence sync 與 compile 後 `go libraries` run-only blocker capture，Catapult / SCVerify 仍 deferred。
 - reviewer-facing debt/paydown（Sprint 1/2/3）已完成主體收斂：source readability backfill、guide convergence、lower-level consistency refinement、docs-only acceleration kit 已落地；目前狀態為 core debt largely paid down，剩餘屬 optional reviewer-acceleration enhancements。
@@ -72,16 +73,19 @@ Version: 2026-03-27
 3. Frozen Baseline（已凍結基線）
 ====================================================================
 - Top 是唯一 SRAM owner；共享 SRAM 仲裁與 lifetime/free-point 由 Top 管理。
-- 外部 4-channel contract 固定：ctrl_cmd / ctrl_rsp / data_in / data_out。
-- block contract 採 Top 強控型（base/cfg/token_range/tile_range/phase_id）。
+- canonical core 4-channel contract 固定：ctrl_cmd / ctrl_rsp / data_in / data_out。
+- canonical core transport beat 以 io16 為基線；若系統整合需要 byte-stream，可在 core 外層再包一層 optional io8 wrapper。
+- io8 wrapper 不改變 core 的 word/addr semantics（base_word / len_words 仍以 16-bit words 為單位）。
+- block contract 採 Top 強控型（base/cfg/token_range/tile_range/phase_id）；backup track 僅放寬為 `Top-owned / module direct-read`，不改變 shared SRAM ownership。
+- shared SRAM 共用語意已同步更新：SRAM word = 16 bits、SRAM beat = 8 words = 128 bits、shared region base_word 需 8-word 對齊。
 - single-X_WORK baseline 已凍結；W_REGION 與 runtime scratch 不 alias。
 - FinalHead 正式為 Pass A / Pass B，Pass bridge 落於 SCRATCH.FINAL_SCALAR_BUF。
 - READ_MEM state gating 已凍結：IDLE/HALTED 合法；active state 回 RSP_ERR(ERR_BAD_STATE)，避免 data_out 混流。
 - ternary SRAM storage 規格摘要已凍結：
   - codebook：00=0、01=+1、11=-1、10 illegal
-  - 2-bit packing、32-bit word=16 weights、LSB-first
-  - last_word_valid_count=1..16（滿載=16）、tail padding=0
-  - per-matrix inv_s_w、matrix record（logical section format，非手動固定 physical base offset）
+  - 2-bit packing、16-bit word=8 weights、LSB-first
+  - last_word_valid_count=1..8（滿載=8）、tail padding=0
+  - per-matrix inv_s_w、matrix record（logical section format，非手動固定 physical base offset）均以 16-bit words 計
   - W[out][in] 為數學表示；in contiguous 僅指實體線性化
 
 ====================================================================
