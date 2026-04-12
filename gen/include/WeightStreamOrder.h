@@ -278,7 +278,7 @@ static inline uint32_t weight_addr_word(WeightId id) {
 }
 
 static inline uint32_t weight_addr_storage_word(WeightId id) {
-  return sram_map::legacy_words_to_storage_words(weight_addr_word(id));
+  return ::legacy_words_to_storage_words(weight_addr_word(id));
 }
 
 // ----------------------------
@@ -627,7 +627,7 @@ static inline uint32_t bias_addr_word(BiasId id) {
 }
 
 static inline uint32_t bias_addr_storage_word(BiasId id) {
-  return sram_map::legacy_words_to_storage_words(bias_addr_word(id));
+  return ::legacy_words_to_storage_words(bias_addr_word(id));
 }
 
 // ----------------------------

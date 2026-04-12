@@ -33,15 +33,12 @@ static const uint32_t SRAM_WORD_LANES = W_LANES;
 static_assert(SRAM_WORD_BYTES == 16u, "Legacy aggregate beat must remain 16 bytes during bridge.");
 static_assert(SRAM_WORD_LANES == 8u, "Legacy aggregate beat must remain 8 lanes during bridge.");
 
-static const uint32_t SRAM_STORAGE_WORD_BITS = ::SRAM_STORAGE_WORD_BITS;
-static const uint32_t SRAM_STORAGE_WORD_BYTES = ::SRAM_STORAGE_WORD_BYTES;
 static const uint32_t SRAM_STORAGE_WORDS_PER_BEAT = ::SRAM_WORDS_PER_BEAT;
-static const uint32_t SRAM_BEAT_BITS = ::SRAM_BEAT_BITS;
 static const uint32_t SRAM_STORAGE_WORDS_PER_LEGACY_WORD =
-    (LEGACY_U32_WORD_BITS / SRAM_STORAGE_WORD_BITS);
-static_assert(SRAM_STORAGE_WORD_BITS == 16u, "v12.1 storage word must be 16 bits");
+    (LEGACY_U32_WORD_BITS / ::SRAM_STORAGE_WORD_BITS);
+static_assert(::SRAM_STORAGE_WORD_BITS == 16u, "v12.1 storage word must be 16 bits");
 static_assert(SRAM_STORAGE_WORDS_PER_BEAT == 8u, "v12.1 beat must contain 8 storage words");
-static_assert(SRAM_BEAT_BITS == 128u, "v12.1 beat must be 128 bits");
+static_assert(::SRAM_BEAT_BITS == 128u, "v12.1 beat must be 128 bits");
 static_assert(SRAM_STORAGE_WORDS_PER_LEGACY_WORD == 2u,
               "Legacy u32 word must map to two 16-bit storage words.");
 
@@ -63,10 +60,6 @@ constexpr uint32_t storage_words_to_legacy_words_ceil(uint32_t words) {
 
 constexpr uint32_t align_up_storage_words(uint32_t x, uint32_t a) {
   return ((x + a - 1u) / a) * a;
-}
-
-constexpr uint32_t align_up_storage_words_to_beat(uint32_t x) {
-  return align_up_storage_words(x, SRAM_STORAGE_WORDS_PER_BEAT);
 }
 
 namespace sram_map {

@@ -34,7 +34,7 @@ static const uint32_t kTracePatternCount = 8u;
 static const uint32_t kTraceSampleIds[kTracePatternCount] = { 0u, 1u, 2u, 3u, 4u, 6u, 8u, 9u };
 static const uint32_t kDutRefFocusedSampleCount = 8u;
 static const uint32_t kDutRefFocusedSampleIds[kDutRefFocusedSampleCount] = {
-    20u, 21u, 22u, 23u, 60u, 61u, 62u, 63u
+    20u, 21u, 22u, 23u, 61u, 62u, 63u, 77u
 };
 static const uint32_t kDebugMaxXpredOneSamples = 1u;
 static const uint32_t kDebugPreferredSampleId = 5u;
@@ -145,6 +145,10 @@ struct RefModelStageCompareResult {
     bool st_exact;
     bool logit_exact;
     bool xpred_exact;
+    bool io16_ref_image_build_ok;
+    bool io16_final_scalar_direct_exact;
+    bool io16_final_scalar_readmem_exact;
+    bool io16_logits_output_exact;
     bool all_exact;
     uint32_t layer1_attn_input_first_mismatch_token;
     uint32_t layer1_attn_input_first_mismatch_dim;
@@ -351,6 +355,15 @@ struct RefModelStageCompareResult {
     uint64_t xpred_mismatch_mask;
     uint64_t xpred_dut_one_mask;
     uint64_t xpred_ref_one_mask;
+    uint32_t io16_final_scalar_direct_first_bad_idx;
+    uint16_t io16_final_scalar_direct_got_word16;
+    uint16_t io16_final_scalar_direct_ref_word16;
+    uint32_t io16_final_scalar_readmem_first_bad_idx;
+    uint16_t io16_final_scalar_readmem_got_word16;
+    uint16_t io16_final_scalar_readmem_ref_word16;
+    uint32_t io16_logits_first_bad_idx;
+    uint16_t io16_logits_dut_word16;
+    uint16_t io16_logits_ref_word16;
     uint32_t layer1_sublayer1_ln_bucket; // 0=none,1=pre_ln_input,2=affine_out,3=writeback
     uint32_t boundary_bucket; // 0=attn_input(mid_norm),1=q,2=post_concat,3=attn_out,4=residual/preln,5=ln0,6=ffn1,7=relu,8=ffn2,9=sublayer1_ln,10=endLN,11=s_t,12=logit,13=x_pred,14=none
 };
@@ -732,6 +745,49 @@ static void bytes_to_words_le(const std::vector<uint8_t>& bytes, std::vector<uin
             ((uint32_t)bytes[b + 3u] << 24);
         words_out[i] = w;
     }
+}
+
+static void words_u32_to_words16_le(const std::vector<uint32_t>& words_u32,
+                                     std::vector<uint16_t>& words16_out) {
+    words16_out.clear();
+    words16_out.reserve((std::size_t)words_u32.size() * 2u);
+    WORDS32_TO_WORDS16_LOOP: for (uint32_t i = 0u; i < (uint32_t)words_u32.size(); ++i) {
+        const uint32_t w = words_u32[i];
+        words16_out.push_back((uint16_t)(w & 0xFFFFu));
+        words16_out.push_back((uint16_t)((w >> 16) & 0xFFFFu));
+    }
+}
+
+static bool compare_word16_vectors_exact(const std::vector<uint16_t>& expected_words,
+                                         const std::vector<uint16_t>& actual_words,
+                                         uint32_t& first_bad_idx,
+                                         uint16_t& first_bad_got,
+                                         uint16_t& first_bad_exp) {
+    first_bad_idx = 0u;
+    first_bad_got = 0u;
+    first_bad_exp = 0u;
+    if (expected_words.size() != actual_words.size()) {
+        return false;
+    }
+    WORD16_COMPARE_LOOP: for (uint32_t i = 0u; i < (uint32_t)expected_words.size(); ++i) {
+        if (actual_words[i] != expected_words[i]) {
+            first_bad_idx = i;
+            first_bad_got = actual_words[i];
+            first_bad_exp = expected_words[i];
+            return false;
+        }
+    }
+    return true;
+}
+
+static void set_outmode(Io8Top& io, uint32_t out_mode, const char* tag) {
+    io.data_in.write((aecct::u8_t)(out_mode & 0xFFu));
+    io.data_in.write((aecct::u8_t)((out_mode >> 8) & 0xFFu));
+    io.data_in.write((aecct::u8_t)((out_mode >> 16) & 0xFFu));
+    io.data_in.write((aecct::u8_t)((out_mode >> 24) & 0xFFu));
+    io.ctrl_cmd.write(aecct::pack_ctrl_cmd((uint8_t)aecct::OP_SET_OUTMODE));
+    top_tick(io);
+    expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SET_OUTMODE, tag);
 }
 
 static void words_to_bytes_le(const std::vector<uint32_t>& words, std::vector<uint8_t>& bytes_out) {
@@ -1336,6 +1392,10 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.st_exact = true;
     r.logit_exact = true;
     r.xpred_exact = true;
+    r.io16_ref_image_build_ok = false;
+    r.io16_final_scalar_direct_exact = false;
+    r.io16_final_scalar_readmem_exact = false;
+    r.io16_logits_output_exact = false;
     r.all_exact = true;
     r.layer1_attn_input_first_mismatch_token = 0u;
     r.layer1_attn_input_first_mismatch_dim = 0u;
@@ -1542,6 +1602,15 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     r.xpred_mismatch_mask = 0ULL;
     r.xpred_dut_one_mask = 0ULL;
     r.xpred_ref_one_mask = 0ULL;
+    r.io16_final_scalar_direct_first_bad_idx = 0u;
+    r.io16_final_scalar_direct_got_word16 = 0u;
+    r.io16_final_scalar_direct_ref_word16 = 0u;
+    r.io16_final_scalar_readmem_first_bad_idx = 0u;
+    r.io16_final_scalar_readmem_got_word16 = 0u;
+    r.io16_final_scalar_readmem_ref_word16 = 0u;
+    r.io16_logits_first_bad_idx = 0u;
+    r.io16_logits_dut_word16 = 0u;
+    r.io16_logits_ref_word16 = 0u;
     r.layer1_sublayer1_ln_bucket = 0u;
     r.boundary_bucket = 14u;
 
@@ -2712,6 +2781,71 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
     }
     if (xpred_one_bits == 0u) {
         fail("unexpected xpred one-bit encoding");
+    }
+
+    aecct_ref::RefStep0Io16Image io16_logits_image;
+    const bool io16_build_ok = ref_model.build_step0_io16_image(
+        ref_io,
+        aecct_ref::RefStep0OutputMode::LOGITS,
+        io16_logits_image);
+    r.io16_ref_image_build_ok = io16_build_ok;
+    if (io16_build_ok) {
+        std::vector<uint16_t> ref_final_scalar_words16;
+        const bool ref_final_read_ok = aecct_ref::RefModel::read_mem_words16(
+            io16_logits_image,
+            io16_logits_image.report.final_scalar_base_word16,
+            io16_logits_image.report.final_scalar_words16,
+            ref_final_scalar_words16);
+        if (!ref_final_read_ok) {
+            fail("ref io16 final-scalar readback failed");
+        }
+
+        std::vector<uint32_t> dut_final_scalar_direct_words;
+        std::vector<uint32_t> dut_final_scalar_readmem_words;
+        std::vector<uint16_t> dut_final_scalar_direct_words16;
+        std::vector<uint16_t> dut_final_scalar_readmem_words16;
+        read_sram_words_direct(final_scalar_base, (uint32_t)N_NODES, dut_final_scalar_direct_words);
+        read_mem_words(io, final_scalar_base, (uint32_t)N_NODES, dut_final_scalar_readmem_words);
+        words_u32_to_words16_le(dut_final_scalar_direct_words, dut_final_scalar_direct_words16);
+        words_u32_to_words16_le(dut_final_scalar_readmem_words, dut_final_scalar_readmem_words16);
+        r.io16_final_scalar_direct_exact = compare_word16_vectors_exact(
+            ref_final_scalar_words16,
+            dut_final_scalar_direct_words16,
+            r.io16_final_scalar_direct_first_bad_idx,
+            r.io16_final_scalar_direct_got_word16,
+            r.io16_final_scalar_direct_ref_word16);
+        r.io16_final_scalar_readmem_exact = compare_word16_vectors_exact(
+            ref_final_scalar_words16,
+            dut_final_scalar_readmem_words16,
+            r.io16_final_scalar_readmem_first_bad_idx,
+            r.io16_final_scalar_readmem_got_word16,
+            r.io16_final_scalar_readmem_ref_word16);
+
+        set_outmode(io, 1u, "set_outmode_logits_ref_model_probe");
+        send_cmd(io, (uint8_t)aecct::OP_INFER);
+        expect_rsp(io, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_INFER, "infer_begin_ref_model_probe_logits");
+        REF_MODEL_PROBE_LOGITS_INGEST_LOOP: for (uint32_t i = 0u; i < (uint32_t)infer_words.size(); ++i) {
+            push_u32_le(io, infer_words[i]);
+            top_tick(io);
+            if (i + 1u < (uint32_t)infer_words.size()) {
+                expect_no_rsp(io, "infer_ingest_ref_model_probe_logits");
+            } else {
+                expect_rsp(io, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_INFER, "infer_done_ref_model_probe_logits");
+            }
+        }
+        std::vector<uint8_t> logits_out_bytes;
+        std::vector<uint32_t> logits_out_words32;
+        std::vector<uint16_t> logits_out_words16;
+        collect_out_bytes(io, (uint32_t)EXP_LEN_OUT_LOGITS_WORDS * 4u, logits_out_bytes);
+        bytes_to_words_le(logits_out_bytes, logits_out_words32);
+        words_u32_to_words16_le(logits_out_words32, logits_out_words16);
+        r.io16_logits_output_exact = compare_word16_vectors_exact(
+            io16_logits_image.data_out_words16,
+            logits_out_words16,
+            r.io16_logits_first_bad_idx,
+            r.io16_logits_dut_word16,
+            r.io16_logits_ref_word16);
+        set_outmode(io, 0u, "set_outmode_xpred_ref_model_probe_restore");
     }
 
     struct Layer0StageCmp {
@@ -4493,7 +4627,11 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         r.end_norm_exact &&
         r.st_exact &&
         r.logit_exact &&
-        r.xpred_exact;
+        r.xpred_exact &&
+        r.io16_ref_image_build_ok &&
+        r.io16_final_scalar_direct_exact &&
+        r.io16_final_scalar_readmem_exact &&
+        r.io16_logits_output_exact;
     if (!r.layer0_ffn_ln_out_writeback_exact) {
         r.bounded_first_divergence_bucket = 1u;
     } else if (!r.mid_norm_output_writeback_exact) {
@@ -5959,6 +6097,13 @@ int main() {
     uint32_t logits_first_mismatch_idx = 0u;
     uint32_t logits_first_mismatch_dut = 0u;
     uint32_t logits_first_mismatch_ref = 0u;
+    bool io16_all_exact = true;
+    bool io16_first_mismatch_valid = false;
+    uint32_t io16_first_mismatch_sample = 0u;
+    const char* io16_first_mismatch_kind = "none";
+    uint32_t io16_first_mismatch_idx = 0u;
+    uint32_t io16_first_mismatch_dut = 0u;
+    uint32_t io16_first_mismatch_ref = 0u;
     DUT_REF_FOCUSED_SAMPLE_LOOP: for (uint32_t i = 0u; i < kDutRefFocusedSampleCount; ++i) {
         const uint32_t sample_id = kDutRefFocusedSampleIds[i];
         const RefModelStageCompareResult gate_probe =
@@ -5984,6 +6129,37 @@ int main() {
                 logits_first_mismatch_ref = gate_probe.logit_ref_bits;
             }
         }
+        if (!(gate_probe.io16_ref_image_build_ok &&
+              gate_probe.io16_final_scalar_direct_exact &&
+              gate_probe.io16_final_scalar_readmem_exact &&
+              gate_probe.io16_logits_output_exact)) {
+            io16_all_exact = false;
+            if (!io16_first_mismatch_valid) {
+                io16_first_mismatch_valid = true;
+                io16_first_mismatch_sample = sample_id;
+                if (!gate_probe.io16_ref_image_build_ok) {
+                    io16_first_mismatch_kind = "build";
+                    io16_first_mismatch_idx = 0u;
+                    io16_first_mismatch_dut = 0u;
+                    io16_first_mismatch_ref = 0u;
+                } else if (!gate_probe.io16_final_scalar_direct_exact) {
+                    io16_first_mismatch_kind = "final_scalar_direct";
+                    io16_first_mismatch_idx = gate_probe.io16_final_scalar_direct_first_bad_idx;
+                    io16_first_mismatch_dut = gate_probe.io16_final_scalar_direct_got_word16;
+                    io16_first_mismatch_ref = gate_probe.io16_final_scalar_direct_ref_word16;
+                } else if (!gate_probe.io16_final_scalar_readmem_exact) {
+                    io16_first_mismatch_kind = "final_scalar_readmem";
+                    io16_first_mismatch_idx = gate_probe.io16_final_scalar_readmem_first_bad_idx;
+                    io16_first_mismatch_dut = gate_probe.io16_final_scalar_readmem_got_word16;
+                    io16_first_mismatch_ref = gate_probe.io16_final_scalar_readmem_ref_word16;
+                } else {
+                    io16_first_mismatch_kind = "logits_output";
+                    io16_first_mismatch_idx = gate_probe.io16_logits_first_bad_idx;
+                    io16_first_mismatch_dut = gate_probe.io16_logits_dut_word16;
+                    io16_first_mismatch_ref = gate_probe.io16_logits_ref_word16;
+                }
+            }
+        }
         std::printf(
             "[backup_io8][dut_ref_gate_sample] sample=%u xpred_exact=%u mismatch_count=%u mismatch_bits=",
             (unsigned)sample_id,
@@ -5994,7 +6170,13 @@ int main() {
         print_mask_indices_line(gate_probe.xpred_dut_one_mask, (uint32_t)EXP_LEN_OUT_XPRED_WORDS);
         std::printf(" ref_ones=");
         print_mask_indices_line(gate_probe.xpred_ref_one_mask, (uint32_t)EXP_LEN_OUT_XPRED_WORDS);
-        std::printf(" logits_exact=%u\n", (unsigned)(gate_probe.logit_exact ? 1u : 0u));
+        std::printf(
+            " logits_exact=%u io16_build_ok=%u io16_final_direct_exact=%u io16_final_readmem_exact=%u io16_logits_output_exact=%u\n",
+            (unsigned)(gate_probe.logit_exact ? 1u : 0u),
+            (unsigned)(gate_probe.io16_ref_image_build_ok ? 1u : 0u),
+            (unsigned)(gate_probe.io16_final_scalar_direct_exact ? 1u : 0u),
+            (unsigned)(gate_probe.io16_final_scalar_readmem_exact ? 1u : 0u),
+            (unsigned)(gate_probe.io16_logits_output_exact ? 1u : 0u));
     }
     std::printf(
         "[backup_io8][dut_ref_gate_summary] samples=%u matched_samples=%u mismatched_samples=%u mismatched_bits=%u xpred_verdict=%s\n",
@@ -6021,6 +6203,17 @@ int main() {
             (unsigned)logits_first_mismatch_idx,
             (unsigned)logits_first_mismatch_dut,
             (unsigned)logits_first_mismatch_ref);
+    }
+    if (io16_all_exact) {
+        std::printf("[backup_io8][dut_ref_gate_io16] exact=PASS first_mismatch=none\n");
+    } else {
+        std::printf(
+            "[backup_io8][dut_ref_gate_io16] exact=FAIL first_mismatch_sample=%u first_mismatch_kind=%s first_mismatch_idx=%u dut=0x%04X ref=0x%04X\n",
+            (unsigned)io16_first_mismatch_sample,
+            io16_first_mismatch_kind,
+            (unsigned)io16_first_mismatch_idx,
+            (unsigned)io16_first_mismatch_dut,
+            (unsigned)io16_first_mismatch_ref);
     }
 
     std::vector<uint32_t> readmem_payload_prefix_post;
