@@ -791,3 +791,165 @@ static const char* const kBiasKey[BIAS_COUNT] = {
 //
 // BCH_H_BITPACK is [CODE_C, CODE_N] with this packing.
 // src_mask is [N_NODES, N_NODES] with this packing.
+
+
+// ============================================================
+// fp16 DUT branch: mixed weight storage contract helpers
+// ------------------------------------------------------------
+// Intent:
+// - Quantized-linear payload matrices remain ternary packed in W_REGION.
+// - inv_s_w carriers migrate to fp16 metadata lanes (1 fp16 = 1 word16).
+// - Non-linear / non-ternary weights and all bias tensors migrate to fp16.
+// - BCH_H_BITPACK / SRC_MASK remain bit-packed metadata payloads.
+//
+// These helpers DO NOT rewrite the legacy unified PARAM u32 stream yet.
+// They provide a single source of truth for the new storage-side contract so
+// the branch can build focused checkers before the LOAD_W datapath is cut over.
+// ============================================================
+
+enum Fp16BranchStorageKind : uint32_t {
+  FP16_BRANCH_STORAGE_FP16 = 0u,
+  FP16_BRANCH_STORAGE_TERNARY_PAYLOAD = 1u,
+  FP16_BRANCH_STORAGE_BITPACK = 2u
+};
+
+static inline constexpr uint32_t tensor_numel_from_meta(const TensorMeta& meta) {
+  uint32_t n = 1u;
+  if (meta.ndims == 0u) {
+    return 0u;
+  }
+  if (meta.ndims >= 1u) n *= (meta.d0 == 0u ? 1u : meta.d0);
+  if (meta.ndims >= 2u) n *= (meta.d1 == 0u ? 1u : meta.d1);
+  if (meta.ndims >= 3u) n *= (meta.d2 == 0u ? 1u : meta.d2);
+  if (meta.ndims >= 4u) n *= (meta.d3 == 0u ? 1u : meta.d3);
+  return n;
+}
+
+static inline bool is_quant_linear_delta_weight_slot(const WeightId wid) {
+  switch (wid) {
+    case DECODER_LAYERS_0_SELF_ATTN_LINEARS_0_DELTA:
+    case DECODER_LAYERS_0_SELF_ATTN_LINEARS_1_DELTA:
+    case DECODER_LAYERS_0_SELF_ATTN_LINEARS_2_DELTA:
+    case DECODER_LAYERS_0_SELF_ATTN_LINEARS_3_DELTA:
+    case DECODER_LAYERS_0_FEED_FORWARD_W_1_DELTA:
+    case DECODER_LAYERS_0_FEED_FORWARD_W_2_DELTA:
+    case DECODER_LAYERS_1_SELF_ATTN_LINEARS_0_DELTA:
+    case DECODER_LAYERS_1_SELF_ATTN_LINEARS_1_DELTA:
+    case DECODER_LAYERS_1_SELF_ATTN_LINEARS_2_DELTA:
+    case DECODER_LAYERS_1_SELF_ATTN_LINEARS_3_DELTA:
+    case DECODER_LAYERS_1_FEED_FORWARD_W_1_DELTA:
+    case DECODER_LAYERS_1_FEED_FORWARD_W_2_DELTA:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static inline bool is_fp16_plain_weight_slot(const WeightId wid) {
+  if (wid == BCH_H_BITPACK || wid == SRC_MASK) {
+    return false;
+  }
+  if (is_quant_linear_weight_slot(wid)) {
+    return false;
+  }
+  return true;
+}
+
+static inline Fp16BranchStorageKind fp16_branch_weight_storage_kind(const WeightId wid) {
+  if (wid == BCH_H_BITPACK || wid == SRC_MASK) {
+    return FP16_BRANCH_STORAGE_BITPACK;
+  }
+  if (is_quant_linear_weight_slot(wid)) {
+    return FP16_BRANCH_STORAGE_TERNARY_PAYLOAD;
+  }
+  return FP16_BRANCH_STORAGE_FP16;
+}
+
+static inline constexpr bool fp16_branch_bias_is_fp16(const BiasId) {
+  return true;
+}
+
+static inline constexpr uint32_t bias_numel(const BiasId bid) {
+  return tensor_numel_from_meta(kBiasMeta[(uint32_t)bid]);
+}
+
+static inline constexpr uint32_t weight_numel(const WeightId wid) {
+  return tensor_numel_from_meta(kWeightMeta[(uint32_t)wid]);
+}
+
+static inline uint32_t fp16_branch_weight_storage_words16(const WeightId wid) {
+  const TensorMeta& meta = kWeightMeta[(uint32_t)wid];
+  switch (fp16_branch_weight_storage_kind(wid)) {
+    case FP16_BRANCH_STORAGE_FP16:
+      return storage_words_fp16(weight_numel(wid));
+    case FP16_BRANCH_STORAGE_TERNARY_PAYLOAD:
+      return ternary_payload_storage_words_2b(weight_numel(wid));
+    case FP16_BRANCH_STORAGE_BITPACK:
+      return storage_words_bits(tensor_numel_from_meta(meta));
+    default:
+      return 0u;
+  }
+}
+
+static inline uint32_t fp16_branch_bias_storage_words16(const BiasId bid) {
+  return storage_words_fp16(bias_numel(bid));
+}
+
+static inline uint32_t fp16_branch_total_bias_words16() {
+  uint32_t total = 0u;
+  for (uint32_t i = 0u; i < (uint32_t)BIAS_COUNT; ++i) {
+    total += fp16_branch_bias_storage_words16((BiasId)i);
+  }
+  return total;
+}
+
+static inline uint32_t fp16_branch_total_weight_words16() {
+  uint32_t total = 0u;
+  for (uint32_t i = 0u; i < (uint32_t)WEIGHT_COUNT; ++i) {
+    total += fp16_branch_weight_storage_words16((WeightId)i);
+  }
+  return total;
+}
+
+static inline uint32_t fp16_branch_total_param_words16() {
+  return fp16_branch_total_bias_words16() + fp16_branch_total_weight_words16();
+}
+
+static inline uint32_t fp16_branch_bias_offset_words16(const BiasId bid) {
+  uint32_t off = 0u;
+  for (uint32_t i = 0u; i < (uint32_t)bid; ++i) {
+    off += fp16_branch_bias_storage_words16((BiasId)i);
+  }
+  return off;
+}
+
+static inline uint32_t fp16_branch_weight_offset_words16(const WeightId wid) {
+  uint32_t off = fp16_branch_total_bias_words16();
+  for (uint32_t i = 0u; i < (uint32_t)wid; ++i) {
+    off += fp16_branch_weight_storage_words16((WeightId)i);
+  }
+  return off;
+}
+
+static inline bool fp16_branch_param_id_to_storage_words16(const uint32_t param_id, uint32_t& out_words16) {
+  if (param_id < (uint32_t)BIAS_COUNT) {
+    out_words16 = fp16_branch_bias_storage_words16((BiasId)param_id);
+    return true;
+  }
+  const uint32_t wid_idx = param_id - (uint32_t)BIAS_COUNT;
+  if (wid_idx < (uint32_t)WEIGHT_COUNT) {
+    out_words16 = fp16_branch_weight_storage_words16((WeightId)wid_idx);
+    return true;
+  }
+  out_words16 = 0u;
+  return false;
+}
+
+static inline const char* fp16_branch_storage_kind_name(const Fp16BranchStorageKind kind) {
+  switch (kind) {
+    case FP16_BRANCH_STORAGE_FP16: return "fp16";
+    case FP16_BRANCH_STORAGE_TERNARY_PAYLOAD: return "ternary_2b";
+    case FP16_BRANCH_STORAGE_BITPACK: return "bitpack";
+    default: return "unknown";
+  }
+}
