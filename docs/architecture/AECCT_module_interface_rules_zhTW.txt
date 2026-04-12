@@ -71,15 +71,20 @@ sub-block 不得：
 - 以 hidden request path 偷渡共享記憶體存取語意
 
 ================================================================
-2. v12.1 固定外部 contract
+2. v12.1 core contract 與 optional io8 wrapper
 ================================================================
 
-Top 外部 contract 固定為四條 channel：
+Top canonical core contract 固定為四條 channel：
 
 - ctrl_cmd  : ac_channel<ac_int<16,false>>
 - ctrl_rsp  : ac_channel<ac_int<16,false>>
-- data_in   : ac_channel<ac_int<32,false>>
-- data_out  : ac_channel<ac_int<32,false>>
+- data_in   : ac_channel<ac_int<16,false>>
+- data_out  : ac_channel<ac_int<16,false>>
+
+可選的外層 io8 wrapper：
+- 若系統整合需要 byte-stream 介面，可在 core 外層再包一層 io8 wrapper
+- io8 wrapper 對外可提供 8-bit stream，對內仍轉接回上述 core io16 contract
+- io8 wrapper 不改變 shared SRAM ownership，也不改變 base_word/len_words 的 16-bit word 語意
 
 Top 內必須有：
 - in_fifo（input elastic FIFO）
@@ -119,11 +124,20 @@ Top 強控型 + block 接收 token_range / tile_range
 - Top 決定 phase、base、region、token 範圍、tile 範圍
 - block 不自行產生正式的共享 SRAM request protocol
 - block 只在被指派的工作單位內運作
+- canonical mainline 預設為 Top-managed data movement；若為 backup direct-read track，則僅放寬為 block 可在 Top 指派 window 內 direct-read shared SRAM
 
 4.2 為何不採 block 自治 request 模式
 ------------------------------------
 本版不把 block-to-Top request/rsp 當成正式 contract。
 若未來為 performance / overlap 需要引入，必須另立條款，不得在 v12.1 下默默擴張。
+
+4.2a Backup direct-read carve-out
+------------------------------------
+僅在 backup direct-read track 下：
+- Top 仍是唯一 shared SRAM owner
+- block 只可在 Top 給定的 region/base/len/window 內 direct-read shared SRAM
+- block 不得自行宣告 shared SRAM ownership / arbitration policy / alias rule
+- block 不得自行擴張成 second request protocol（第二套請求協定）
 
 4.3 介面欄位分級
 ----------------
@@ -204,6 +218,9 @@ subphase_id 只在下列情況才使用：
 -------------------
 所有共享記憶體相關範圍資訊都由 Top 提供。
 block 不得自行推導出第二套與 Top 不一致的 base/len 規則。
+- base_word / len_words 一律以 16-bit SRAM words 為單位。
+- shared SRAM region 的 base_word 必須滿足 8-word 對齊。
+- 若某 section 長度不是 8 words 的整數倍，padding 規則由 SramMap / payload pack 規則決定，block 不得自行猜測。
 
 5.5 ternary packed payload contract
 -----------------------------------
@@ -337,6 +354,7 @@ ac_channel 不是共享 SRAM arbitration 的替代品。
 ------------------------------------------------------
 本版在共享 SRAM 介面上採下列收斂方式：
 - Top 是唯一共享 SRAM owner，負責從共享 SRAM 取資料、餵入 block、收回結果並決定寫回時機。
+- 若採 backup direct-read track，Top 仍保留 owner 身分，只是把可讀 window 明確指派給 block，由 block 在該 window 內直接讀取。
 - 高層 block 的正式資料流預設為：
   - in_ch  ：Top -> block
   - out_ch ：block -> Top

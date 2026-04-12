@@ -26,9 +26,13 @@ Source baseline:
 本文件目前不負責：
 - 實體 base offset 數值
 - bank 數量與 bank mapping
-- 實際位址對齊與 padding
 - 最終 generator 輸出格式的程式實作
 - 完整 multi-context overlap 資料表
+
+本文件正式負責：
+- SRAM word / beat / alignment 的共用語意
+- base_word / len_words 的單位定義
+- payload 落在 16-bit SRAM words 時的共用對齊原則
 
 上述事項由：
 - SramMap.h / generator
@@ -81,6 +85,15 @@ v12.1 採 single-X_WORK baseline。
 - 合法的 SCRATCH 子區
 
 但本規則不要求第二份實體主工作頁作為正確性前提。
+
+1.6 SRAM word / beat / alignment
+--------------------------------
+本版共用語意固定為：
+- SRAM word = 16 bits
+- SRAM beat = 8 words = 128 bits
+- base_word / len_words 一律以 16-bit SRAM words 為單位
+- 共享 SRAM region 的 base_word 必須 8-word 對齊
+- 非整 beat 長度的 payload / section 需依 pack 規則做 tail padding
 
 ================================================================
 2. Storage Classes
@@ -140,8 +153,8 @@ E. TOKEN_LOCAL / SMALL_SCRATCH
 - transformer weights
 - H_by_var / connectivity metadata
 - QUANT_PARAM metadata（如固定 s_x / inv_s_w）
-- ternary packed weight payload（每個 weight 2 bits，32-bit word 打包 16 個）
-- per-matrix inv_s_w 與 matrix record/section metadata（例如 payload_words、last_word_valid_count）
+- ternary packed weight payload（每個 weight 2 bits，16-bit word 打包 8 個）
+- per-matrix inv_s_w 與 matrix record/section metadata（例如 payload_words、last_word_valid_count；均以 16-bit SRAM words 計）
 
 規則：
 - LOAD_W 或等價 parameter 載入完成後，W_REGION 不應被 runtime scratch 覆蓋
@@ -184,9 +197,11 @@ v12.1 至少包含：
 -------------
 角色：
 - input staging / output staging / debug / meta staging
+- io8 wrapper / io16 core 轉接時所需的 staging（若實作需要）
 
 規則：
 - 若 input 或 output 需要落 SRAM，應明確落在 IO_REGION
+- 若採 optional io8 wrapper，wrapper 相關 staging 亦應落在 IO_REGION 或 block-local staging，不得偷偷侵入 X_WORK
 - 不得反向侵入 X_WORK 充當主工作區
 - 不得把 IO_REGION 當成 FinalHead 正常 readout 的替代主路徑
 
@@ -443,3 +458,31 @@ ac_channel 可用於：
 - 完整 free-point 檢查表
 - overlap 專用 context 隔離細則
 - WeightStreamOrder 各 section 的最終實體格式
+
+================================================================
+6. Word / Beat / Alignment Semantics
+================================================================
+
+6.1 基本單位
+----------------
+- SRAM word = 16-bit storage element
+- SRAM beat = 8 words = 128 bits
+- 所有共享 SRAM base/len/offset 類欄位，皆以 16-bit words 為單位
+
+6.2 對齊規則
+----------------
+- shared SRAM region 的 base_word 必須是 8 的倍數
+- 若 payload 長度不是 8 words 的整數倍，須於尾端補齊 padding
+- 對齊與 padding 屬 physical layout / transport discipline，不改變邏輯值名稱
+
+6.3 Payload class-aware packing
+--------------------------------
+- fp16 tensor payload：1 word = 1 個 fp16
+- bit-mask payload：可在 1 個 16-bit word 內打包 16 個 1-bit entries
+- ternary payload：1 個 16-bit word 可打包 8 個 2-bit ternary weights
+- metadata / logical 32-bit arguments：可保留 32-bit 邏輯寬度，但 transport 與 SRAM 落點仍須拆成 2 個連續的 16-bit words
+
+6.4 與 ownership 的關係
+---------------------------
+- word / beat / alignment 屬共用主線語意，不是 backup 專屬
+- backup direct-read track 只改變 module 的讀取方式，不改變 Top 的 shared SRAM ownership
