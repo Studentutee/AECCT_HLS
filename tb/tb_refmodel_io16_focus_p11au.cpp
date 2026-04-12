@@ -1,6 +1,9 @@
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -23,6 +26,82 @@ static const uint32_t kFocusedSampleCount = 8u;
 static const uint32_t kFocusedSampleIds[kFocusedSampleCount] = {
     20u, 21u, 22u, 23u, 61u, 62u, 63u, 77u
 };
+
+struct FpCompareStats {
+    bool size_ok = true;
+    uint32_t sign_mismatch_count = 0u;
+    double max_abs_diff = 0.0;
+    double max_rel_diff = 0.0;
+    double mse = 0.0;
+    uint32_t worst_idx = 0u;
+    double worst_got = 0.0;
+    double worst_exp = 0.0;
+};
+
+static float bits_to_f32(uint32_t u) {
+    union {
+        uint32_t u;
+        float f;
+    } cvt;
+    cvt.u = u;
+    return cvt.f;
+}
+
+static void decode_f32_words_to_double(const std::vector<uint32_t>& words_u32,
+                                       std::vector<double>& values_out) {
+    values_out.assign(words_u32.size(), 0.0);
+    for (uint32_t i = 0u; i < (uint32_t)words_u32.size(); ++i) {
+        values_out[i] = (double)bits_to_f32(words_u32[i]);
+    }
+}
+
+static int sign_class(double x) {
+    return (x > 0.0) ? 1 : ((x < 0.0) ? -1 : 0);
+}
+
+static FpCompareStats compare_fp_semantic(const std::vector<double>& exp_vals,
+                                          const std::vector<double>& got_vals) {
+    FpCompareStats stats;
+    if (exp_vals.size() != got_vals.size()) {
+        stats.size_ok = false;
+        return stats;
+    }
+    double sq_sum = 0.0;
+    for (uint32_t i = 0u; i < (uint32_t)exp_vals.size(); ++i) {
+        const double exp_v = exp_vals[i];
+        const double got_v = got_vals[i];
+        const double abs_diff = std::fabs(got_v - exp_v);
+        const double rel_diff = abs_diff / std::max(1.0e-12, std::fabs(exp_v));
+        if (abs_diff > stats.max_abs_diff) {
+            stats.max_abs_diff = abs_diff;
+            stats.max_rel_diff = rel_diff;
+            stats.worst_idx = i;
+            stats.worst_got = got_v;
+            stats.worst_exp = exp_v;
+        }
+        if (sign_class(exp_v) != sign_class(got_v)) {
+            stats.sign_mismatch_count += 1u;
+        }
+        sq_sum += abs_diff * abs_diff;
+    }
+    if (!exp_vals.empty()) {
+        stats.mse = sq_sum / (double)exp_vals.size();
+    }
+    return stats;
+}
+
+static bool parse_sample_id(const char* s, uint32_t& value_out) {
+    if (s == nullptr || *s == '\0') {
+        return false;
+    }
+    char* endp = nullptr;
+    const unsigned long v = std::strtoul(s, &endp, 10);
+    if (endp == s || *endp != '\0') {
+        return false;
+    }
+    value_out = (uint32_t)v;
+    return true;
+}
 
 static uint32_t f32_to_bits(float f) {
     union {
@@ -355,8 +434,24 @@ static uint32_t ref_xpred_bit_to_word_bits(const aecct_ref::bit1_t& bit) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::vector<uint32_t> focused_sample_ids;
+    if (argc > 1) {
+        for (int i = 1; i < argc; ++i) {
+            uint32_t sample_id = 0u;
+            if (!parse_sample_id(argv[i], sample_id)) {
+                std::printf("[p11au][FAIL] invalid sample id: %s\n", argv[i]);
+                return 1;
+            }
+            focused_sample_ids.push_back(sample_id);
+        }
+    } else {
+        focused_sample_ids.assign(kFocusedSampleIds, kFocusedSampleIds + kFocusedSampleCount);
+    }
+    if (focused_sample_ids.empty()) {
+        fail_now("focused_sample_ids empty");
+    }
     std::vector<uint32_t> param_words;
     std::string build_error;
     std::printf("[p11au][debug] build_param begin\n");
@@ -386,6 +481,25 @@ int main() {
     uint32_t final_scalar_direct_diag_exact_samples = 0u;
     uint32_t final_scalar_readmem_diag_exact_samples = 0u;
     uint32_t logits_diag_exact_samples = 0u;
+    uint32_t final_scalar_direct_readmem_mirror_samples = 0u;
+    uint32_t final_scalar_direct_semantic_sign_exact_samples = 0u;
+    uint32_t final_scalar_readmem_semantic_sign_exact_samples = 0u;
+    uint32_t logits_semantic_sign_exact_samples = 0u;
+    double worst_final_scalar_direct_abs = 0.0;
+    uint32_t worst_final_scalar_direct_sample = 0u;
+    uint32_t worst_final_scalar_direct_idx = 0u;
+    double worst_final_scalar_direct_got = 0.0;
+    double worst_final_scalar_direct_exp = 0.0;
+    double worst_final_scalar_readmem_abs = 0.0;
+    uint32_t worst_final_scalar_readmem_sample = 0u;
+    uint32_t worst_final_scalar_readmem_idx = 0u;
+    double worst_final_scalar_readmem_got = 0.0;
+    double worst_final_scalar_readmem_exp = 0.0;
+    double worst_logits_abs = 0.0;
+    uint32_t worst_logits_sample = 0u;
+    uint32_t worst_logits_idx = 0u;
+    double worst_logits_got = 0.0;
+    double worst_logits_exp = 0.0;
     bool final_scalar_direct_first_mismatch_valid = false;
     uint32_t final_scalar_direct_first_mismatch_sample = 0u;
     uint32_t final_scalar_direct_first_mismatch_idx = 0u;
@@ -402,8 +516,8 @@ int main() {
     uint16_t logits_diag_first_mismatch_dut = 0u;
     uint16_t logits_diag_first_mismatch_ref = 0u;
 
-    for (uint32_t si = 0u; si < kFocusedSampleCount; ++si) {
-        const uint32_t sample_id = kFocusedSampleIds[si];
+    for (uint32_t si = 0u; si < (uint32_t)focused_sample_ids.size(); ++si) {
+        const uint32_t sample_id = focused_sample_ids[si];
         std::printf("[p11au][debug] sample=%u begin\n", (unsigned)sample_id);
         std::vector<uint32_t> infer_words;
         build_trace_infer_words(sample_id, infer_words);
@@ -489,6 +603,26 @@ int main() {
             logits_diag_first_mismatch_dut = logits_bad_got;
             logits_diag_first_mismatch_ref = logits_bad_exp;
         }
+        std::vector<double> dut_logits_fp;
+        decode_f32_words_to_double(dut_logits_words, dut_logits_fp);
+        const FpCompareStats logits_stats = compare_fp_semantic(ref_logits, dut_logits_fp);
+        if (!logits_stats.size_ok) {
+            std::printf("[p11au][FAIL] sample=%u logits semantic size mismatch ref=%u dut=%u\n",
+                        (unsigned)sample_id,
+                        (unsigned)ref_logits.size(),
+                        (unsigned)dut_logits_fp.size());
+            return 1;
+        }
+        if (logits_stats.sign_mismatch_count == 0u) {
+            logits_semantic_sign_exact_samples += 1u;
+        }
+        if (logits_stats.max_abs_diff > worst_logits_abs) {
+            worst_logits_abs = logits_stats.max_abs_diff;
+            worst_logits_sample = sample_id;
+            worst_logits_idx = logits_stats.worst_idx;
+            worst_logits_got = logits_stats.worst_got;
+            worst_logits_exp = logits_stats.worst_exp;
+        }
 
         std::printf("[p11au][debug] sample=%u direct/read_mem final_scalar begin\n", (unsigned)sample_id);
         std::vector<uint32_t> dut_final_scalar_direct_words((uint32_t)N_NODES, 0u);
@@ -515,11 +649,42 @@ int main() {
             final_scalar_direct_first_mismatch_dut = final_direct_bad_got;
             final_scalar_direct_first_mismatch_ref = final_direct_bad_exp;
         }
+        std::vector<double> dut_final_scalar_direct_fp;
+        decode_f32_words_to_double(dut_final_scalar_direct_words, dut_final_scalar_direct_fp);
+        const FpCompareStats final_direct_stats = compare_fp_semantic(ref_final_s, dut_final_scalar_direct_fp);
+        if (!final_direct_stats.size_ok) {
+            std::printf("[p11au][FAIL] sample=%u final_scalar_direct semantic size mismatch ref=%u dut=%u\n",
+                        (unsigned)sample_id,
+                        (unsigned)ref_final_s.size(),
+                        (unsigned)dut_final_scalar_direct_fp.size());
+            return 1;
+        }
+        if (final_direct_stats.sign_mismatch_count == 0u) {
+            final_scalar_direct_semantic_sign_exact_samples += 1u;
+        }
+        if (final_direct_stats.max_abs_diff > worst_final_scalar_direct_abs) {
+            worst_final_scalar_direct_abs = final_direct_stats.max_abs_diff;
+            worst_final_scalar_direct_sample = sample_id;
+            worst_final_scalar_direct_idx = final_direct_stats.worst_idx;
+            worst_final_scalar_direct_got = final_direct_stats.worst_got;
+            worst_final_scalar_direct_exp = final_direct_stats.worst_exp;
+        }
         std::vector<uint32_t> dut_final_scalar_words;
         do_read_mem_words(io,
                           (uint32_t)sram_map::SCR_FINAL_SCALAR_BASE_W,
                           (uint32_t)N_NODES,
                           dut_final_scalar_words);
+        uint32_t direct_readmem_bad_idx = 0u;
+        uint32_t direct_readmem_bad_got = 0u;
+        uint32_t direct_readmem_bad_exp = 0u;
+        const bool final_direct_readmem_mirror = compare_u32_exact(dut_final_scalar_direct_words,
+                                                                   dut_final_scalar_words,
+                                                                   direct_readmem_bad_idx,
+                                                                   direct_readmem_bad_got,
+                                                                   direct_readmem_bad_exp);
+        if (final_direct_readmem_mirror) {
+            final_scalar_direct_readmem_mirror_samples += 1u;
+        }
         std::vector<uint16_t> dut_final_scalar_words16;
         words_u32_to_words16_le(dut_final_scalar_words, dut_final_scalar_words16);
         uint32_t final_bad_idx = 0u;
@@ -539,23 +704,54 @@ int main() {
             final_scalar_readmem_first_mismatch_dut = final_bad_got;
             final_scalar_readmem_first_mismatch_ref = final_bad_exp;
         }
+        std::vector<double> dut_final_scalar_readmem_fp;
+        decode_f32_words_to_double(dut_final_scalar_words, dut_final_scalar_readmem_fp);
+        const FpCompareStats final_readmem_stats = compare_fp_semantic(ref_final_s, dut_final_scalar_readmem_fp);
+        if (!final_readmem_stats.size_ok) {
+            std::printf("[p11au][FAIL] sample=%u final_scalar_readmem semantic size mismatch ref=%u dut=%u\n",
+                        (unsigned)sample_id,
+                        (unsigned)ref_final_s.size(),
+                        (unsigned)dut_final_scalar_readmem_fp.size());
+            return 1;
+        }
+        if (final_readmem_stats.sign_mismatch_count == 0u) {
+            final_scalar_readmem_semantic_sign_exact_samples += 1u;
+        }
+        if (final_readmem_stats.max_abs_diff > worst_final_scalar_readmem_abs) {
+            worst_final_scalar_readmem_abs = final_readmem_stats.max_abs_diff;
+            worst_final_scalar_readmem_sample = sample_id;
+            worst_final_scalar_readmem_idx = final_readmem_stats.worst_idx;
+            worst_final_scalar_readmem_got = final_readmem_stats.worst_got;
+            worst_final_scalar_readmem_exp = final_readmem_stats.worst_exp;
+        }
 
         matched_samples += 1u;
-        std::printf("[p11au][sample] sample=%u xpred_exact=1 logits_io16_diag_exact=%u final_scalar_direct_diag_exact=%u final_scalar_readmem_diag_exact=%u logits_words16=%u final_scalar_words16=%u\n",
+        std::printf("[p11au][sample] sample=%u xpred_exact=1 logits_io16_diag_exact=%u logits_sign_mismatch=%u logits_max_abs=%e final_scalar_direct_diag_exact=%u final_scalar_direct_sign_mismatch=%u final_scalar_direct_max_abs=%e final_scalar_readmem_diag_exact=%u final_scalar_readmem_sign_mismatch=%u final_scalar_readmem_max_abs=%e final_scalar_direct_readmem_mirror=%u logits_words16=%u final_scalar_words16=%u\n",
                     (unsigned)sample_id,
                     (unsigned)(logits_exact ? 1u : 0u),
+                    (unsigned)logits_stats.sign_mismatch_count,
+                    logits_stats.max_abs_diff,
                     (unsigned)(final_direct_exact ? 1u : 0u),
+                    (unsigned)final_direct_stats.sign_mismatch_count,
+                    final_direct_stats.max_abs_diff,
                     (unsigned)(final_exact ? 1u : 0u),
+                    (unsigned)final_readmem_stats.sign_mismatch_count,
+                    final_readmem_stats.max_abs_diff,
+                    (unsigned)(final_direct_readmem_mirror ? 1u : 0u),
                     (unsigned)logits_image.data_out_words16.size(),
                     (unsigned)ref_final_scalar_words16.size());
     }
 
-    std::printf("[p11au][summary] samples=%u matched=%u final_scalar_direct_diag_exact_samples=%u final_scalar_readmem_diag_exact_samples=%u logits_diag_exact_samples=%u verdict=PASS\n",
-                (unsigned)kFocusedSampleCount,
+    std::printf("[p11au][summary] samples=%u matched=%u final_scalar_direct_diag_exact_samples=%u final_scalar_readmem_diag_exact_samples=%u logits_diag_exact_samples=%u final_scalar_direct_readmem_mirror_samples=%u final_scalar_direct_semantic_sign_exact_samples=%u final_scalar_readmem_semantic_sign_exact_samples=%u logits_semantic_sign_exact_samples=%u verdict=PASS\n",
+                (unsigned)focused_sample_ids.size(),
                 (unsigned)matched_samples,
                 (unsigned)final_scalar_direct_diag_exact_samples,
                 (unsigned)final_scalar_readmem_diag_exact_samples,
-                (unsigned)logits_diag_exact_samples);
+                (unsigned)logits_diag_exact_samples,
+                (unsigned)final_scalar_direct_readmem_mirror_samples,
+                (unsigned)final_scalar_direct_semantic_sign_exact_samples,
+                (unsigned)final_scalar_readmem_semantic_sign_exact_samples,
+                (unsigned)logits_semantic_sign_exact_samples);
     if (final_scalar_direct_first_mismatch_valid) {
         std::printf("[p11au][final_scalar_direct_diag] first_mismatch_sample=%u idx=%u dut=0x%04X ref=0x%04X\n",
                     (unsigned)final_scalar_direct_first_mismatch_sample,
@@ -583,6 +779,24 @@ int main() {
     } else {
         std::printf("[p11au][logits_diag] first_mismatch_sample=none idx=none dut=none ref=none\n");
     }
+    std::printf("[p11au][final_scalar_direct_semantic] worst_sample=%u idx=%u max_abs=%e dut=%e ref=%e\n",
+                (unsigned)worst_final_scalar_direct_sample,
+                (unsigned)worst_final_scalar_direct_idx,
+                worst_final_scalar_direct_abs,
+                worst_final_scalar_direct_got,
+                worst_final_scalar_direct_exp);
+    std::printf("[p11au][final_scalar_readmem_semantic] worst_sample=%u idx=%u max_abs=%e dut=%e ref=%e\n",
+                (unsigned)worst_final_scalar_readmem_sample,
+                (unsigned)worst_final_scalar_readmem_idx,
+                worst_final_scalar_readmem_abs,
+                worst_final_scalar_readmem_got,
+                worst_final_scalar_readmem_exp);
+    std::printf("[p11au][logits_semantic] worst_sample=%u idx=%u max_abs=%e dut=%e ref=%e\n",
+                (unsigned)worst_logits_sample,
+                (unsigned)worst_logits_idx,
+                worst_logits_abs,
+                worst_logits_got,
+                worst_logits_exp);
     std::printf("PASS: tb_refmodel_io16_focus_p11au\n");
     return 0;
 }
