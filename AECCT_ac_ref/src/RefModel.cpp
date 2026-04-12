@@ -15,6 +15,7 @@
 
 #include "../include/RefE4M3Helpers.h"
 #include "../include/RefFullQuantStats.h"
+#include "../../include/ModelShapes.h"
 #include "../include/InvSqrtApprox.h"
 #include "../include/SoftmaxApprox.h"
 #include "weights.h"
@@ -23,6 +24,34 @@ namespace aecct_ref {
 namespace {
 
 typedef ref_fp32_t fp32_ref_t;
+
+constexpr uint32_t ref_align_up_u32(uint32_t x, uint32_t a) {
+  return ((x + a - 1u) / a) * a;
+}
+
+namespace ref_step0_map {
+static const uint32_t kAlignWordsLegacy = 16u;
+static const uint32_t kStorageAlignWords = SRAM_WORDS_PER_BEAT;
+static const uint32_t kXPageWordsLegacy = ref_align_up_u32(WORDS_X_FP32, kAlignWordsLegacy);
+static const uint32_t kBaseScratchLegacy = kXPageWordsLegacy * 2u;
+static const uint32_t kBaseScrKLegacy = ref_align_up_u32(kBaseScratchLegacy, kAlignWordsLegacy);
+static const uint32_t kSizeScrKLegacy = kXPageWordsLegacy;
+static const uint32_t kBaseScrVLegacy = kBaseScrKLegacy + kSizeScrKLegacy;
+static const uint32_t kSizeScrVLegacy = kXPageWordsLegacy;
+static const uint32_t kBaseFinalScalarLegacy =
+  ref_align_up_u32(kBaseScrVLegacy + kSizeScrVLegacy, kAlignWordsLegacy);
+static const uint32_t kSizeFinalScalarLegacy = ref_align_up_u32(N_NODES, kAlignWordsLegacy);
+static const uint32_t kScratchWordsLegacy =
+  (kBaseFinalScalarLegacy + kSizeFinalScalarLegacy) - kBaseScratchLegacy;
+static const uint32_t kBaseScratchWord16 = kBaseScratchLegacy * 2u;
+static const uint32_t kScratchWordsWord16 = kScratchWordsLegacy * 2u;
+static const uint32_t kBaseScrKWord16 = kBaseScrKLegacy * 2u;
+static const uint32_t kSizeScrKWord16 = kSizeScrKLegacy * 2u;
+static const uint32_t kBaseScrVWord16 = kBaseScrVLegacy * 2u;
+static const uint32_t kSizeScrVWord16 = kSizeScrVLegacy * 2u;
+static const uint32_t kBaseFinalScalarWord16 = kBaseFinalScalarLegacy * 2u;
+static const uint32_t kSizeFinalScalarWord16 = kSizeFinalScalarLegacy * 2u;
+} // namespace ref_step0_map
 
 static constexpr int TOKENS_T = 75;
 static constexpr int VAR_N = 63;
@@ -142,6 +171,86 @@ struct DumpContext {
 
 static inline fp32_ref_t fp32_abs(fp32_ref_t x) {
   return (x < fp32_ref_t(0.0f)) ? (fp32_ref_t(0.0f) - x) : x;
+}
+
+static inline uint32_t fp32_bits_from_double(double x) {
+  const float xf = static_cast<float>(x);
+  uint32_t bits = 0u;
+  std::memcpy(&bits, &xf, sizeof(bits));
+  return bits;
+}
+
+static inline double fp32_double_from_words16(uint16_t lo16, uint16_t hi16) {
+  const uint32_t bits = static_cast<uint32_t>(lo16) | (static_cast<uint32_t>(hi16) << 16);
+  float xf = 0.0f;
+  std::memcpy(&xf, &bits, sizeof(xf));
+  return static_cast<double>(xf);
+}
+
+static inline void append_fp32_as_words16(double x, std::vector<uint16_t>& dst) {
+  const uint32_t bits = fp32_bits_from_double(x);
+  dst.push_back(static_cast<uint16_t>(bits & 0xFFFFu));
+  dst.push_back(static_cast<uint16_t>((bits >> 16) & 0xFFFFu));
+}
+
+static inline bool ranges_overlap_words16(uint32_t a_base, uint32_t a_words, uint32_t b_base, uint32_t b_words) {
+  const uint32_t a_end = a_base + a_words;
+  const uint32_t b_end = b_base + b_words;
+  return (a_base < b_end) && (b_base < a_end);
+}
+
+static inline void pack_logits_to_words16(const double* logits, int n_logits, std::vector<uint16_t>& dst) {
+  dst.clear();
+  dst.reserve(static_cast<std::size_t>(n_logits) * 2u);
+  for (int i = 0; i < n_logits; ++i) {
+    append_fp32_as_words16(logits[i], dst);
+  }
+}
+
+static inline void pack_xpred_to_words16(const bit1_t* xpred, int n_bits, std::vector<uint16_t>& dst) {
+  const int n_words16 = static_cast<int>(storage_words_bits(static_cast<uint32_t>(n_bits)));
+  dst.assign(static_cast<std::size_t>(n_words16), static_cast<uint16_t>(0u));
+  for (int i = 0; i < n_bits; ++i) {
+    if (xpred[i].to_uint() == 0u) {
+      continue;
+    }
+    const int word_idx = (i >> 4);
+    const int bit_idx = (i & 15);
+    dst[static_cast<std::size_t>(word_idx)] =
+      static_cast<uint16_t>(dst[static_cast<std::size_t>(word_idx)] | static_cast<uint16_t>(1u << bit_idx));
+  }
+}
+
+static inline bool unpack_logits_words16_impl(const std::vector<uint16_t>& src, std::vector<double>& logits_out) {
+  if ((src.size() & 1u) != 0u) {
+    return false;
+  }
+  const std::size_t n_logits = src.size() / 2u;
+  logits_out.resize(n_logits);
+  for (std::size_t i = 0; i < n_logits; ++i) {
+    logits_out[i] = fp32_double_from_words16(src[i * 2u], src[i * 2u + 1u]);
+  }
+  return true;
+}
+
+static inline bool unpack_xpred_words16_impl(const std::vector<uint16_t>& src,
+                                             int n_bits,
+                                             std::vector<uint8_t>& xpred_bits_out) {
+  if (n_bits < 0) {
+    return false;
+  }
+  const std::size_t need_words16 = static_cast<std::size_t>(storage_words_bits(static_cast<uint32_t>(n_bits)));
+  if (src.size() < need_words16) {
+    return false;
+  }
+  xpred_bits_out.assign(static_cast<std::size_t>(n_bits), static_cast<uint8_t>(0u));
+  for (int i = 0; i < n_bits; ++i) {
+    const std::size_t word_idx = static_cast<std::size_t>(i >> 4);
+    const int bit_idx = (i & 15);
+    xpred_bits_out[static_cast<std::size_t>(i)] =
+      static_cast<uint8_t>((src[word_idx] >> bit_idx) & static_cast<uint16_t>(1u));
+  }
+  return true;
 }
 
 static inline fp32_ref_t sign_fp32(fp32_ref_t x) {
@@ -2941,6 +3050,143 @@ void RefModel::infer_step0(const RefModelIO& io) const {
   }
 
   add_ref_full_quant_stats(local_stats);
+}
+
+
+bool RefModel::build_step0_io16_image(const RefModelIO& io,
+                                    RefStep0OutputMode output_mode,
+                                    RefStep0Io16Image& image) const {
+  if (io.input_y_fp32 == nullptr || io.B != 1 || io.N < VAR_N) {
+    return false;
+  }
+
+  const int B = io.B;
+  const int N = io.N;
+  std::vector<double> tmp_logits(static_cast<std::size_t>(B * N), 0.0);
+  std::vector<bit1_t> tmp_xpred(static_cast<std::size_t>(B * N), bit1_t(0));
+  std::vector<double> tmp_final_s(static_cast<std::size_t>(B * TOKENS_T), 0.0);
+
+  RefModelIO exec_io = io;
+  exec_io.out_logits = tmp_logits.data();
+  exec_io.out_x_pred = tmp_xpred.data();
+  exec_io.out_finalhead_s_t = tmp_final_s.data();
+
+  infer_step0(exec_io);
+
+  if (io.out_logits != nullptr) {
+    for (std::size_t i = 0; i < tmp_logits.size(); ++i) {
+      io.out_logits[i] = tmp_logits[i];
+    }
+  }
+  if (io.out_x_pred != nullptr) {
+    for (std::size_t i = 0; i < tmp_xpred.size(); ++i) {
+      io.out_x_pred[i] = tmp_xpred[i];
+    }
+  }
+  if (io.out_finalhead_s_t != nullptr) {
+    for (std::size_t i = 0; i < tmp_final_s.size(); ++i) {
+      io.out_finalhead_s_t[i] = tmp_final_s[i];
+    }
+  }
+
+  image = RefStep0Io16Image();
+  image.output_mode = output_mode;
+  image.sram_words16.assign(static_cast<std::size_t>(ref_step0_map::kBaseScratchWord16 + ref_step0_map::kScratchWordsWord16), static_cast<uint16_t>(0u));
+
+  std::vector<uint16_t> final_scalar_words16;
+  pack_logits_to_words16(tmp_final_s.data(), TOKENS_T, final_scalar_words16);
+
+  const uint32_t final_base16 = ref_step0_map::kBaseFinalScalarWord16;
+  const uint32_t final_used16 = static_cast<uint32_t>(final_scalar_words16.size());
+  if ((static_cast<std::size_t>(final_base16) + final_scalar_words16.size()) > image.sram_words16.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < final_scalar_words16.size(); ++i) {
+    image.sram_words16[static_cast<std::size_t>(final_base16) + i] = final_scalar_words16[i];
+  }
+
+  if (output_mode == RefStep0OutputMode::LOGITS) {
+    pack_logits_to_words16(tmp_logits.data(), VAR_N, image.data_out_words16);
+    image.report.output_words = static_cast<uint32_t>(VAR_N);
+  } else {
+    pack_xpred_to_words16(tmp_xpred.data(), VAR_N, image.data_out_words16);
+    image.report.output_words = legacy_u32_words_from_storage_words_ceil(static_cast<uint32_t>(image.data_out_words16.size()));
+  }
+
+  image.report.final_scalar_base_word = ref_step0_map::kBaseFinalScalarLegacy;
+  image.report.final_scalar_words = ref_step0_map::kSizeFinalScalarLegacy;
+  image.report.scratch_base_word = ref_step0_map::kBaseScratchLegacy;
+  image.report.scratch_words = ref_step0_map::kScratchWordsLegacy;
+  image.report.final_scalar_base_word16 = ref_step0_map::kBaseFinalScalarWord16;
+  image.report.final_scalar_words16 = ref_step0_map::kSizeFinalScalarWord16;
+  image.report.scratch_base_word16 = ref_step0_map::kBaseScratchWord16;
+  image.report.scratch_words16 = ref_step0_map::kScratchWordsWord16;
+  image.report.final_scalar_beats16 = storage_beats_from_words(final_used16);
+  image.report.scratch_beats16 = storage_beats_from_words(image.report.scratch_words16);
+
+  image.report.final_scalar_in_scratch =
+    (image.report.final_scalar_base_word16 >= image.report.scratch_base_word16) &&
+    ((image.report.final_scalar_base_word16 + final_used16) <=
+     (image.report.scratch_base_word16 + image.report.scratch_words16));
+  image.report.final_scalar_range_ok = image.report.final_scalar_in_scratch;
+  image.report.final_scalar_capacity_ok =
+    (final_used16 <= ref_step0_map::kSizeFinalScalarWord16);
+  image.report.final_scalar_addr_overlap_scr_k = ranges_overlap_words16(
+    image.report.final_scalar_base_word16,
+    final_used16,
+    ref_step0_map::kBaseScrKWord16,
+    ref_step0_map::kSizeScrKWord16);
+  image.report.final_scalar_addr_overlap_scr_v = ranges_overlap_words16(
+    image.report.final_scalar_base_word16,
+    final_used16,
+    ref_step0_map::kBaseScrVWord16,
+    ref_step0_map::kSizeScrVWord16);
+  image.report.final_scalar_live_conflict_scr_k = false;
+  image.report.final_scalar_live_conflict_scr_v = false;
+  image.report.final_scalar_overlap_conflict = false;
+  image.report.final_layer_no_writeback_enforced = true;
+  image.report.final_layer_writeback_words = 0u;
+  image.report.final_head_used_page_next = false;
+  image.report.pass_b_executed = true;
+  image.report.output_words16 = static_cast<uint32_t>(image.data_out_words16.size());
+  image.report.final_scalar_base_word16_aligned =
+    ((image.report.final_scalar_base_word16 % ref_step0_map::kStorageAlignWords) == 0u);
+  image.report.scratch_base_word16_aligned =
+    ((image.report.scratch_base_word16 % ref_step0_map::kStorageAlignWords) == 0u);
+  image.report.has_error = !(image.report.final_scalar_range_ok && image.report.final_scalar_capacity_ok);
+  image.report.error_code = image.report.has_error
+    ? ((!image.report.final_scalar_range_ok) ? REF_STEP0_ERR_FINAL_SCALAR_RANGE : REF_STEP0_ERR_FINAL_SCALAR_CAPACITY)
+    : REF_STEP0_ERR_NONE;
+  image.report.error_msg = image.report.has_error
+    ? ((!image.report.final_scalar_range_ok) ? REF_STEP0_MSG_FINAL_SCALAR_RANGE : REF_STEP0_MSG_FINAL_SCALAR_CAPACITY)
+    : REF_STEP0_MSG_NONE;
+
+  return true;
+}
+
+bool RefModel::read_mem_words16(const RefStep0Io16Image& image,
+                              uint32_t addr_word16,
+                              uint32_t len_words16,
+                              std::vector<uint16_t>& out_words16) {
+  const std::size_t start = static_cast<std::size_t>(addr_word16);
+  const std::size_t count = static_cast<std::size_t>(len_words16);
+  if ((start + count) > image.sram_words16.size()) {
+    return false;
+  }
+  out_words16.assign(image.sram_words16.begin() + static_cast<std::ptrdiff_t>(start),
+                     image.sram_words16.begin() + static_cast<std::ptrdiff_t>(start + count));
+  return true;
+}
+
+bool RefModel::unpack_logits_from_io16(const std::vector<uint16_t>& data_out_words16,
+                                     std::vector<double>& logits_out) {
+  return unpack_logits_words16_impl(data_out_words16, logits_out);
+}
+
+bool RefModel::unpack_xpred_from_io16(const std::vector<uint16_t>& data_out_words16,
+                                    int n_bits,
+                                    std::vector<uint8_t>& xpred_bits_out) {
+  return unpack_xpred_words16_impl(data_out_words16, n_bits, xpred_bits_out);
 }
 
 void set_ref_ln_debug_enabled(bool enabled) {

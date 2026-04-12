@@ -1,12 +1,14 @@
 ﻿#pragma once
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "RefAlgoVariant.h"
 #include "RefFragGroupConfig.h"
 #include "RefLayerNormMode.h"
 #include "RefPrecisionMode.h"
 #include "RefSoftmaxExpMode.h"
+#include "RefStep0RunReport.h"
 #include "RefStageConfig.h"
 #include "RefTypes.h"
 
@@ -121,6 +123,18 @@ struct RefDumpConfig {
   int pattern_index;
 };
 
+enum class RefStep0OutputMode : uint8_t {
+  X_PRED = 0,
+  LOGITS = 1
+};
+
+struct RefStep0Io16Image {
+  RefStep0RunReport report;
+  RefStep0OutputMode output_mode = RefStep0OutputMode::X_PRED;
+  std::vector<uint16_t> sram_words16;
+  std::vector<uint16_t> data_out_words16;
+};
+
 struct RefRunConfig {
   RefPrecisionMode precision_mode = RefPrecisionMode::BASELINE_FP32;
   RefAlgoVariant algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
@@ -148,6 +162,25 @@ public:
 
   // Step-0 reference path aligned to algorithm_ref.ipynb.
   void infer_step0(const RefModelIO& io) const;
+
+  // Build a ref-only io16 image for single-pattern SRAM/readback checks.
+  // This path does not change the math kernel; it only stages already-computed
+  // ref outputs into 16-bit storage words and io16 data_out framing.
+  bool build_step0_io16_image(const RefModelIO& io,
+                              RefStep0OutputMode output_mode,
+                              RefStep0Io16Image& image) const;
+
+  static bool read_mem_words16(const RefStep0Io16Image& image,
+                               uint32_t addr_word16,
+                               uint32_t len_words16,
+                               std::vector<uint16_t>& out_words16);
+
+  static bool unpack_logits_from_io16(const std::vector<uint16_t>& data_out_words16,
+                                      std::vector<double>& logits_out);
+
+  static bool unpack_xpred_from_io16(const std::vector<uint16_t>& data_out_words16,
+                                     int n_bits,
+                                     std::vector<uint8_t>& xpred_bits_out);
 
 private:
   RefRunConfig run_cfg_;
