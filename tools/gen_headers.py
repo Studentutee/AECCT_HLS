@@ -110,7 +110,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", default=".", help="Repository root path")
     parser.add_argument("--src-include", default="include", help="Source include directory")
     parser.add_argument("--out-root", default="gen", help="Generated root directory")
-    parser.add_argument("--version", default="v11.5", help="Spec version tag")
+    parser.add_argument("--version", default="v12.1", help="Spec version tag")
     parser.add_argument(
         "--extra-input",
         action="append",
