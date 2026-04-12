@@ -92,8 +92,8 @@ int main() {
   expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_DONE, (uint8_t)aecct::OP_SOFT_RESET);
   expect_state(aecct::ST_IDLE);
 
-  // Case 1: Read from X_PAGE0 base.
-  drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 8u);
+  // Case 1: Read from active X_WORK slice base.
+  drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_WORK_BASE_W, 8u);
   for (uint32_t i = 0; i < 8u; ++i) {
     expect_data_word(data_out, make_pattern(0u, i));
   }
@@ -111,7 +111,7 @@ int main() {
   expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_OK, (uint8_t)aecct::OP_CFG_BEGIN);
   expect_state(aecct::ST_CFG_RX);
 
-  drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_PAGE0_BASE_W, 2u);
+  drive_read_mem(ctrl_cmd, ctrl_rsp, data_in, data_out, sram_map::X_WORK_BASE_W, 2u);
   expect_rsp(ctrl_rsp, (uint8_t)aecct::RSP_ERR, (uint8_t)aecct::ERR_BAD_STATE);
   expect_no_data(data_out);
   expect_state(aecct::ST_CFG_RX);

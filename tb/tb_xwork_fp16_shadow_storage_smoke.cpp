@@ -242,7 +242,7 @@ static int run_one_sample(uint32_t sample_idx, ShadowStats& stats) {
         }
     }
 
-    const uint32_t current_storage_word16 = (uint32_t)sram_map::X_PAGE0_WORDS_WORD16;
+    const uint32_t current_storage_word16 = (uint32_t)sram_map::X_WORK_WORD16;
     const uint32_t shadow_storage_word16 = align_up_storage_words((uint32_t)ELEMS_X, (uint32_t)ALIGN_STORAGE_WORD16);
     std::printf(
         "[xwork_fp16_shadow] sample=%u fp32_mismatch=%u shadow_lane_mismatch=%u first_token=%u first_dim=%u first_got_lane=0x%04X first_ref_lane=0x%04X current_word16=%u shadow_word16=%u max_abs_diff_fp32=%.9g max_abs_diff_shadow=%.9g\n",
@@ -259,7 +259,7 @@ static int run_one_sample(uint32_t sample_idx, ShadowStats& stats) {
         (double)stats.max_abs_diff_shadow);
 
     if (shadow_storage_word16 >= current_storage_word16) {
-        std::printf("[xwork_fp16_shadow][FAIL] shadow storage did not shrink X_PAGE0\n");
+        std::printf("[xwork_fp16_shadow][FAIL] shadow storage did not shrink active X_WORK slice\n");
         return 1;
     }
     if (stats.shadow_lane_mismatch_count != 0u) {
@@ -303,7 +303,7 @@ int main() {
 
     std::printf("[xwork_fp16_shadow][PASS] samples=3 total_shadow_mismatch=%u current_word16=%u shadow_word16=%u max_abs_diff_shadow=%.9g\n",
         (unsigned)total_shadow_mismatch,
-        (unsigned)sram_map::X_PAGE0_WORDS_WORD16,
+        (unsigned)sram_map::X_WORK_WORD16,
         (unsigned)align_up_storage_words((uint32_t)ELEMS_X, (uint32_t)ALIGN_STORAGE_WORD16),
         (double)global_max_abs_shadow);
     std::printf("PASS: tb_xwork_fp16_shadow_storage_smoke\n");

@@ -156,12 +156,9 @@ static inline uint32_t count_region_diff(
     return diff_count;
 }
 
-static inline aecct::u32_t local_alternate_x_page(aecct::u32_t x_base_word) {
-    const uint32_t x_base = (uint32_t)x_base_word.to_uint();
-    if (x_base == (uint32_t)sram_map::X_PAGE0_BASE_W) {
-        return (aecct::u32_t)sram_map::X_PAGE1_BASE_W;
-    }
-    return (aecct::u32_t)sram_map::X_PAGE0_BASE_W;
+static inline aecct::u32_t local_canonical_x_work_base(aecct::u32_t x_base_word) {
+    (void)x_base_word;
+    return (aecct::u32_t)sram_map::X_WORK_BASE_W;
 }
 
 class TbP11anbAttnLayer0BoundarySeamContract {
@@ -865,7 +862,7 @@ private:
 
         const aecct::u32_t layer_id = (aecct::u32_t)0u;
         const aecct::u32_t x_in_base = (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD_DEFAULT;
-        const aecct::u32_t x_out_base = local_alternate_x_page(x_in_base);
+        const aecct::u32_t x_out_base = local_canonical_x_work_base(x_in_base);
         const aecct::LayerScratch sc = aecct::make_layer_scratch(x_in_base);
         const aecct::LayerParamBase pb =
             aecct::make_layer_param_base((aecct::u32_t)sram_map::W_REGION_BASE, layer_id);

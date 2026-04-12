@@ -22,7 +22,7 @@ static const int STORAGE_ALIGN_WORDS = static_cast<int>(::SRAM_WORDS_PER_BEAT);
 // synth/ref helpers do not silently resize fp32 buffers in this patch.
 // New *_STORAGE_WORDS / *_BASE_WORD16 values expose v12.1 storage units.
 static const int X_WORK_WORDS = static_cast<int>(align_up_words(static_cast<uint32_t>(T_TOKENS * D_MODEL), static_cast<uint32_t>(ALIGN_WORDS)));
-static const int X_WORK_BASE = static_cast<int>(sram_map::X_PAGE0_BASE_W);
+static const int X_WORK_BASE = static_cast<int>(sram_map::X_WORK_BASE_W);
 static const int X_WORK_STORAGE_WORDS = static_cast<int>(sram_map::SIZE_X_WORK_WORD16);
 static const int X_WORK_BASE_WORD16 = static_cast<int>(sram_map::BASE_X_WORK_WORD16);
 

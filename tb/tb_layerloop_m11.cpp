@@ -268,9 +268,9 @@ static void run_infer_sample0(
 static uint32_t final_x_base_word(uint32_t n_layers) {
     uint32_t x_in = (uint32_t)aecct::LN_X_OUT_BASE_WORD_DEFAULT;
     for (uint32_t lid = 0; lid < n_layers; ++lid) {
-        x_in = (x_in == (uint32_t)sram_map::X_PAGE0_BASE_W)
-            ? (uint32_t)sram_map::X_PAGE1_BASE_W
-            : (uint32_t)sram_map::X_PAGE0_BASE_W;
+        x_in = (x_in == (uint32_t)sram_map::X_WORK_BASE_W)
+            ? (uint32_t)sram_map::X_WORK_BASE_W
+            : (uint32_t)sram_map::X_WORK_BASE_W;
     }
     return x_in;
 }

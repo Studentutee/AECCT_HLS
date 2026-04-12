@@ -4557,7 +4557,7 @@ static RefModelStageCompareResult run_one_ref_model_stage_probe(
         }
     } else if (r.earliest_e0_first_divergence_bucket == 5u) {
         const uint32_t expected_x_out_base =
-            (uint32_t)aecct::alternate_x_page((aecct::u32_t)layer0_sublayer0_x_in_base).to_uint();
+            (uint32_t)aecct::canonical_x_work_base((aecct::u32_t)layer0_sublayer0_x_in_base).to_uint();
         const Layer0StageCmp e1_x_out_base_cmp = compare_scalar_stage(layer0_sublayer0_x_out_base, expected_x_out_base);
         const Layer0StageCmp e1_ffn_input_base_cmp = compare_scalar_stage(layer0_ffn_input_base, layer0_sublayer0_x_out_base);
         const Layer0StageCmp e1_readback_cmp = e0_e_ffn_input_base_readback_cmp;

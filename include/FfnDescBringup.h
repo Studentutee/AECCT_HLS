@@ -60,7 +60,7 @@ namespace aecct {
 
     static const unsigned FFN_X_IN_BASE_WORD_DEFAULT = (unsigned)ATTN_OUT_BASE_WORD_DEFAULT;
 
-    // W1/relu ?閬?9600 words嚗??W_REGION嚗2/add2 ?曉 SCRATCH嚗N output ??X_PAGE1
+    // W1/relu stay in runtime scratch; final write-back still targets the compatibility X_WORK slice in the transitional path
     static const unsigned FFN_RUNTIME_BASE_WORD_DEFAULT =
         (unsigned)align_up_words((uint32_t)ATTN_RUNTIME_END_EXCL_WORD_DEFAULT, (uint32_t)ALIGN_WORDS);
     static const unsigned FFN_W1_OUT_BASE_WORD_DEFAULT = (unsigned)FFN_RUNTIME_BASE_WORD_DEFAULT;

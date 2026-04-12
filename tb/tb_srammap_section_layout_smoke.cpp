@@ -8,8 +8,6 @@ namespace {
 
 static const char* section_name(const sram_map::SectionId id) {
   switch (id) {
-    case sram_map::SEC_X_PAGE0_COMPAT: return "X_PAGE0_COMPAT";
-    case sram_map::SEC_X_PAGE1_COMPAT: return "X_PAGE1_COMPAT";
     case sram_map::SEC_X_WORK: return "X_WORK";
     case sram_map::SEC_SCR_K: return "SCR_K";
     case sram_map::SEC_SCR_V: return "SCR_V";
@@ -118,7 +116,7 @@ static void print_section_table() {
 } // namespace
 
 int main() {
-  expect_eq_u32("SECTION_COUNT", sram_map::SECTION_COUNT, 13u);
+  expect_eq_u32("SECTION_COUNT", sram_map::SECTION_COUNT, 11u);
   expect_eq_u32("PARAM_STREAM_DEFAULT_WORDS_vs_EXP_LEN_PARAM_WORDS",
                 sram_map::PARAM_STREAM_DEFAULT_WORDS,
                 EXP_LEN_PARAM_WORDS);

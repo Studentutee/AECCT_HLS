@@ -1546,7 +1546,7 @@ private:
 
     uint32_t run_downstream_from_prebuilt(std::vector<aecct::u32_t>& sram_vec) const {
         aecct::u32_t x_in_base = (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD;
-        aecct::u32_t x_out_base = aecct::alternate_x_page(x_in_base);
+        aecct::u32_t x_out_base = aecct::canonical_x_work_base(x_in_base);
         const aecct::LayerScratch sc = aecct::make_layer_scratch(x_in_base);
         const aecct::LayerParamBase pb =
             aecct::make_layer_param_base((aecct::u32_t)param_base_, (aecct::u32_t)0u);
@@ -1566,7 +1566,7 @@ private:
         );
 
         x_in_base = x_out_base;
-        x_out_base = aecct::alternate_x_page(x_in_base);
+        x_out_base = aecct::canonical_x_work_base(x_in_base);
         aecct::run_mid_or_end_layernorm(
             false,
             cfg_,
@@ -1582,7 +1582,7 @@ private:
 
     uint32_t run_transformer_layer_prebuilt_only(std::vector<aecct::u32_t>& sram_vec) const {
         aecct::u32_t x_in_base = (aecct::u32_t)aecct::LN_X_OUT_BASE_WORD;
-        aecct::u32_t x_out_base = aecct::alternate_x_page(x_in_base);
+        aecct::u32_t x_out_base = aecct::canonical_x_work_base(x_in_base);
         const aecct::LayerScratch sc = aecct::make_layer_scratch(x_in_base);
         const aecct::LayerParamBase pb =
             aecct::make_layer_param_base((aecct::u32_t)param_base_, (aecct::u32_t)0u);

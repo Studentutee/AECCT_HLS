@@ -60,7 +60,7 @@ CCS_MAIN(int argc, char** argv) {
     const uint32_t w2_weight_words = d_model * d_ffn;
     const uint32_t w2_bias_words = d_model;
 
-    const uint32_t x_base = (uint32_t)sram_map::X_PAGE0_BASE_W;
+    const uint32_t x_base = (uint32_t)sram_map::X_WORK_BASE_W;
     const uint32_t w1_base = (uint32_t)sram_map::BASE_SCR_K_W;
     const uint32_t relu_base = (uint32_t)sram_map::BASE_SCR_V_W;
     const uint32_t w2_base = (uint32_t)sram_map::BASE_SCR_FINAL_SCALAR_W;

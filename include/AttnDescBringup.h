@@ -44,9 +44,9 @@ namespace aecct {
         u32_t q_sx_base_word;
     };
 
-    // x_in 來自 LN 輸出，attn_out 寫回 X_PAGE0
+    // x_in comes from LN output; attn_out writes back to the active X_WORK slice
     static const unsigned ATTN_X_IN_BASE_WORD_DEFAULT = (unsigned)LN_X_OUT_BASE_WORD_DEFAULT;
-    static const unsigned ATTN_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::X_PAGE0_BASE_W;
+    static const unsigned ATTN_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::X_WORK_BASE_W;
 
     // Q/K 優先放 SCRATCH，其他暫存放 W_REGION（M9 bring-up 先對齊 checkpoint）
     static const unsigned ATTN_RUNTIME_BASE_WORD_DEFAULT = (unsigned)sram_map::BACKUP_RUNTIME_SCRATCH_BASE_W;

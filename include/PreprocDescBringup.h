@@ -16,6 +16,6 @@ namespace aecct {
 
     // Default SRAM locations (word address)
     static const unsigned PREPROC_IN_BASE_WORD_DEFAULT = (unsigned)sram_map::BASE_SCRATCH_W;
-    static const unsigned PREPROC_X_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::X_PAGE0_BASE_W;
+    static const unsigned PREPROC_X_OUT_BASE_WORD_DEFAULT = (unsigned)sram_map::X_WORK_BASE_W;
 
 } // namespace aecct

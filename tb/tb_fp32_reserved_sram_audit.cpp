@@ -36,12 +36,9 @@ static void print_row(const AuditRow& row) {
 
 int main() {
     const AuditRow rows[] = {
-        {"X_PAGE0_ACTIVE", (uint32_t)ELEMS_X, (uint32_t)sram_map::X_PAGE0_WORDS_WORD16,
+        {"X_WORK", (uint32_t)ELEMS_X, (uint32_t)sram_map::X_WORK_WORD16,
             align_up_storage_words_local((uint32_t)ELEMS_X),
-            (uint32_t)sram_map::X_PAGE0_WORDS_WORD16 - align_up_storage_words_local((uint32_t)ELEMS_X), false},
-        {"X_PAGE1_COMPAT", (uint32_t)ELEMS_X, (uint32_t)sram_map::X_PAGE1_WORDS_WORD16,
-            align_up_storage_words_local((uint32_t)ELEMS_X),
-            (uint32_t)sram_map::X_PAGE1_WORDS_WORD16 - align_up_storage_words_local((uint32_t)ELEMS_X), true},
+            (uint32_t)sram_map::X_WORK_WORD16 - align_up_storage_words_local((uint32_t)ELEMS_X), false},
         {"SCR_K", (uint32_t)ELEMS_X, (uint32_t)sram_map::SIZE_SCR_K_WORD16,
             align_up_storage_words_local((uint32_t)ELEMS_X),
             (uint32_t)sram_map::SIZE_SCR_K_WORD16 - align_up_storage_words_local((uint32_t)ELEMS_X), false},
@@ -72,15 +69,12 @@ int main() {
         }
     }
 
-    const uint32_t logical_x_work_shadow_keep_both_pages =
-        align_up_storage_words_local((uint32_t)ELEMS_X) * 2u;
     const uint32_t logical_x_work_shadow_single_page =
         align_up_storage_words_local((uint32_t)ELEMS_X);
 
     std::printf(
-        "[fp32_audit] logical_x_work current_word16=%u shadow_keep_compat_pages=%u shadow_single_page=%u\n",
+        "[fp32_audit] logical_x_work current_word16=%u shadow_single_page=%u\n",
         (unsigned)sram_map::SIZE_X_WORK_WORD16,
-        (unsigned)logical_x_work_shadow_keep_both_pages,
         (unsigned)logical_x_work_shadow_single_page);
 
     std::printf(
@@ -89,7 +83,7 @@ int main() {
         (unsigned)total_shadow,
         (unsigned)total_delta);
     std::printf(
-        "[fp32_audit][SUMMARY_NO_RESERVED] total_current_word16=%u total_shadow_word16=%u total_delta=%u\n",
+        "[fp32_audit][SUMMARY_SINGLE_X_WORK] total_current_word16=%u total_shadow_word16=%u total_delta=%u\n",
         (unsigned)total_current_no_reserved,
         (unsigned)total_shadow_no_reserved,
         (unsigned)total_delta_no_reserved);

@@ -84,10 +84,9 @@ namespace aecct {
     };
 
     enum RegionId : unsigned {
-        REG_X0 = 0,
-        REG_X1 = 1,
-        REG_SCR = 2,
-        REG_W = 3,
+        REG_X_WORK = 0,
+        REG_SCR = 1,
+        REG_W = 2,
         REG_OOR = 255
     };
 
@@ -941,8 +940,7 @@ namespace aecct {
 
     static inline RegionId decode_region(const u32_t& addr_word) {
         unsigned a = (unsigned)addr_word.to_uint();
-        if (a >= sram_map::X_PAGE0_BASE_W && a < (sram_map::X_PAGE0_BASE_W + sram_map::X_PAGE0_WORDS)) { return REG_X0; }
-        if (a >= sram_map::X_PAGE1_BASE_W && a < (sram_map::X_PAGE1_BASE_W + sram_map::X_PAGE1_WORDS)) { return REG_X1; }
+        if (a >= sram_map::X_WORK_BASE_W && a < (sram_map::X_WORK_BASE_W + sram_map::X_WORK_WORDS)) { return REG_X_WORK; }
         if (a >= sram_map::BASE_SCRATCH_W && a < (sram_map::BASE_SCRATCH_W + sram_map::SIZE_SCRATCH_W)) { return REG_SCR; }
         if (a >= sram_map::W_REGION_BASE && a < (sram_map::W_REGION_BASE + sram_map::W_REGION_WORDS)) { return REG_W; }
         return REG_OOR;
@@ -1220,8 +1218,7 @@ namespace aecct {
 
     static inline void soft_reset_all(TopRegs& regs, u32_t* sram) {
         regs.clear();
-        init_region_prefix(sram, sram_map::X_PAGE0_BASE_W, sram_map::X_PAGE0_WORDS, (unsigned)REG_X0);
-        init_region_prefix(sram, sram_map::X_PAGE1_BASE_W, sram_map::X_PAGE1_WORDS, (unsigned)REG_X1);
+        init_region_prefix(sram, sram_map::X_WORK_BASE_W, sram_map::X_WORK_WORDS, (unsigned)REG_X_WORK);
         init_region_prefix(sram, sram_map::BASE_SCRATCH_W, sram_map::SIZE_SCRATCH_W, (unsigned)REG_SCR);
         init_region_prefix(sram, sram_map::W_REGION_BASE, sram_map::W_REGION_WORDS, (unsigned)REG_W);
     }
@@ -1438,7 +1435,7 @@ namespace aecct {
         contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
         // Backup bring-up contract alignment:
         // ref_model step0 path is preproc_x -> layer0 (no standalone pre-layer LN stage).
-        // Keep Top ownership unchanged and preserve X_PAGE handoff by pass-through copy.
+        // Keep Top ownership unchanged and write back in-place within the single-X_WORK baseline.
         const uint32_t src_base = (uint32_t)LN_X_IN_BASE_WORD;
         const uint32_t dst_base = (uint32_t)LN_X_OUT_BASE_WORD;
         const uint32_t words = token_count * d_model;
@@ -1462,12 +1459,9 @@ namespace aecct {
         return cfg;
     }
 
-    static inline u32_t alternate_x_page(u32_t x_base_word) {
-        uint32_t x = (uint32_t)x_base_word.to_uint();
-        if (x == (uint32_t)sram_map::X_PAGE0_BASE_W) {
-            return (u32_t)sram_map::X_PAGE1_BASE_W;
-        }
-        return (u32_t)sram_map::X_PAGE0_BASE_W;
+    static inline u32_t canonical_x_work_base(u32_t x_base_word) {
+        (void)x_base_word;
+        return (u32_t)sram_map::X_WORK_BASE_W;
     }
 
     static inline void copy_x_words(u32_t* dst, const u32_t* src, uint32_t words) {
@@ -2491,7 +2485,7 @@ namespace aecct {
         int mid_index = (int)(n_layers / 2u) - 1;
 
         u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
-        u32_t x_out_base = alternate_x_page(x_in_base);
+        u32_t x_out_base = canonical_x_work_base(x_in_base);
         bool mid_valid = false;
         static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
         regs.infer_mid_norm_output_valid = false;
@@ -3072,7 +3066,7 @@ namespace aecct {
             );
 
             x_in_base = x_out_base;
-            x_out_base = alternate_x_page(x_in_base);
+            x_out_base = canonical_x_work_base(x_in_base);
 
             if ((int)lid == mid_index) {
                 // mid LN must be out-of-place: current_x -> other_x
@@ -3093,7 +3087,7 @@ namespace aecct {
                 );
                 regs.infer_mid_norm_output_valid = true;
                 x_in_base = x_out_base;
-                x_out_base = alternate_x_page(x_in_base);
+                x_out_base = canonical_x_work_base(x_in_base);
 
                 copy_x_words(mid_snapshot, &sram[(uint32_t)x_in_base.to_uint()], (uint32_t)LN_X_TOTAL_WORDS);
                 mid_valid = true;
@@ -3118,7 +3112,7 @@ namespace aecct {
             &regs.layernorm_contract
         );
         x_in_base = x_out_base;
-        x_out_base = alternate_x_page(x_in_base);
+        x_out_base = canonical_x_work_base(x_in_base);
 
         regs.infer_final_x_base_word = x_in_base;
         if (mid_valid) {
@@ -3161,7 +3155,7 @@ namespace aecct {
         int mid_index = (int)(n_layers / 2u) - 1;
 
         u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
-        u32_t x_out_base = alternate_x_page(x_in_base);
+        u32_t x_out_base = canonical_x_work_base(x_in_base);
         bool mid_valid = false;
         static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
         regs.infer_mid_norm_output_valid = false;
@@ -3737,7 +3731,7 @@ namespace aecct {
             );
 
             x_in_base = x_out_base;
-            x_out_base = alternate_x_page(x_in_base);
+            x_out_base = canonical_x_work_base(x_in_base);
 
             if ((int)lid == mid_index) {
                 run_mid_or_end_layernorm(
@@ -3757,7 +3751,7 @@ namespace aecct {
                 );
                 regs.infer_mid_norm_output_valid = true;
                 x_in_base = x_out_base;
-                x_out_base = alternate_x_page(x_in_base);
+                x_out_base = canonical_x_work_base(x_in_base);
 
                 copy_x_words(mid_snapshot, &sram[(uint32_t)x_in_base.to_uint()], (uint32_t)LN_X_TOTAL_WORDS);
                 mid_valid = true;
@@ -3781,7 +3775,7 @@ namespace aecct {
             &regs.layernorm_contract
         );
         x_in_base = x_out_base;
-        x_out_base = alternate_x_page(x_in_base);
+        x_out_base = canonical_x_work_base(x_in_base);
 
         regs.infer_final_x_base_word = x_in_base;
         if (mid_valid) {
