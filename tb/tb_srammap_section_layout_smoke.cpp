@@ -66,6 +66,7 @@ static const char* payload_class_name(const uint8_t payload) {
     case sram_map::PAYLOAD_COMPAT_ALIAS: return "compat_alias";
     case sram_map::PAYLOAD_RUNTIME_SCRATCH: return "runtime_scratch";
     case sram_map::PAYLOAD_MIXED_PERSIST: return "mixed_persist";
+    case sram_map::PAYLOAD_FP16_TENSOR: return "fp16_tensor";
     default: return "invalid";
   }
 }

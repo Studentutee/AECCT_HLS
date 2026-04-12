@@ -205,7 +205,7 @@ static int run_one_sample(uint32_t sample_idx, ShadowStats& stats) {
     REF_COMPARE_TOKEN_LOOP: for (uint32_t token = 0u; token < (uint32_t)N_NODES; ++token) {
         REF_COMPARE_DIM_LOOP: for (uint32_t d = 0u; d < (uint32_t)D_MODEL; ++d) {
             const uint32_t linear_idx = token * (uint32_t)D_MODEL + d;
-            const uint32_t got_bits = (uint32_t)sram[x_base + linear_idx].to_uint();
+            const uint32_t got_bits = (uint32_t)aecct::x_work_load_fp32_bits(sram, x_base, linear_idx).to_uint();
             const uint32_t ref_bits = ref_x_word_bits(sample_idx, token, d);
             const float abs_diff_fp32 = std::fabs(bits_to_f32(got_bits) - bits_to_f32(ref_bits));
             if (abs_diff_fp32 > stats.max_abs_diff_fp32) {
@@ -258,8 +258,10 @@ static int run_one_sample(uint32_t sample_idx, ShadowStats& stats) {
         (double)stats.max_abs_diff_fp32,
         (double)stats.max_abs_diff_shadow);
 
-    if (shadow_storage_word16 >= current_storage_word16) {
-        std::printf("[xwork_fp16_shadow][FAIL] shadow storage did not shrink active X_WORK slice\n");
+    if (current_storage_word16 != shadow_storage_word16) {
+        std::printf("[xwork_fp16_shadow][FAIL] live X_WORK storage words mismatch current=%u expect=%u\n",
+            (unsigned)current_storage_word16,
+            (unsigned)shadow_storage_word16);
         return 1;
     }
     if (stats.shadow_lane_mismatch_count != 0u) {

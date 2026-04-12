@@ -11,8 +11,8 @@ namespace aecct {
     static const unsigned PREPROC_IN_WORDS_EXPECTED = (unsigned)EXP_LEN_INFER_IN_WORDS;
 
     // Preproc output X words, layout: [token][d_model]
-    static const unsigned PREPROC_X_OUT_WORDS_EXPECTED = (unsigned)WORDS_X_FP32;
-    static const unsigned PREPROC_X_TOKEN_STRIDE_WORDS = (unsigned)D_MODEL;
+    static const unsigned PREPROC_X_OUT_WORDS_EXPECTED = (unsigned)WORDS_X_FP16_PACKED;
+    static const unsigned PREPROC_X_TOKEN_STRIDE_WORDS = (unsigned)WORDS_X_FP16_ROW_PACKED;
 
     // Default SRAM locations (word address)
     static const unsigned PREPROC_IN_BASE_WORD_DEFAULT = (unsigned)sram_map::BASE_SCRATCH_W;

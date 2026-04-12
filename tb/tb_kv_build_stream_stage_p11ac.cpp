@@ -202,7 +202,7 @@ private:
     aecct::attn_v_pkt_ch_t v_ch_;
 
     static uint32_t x_row_base(uint32_t token) {
-        return (uint32_t)sram_map::BASE_X_WORK_W + token * kTileWords;
+        return (uint32_t)sram_map::BASE_X_WORK_W + token * aecct::x_work_packed_row_words(kTileWords);
     }
     static uint32_t scr_k_row_base(uint32_t token) {
         return (uint32_t)sram_map::BASE_SCR_K_W + token * kTileWords;
@@ -234,7 +234,7 @@ private:
             for (uint32_t i = 0u; i < kTileWords; ++i) {
                 const int32_t v = (int32_t)((t + 1u) * 19u + (i * 5u)) - 31;
                 const float f = ((float)v) * 0.03125f;
-                sram_[base + i] = (aecct::u32_t)f32_to_bits(f);
+                aecct::x_work_store_fp32_bits(sram_, (uint32_t)sram_map::BASE_X_WORK_W, t * kTileWords + i, (aecct::u32_t)f32_to_bits(f));
             }
         }
         sram_before_ = sram_;
@@ -265,7 +265,7 @@ private:
             expected_k_[t].assign(kTileWords, (aecct::u32_t)0u);
             expected_v_[t].assign(kTileWords, (aecct::u32_t)0u);
             for (uint32_t i = 0u; i < kTileWords; ++i) {
-                x_row_[i] = sram_[x_row_base(t) + i];
+                x_row_[i] = aecct::x_work_load_fp32_bits(sram_, (uint32_t)sram_map::BASE_X_WORK_W, t * kTileWords + i);
             }
 
             aecct::u32_t out_inv_sw_k = 0;
@@ -539,8 +539,8 @@ private:
                                 (unsigned)t, (unsigned)i, (unsigned)got_v, (unsigned)exp_v);
                     return false;
                 }
-                const uint32_t got_x = (uint32_t)sram_[x_base + i].to_uint();
-                const uint32_t exp_x = (uint32_t)sram_before_[x_base + i].to_uint();
+                const uint32_t got_x = (uint32_t)aecct::x_work_load_fp32_bits(sram_, (uint32_t)sram_map::BASE_X_WORK_W, t * kTileWords + i).to_uint();
+                const uint32_t exp_x = (uint32_t)aecct::x_work_load_fp32_bits(sram_before_, (uint32_t)sram_map::BASE_X_WORK_W, t * kTileWords + i).to_uint();
                 if (got_x != exp_x) {
                     std::printf("[p11ac][FAIL] X_WORK changed token=%u idx=%u got=%g exp=%g\n",
                                 (unsigned)t, (unsigned)i, (double)bits_to_f32(got_x), (double)bits_to_f32(exp_x));
@@ -562,7 +562,7 @@ private:
             for (uint32_t i = 0u; i < kTileWords; ++i) {
                 allowed_write[k_base + i] = 1u;
                 allowed_write[v_base + i] = 1u;
-                if ((uint32_t)sram_[x_base + i].to_uint() != (uint32_t)sram_before_[x_base + i].to_uint()) {
+                if ((uint32_t)aecct::x_work_load_fp32_bits(sram_, (uint32_t)sram_map::BASE_X_WORK_W, t * kTileWords + i).to_uint() != (uint32_t)aecct::x_work_load_fp32_bits(sram_before_, (uint32_t)sram_map::BASE_X_WORK_W, t * kTileWords + i).to_uint()) {
                     std::printf("[p11ac][FAIL] source preservation mismatch token=%u idx=%u\n",
                                 (unsigned)t, (unsigned)i);
                     return false;
@@ -593,7 +593,7 @@ private:
             const uint32_t src_base = x_row_base(t);
             const uint32_t dst_base = top_x_base + t * kTileWords;
             for (uint32_t i = 0u; i < kTileWords; ++i) {
-                top_sram[dst_base + i] = sram_before_[src_base + i];
+                aecct::x_work_store_fp32_bits(top_sram, top_x_base, t * kTileWords + i, aecct::x_work_load_fp32_bits(sram_before_, (uint32_t)sram_map::BASE_X_WORK_W, t * kTileWords + i));
             }
         }
 

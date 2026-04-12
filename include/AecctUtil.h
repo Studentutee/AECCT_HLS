@@ -46,6 +46,79 @@ static inline u32_t fp32_bits_from_double(double v) {
     return bits_from_fp32(x);
 }
 
+
+static inline u16_t fp16_lane_from_fp32_bits(const u32_t& bits) {
+    const fp32_t x = fp32_from_bits(bits);
+    const fp16_t h(x);
+    const ac_int<16, true> raw = h.data_ac_int();
+    return (u16_t)((ac_int<16, false>)raw);
+}
+
+static inline u32_t fp32_bits_from_fp16_lane(const u16_t& lane) {
+    fp16_t h;
+    h.set_data((ac_int<16, true>)(ac_int<16, false>)lane);
+    const fp32_t y(h);
+    return bits_from_fp32(y);
+}
+
+static inline u32_t pack_fp16_lanes(const u16_t& lo_lane, const u16_t& hi_lane) {
+    u32_t word = 0;
+    word.set_slc(0, lo_lane);
+    word.set_slc(16, hi_lane);
+    return word;
+}
+
+static inline u16_t unpack_fp16_lane(const u32_t& word, uint32_t lane_idx) {
+    return (lane_idx == 0u) ? word.template slc<16>(0) : word.template slc<16>(16);
+}
+
+static inline uint32_t x_work_packed_u32_words(uint32_t elems) {
+    return (elems + 1u) >> 1;
+}
+
+static inline uint32_t x_work_packed_row_words(uint32_t d_model) {
+    return x_work_packed_u32_words(d_model);
+}
+
+template<typename SramView>
+static inline u32_t x_work_load_fp32_bits(const SramView& sram, uint32_t x_base_word, uint32_t elem_idx) {
+    const uint32_t packed_word_idx = elem_idx >> 1;
+    const uint32_t lane_idx = elem_idx & 1u;
+    const u32_t packed = sram[x_base_word + packed_word_idx];
+    const u16_t lane = unpack_fp16_lane(packed, lane_idx);
+    return fp32_bits_from_fp16_lane(lane);
+}
+
+template<typename SramView>
+static inline fp32_t x_work_load_fp32(const SramView& sram, uint32_t x_base_word, uint32_t elem_idx) {
+    return fp32_from_bits(x_work_load_fp32_bits(sram, x_base_word, elem_idx));
+}
+
+template<typename SramView>
+static inline void x_work_store_fp32_bits(SramView& sram, uint32_t x_base_word, uint32_t elem_idx, const u32_t& fp32_bits) {
+    const uint32_t packed_word_idx = elem_idx >> 1;
+    const uint32_t lane_idx = elem_idx & 1u;
+    const uint32_t addr = x_base_word + packed_word_idx;
+    const u16_t new_lane = fp16_lane_from_fp32_bits(fp32_bits);
+    u16_t lo_lane = 0;
+    u16_t hi_lane = 0;
+    if (lane_idx == 0u) {
+        const u32_t prior = sram[addr];
+        lo_lane = new_lane;
+        hi_lane = unpack_fp16_lane(prior, 1u);
+    } else {
+        const u32_t prior = sram[addr];
+        lo_lane = unpack_fp16_lane(prior, 0u);
+        hi_lane = new_lane;
+    }
+    sram[addr] = pack_fp16_lanes(lo_lane, hi_lane);
+}
+
+template<typename SramView>
+static inline void x_work_store_fp32(SramView& sram, uint32_t x_base_word, uint32_t elem_idx, const fp32_t& value) {
+    x_work_store_fp32_bits(sram, x_base_word, elem_idx, bits_from_fp32(value));
+}
+
 static inline fp32_t fp32_zero() {
     return fp32_from_bits((u32_t)0u);
 }

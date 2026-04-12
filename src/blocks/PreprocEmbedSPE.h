@@ -138,6 +138,7 @@ static inline void PreprocEmbedSPECoreWindow(
     const uint32_t lpe_base = param_base + kParamMeta[68u].offset_w; // lpe_token
     const uint32_t src_embed_dim = (uint32_t)kParamMeta[21u].d1;
     const uint32_t lpe_dim = (uint32_t)kParamMeta[68u].d1;
+    const uint32_t d_model = src_embed_dim + lpe_dim;
 
     fp32_t var_feature[CODE_N];
     uint32_t hard_bit[CODE_N];
@@ -193,22 +194,30 @@ static inline void PreprocEmbedSPECoreWindow(
             }
 
             PREPROC_TOP_MANAGED_TILE_STORE_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
-                const uint32_t linear_idx = token_base + tile_offset + i;
-                if (linear_idx >= x_out_words) {
+                const uint32_t linear_word_idx = token_base + tile_offset + i;
+                if (linear_word_idx >= x_out_words) {
                     continue;
                 }
-                const uint32_t d = linear_idx - token_base;
-                if (d < src_embed_dim) {
-                    const u32_t embed_bits = sram[src_embed_base + t * src_embed_dim + d];
-                    const fp32_t embed_v = fp32_from_bits(embed_bits);
-                    const fp32_t x = node_feature[t] * embed_v;
-                    sram[x_base + linear_idx] = bits_from_fp32(x);
-                } else if (d < (src_embed_dim + lpe_dim)) {
-                    const uint32_t lpe_d = d - src_embed_dim;
-                    sram[x_base + linear_idx] = sram[lpe_base + t * lpe_dim + lpe_d];
-                } else {
-                    // Tail beyond infer payload is explicitly zero-filled into X_WORK.
-                    sram[x_base + linear_idx] = (u32_t)0u;
+                const uint32_t d_word = linear_word_idx - token_base;
+                const uint32_t d0 = d_word * 2u;
+                const uint32_t elem_base = t * d_model;
+                PREPROC_TOP_MANAGED_LANE_STORE_LOOP: for (uint32_t lane = 0u; lane < 2u; ++lane) {
+                    const uint32_t d = d0 + lane;
+                    if (d >= d_model) {
+                        continue;
+                    }
+                    if (d < src_embed_dim) {
+                        const u32_t embed_bits = sram[src_embed_base + t * src_embed_dim + d];
+                        const fp32_t embed_v = fp32_from_bits(embed_bits);
+                        const fp32_t x = node_feature[t] * embed_v;
+                        x_work_store_fp32(sram, x_base, elem_base + d, x);
+                    } else if (d < (src_embed_dim + lpe_dim)) {
+                        const uint32_t lpe_d = d - src_embed_dim;
+                        x_work_store_fp32_bits(sram, x_base, elem_base + d, sram[lpe_base + t * lpe_dim + lpe_d]);
+                    } else {
+                        // Tail beyond infer payload is explicitly zero-filled into X_WORK.
+                        x_work_store_fp32_bits(sram, x_base, elem_base + d, (u32_t)0u);
+                    }
                 }
             }
         }
@@ -227,11 +236,12 @@ static inline void PreprocEmbedSPECoreWindowDirect(
     uint32_t infer_in_words = (uint32_t)cfg.infer_in_words.to_uint();
     uint32_t x_out_words = (uint32_t)cfg.x_out_words.to_uint();
 
-    for (uint32_t i = 0; i < x_out_words; ++i) {
+    const uint32_t out_elems = infer_in_words;
+    for (uint32_t i = 0; i < out_elems; ++i) {
         if (i < infer_in_words) {
-            sram[x_base + i] = sram[in_base + i];
+            x_work_store_fp32_bits(sram, x_base, i, sram[in_base + i]);
         } else {
-            sram[x_base + i] = (u32_t)0u;
+            x_work_store_fp32_bits(sram, x_base, i, (u32_t)0u);
         }
     }
 }

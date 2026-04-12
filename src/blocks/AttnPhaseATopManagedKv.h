@@ -595,7 +595,8 @@ static inline bool attn_phasea_top_managed_kv_mainline(
     bool phase_entry_probe_checked = false;
 
     for (uint32_t t = 0u; t < token_count; ++t) {
-        const uint32_t row_x_base = x_base + t * d_model;
+        const uint32_t row_x_elem_base = t * d_model;
+        const uint32_t row_x_base = x_base + x_work_packed_row_words(d_model) * t;
         const uint32_t row_k_base = k_base + t * d_model;
         const uint32_t row_v_base = v_base + t * d_model;
         const uint32_t row_k_act_q_base = k_act_q_base + t * d_model;
@@ -621,7 +622,7 @@ static inline bool attn_phasea_top_managed_kv_mainline(
             }
             bool probe_compare_ok = true;
             ATTN_P11AC_PHASE_ENTRY_PROBE_COL_LOOP: for (uint32_t i = 0u; i < d_model; ++i) {
-                if ((uint32_t)sram[row_x_base + i].to_uint() !=
+                if ((uint32_t)x_work_load_fp32_bits(sram, x_base, row_x_elem_base + i).to_uint() !=
                     (uint32_t)phase_entry_probe_x_words[i].to_uint()) {
                     probe_compare_ok = false;
                     break;
@@ -652,7 +653,7 @@ static inline bool attn_phasea_top_managed_kv_mainline(
                 return false;
             }
             ATTN_P11AC_MAINLINE_XROW_LOAD_LOOP: for (uint32_t i = 0u; i < valid; ++i) {
-                x_row[tile_offset + i] = sram[row_x_base + tile_offset + i];
+                x_row[tile_offset + i] = x_work_load_fp32_bits(sram, x_base, row_x_elem_base + tile_offset + i);
             }
         }
 

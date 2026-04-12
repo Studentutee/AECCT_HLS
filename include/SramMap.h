@@ -115,6 +115,7 @@ enum PayloadClass : uint8_t {
   PAYLOAD_COMPAT_ALIAS = 5,
   PAYLOAD_RUNTIME_SCRATCH = 6,
   PAYLOAD_MIXED_PERSIST = 7,
+  PAYLOAD_FP16_TENSOR = 8,
   PAYLOAD_INVALID = 255
 };
 
@@ -185,8 +186,8 @@ struct SectionDesc {
 // ----------------------------
 // X_WORK (single physical working buffer)
 // ----------------------------
-// X is fp32 [N_NODES, D_MODEL] => WORDS_X_FP32
-static const uint32_t X_WORK_SLICE_WORDS = align_up_words(WORDS_X_FP32, ALIGN_WORDS);
+// X is live fp16 storage [N_NODES, D_MODEL] packed into legacy u32 words
+static const uint32_t X_WORK_SLICE_WORDS = align_up_words(WORDS_X_FP16_PACKED, ALIGN_WORDS);
 static const uint32_t BASE_X_WORK_W = 0;
 static const uint32_t SIZE_X_WORK_W = X_WORK_SLICE_WORDS;
 
@@ -203,10 +204,10 @@ static const uint32_t X_WORK_WORDS  = SIZE_X_WORK_W;
 static const uint32_t BASE_SCRATCH_W = BASE_X_WORK_W + SIZE_X_WORK_W;
 
 static const uint32_t BASE_SCR_K_W = align_up_words(BASE_SCRATCH_W, ALIGN_WORDS);
-static const uint32_t SIZE_SCR_K_W = X_WORK_SLICE_WORDS;
+static const uint32_t SIZE_SCR_K_W = align_up_words(WORDS_X_FP32, ALIGN_WORDS);
 
 static const uint32_t BASE_SCR_V_W = BASE_SCR_K_W + SIZE_SCR_K_W;
-static const uint32_t SIZE_SCR_V_W = X_WORK_SLICE_WORDS;
+static const uint32_t SIZE_SCR_V_W = align_up_words(WORDS_X_FP32, ALIGN_WORDS);
 
 static const uint32_t BASE_SCR_FINAL_SCALAR_W =
   align_up_words(BASE_SCR_V_W + SIZE_SCR_V_W, ALIGN_WORDS);
@@ -337,10 +338,10 @@ static_assert(FINAL_SCALAR_BUF_WORDS == SCR_FINAL_SCALAR_WORDS,
               "FINAL_SCALAR_BUF alias must match legacy SCR_FINAL_SCALAR words.");
 
 static constexpr SectionDesc kSectionTable[] = {
-  { SEC_X_WORK, SECTION_PHYSICAL, CLASS_X_WORK, ALIAS_X_WORK, PAYLOAD_FP32_TENSOR, 0u, 0u,
+  { SEC_X_WORK, SECTION_PHYSICAL, CLASS_X_WORK, ALIAS_X_WORK, PAYLOAD_FP16_TENSOR, 0u, 0u,
     BASE_X_WORK_W, SIZE_X_WORK_W, BASE_X_WORK_WORD16, SIZE_X_WORK_WORD16,
     ALIGN_WORDS, ALIGN_STORAGE_WORD16,
-    SIZE_X_WORK_W, SIZE_X_WORK_WORD16,
+    WORDS_X_FP16_PACKED, storage_words_fp16(ELEMS_X),
     SECTION_FLAG_READ_MEM_VISIBLE | SECTION_FLAG_COMPARE_CRITICAL },
   { SEC_SCR_K, SECTION_PHYSICAL, CLASS_SCRATCH, ALIAS_SCR_K, PAYLOAD_FP32_TENSOR, 0u, 0u,
     BASE_SCR_K_W, SIZE_SCR_K_W, BASE_SCR_K_WORD16, SIZE_SCR_K_WORD16,

@@ -59,6 +59,9 @@ constexpr uint32_t storage_words_from_legacy_u32_words(uint32_t words) { return 
 constexpr uint32_t legacy_u32_words_from_storage_words_ceil(uint32_t words) {
   return ceil_div_u32(words, 2u);
 }
+constexpr uint32_t legacy_u32_words_fp16_packed(uint32_t elems) {
+  return legacy_u32_words_from_storage_words_ceil(storage_words_fp16(elems));
+}
 constexpr uint32_t storage_beats_from_words(uint32_t words) { return ceil_div_u32(words, SRAM_WORDS_PER_BEAT); }
 constexpr uint32_t align_up_storage_words_to_beat(uint32_t words) { return align_up_u32(words, SRAM_WORDS_PER_BEAT); }
 
@@ -114,6 +117,8 @@ static const uint32_t D_LPE_TOKEN = 8;
 // X: [N_NODES, D_MODEL]
 static const uint32_t ELEMS_X = N_NODES * D_MODEL;
 static const uint32_t WORDS_X_FP32 = words_fp32(ELEMS_X);
+static const uint32_t WORDS_X_FP16_PACKED = legacy_u32_words_fp16_packed(ELEMS_X);
+static const uint32_t WORDS_X_FP16_ROW_PACKED = legacy_u32_words_fp16_packed(D_MODEL);
 
 // y: [CODE_N]
 static const uint32_t ELEMS_Y = CODE_N;
