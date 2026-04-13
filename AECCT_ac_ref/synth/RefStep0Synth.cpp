@@ -10,6 +10,8 @@
 namespace aecct_ref {
 namespace {
 
+typedef fp16_ref_t fp_t;
+
 static const int kTokens = ModelShapes::T_TOKENS;
 static const int kVars = ModelShapes::N_VARS;
 static const int kChecks = ModelShapes::T_TOKENS - ModelShapes::N_VARS;
@@ -23,26 +25,26 @@ static const int kClassTile = 16;
 static const int kFifoDepth = 2;
 static const int kXRegionWords = ModelShapes::X_WORK_BASE + ModelShapes::X_WORK_WORDS;
 
-static const fp32_ref_t kLnEps = fp32_ref_t(1.0e-5f);
-static const fp32_ref_t kInvDModel = fp32_ref_t(1.0f / static_cast<float>(kDModel));
-static const fp32_ref_t kInvSqrtDHead = (kDHead == 1) ? fp32_ref_t(1.0f) : (kDHead == 2) ? fp32_ref_t(0.70710678f) : (kDHead == 4) ? fp32_ref_t(0.5f) : (kDHead == 8) ? fp32_ref_t(0.35355339f) : (kDHead == 16) ? fp32_ref_t(0.25f) : fp32_ref_t(1.0f);
-static const fp32_ref_t kNegLarge = fp32_ref_t(-1.0e30f);
-static const fp32_ref_t kActQMin = fp32_ref_t(-127.0f);
-static const fp32_ref_t kActQMax = fp32_ref_t(127.0f);
+static const fp16_ref_t kLnEps = fp16_ref_t(1.0e-5f);
+static const fp16_ref_t kInvDModel = fp16_ref_t(1.0f / static_cast<float>(kDModel));
+static const fp_t kInvSqrtDHead = (kDHead == 1) ? fp_t(1.0f) : (kDHead == 2) ? fp_t(0.70710678f) : (kDHead == 4) ? fp_t(0.5f) : (kDHead == 8) ? fp_t(0.35355339f) : (kDHead == 16) ? fp_t(0.25f) : fp_t(1.0f);
+static const fp_t kNegLarge = fp_t(-1.0e30f);
+static const fp_t kActQMin = fp_t(-127.0f);
+static const fp_t kActQMax = fp_t(127.0f);
 
-static const fp32_ref_t kInvScaleL0Q = fp32_ref_t(0.0071290909f);
-static const fp32_ref_t kInvScaleL0K = fp32_ref_t(0.0077177854f);
-static const fp32_ref_t kInvScaleL0V = fp32_ref_t(0.0030414062f);
-static const fp32_ref_t kInvScaleL0O = fp32_ref_t(0.00089474069f);
-static const fp32_ref_t kInvScaleL0Ff1 = fp32_ref_t(0.0026840530f);
-static const fp32_ref_t kInvScaleL0Ff2 = fp32_ref_t(0.0036128608f);
+static const fp_t kInvScaleL0Q = fp_t(0.0071290909f);
+static const fp_t kInvScaleL0K = fp_t(0.0077177854f);
+static const fp_t kInvScaleL0V = fp_t(0.0030414062f);
+static const fp_t kInvScaleL0O = fp_t(0.00089474069f);
+static const fp_t kInvScaleL0Ff1 = fp_t(0.0026840530f);
+static const fp_t kInvScaleL0Ff2 = fp_t(0.0036128608f);
 
-static const fp32_ref_t kInvScaleL1Q = fp32_ref_t(0.0043993234f);
-static const fp32_ref_t kInvScaleL1K = fp32_ref_t(0.0071688984f);
-static const fp32_ref_t kInvScaleL1V = fp32_ref_t(0.0049903886f);
-static const fp32_ref_t kInvScaleL1O = fp32_ref_t(0.0043067653f);
-static const fp32_ref_t kInvScaleL1Ff1 = fp32_ref_t(0.0024541419f);
-static const fp32_ref_t kInvScaleL1Ff2 = fp32_ref_t(0.0055658957f);
+static const fp_t kInvScaleL1Q = fp_t(0.0043993234f);
+static const fp_t kInvScaleL1K = fp_t(0.0071688984f);
+static const fp_t kInvScaleL1V = fp_t(0.0049903886f);
+static const fp_t kInvScaleL1O = fp_t(0.0043067653f);
+static const fp_t kInvScaleL1Ff1 = fp_t(0.0024541419f);
+static const fp_t kInvScaleL1Ff2 = fp_t(0.0055658957f);
 
 static ac_int<2, false> g_outmode_reg = ac_int<2, false>(0);
 static RefStep0RunReport g_last_report;
@@ -64,54 +66,66 @@ struct LayerConfig {
   const double *ln0_b;
   const double *ln1_w;
   const double *ln1_b;
-  fp32_ref_t s_x_in;
-  fp32_ref_t s_x_o;
-  fp32_ref_t s_x_ff1;
-  fp32_ref_t s_x_ff2;
-  fp32_ref_t inv_q;
-  fp32_ref_t inv_k;
-  fp32_ref_t inv_v;
-  fp32_ref_t inv_o;
-  fp32_ref_t inv_ff1;
-  fp32_ref_t inv_ff2;
+  fp_t s_x_in;
+  fp_t s_x_o;
+  fp_t s_x_ff1;
+  fp_t s_x_ff2;
+  fp_t inv_q;
+  fp_t inv_k;
+  fp_t inv_v;
+  fp_t inv_o;
+  fp_t inv_ff1;
+  fp_t inv_ff2;
 };
 
-static inline fp32_ref_t fp32_abs(fp32_ref_t x) {
-  return (x < fp32_ref_t(0.0f)) ? (fp32_ref_t(0.0f) - x) : x;
+static inline fp_t fp32_abs(fp_t x) {
+  return (x < fp_t(0.0f)) ? (fp_t(0.0f) - x) : x;
 }
 
-static inline fp32_ref_t sign_fp32(fp32_ref_t x) {
-  if (x > fp32_ref_t(0.0f)) return fp32_ref_t(1.0f);
-  if (x < fp32_ref_t(0.0f)) return fp32_ref_t(-1.0f);
-  return fp32_ref_t(0.0f);
+static inline fp_t sign_fp32(fp_t x) {
+  if (x > fp_t(0.0f)) return fp_t(1.0f);
+  if (x < fp_t(0.0f)) return fp_t(-1.0f);
+  return fp_t(0.0f);
 }
 
-static inline fp32_ref_t fp32_round(fp32_ref_t x) {
+static inline fp_t fp32_round(fp_t x) {
   return x.round();
 }
 
-static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
-  fp32_ref_t q = fp32_round(x * s_x);
+static inline fp_t quantize_int8_symmetric(fp_t x, fp_t s_x) {
+  fp_t q = fp32_round(x * s_x);
   if (q > kActQMax) q = kActQMax;
   if (q < kActQMin) q = kActQMin;
   return q;
 }
 
-static inline fp32_ref_t fp32_relu(fp32_ref_t x) {
-  return (x > fp32_ref_t(0.0f)) ? x : fp32_ref_t(0.0f);
+static inline fp_t fp32_relu(fp_t x) {
+  return (x > fp_t(0.0f)) ? x : fp_t(0.0f);
 }
 
-static inline u32_word_t bits_from_fp32(const fp32_ref_t &x) {
-  ac_int<32, true> raw = x.data_ac_int();
-  return static_cast<u32_word_t>(raw);
+static inline u16_word_t bits_from_fp16(const fp_t &x) {
+  ac_int<16, true> raw = x.data_ac_int();
+  return static_cast<u16_word_t>(raw);
 }
 
-static inline uint32_t output_words_for_mode(uint32_t mode) {
+static inline fp_t fp16_from_bits(u16_word_t bits) {
+  ac_int<16, true> raw = static_cast<ac_int<16, true> >(bits);
+  return fp_t::set_data(raw);
+}
+
+static inline void emit_u32_as_u16_pair(u32_word_t word, ac_channel<u16_word_t> &data_out_u16) {
+  const u16_word_t lo = static_cast<u16_word_t>(word.slc<16>(0));
+  const u16_word_t hi = static_cast<u16_word_t>(word.slc<16>(16));
+  data_out_u16.write(lo);
+  data_out_u16.write(hi);
+}
+
+static inline uint32_t output_words_for_mode_u16(uint32_t mode) {
   if (mode == 1u) {
     return static_cast<uint32_t>(ModelShapes::OUT_DIM);
   }
   if (mode == 0u) {
-    return static_cast<uint32_t>(ModelShapes::XPRED_WORDS);
+    return static_cast<uint32_t>(ModelShapes::XPRED_WORDS * 2);
   }
   return 0u;
 }
@@ -208,10 +222,10 @@ static inline bool validate_var_to_class_map(RefStep0RunReport &r) {
 }
 
 static inline void load_x_token(
-  const fp32_ref_t x_region[kXRegionWords],
+  const fp_t x_region[kXRegionWords],
   int page_base,
   int token_idx,
-  fp32_ref_t x_row[kDModel]
+  fp_t x_row[kDModel]
 ) {
   const int row_base = page_base + token_idx * kDModel;
   for (int d = 0; d < kDModel; ++d) {
@@ -220,10 +234,10 @@ static inline void load_x_token(
 }
 
 static inline void store_x_token(
-  fp32_ref_t x_region[kXRegionWords],
+  fp_t x_region[kXRegionWords],
   int page_base,
   int token_idx,
-  const fp32_ref_t x_row[kDModel]
+  const fp_t x_row[kDModel]
 ) {
   const int row_base = page_base + token_idx * kDModel;
   for (int d = 0; d < kDModel; ++d) {
@@ -234,18 +248,18 @@ static inline void store_x_token(
 template <int OUT_DIM, int IN_DIM>
 static inline void prefetch_quant_weight_tile(
   const double w[OUT_DIM * IN_DIM],
-  fp32_ref_t inv_scale,
+  fp_t inv_scale,
   int out_base,
-  fp32_ref_t wbuf[kOutTile][IN_DIM]
+  fp_t wbuf[kOutTile][IN_DIM]
 ) {
   for (int tile_o = 0; tile_o < kOutTile; ++tile_o) {
     const int out_idx = out_base + tile_o;
     for (int in_idx = 0; in_idx < IN_DIM; ++in_idx) {
       if (out_idx < OUT_DIM) {
         const float wf = static_cast<float>(w[out_idx * IN_DIM + in_idx]);
-        wbuf[tile_o][in_idx] = fp32_ref_t(wf) * inv_scale;
+        wbuf[tile_o][in_idx] = fp_t(wf) * inv_scale;
       } else {
-        wbuf[tile_o][in_idx] = fp32_ref_t(0.0f);
+        wbuf[tile_o][in_idx] = fp_t(0.0f);
       }
     }
   }
@@ -255,15 +269,15 @@ template <int OUT_DIM, int IN_DIM>
 static inline void prefetch_weight_tile(
   const double w[OUT_DIM * IN_DIM],
   int out_base,
-  fp32_ref_t wbuf[kOutTile][IN_DIM]
+  fp_t wbuf[kOutTile][IN_DIM]
 ) {
   for (int tile_o = 0; tile_o < kOutTile; ++tile_o) {
     const int out_idx = out_base + tile_o;
     for (int in_idx = 0; in_idx < IN_DIM; ++in_idx) {
       if (out_idx < OUT_DIM) {
-        wbuf[tile_o][in_idx] = fp32_ref_t(static_cast<float>(w[out_idx * IN_DIM + in_idx]));
+        wbuf[tile_o][in_idx] = fp_t(static_cast<float>(w[out_idx * IN_DIM + in_idx]));
       } else {
-        wbuf[tile_o][in_idx] = fp32_ref_t(0.0f);
+        wbuf[tile_o][in_idx] = fp_t(0.0f);
       }
     }
   }
@@ -271,20 +285,20 @@ static inline void prefetch_weight_tile(
 
 template <int OUT_DIM, int IN_DIM>
 static inline void quant_linear_vec_tiled(
-  const fp32_ref_t x[IN_DIM],
+  const fp_t x[IN_DIM],
   const double w[OUT_DIM * IN_DIM],
   const double b[OUT_DIM],
-  fp32_ref_t s_x,
-  fp32_ref_t inv_scale,
-  fp32_ref_t y[OUT_DIM]
+  fp_t s_x,
+  fp_t inv_scale,
+  fp_t y[OUT_DIM]
 ) {
-  fp32_ref_t qx[IN_DIM];
+  fp_t qx[IN_DIM];
   for (int i = 0; i < IN_DIM; ++i) {
     qx[i] = quantize_int8_symmetric(x[i], s_x);
   }
 
-  fp32_ref_t wbuf_ping[kOutTile][IN_DIM];
-  fp32_ref_t wbuf_pong[kOutTile][IN_DIM];
+  fp_t wbuf_ping[kOutTile][IN_DIM];
+  fp_t wbuf_pong[kOutTile][IN_DIM];
 
   int out_base = 0;
   bool use_ping = true;
@@ -300,13 +314,13 @@ static inline void quant_linear_vec_tiled(
       }
     }
 
-    fp32_ref_t (*cur)[IN_DIM] = use_ping ? wbuf_ping : wbuf_pong;
+    fp_t (*cur)[IN_DIM] = use_ping ? wbuf_ping : wbuf_pong;
     for (int tile_o = 0; tile_o < kOutTile; ++tile_o) {
       const int out_idx = out_base + tile_o;
       if (out_idx >= OUT_DIM) {
         continue;
       }
-      fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[out_idx]));
+      fp_t acc = fp_t(static_cast<float>(b[out_idx]));
       for (int in_idx = 0; in_idx < IN_DIM; ++in_idx) {
         acc += qx[in_idx] * cur[tile_o][in_idx];
       }
@@ -320,13 +334,13 @@ static inline void quant_linear_vec_tiled(
 
 template <int OUT_DIM, int IN_DIM>
 static inline void dense_vec_tiled(
-  const fp32_ref_t x[IN_DIM],
+  const fp_t x[IN_DIM],
   const double w[OUT_DIM * IN_DIM],
   const double b[OUT_DIM],
-  fp32_ref_t y[OUT_DIM]
+  fp_t y[OUT_DIM]
 ) {
-  fp32_ref_t wbuf_ping[kOutTile][IN_DIM];
-  fp32_ref_t wbuf_pong[kOutTile][IN_DIM];
+  fp_t wbuf_ping[kOutTile][IN_DIM];
+  fp_t wbuf_pong[kOutTile][IN_DIM];
 
   int out_base = 0;
   bool use_ping = true;
@@ -342,13 +356,13 @@ static inline void dense_vec_tiled(
       }
     }
 
-    fp32_ref_t (*cur)[IN_DIM] = use_ping ? wbuf_ping : wbuf_pong;
+    fp_t (*cur)[IN_DIM] = use_ping ? wbuf_ping : wbuf_pong;
     for (int tile_o = 0; tile_o < kOutTile; ++tile_o) {
       const int out_idx = out_base + tile_o;
       if (out_idx >= OUT_DIM) {
         continue;
       }
-      fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[out_idx]));
+      fp_t acc = fp_t(static_cast<float>(b[out_idx]));
       for (int in_idx = 0; in_idx < IN_DIM; ++in_idx) {
         acc += x[in_idx] * cur[tile_o][in_idx];
       }
@@ -360,13 +374,13 @@ static inline void dense_vec_tiled(
   }
 }
 
-static inline fp32_ref_t dot_head(
-  const fp32_ref_t q_vec[kDModel],
-  const fp32_ref_t k_vec[kDModel],
+static inline fp_t dot_head(
+  const fp_t q_vec[kDModel],
+  const fp_t k_vec[kDModel],
   int head_idx
 ) {
   const int base = head_idx * kDHead;
-  fp32_ref_t dot = fp32_ref_t(0.0f);
+  fp_t dot = fp_t(0.0f);
   for (int dh = 0; dh < kDHead; ++dh) {
     dot += q_vec[base + dh] * k_vec[base + dh];
   }
@@ -376,15 +390,15 @@ static inline fp32_ref_t dot_head(
 // Online single-pass softmax update for one head state.
 static inline void online_softmax_update(
   bool &is_init,
-  fp32_ref_t score,
-  const fp32_ref_t v_head[kDHead],
-  fp32_ref_t &max_score,
-  fp32_ref_t &sumexp,
-  fp32_ref_t acc_vec[kDHead]
+  fp_t score,
+  const fp_t v_head[kDHead],
+  fp_t &max_score,
+  fp_t &sumexp,
+  fp_t acc_vec[kDHead]
 ) {
   if (!is_init) {
     max_score = score;
-    sumexp = fp32_ref_t(1.0f);
+    sumexp = fp_t(1.0f);
     for (int dh = 0; dh < kDHead; ++dh) {
       acc_vec[dh] = v_head[dh];
     }
@@ -393,8 +407,8 @@ static inline void online_softmax_update(
   }
 
   if (score > max_score) {
-    const fp32_ref_t rescale = ref_softmax_exp_lut(max_score - score);
-    sumexp = (sumexp * rescale) + fp32_ref_t(1.0f);
+    const fp_t rescale = ref_softmax_exp_lut(max_score - score);
+    sumexp = (sumexp * rescale) + fp_t(1.0f);
     for (int dh = 0; dh < kDHead; ++dh) {
       acc_vec[dh] = (acc_vec[dh] * rescale) + v_head[dh];
     }
@@ -402,7 +416,7 @@ static inline void online_softmax_update(
     return;
   }
 
-  const fp32_ref_t w = ref_softmax_exp_lut(score - max_score);
+  const fp_t w = ref_softmax_exp_lut(score - max_score);
   sumexp += w;
   for (int dh = 0; dh < kDHead; ++dh) {
     acc_vec[dh] += w * v_head[dh];
@@ -410,29 +424,29 @@ static inline void online_softmax_update(
 }
 
 static inline void layernorm_token(
-  const fp32_ref_t x[kDModel],
+  const fp_t x[kDModel],
   const double gamma[kDModel],
   const double beta[kDModel],
-  fp32_ref_t y[kDModel]
+  fp_t y[kDModel]
 ) {
-  fp32_ref_t sum = fp32_ref_t(0.0f);
+  fp_t sum = fp_t(0.0f);
+  fp_t sumsq = fp_t(0.0f);
   for (int i = 0; i < kDModel; ++i) {
     sum += x[i];
+    sumsq += x[i] * x[i];
   }
-  const fp32_ref_t mean = sum * kInvDModel;
-
-  fp32_ref_t var_acc = fp32_ref_t(0.0f);
-  for (int i = 0; i < kDModel; ++i) {
-    const fp32_ref_t d = x[i] - mean;
-    var_acc += d * d;
+  const fp_t mean = sum * kInvDModel;
+  fp_t ex2 = sumsq * kInvDModel;
+  fp_t var = ex2 - (mean * mean);
+  if (var < fp_t(0.0f)) {
+    var = fp_t(0.0f);
   }
-  const fp32_ref_t var = var_acc * kInvDModel;
-  const fp32_ref_t inv_std = ref_inv_sqrt_approx(var + kLnEps);
+  const fp_t inv_std = ref_inv_sqrt_approx(var + kLnEps);
 
   for (int i = 0; i < kDModel; ++i) {
-    const fp32_ref_t xn = (x[i] - mean) * inv_std;
-    const fp32_ref_t g = fp32_ref_t(static_cast<float>(gamma[i]));
-    const fp32_ref_t b = fp32_ref_t(static_cast<float>(beta[i]));
+    const fp_t xn = (x[i] - mean) * inv_std;
+    const fp_t g = fp_t(static_cast<float>(gamma[i]));
+    const fp_t b = fp_t(static_cast<float>(beta[i]));
     y[i] = xn * g + b;
   }
 }
@@ -488,10 +502,10 @@ static inline bool get_layer_config(int layer_idx, LayerConfig &cfg) {
     cfg.ln0_b = w_decoder_layers_0_sublayer_0_norm_bias;
     cfg.ln1_w = w_decoder_layers_0_sublayer_1_norm_weight;
     cfg.ln1_b = w_decoder_layers_0_sublayer_1_norm_bias;
-    cfg.s_x_in = fp32_ref_t(static_cast<float>(l0_in_s_x));
-    cfg.s_x_o = fp32_ref_t(static_cast<float>(l0_o_s_x));
-    cfg.s_x_ff1 = fp32_ref_t(static_cast<float>(l0_ff1_s_x));
-    cfg.s_x_ff2 = fp32_ref_t(static_cast<float>(l0_ff2_s_x));
+    cfg.s_x_in = fp_t(static_cast<float>(l0_in_s_x));
+    cfg.s_x_o = fp_t(static_cast<float>(l0_o_s_x));
+    cfg.s_x_ff1 = fp_t(static_cast<float>(l0_ff1_s_x));
+    cfg.s_x_ff2 = fp_t(static_cast<float>(l0_ff2_s_x));
     cfg.inv_q = kInvScaleL0Q;
     cfg.inv_k = kInvScaleL0K;
     cfg.inv_v = kInvScaleL0V;
@@ -517,10 +531,10 @@ static inline bool get_layer_config(int layer_idx, LayerConfig &cfg) {
     cfg.ln0_b = w_decoder_layers_1_sublayer_0_norm_bias;
     cfg.ln1_w = w_decoder_layers_1_sublayer_1_norm_weight;
     cfg.ln1_b = w_decoder_layers_1_sublayer_1_norm_bias;
-    cfg.s_x_in = fp32_ref_t(static_cast<float>(l1_in_s_x));
-    cfg.s_x_o = fp32_ref_t(static_cast<float>(l1_o_s_x));
-    cfg.s_x_ff1 = fp32_ref_t(static_cast<float>(l1_ff1_s_x));
-    cfg.s_x_ff2 = fp32_ref_t(static_cast<float>(l1_ff2_s_x));
+    cfg.s_x_in = fp_t(static_cast<float>(l1_in_s_x));
+    cfg.s_x_o = fp_t(static_cast<float>(l1_o_s_x));
+    cfg.s_x_ff1 = fp_t(static_cast<float>(l1_ff1_s_x));
+    cfg.s_x_ff2 = fp_t(static_cast<float>(l1_ff2_s_x));
     cfg.inv_q = kInvScaleL1Q;
     cfg.inv_k = kInvScaleL1K;
     cfg.inv_v = kInvScaleL1V;
@@ -534,17 +548,17 @@ static inline bool get_layer_config(int layer_idx, LayerConfig &cfg) {
 
 static void run_layer_writeback(
   const LayerConfig &cfg,
-  fp32_ref_t x_region[kXRegionWords],
+  fp_t x_region[kXRegionWords],
   int x_work_base,
   const bool one_ring[kTokens][kTokens],
   const bool second_ring[kTokens][kTokens],
-  fp32_ref_t scr_k[kTokens][kDModel],
-  fp32_ref_t scr_v[kTokens][kDModel],
+  fp_t scr_k[kTokens][kDModel],
+  fp_t scr_v[kTokens][kDModel],
   bool &scr_k_live,
   bool &scr_v_live
 ) {
   for (int n = 0; n < kTokens; ++n) {
-    fp32_ref_t x_row[kDModel];
+    fp_t x_row[kDModel];
     load_x_token(x_region, x_work_base, n, x_row);
 
     quant_linear_vec_tiled<kDModel, kDModel>(
@@ -567,20 +581,20 @@ static void run_layer_writeback(
   scr_k_live = true;
   scr_v_live = true;
 
-  fp32_ref_t attn_fifo[kFifoDepth][kDModel];
-  fp32_ref_t ffn1_fifo[kFifoDepth][kFfnDim];
+  fp_t attn_fifo[kFifoDepth][kDModel];
+  fp_t ffn1_fifo[kFifoDepth][kFfnDim];
 
   for (int q_idx = 0; q_idx < kTokens; ++q_idx) {
     const int slot = q_idx & (kFifoDepth - 1);
 
-    fp32_ref_t x_q[kDModel];
-    fp32_ref_t q_vec[kDModel];
-    fp32_ref_t post_concat[kDModel];
-    fp32_ref_t ln0_in[kDModel];
-    fp32_ref_t ln0_out[kDModel];
-    fp32_ref_t ffn2_out[kDModel];
-    fp32_ref_t ln1_in[kDModel];
-    fp32_ref_t ln1_out[kDModel];
+    fp_t x_q[kDModel];
+    fp_t q_vec[kDModel];
+    fp_t post_concat[kDModel];
+    fp_t ln0_in[kDModel];
+    fp_t ln0_out[kDModel];
+    fp_t ffn2_out[kDModel];
+    fp_t ln1_in[kDModel];
+    fp_t ln1_out[kDModel];
 
     load_x_token(x_region, x_work_base, q_idx, x_q);
 
@@ -598,12 +612,12 @@ static void run_layer_writeback(
       const int base = h * kDHead;
       bool has_valid = false;
       bool online_init = false;
-      fp32_ref_t online_max = kNegLarge;
-      fp32_ref_t online_sumexp = fp32_ref_t(0.0f);
+      fp_t online_max = kNegLarge;
+      fp_t online_sumexp = fp_t(0.0f);
 
-      fp32_ref_t acc_vec[kDHead];
+      fp_t acc_vec[kDHead];
       for (int dh = 0; dh < kDHead; ++dh) {
-        acc_vec[dh] = fp32_ref_t(0.0f);
+        acc_vec[dh] = fp_t(0.0f);
       }
 
       for (int k_idx = 0; k_idx < kTokens; ++k_idx) {
@@ -611,7 +625,7 @@ static void run_layer_writeback(
           continue;
         }
         has_valid = true;
-        const fp32_ref_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
+        const fp_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
         online_softmax_update(
           online_init,
           score,
@@ -624,12 +638,12 @@ static void run_layer_writeback(
 
       if (!has_valid) {
         for (int dh = 0; dh < kDHead; ++dh) {
-          post_concat[base + dh] = fp32_ref_t(0.0f);
+          post_concat[base + dh] = fp_t(0.0f);
         }
         continue;
       }
 
-      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+      const fp_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
       for (int dh = 0; dh < kDHead; ++dh) {
         post_concat[base + dh] = acc_vec[dh] * inv_sumexp;
       }
@@ -684,18 +698,18 @@ static void run_layer_writeback(
 
 static void run_final_layer_pass_a(
   const LayerConfig &cfg,
-  fp32_ref_t x_region[kXRegionWords],
+  fp_t x_region[kXRegionWords],
   int x_work_base,
   const bool one_ring[kTokens][kTokens],
   const bool second_ring[kTokens][kTokens],
-  fp32_ref_t scr_k[kTokens][kDModel],
-  fp32_ref_t scr_v[kTokens][kDModel],
-  fp32_ref_t final_scalar_buf[ModelShapes::SCR_FINAL_SCALAR_WORDS],
+  fp_t scr_k[kTokens][kDModel],
+  fp_t scr_v[kTokens][kDModel],
+  fp_t final_scalar_buf[ModelShapes::SCR_FINAL_SCALAR_WORDS],
   bool &scr_k_live,
   bool &scr_v_live
 ) {
   for (int n = 0; n < kTokens; ++n) {
-    fp32_ref_t x_row[kDModel];
+    fp_t x_row[kDModel];
     load_x_token(x_region, x_work_base, n, x_row);
 
     quant_linear_vec_tiled<kDModel, kDModel>(
@@ -718,22 +732,22 @@ static void run_final_layer_pass_a(
   scr_k_live = true;
   scr_v_live = true;
 
-  fp32_ref_t attn_fifo[kFifoDepth][kDModel];
-  fp32_ref_t ffn1_fifo[kFifoDepth][kFfnDim];
+  fp_t attn_fifo[kFifoDepth][kDModel];
+  fp_t ffn1_fifo[kFifoDepth][kFfnDim];
 
   for (int q_idx = 0; q_idx < kTokens; ++q_idx) {
     const int slot = q_idx & (kFifoDepth - 1);
 
-    fp32_ref_t x_q[kDModel];
-    fp32_ref_t q_vec[kDModel];
-    fp32_ref_t post_concat[kDModel];
-    fp32_ref_t ln0_in[kDModel];
-    fp32_ref_t ln0_out[kDModel];
-    fp32_ref_t ffn2_out[kDModel];
-    fp32_ref_t ln1_in[kDModel];
-    fp32_ref_t ln1_out[kDModel];
-    fp32_ref_t token_norm[kDModel];
-    fp32_ref_t token_logit[1];
+    fp_t x_q[kDModel];
+    fp_t q_vec[kDModel];
+    fp_t post_concat[kDModel];
+    fp_t ln0_in[kDModel];
+    fp_t ln0_out[kDModel];
+    fp_t ffn2_out[kDModel];
+    fp_t ln1_in[kDModel];
+    fp_t ln1_out[kDModel];
+    fp_t token_norm[kDModel];
+    fp_t token_logit[1];
 
     load_x_token(x_region, x_work_base, q_idx, x_q);
 
@@ -751,12 +765,12 @@ static void run_final_layer_pass_a(
       const int base = h * kDHead;
       bool has_valid = false;
       bool online_init = false;
-      fp32_ref_t online_max = kNegLarge;
-      fp32_ref_t online_sumexp = fp32_ref_t(0.0f);
+      fp_t online_max = kNegLarge;
+      fp_t online_sumexp = fp_t(0.0f);
 
-      fp32_ref_t acc_vec[kDHead];
+      fp_t acc_vec[kDHead];
       for (int dh = 0; dh < kDHead; ++dh) {
-        acc_vec[dh] = fp32_ref_t(0.0f);
+        acc_vec[dh] = fp_t(0.0f);
       }
 
       for (int k_idx = 0; k_idx < kTokens; ++k_idx) {
@@ -764,7 +778,7 @@ static void run_final_layer_pass_a(
           continue;
         }
         has_valid = true;
-        const fp32_ref_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
+        const fp_t score = dot_head(q_vec, scr_k[k_idx], h) * kInvSqrtDHead;
         online_softmax_update(
           online_init,
           score,
@@ -777,12 +791,12 @@ static void run_final_layer_pass_a(
 
       if (!has_valid) {
         for (int dh = 0; dh < kDHead; ++dh) {
-          post_concat[base + dh] = fp32_ref_t(0.0f);
+          post_concat[base + dh] = fp_t(0.0f);
         }
         continue;
       }
 
-      const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+      const fp_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
       for (int dh = 0; dh < kDHead; ++dh) {
         post_concat[base + dh] = acc_vec[dh] * inv_sumexp;
       }
@@ -863,10 +877,10 @@ static inline void xpred_set_bit(
 }
 
 static void run_pass_b_and_emit(
-  const fp32_ref_t final_scalar_buf[ModelShapes::SCR_FINAL_SCALAR_WORDS],
-  const fp32_ref_t y_var[kVars],
+  const fp_t final_scalar_buf[ModelShapes::SCR_FINAL_SCALAR_WORDS],
+  const fp_t y_var[kVars],
   uint32_t outmode,
-  ac_channel<u32_word_t> &data_out,
+  ac_channel<u16_word_t> &data_out_u16,
   RefStep0RunReport &report
 ) {
   report.pass_b_executed = true;
@@ -877,25 +891,25 @@ static void run_pass_b_and_emit(
   }
 
   for (int class_base = 0; class_base < ModelShapes::OUT_DIM; class_base += kClassTile) {
-    fp32_ref_t acc_tile[kClassTile];
+    fp_t acc_tile[kClassTile];
 
     for (int tc = 0; tc < kClassTile; ++tc) {
       const int class_idx = class_base + tc;
       if (class_idx < ModelShapes::OUT_DIM) {
-        acc_tile[tc] = fp32_ref_t(static_cast<float>(w_out_fc_bias[class_idx]));
+        acc_tile[tc] = fp_t(static_cast<float>(w_out_fc_bias[class_idx]));
       } else {
-        acc_tile[tc] = fp32_ref_t(0.0f);
+        acc_tile[tc] = fp_t(0.0f);
       }
     }
 
     for (int t = 0; t < ModelShapes::T_TOKENS; ++t) {
-      const fp32_ref_t st = final_scalar_buf[t];
+      const fp_t st = final_scalar_buf[t];
       for (int tc = 0; tc < kClassTile; ++tc) {
         const int class_idx = class_base + tc;
         if (class_idx >= ModelShapes::OUT_DIM) {
           continue;
         }
-        const fp32_ref_t w_ct = fp32_ref_t(static_cast<float>(w_out_fc_weight[class_idx * ModelShapes::T_TOKENS + t]));
+        const fp_t w_ct = fp_t(static_cast<float>(w_out_fc_weight[class_idx * ModelShapes::T_TOKENS + t]));
         acc_tile[tc] += w_ct * st;
       }
     }
@@ -906,9 +920,9 @@ static void run_pass_b_and_emit(
         continue;
       }
 
-      const fp32_ref_t logit = acc_tile[tc];
+      const fp_t logit = acc_tile[tc];
       if (outmode == 1u) {
-        data_out.write(bits_from_fp32(logit));
+        data_out_u16.write(bits_from_fp16(logit));
         report.output_words += 1u;
         continue;
       }
@@ -918,8 +932,8 @@ static void run_pass_b_and_emit(
           if (ModelShapes::map_var_to_class(var_idx) != class_idx) {
             continue;
           }
-          const fp32_ref_t decision = logit * sign_fp32(y_var[var_idx]);
-          const bool bit = (decision < fp32_ref_t(0.0f));
+          const fp_t decision = logit * sign_fp32(y_var[var_idx]);
+          const bool bit = (decision < fp_t(0.0f));
           xpred_set_bit(xpred_word_buf, var_idx, bit);
         }
       }
@@ -928,8 +942,8 @@ static void run_pass_b_and_emit(
 
   if (outmode == 0u) {
     for (int w = 0; w < ModelShapes::XPRED_WORDS; ++w) {
-      data_out.write(xpred_word_buf[w]);
-      report.output_words += 1u;
+      emit_u32_as_u16_pair(xpred_word_buf[w], data_out_u16);
+      report.output_words += 2u;
     }
   }
 }
@@ -949,21 +963,21 @@ const RefStep0RunReport &ref_step0_get_last_report() {
   return g_last_report;
 }
 
-void ref_step0_synth(
-  ac_channel<fp32_ref_t> &in_y_ch,
-  ac_channel<u32_word_t> &data_out
+void ref_step0_synth_core(
+  ac_channel<fp_t> &in_y_ch,
+  ac_channel<u16_word_t> &data_out_u16
 ) {
   RefStep0RunReport report;
   clear_report(report);
 
   const uint32_t outmode = static_cast<uint32_t>(g_outmode_reg.to_uint());
 
-  fp32_ref_t y_var[kVars];
+  fp_t y_var[kVars];
   int y_hard[kVars];
   for (int i = 0; i < kVars; ++i) {
-    const fp32_ref_t y = in_y_ch.read();
+    const fp_t y = in_y_ch.read();
     y_var[i] = y;
-    y_hard[i] = (y < fp32_ref_t(0.0f)) ? 1 : 0;
+    y_hard[i] = (y < fp_t(0.0f)) ? 1 : 0;
   }
 
   bool one_ring[kTokens][kTokens];
@@ -991,18 +1005,18 @@ void ref_step0_synth(
     return;
   }
 
-  static fp32_ref_t x_region[kXRegionWords];
-  static fp32_ref_t scr_k[kTokens][kDModel];
-  static fp32_ref_t scr_v[kTokens][kDModel];
-  static fp32_ref_t final_scalar_buf[ModelShapes::SCR_FINAL_SCALAR_WORDS];
+  static fp_t x_region[kXRegionWords];
+  static fp_t scr_k[kTokens][kDModel];
+  static fp_t scr_v[kTokens][kDModel];
+  static fp_t final_scalar_buf[ModelShapes::SCR_FINAL_SCALAR_WORDS];
 
   for (int i = 0; i < ModelShapes::SCR_FINAL_SCALAR_WORDS; ++i) {
-    final_scalar_buf[i] = fp32_ref_t(0.0f);
+    final_scalar_buf[i] = fp_t(0.0f);
   }
 
   const int x_work_base = ModelShapes::X_WORK_BASE;
 
-  fp32_ref_t node_feature[kTokens];
+  fp_t node_feature[kTokens];
   for (int i = 0; i < kVars; ++i) {
     node_feature[i] = fp32_abs(y_var[i]);
   }
@@ -1013,19 +1027,19 @@ void ref_step0_synth(
         parity ^= y_hard[v];
       }
     }
-    node_feature[kVars + c] = (parity == 0) ? fp32_ref_t(1.0f) : fp32_ref_t(-1.0f);
+    node_feature[kVars + c] = (parity == 0) ? fp_t(1.0f) : fp_t(-1.0f);
   }
 
   for (int t = 0; t < kTokens; ++t) {
-    fp32_ref_t x_row[kDModel];
+    fp_t x_row[kDModel];
     for (int d = 0; d < kDModel; ++d) {
-      x_row[d] = fp32_ref_t(0.0f);
+      x_row[d] = fp_t(0.0f);
     }
     for (int k = 0; k < src_embed_dim; ++k) {
-      x_row[k] = node_feature[t] * fp32_ref_t(static_cast<float>(w_src_embed[t * src_embed_dim + k]));
+      x_row[k] = node_feature[t] * fp_t(static_cast<float>(w_src_embed[t * src_embed_dim + k]));
     }
     for (int k = 0; k < lpe_token_dim; ++k) {
-      x_row[src_embed_dim + k] = fp32_ref_t(static_cast<float>(w_lpe_token[t * lpe_token_dim + k]));
+      x_row[src_embed_dim + k] = fp_t(static_cast<float>(w_lpe_token[t * lpe_token_dim + k]));
     }
     store_x_token(x_region, x_work_base, t, x_row);
   }
@@ -1068,8 +1082,8 @@ void ref_step0_synth(
       );
 
       for (int t = 0; t < kTokens; ++t) {
-        fp32_ref_t in_row[kDModel];
-        fp32_ref_t out_row[kDModel];
+        fp_t in_row[kDModel];
+        fp_t out_row[kDModel];
         load_x_token(x_region, x_work_base, t, in_row);
         layernorm_token(in_row, w_decoder_norm2_weight, w_decoder_norm2_bias, out_row);
         store_x_token(x_region, x_work_base, t, out_row);
@@ -1109,9 +1123,9 @@ void ref_step0_synth(
     return;
   }
 
-  run_pass_b_and_emit(final_scalar_buf, y_var, outmode, data_out, report);
+  run_pass_b_and_emit(final_scalar_buf, y_var, outmode, data_out_u16, report);
 
-  const uint32_t expected_words = output_words_for_mode(outmode);
+  const uint32_t expected_words = output_words_for_mode_u16(outmode);
   if (report.output_words != expected_words) {
     set_report_error(report, REF_STEP0_ERR_UNSUPPORTED_LAYER, REF_STEP0_MSG_UNSUPPORTED_LAYER);
   }
@@ -1123,5 +1137,28 @@ void ref_step0_synth(
   g_last_report = report;
 }
 
-} // namespace aecct_ref
 
+void ref_step0_synth_io8(
+  ac_channel<io8_word_t> &in_y_bytes,
+  ac_channel<io8_word_t> &data_out_bytes
+) {
+  ac_channel<fp_t> in_y_fp16;
+  ac_channel<u16_word_t> data_out_u16;
+
+  for (int i = 0; i < kVars; ++i) {
+    const u16_word_t lo = static_cast<u16_word_t>(in_y_bytes.read());
+    const u16_word_t hi = static_cast<u16_word_t>(in_y_bytes.read());
+    const u16_word_t bits = static_cast<u16_word_t>(lo | (hi << 8));
+    in_y_fp16.write(fp16_from_bits(bits));
+  }
+
+  ref_step0_synth_core(in_y_fp16, data_out_u16);
+
+  while (data_out_u16.available(1)) {
+    const u16_word_t word = data_out_u16.read();
+    data_out_bytes.write(static_cast<io8_word_t>(word.slc<8>(0)));
+    data_out_bytes.write(static_cast<io8_word_t>(word.slc<8>(8)));
+  }
+}
+
+} // namespace aecct_ref
