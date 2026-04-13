@@ -18,8 +18,7 @@ struct RefModelIO {
   // Flattened pointers (row-major):
   // input_y: [B, N] (quantized path)
   const act_t* input_y = nullptr;
-  // input_y_fp32: [B, N] host-side source values. The pure-fp16 ref model
-  // converts them to ac_std_float<16,5> at the model boundary.
+  // input_y_fp32: [B, N] optional exact FP32/F64 bring-up path
   const double* input_y_fp32 = nullptr;
   // output logits: [B, N] as double for convenient comparison
   double* out_logits = nullptr;
@@ -137,8 +136,6 @@ struct RefStep0Io16Image {
 };
 
 struct RefRunConfig {
-  // Pure-fp16 rewrite keeps API compatibility but always executes the
-  // single ac_std_float<16,5> main chain in RefModel.cpp.
   RefPrecisionMode precision_mode = RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
   RefAlgoVariant algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
   // Leaf-kernel selector for softmax exp only. Reciprocal/row-state/exact-path stay unchanged.
