@@ -299,15 +299,26 @@ static inline void PreprocEmbedSPECoreWindow(
                     if (d < src_embed_dim) {
                         const fp32_t embed_v = preproc_read_src_embed_value(
                             sram, param_base, t, d, fp16_branch_params);
-                        const fp32_t x = node_feature[t] * embed_v;
-                        x_work_store_fp32(sram, x_base, elem_base + d, x);
+                        // Align with fp16 global reference flow:
+                        // 1) embed-only product roundtrip
+                        // 2) preproc assembly roundtrip
+                        // 3) prelayer handoff roundtrip at X_WORK store
+                        const fp32_t x_embed = fp16_linear_roundtrip(node_feature[t] * embed_v);
+                        const fp32_t x_preproc = fp16_linear_roundtrip(x_embed);
+                        x_work_store_fp32(sram, x_base, elem_base + d, x_preproc);
                     } else if (d < (src_embed_dim + lpe_dim)) {
                         const uint32_t lpe_d = d - src_embed_dim;
+                        // Align with fp16 global reference flow:
+                        // 1) SPE token roundtrip happens at param read
+                        // 2) preproc assembly roundtrip here
+                        // 3) prelayer handoff roundtrip at X_WORK store
+                        const fp32_t lpe_preproc = fp16_linear_roundtrip(
+                            preproc_read_lpe_token_value(sram, param_base, t, lpe_d, fp16_branch_params));
                         x_work_store_fp32(
                             sram,
                             x_base,
                             elem_base + d,
-                            preproc_read_lpe_token_value(sram, param_base, t, lpe_d, fp16_branch_params));
+                            lpe_preproc);
                     } else {
                         // Tail beyond infer payload is explicitly zero-filled into X_WORK.
                         x_work_store_fp32_bits(sram, x_base, elem_base + d, (u32_t)0u);

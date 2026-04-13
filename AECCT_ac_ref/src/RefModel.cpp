@@ -279,6 +279,7 @@ static inline bool use_frag_group_bisect(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT;
 }
 
+
 static inline bool use_generic_e4m3_except_g5(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5;
 }
