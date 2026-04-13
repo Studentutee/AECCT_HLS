@@ -42,7 +42,7 @@ public:
 } // namespace fp16_rewrite
 } // namespace aecct
 
-#include "data/weights/weights.h"
+#include "weights.h"
 
 namespace aecct {
 namespace fp16_rewrite {

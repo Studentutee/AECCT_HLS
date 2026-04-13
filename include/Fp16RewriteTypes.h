@@ -50,7 +50,7 @@ static inline fp16_t fp16_from_word(const u16_t& word) {
 }
 
 static inline fp16_t fp16_from_double(const double value) {
-    return fp16_t((float)value);
+    return fp16_t(value);
 }
 
 static inline double fp16_to_double(const fp16_t& value) {
