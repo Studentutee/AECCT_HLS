@@ -60,6 +60,101 @@ struct PreprocTopManagedWindowMeta {
     u16_t tile_valid_words;
 };
 
+
+static inline uint32_t preproc_fp16_branch_param_base_w() {
+    return storage_words_to_legacy_words_ceil(
+        sram_map::FP16_BASELINE_PARAM_STREAM_DEFAULT_BASE_WORD16);
+}
+
+static inline bool preproc_uses_fp16_branch_params(const u32_t& w_base_word) {
+    return (uint32_t)w_base_word.to_uint() == preproc_fp16_branch_param_base_w();
+}
+
+template<typename SramView>
+static inline u16_t preproc_read_word16_from_u32_sram(
+    const SramView& sram,
+    uint32_t base_word32,
+    uint32_t word16_offset
+) {
+    const uint32_t addr_word32 = base_word32 + (word16_offset >> 1);
+    const uint32_t lane_idx = word16_offset & 1u;
+    return unpack_fp16_lane(sram[addr_word32], lane_idx);
+}
+
+template<typename SramView>
+static inline fp32_t preproc_read_fp16_param_as_fp32(
+    const SramView& sram,
+    uint32_t base_word32,
+    uint32_t word16_offset
+) {
+    return fp32_from_bits(fp32_bits_from_fp16_lane(
+        preproc_read_word16_from_u32_sram(sram, base_word32, word16_offset)));
+}
+
+template<typename SramView>
+static inline uint32_t preproc_read_h_bit(
+    const SramView& sram,
+    uint32_t param_base,
+    uint32_t bit_index,
+    bool fp16_branch
+) {
+    if (!fp16_branch) {
+        const uint32_t h_base = param_base + kParamMeta[20u].offset_w;
+        const uint32_t word_index = bit_index >> 5;
+        const uint32_t bit_in_word = bit_index & 31u;
+        const uint32_t h_word = (uint32_t)sram[h_base + word_index].to_uint();
+        return (h_word >> bit_in_word) & 1u;
+    }
+    const Fp16BranchStorageDesc h_desc = fp16_branch_weight_storage_desc(BCH_H_BITPACK);
+    const uint32_t word16_index = bit_index >> 4;
+    const uint32_t bit_in_word16 = bit_index & 15u;
+    const uint16_t h_word16 = (uint16_t)preproc_read_word16_from_u32_sram(
+        sram,
+        param_base,
+        h_desc.offset_words16 + word16_index).to_uint();
+    return (uint32_t)((h_word16 >> bit_in_word16) & 1u);
+}
+
+template<typename SramView>
+static inline fp32_t preproc_read_src_embed_value(
+    const SramView& sram,
+    uint32_t param_base,
+    uint32_t token_idx,
+    uint32_t d,
+    bool fp16_branch
+) {
+    if (!fp16_branch) {
+        const uint32_t src_embed_base = param_base + kParamMeta[21u].offset_w;
+        return fp32_from_bits(sram[src_embed_base + token_idx * (uint32_t)kParamMeta[21u].d1 + d]);
+    }
+    const Fp16BranchStorageDesc src_desc = fp16_branch_weight_storage_desc(SRC_EMBED);
+    const uint32_t src_embed_dim = (uint32_t)kParamMeta[21u].d1;
+    return preproc_read_fp16_param_as_fp32(
+        sram,
+        param_base,
+        src_desc.offset_words16 + token_idx * src_embed_dim + d);
+}
+
+template<typename SramView>
+static inline fp32_t preproc_read_lpe_token_value(
+    const SramView& sram,
+    uint32_t param_base,
+    uint32_t token_idx,
+    uint32_t lpe_d,
+    bool fp16_branch
+) {
+    if (!fp16_branch) {
+        const uint32_t lpe_base = param_base + kParamMeta[68u].offset_w;
+        return fp32_from_bits(sram[lpe_base + token_idx * (uint32_t)kParamMeta[68u].d1 + lpe_d]);
+    }
+    const Fp16BranchStorageDesc lpe_desc = fp16_branch_weight_storage_desc(LPE_TOKEN);
+    const uint32_t lpe_dim = (uint32_t)kParamMeta[68u].d1;
+    return preproc_read_fp16_param_as_fp32(
+        sram,
+        param_base,
+        lpe_desc.offset_words16 + token_idx * lpe_dim + lpe_d);
+}
+
 static inline bool preproc_top_managed_window_meta_ok(
     const PreprocTopManagedWindowMeta& m,
     uint32_t expect_phase_id,
@@ -133,9 +228,7 @@ static inline void PreprocEmbedSPECoreWindow(
     const uint32_t phase_id_u32 = (uint32_t)contract.phase_id;
     const uint32_t subphase_id_u32 = (uint32_t)ATTN_SUBPHASE_QSRC;
     const uint32_t param_base = (uint32_t)contract.w_base_word.to_uint();
-    const uint32_t h_base = param_base + kParamMeta[20u].offset_w;   // BCH_H_BITPACK
-    const uint32_t src_embed_base = param_base + kParamMeta[21u].offset_w; // src_embed
-    const uint32_t lpe_base = param_base + kParamMeta[68u].offset_w; // lpe_token
+    const bool fp16_branch_params = preproc_uses_fp16_branch_params(contract.w_base_word);
     const uint32_t src_embed_dim = (uint32_t)kParamMeta[21u].d1;
     const uint32_t lpe_dim = (uint32_t)kParamMeta[68u].d1;
     const uint32_t d_model = src_embed_dim + lpe_dim;
@@ -160,10 +253,7 @@ static inline void PreprocEmbedSPECoreWindow(
         uint32_t parity = 0u;
         PREPROC_CHECK_PARITY_LOOP: for (uint32_t v = 0u; v < (uint32_t)CODE_N; ++v) {
             const uint32_t bit_index = c * (uint32_t)CODE_N + v;
-            const uint32_t word_index = bit_index >> 5;
-            const uint32_t bit_in_word = bit_index & 31u;
-            const uint32_t h_word = (uint32_t)sram[h_base + word_index].to_uint();
-            const uint32_t h_bit = (h_word >> bit_in_word) & 1u;
+            const uint32_t h_bit = preproc_read_h_bit(sram, param_base, bit_index, fp16_branch_params);
             if (h_bit != 0u) {
                 parity ^= hard_bit[v];
             }
@@ -207,13 +297,17 @@ static inline void PreprocEmbedSPECoreWindow(
                         continue;
                     }
                     if (d < src_embed_dim) {
-                        const u32_t embed_bits = sram[src_embed_base + t * src_embed_dim + d];
-                        const fp32_t embed_v = fp32_from_bits(embed_bits);
+                        const fp32_t embed_v = preproc_read_src_embed_value(
+                            sram, param_base, t, d, fp16_branch_params);
                         const fp32_t x = node_feature[t] * embed_v;
                         x_work_store_fp32(sram, x_base, elem_base + d, x);
                     } else if (d < (src_embed_dim + lpe_dim)) {
                         const uint32_t lpe_d = d - src_embed_dim;
-                        x_work_store_fp32_bits(sram, x_base, elem_base + d, sram[lpe_base + t * lpe_dim + lpe_d]);
+                        x_work_store_fp32(
+                            sram,
+                            x_base,
+                            elem_base + d,
+                            preproc_read_lpe_token_value(sram, param_base, t, lpe_d, fp16_branch_params));
                     } else {
                         // Tail beyond infer payload is explicitly zero-filled into X_WORK.
                         x_work_store_fp32_bits(sram, x_base, elem_base + d, (u32_t)0u);

@@ -759,13 +759,50 @@ namespace aecct {
         );
     }
 
+    static inline uint32_t fp16_branch_param_base_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_PARAM_STREAM_DEFAULT_BASE_WORD16);
+    }
+
+    static inline uint32_t fp16_branch_param_words_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_PARAM_STREAM_DEFAULT_WORDS_WORD16);
+    }
+
+    static inline uint32_t fp16_branch_w_region_base_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_W_REGION_BASE_WORD16);
+    }
+
+    static inline uint32_t fp16_branch_w_region_words_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_W_REGION_WORDS_WORD16);
+    }
+
+    static inline bool uses_fp16_branch_param_stream(const uint32_t w_base_word) {
+        return w_base_word == fp16_branch_param_base_w();
+    }
+
+    static inline uint32_t param_words_expected_for_base(const uint32_t w_base_word) {
+        return uses_fp16_branch_param_stream(w_base_word) ?
+            fp16_branch_param_words_w() : (uint32_t)PARAM_WORDS_EXPECTED;
+    }
+
+    static inline uint32_t param_w_region_base_for_base(const uint32_t w_base_word) {
+        return uses_fp16_branch_param_stream(w_base_word) ?
+            fp16_branch_w_region_base_w() : (uint32_t)sram_map::W_REGION_BASE;
+    }
+
+    static inline uint32_t param_w_region_words_for_base(const uint32_t w_base_word) {
+        return uses_fp16_branch_param_stream(w_base_word) ?
+            fp16_branch_w_region_words_w() : (uint32_t)sram_map::W_REGION_WORDS;
+    }
+
     static inline IngestMetadataSurface param_metadata_surface(const TopRegs& regs) {
+        const uint32_t base_word = (uint32_t)regs.w_base_word.to_uint();
+        const uint32_t expected_words = param_words_expected_for_base(base_word);
         return make_ingest_metadata_surface(
             (u32_t)OP_LOAD_W,
             regs.w_base_word,
-            (u32_t)PARAM_WORDS_EXPECTED,
+            (u32_t)expected_words,
             regs.param_count,
-            ((uint32_t)regs.param_count.to_uint() < (uint32_t)PARAM_WORDS_EXPECTED)
+            ((uint32_t)regs.param_count.to_uint() < expected_words)
         );
     }
 
@@ -1078,8 +1115,10 @@ namespace aecct {
     }
 
     static inline bool is_param_base_in_w_region(uint32_t w_base_word) {
-        return (w_base_word >= sram_map::W_REGION_BASE) &&
-            (w_base_word < (sram_map::W_REGION_BASE + sram_map::W_REGION_WORDS));
+        const uint32_t region_base = param_w_region_base_for_base(w_base_word);
+        const uint32_t region_words = param_w_region_words_for_base(w_base_word);
+        return (w_base_word >= region_base) &&
+            (w_base_word < (region_base + region_words));
     }
 
     static inline bool is_param_base_aligned(uint32_t w_base_word) {
@@ -1087,16 +1126,20 @@ namespace aecct {
     }
 
     static inline bool is_param_span_in_w_region(uint32_t w_base_word) {
+        const uint32_t region_base = param_w_region_base_for_base(w_base_word);
+        const uint32_t region_words = param_w_region_words_for_base(w_base_word);
+        const uint32_t expected_words = param_words_expected_for_base(w_base_word);
         unsigned long long begin = (unsigned long long)w_base_word;
-        unsigned long long end_excl = begin + (unsigned long long)PARAM_WORDS_EXPECTED;
-        unsigned long long region_begin = (unsigned long long)sram_map::W_REGION_BASE;
-        unsigned long long region_end = region_begin + (unsigned long long)sram_map::W_REGION_WORDS;
+        unsigned long long end_excl = begin + (unsigned long long)expected_words;
+        unsigned long long region_begin = (unsigned long long)region_base;
+        unsigned long long region_end = region_begin + (unsigned long long)region_words;
         return (begin >= region_begin) && (end_excl <= region_end);
     }
 
     static inline bool param_ingest_span_legal(const TopRegs& regs) {
         const IngestMetadataSurface meta = param_metadata_surface(regs);
-        const bool in_sram = ingest_meta_span_in_sram(meta, (uint32_t)PARAM_WORDS_EXPECTED);
+        const uint32_t expected_words = param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint());
+        const bool in_sram = ingest_meta_span_in_sram(meta, expected_words);
         const bool in_w_region = is_param_span_in_w_region((uint32_t)regs.w_base_word.to_uint());
         return in_sram && in_w_region;
     }
@@ -1292,7 +1335,7 @@ namespace aecct {
     ) {
         const IngestMetadataSurface meta = param_metadata_surface(regs);
         const unsigned expected_words =
-            (unsigned)ingest_meta_expected_words(meta, (uint32_t)PARAM_WORDS_EXPECTED);
+            (unsigned)ingest_meta_expected_words(meta, param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint()));
         if (!ingest_meta_owner_matches_rx(meta, RX_PARAM)) {
             regs.state = ST_IDLE;
             ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
@@ -1306,7 +1349,7 @@ namespace aecct {
                 regs.accepted_commit_record,
                 meta,
                 RX_PARAM,
-                (uint32_t)PARAM_WORDS_EXPECTED,
+                param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint()),
                 (uint8_t)ERR_PARAM_LEN_MISMATCH,
                 true,
                 (u32_t)0u,
@@ -1346,7 +1389,7 @@ namespace aecct {
                 regs.accepted_commit_record,
                 done_meta,
                 RX_PARAM,
-                (uint32_t)PARAM_WORDS_EXPECTED,
+                param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint()),
                 (uint8_t)ERR_PARAM_LEN_MISMATCH,
                 true,
                 (u32_t)0u,
