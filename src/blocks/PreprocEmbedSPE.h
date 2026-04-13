@@ -97,13 +97,7 @@ static inline uint32_t preproc_read_h_bit(
     uint32_t bit_index,
     bool fp16_branch
 ) {
-    if (!fp16_branch) {
-        const uint32_t h_base = param_base + kParamMeta[20u].offset_w;
-        const uint32_t word_index = bit_index >> 5;
-        const uint32_t bit_in_word = bit_index & 31u;
-        const uint32_t h_word = (uint32_t)sram[h_base + word_index].to_uint();
-        return (h_word >> bit_in_word) & 1u;
-    }
+    (void)fp16_branch;
     const Fp16BranchStorageDesc h_desc = fp16_branch_weight_storage_desc(BCH_H_BITPACK);
     const uint32_t word16_index = bit_index >> 4;
     const uint32_t bit_in_word16 = bit_index & 15u;
@@ -122,10 +116,7 @@ static inline fp16_t preproc_read_src_embed_value(
     uint32_t d,
     bool fp16_branch
 ) {
-    if (!fp16_branch) {
-        const uint32_t src_embed_base = param_base + kParamMeta[21u].offset_w;
-        return fp16_t(fp32_from_bits(sram[src_embed_base + token_idx * (uint32_t)kParamMeta[21u].d1 + d]));
-    }
+    (void)fp16_branch;
     const Fp16BranchStorageDesc src_desc = fp16_branch_weight_storage_desc(SRC_EMBED);
     const uint32_t src_embed_dim = (uint32_t)kParamMeta[21u].d1;
     return preproc_read_fp16_param(
@@ -142,10 +133,7 @@ static inline fp16_t preproc_read_lpe_token_value(
     uint32_t lpe_d,
     bool fp16_branch
 ) {
-    if (!fp16_branch) {
-        const uint32_t lpe_base = param_base + kParamMeta[68u].offset_w;
-        return fp16_t(fp32_from_bits(sram[lpe_base + token_idx * (uint32_t)kParamMeta[68u].d1 + lpe_d]));
-    }
+    (void)fp16_branch;
     const Fp16BranchStorageDesc lpe_desc = fp16_branch_weight_storage_desc(LPE_TOKEN);
     const uint32_t lpe_dim = (uint32_t)kParamMeta[68u].d1;
     return preproc_read_fp16_param(
@@ -241,10 +229,11 @@ static inline void PreprocEmbedSPECoreWindow(
         const u32_t y_bits =
             (v < infer_in_words) ?
                 ((topfed_in_words != 0) ? topfed_in_words[v] : sram[in_base + v]) :
-                bits_from_fp32(fp32_zero());
-        const fp16_t y = fp16_t(fp32_from_bits(y_bits));
-        var_feature[v] = (y < fp16_zero()) ? (fp16_zero() - y) : y;
-        hard_bit[v] = (y < fp16_zero()) ? 1u : 0u;
+                (u32_t)0u;
+        const fp16_t y = fp16_from_bits(fp16_lane_from_fp32_bits(y_bits));
+        const bool neg = (y < fp16_zero());
+        var_feature[v] = neg ? (fp16_zero() - y) : y;
+        hard_bit[v] = neg ? 1u : 0u;
         node_feature[v] = var_feature[v];
     }
 
@@ -311,7 +300,7 @@ static inline void PreprocEmbedSPECoreWindow(
                             lpe_preproc);
                     } else {
                         // Tail beyond infer payload is explicitly zero-filled into X_WORK.
-                        x_work_store_fp32_bits(sram, x_base, elem_base + d, (u32_t)0u);
+                        x_work_store_fp16_bits(sram, x_base, elem_base + d, (u16_t)0u);
                     }
                 }
             }
@@ -334,9 +323,9 @@ static inline void PreprocEmbedSPECoreWindowDirect(
     const uint32_t out_elems = infer_in_words;
     for (uint32_t i = 0; i < out_elems; ++i) {
         if (i < infer_in_words) {
-            x_work_store_fp32_bits(sram, x_base, i, sram[in_base + i]);
+            x_work_store_fp16_bits(sram, x_base, i, fp16_lane_from_fp32_bits(sram[in_base + i]));
         } else {
-            x_work_store_fp32_bits(sram, x_base, i, (u32_t)0u);
+            x_work_store_fp16_bits(sram, x_base, i, (u16_t)0u);
         }
     }
 }

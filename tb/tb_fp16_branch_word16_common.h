@@ -240,21 +240,21 @@ static inline uint32_t fp16_roundtrip_bits_from_double_tb(const double x) {
   return (uint32_t)aecct::fp32_bits_from_fp16_lane((aecct::u16_t)lane).to_uint();
 }
 
-static inline aecct::fp16_t fp16_from_double_tb(const double x) {
-  return aecct::fp16_from_bits((aecct::u16_t)fp16_lane_from_double_tb(x));
-}
-
 static inline uint32_t f32_to_bits_tb(const float x) {
   uint32_t bits = 0u;
   std::memcpy(&bits, &x, sizeof(bits));
   return bits;
 }
 
+static inline aecct::fp16_t fp16_from_double_tb(const double x) {
+  return aecct::fp16_from_bits((aecct::u16_t)fp16_lane_from_double_tb(x));
+}
+
 static inline aecct::fp16_t ref_node_feature_fp16(const uint32_t sample_idx, const uint32_t token_idx) {
   const size_t sample_base = (size_t)sample_idx * (size_t)CODE_N;
   if (token_idx < (uint32_t)CODE_N) {
-    const aecct::fp16_t y = fp16_from_double_tb(trace_input_y_step0_tensor[sample_base + token_idx]);
-    return (y < aecct::fp16_zero()) ? (aecct::fp16_zero() - y) : y;
+    const float y = (float)trace_input_y_step0_tensor[sample_base + token_idx];
+    return fp16_from_double_tb((y < 0.0f) ? -y : y);
   }
   const uint32_t check_idx = token_idx - (uint32_t)CODE_N;
   uint32_t parity = 0u;
@@ -263,29 +263,27 @@ static inline aecct::fp16_t ref_node_feature_fp16(const uint32_t sample_idx, con
     if ((uint32_t)h_H[flat].to_uint() == 0u) {
       continue;
     }
-    const aecct::fp16_t y = fp16_from_double_tb(trace_input_y_step0_tensor[sample_base + v]);
-    parity ^= (y < aecct::fp16_zero()) ? 1u : 0u;
+    const float y = (float)trace_input_y_step0_tensor[sample_base + v];
+    parity ^= (y < 0.0f) ? 1u : 0u;
   }
   return (parity == 0u) ? aecct::fp16_one() : (aecct::fp16_zero() - aecct::fp16_one());
 }
 
-static inline uint32_t ref_preproc_x_fp32_bits(const uint32_t sample_idx,
-                                               const uint32_t token_idx,
-                                               const uint32_t d) {
+static inline aecct::u16_t ref_preproc_x_fp16_bits(const uint32_t sample_idx,
+                                                   const uint32_t token_idx,
+                                                   const uint32_t d) {
   if (d < (uint32_t)w_src_embed_shape[1]) {
     const aecct::fp16_t node = ref_node_feature_fp16(sample_idx, token_idx);
     const aecct::fp16_t embed = fp16_from_double_tb(
         w_src_embed[token_idx * (uint32_t)w_src_embed_shape[1] + d]);
-    const aecct::fp16_t x = aecct::fp16_t(node * embed);
-    return (uint32_t)aecct::fp32_bits_from_fp16_lane(aecct::bits_from_fp16(x)).to_uint();
+    return aecct::bits_from_fp16(aecct::fp16_t(node * embed));
   }
   if (d < ((uint32_t)w_src_embed_shape[1] + (uint32_t)w_lpe_token_shape[1])) {
     const uint32_t lpe_d = d - (uint32_t)w_src_embed_shape[1];
-    const aecct::fp16_t x = fp16_from_double_tb(
-        w_lpe_token[token_idx * (uint32_t)w_lpe_token_shape[1] + lpe_d]);
-    return (uint32_t)aecct::fp32_bits_from_fp16_lane(aecct::bits_from_fp16(x)).to_uint();
+    return aecct::bits_from_fp16(fp16_from_double_tb(
+        w_lpe_token[token_idx * (uint32_t)w_lpe_token_shape[1] + lpe_d]));
   }
-  return 0u;
+  return (aecct::u16_t)0u;
 }
 
 static inline bool build_infer_input_words_u32(const uint32_t sample_idx,
@@ -331,7 +329,7 @@ static inline bool build_preproc_x_ref_word16(const uint32_t sample_idx,
   for (uint32_t token = 0u; token < token_count; ++token) {
     for (uint32_t d = 0u; d < d_model; ++d) {
       const uint32_t elem_idx = token * d_model + d;
-      out_words16[elem_idx] = (uint16_t)aecct::fp16_lane_from_fp32_bits((aecct::u32_t)ref_preproc_x_fp32_bits(sample_idx, token, d)).to_uint();
+      out_words16[elem_idx] = (uint16_t)ref_preproc_x_fp16_bits(sample_idx, token, d).to_uint();
     }
   }
   return true;
