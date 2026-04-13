@@ -82,13 +82,12 @@ static inline u16_t preproc_read_word16_from_u32_sram(
 }
 
 template<typename SramView>
-static inline fp32_t preproc_read_fp16_param_as_fp32(
+static inline fp16_t preproc_read_fp16_param(
     const SramView& sram,
     uint32_t base_word32,
     uint32_t word16_offset
 ) {
-    return fp32_from_bits(fp32_bits_from_fp16_lane(
-        preproc_read_word16_from_u32_sram(sram, base_word32, word16_offset)));
+    return fp16_from_bits(preproc_read_word16_from_u32_sram(sram, base_word32, word16_offset));
 }
 
 template<typename SramView>
@@ -116,7 +115,7 @@ static inline uint32_t preproc_read_h_bit(
 }
 
 template<typename SramView>
-static inline fp32_t preproc_read_src_embed_value(
+static inline fp16_t preproc_read_src_embed_value(
     const SramView& sram,
     uint32_t param_base,
     uint32_t token_idx,
@@ -125,18 +124,18 @@ static inline fp32_t preproc_read_src_embed_value(
 ) {
     if (!fp16_branch) {
         const uint32_t src_embed_base = param_base + kParamMeta[21u].offset_w;
-        return fp32_from_bits(sram[src_embed_base + token_idx * (uint32_t)kParamMeta[21u].d1 + d]);
+        return fp16_t(fp32_from_bits(sram[src_embed_base + token_idx * (uint32_t)kParamMeta[21u].d1 + d]));
     }
     const Fp16BranchStorageDesc src_desc = fp16_branch_weight_storage_desc(SRC_EMBED);
     const uint32_t src_embed_dim = (uint32_t)kParamMeta[21u].d1;
-    return preproc_read_fp16_param_as_fp32(
+    return preproc_read_fp16_param(
         sram,
         param_base,
         src_desc.offset_words16 + token_idx * src_embed_dim + d);
 }
 
 template<typename SramView>
-static inline fp32_t preproc_read_lpe_token_value(
+static inline fp16_t preproc_read_lpe_token_value(
     const SramView& sram,
     uint32_t param_base,
     uint32_t token_idx,
@@ -145,11 +144,11 @@ static inline fp32_t preproc_read_lpe_token_value(
 ) {
     if (!fp16_branch) {
         const uint32_t lpe_base = param_base + kParamMeta[68u].offset_w;
-        return fp32_from_bits(sram[lpe_base + token_idx * (uint32_t)kParamMeta[68u].d1 + lpe_d]);
+        return fp16_t(fp32_from_bits(sram[lpe_base + token_idx * (uint32_t)kParamMeta[68u].d1 + lpe_d]));
     }
     const Fp16BranchStorageDesc lpe_desc = fp16_branch_weight_storage_desc(LPE_TOKEN);
     const uint32_t lpe_dim = (uint32_t)kParamMeta[68u].d1;
-    return preproc_read_fp16_param_as_fp32(
+    return preproc_read_fp16_param(
         sram,
         param_base,
         lpe_desc.offset_words16 + token_idx * lpe_dim + lpe_d);
@@ -233,19 +232,19 @@ static inline void PreprocEmbedSPECoreWindow(
     const uint32_t lpe_dim = (uint32_t)kParamMeta[68u].d1;
     const uint32_t d_model = src_embed_dim + lpe_dim;
 
-    fp32_t var_feature[CODE_N];
+    fp16_t var_feature[CODE_N];
     uint32_t hard_bit[CODE_N];
-    fp32_t check_feature[CODE_C];
-    fp32_t node_feature[N_NODES];
+    fp16_t check_feature[CODE_C];
+    fp16_t node_feature[N_NODES];
 
     PREPROC_VAR_FEATURE_INIT_LOOP: for (uint32_t v = 0u; v < (uint32_t)CODE_N; ++v) {
         const u32_t y_bits =
             (v < infer_in_words) ?
                 ((topfed_in_words != 0) ? topfed_in_words[v] : sram[in_base + v]) :
                 bits_from_fp32(fp32_zero());
-        const fp32_t y = fp32_from_bits(y_bits);
-        var_feature[v] = (y < fp32_zero()) ? (fp32_zero() - y) : y;
-        hard_bit[v] = (y < fp32_zero()) ? 1u : 0u;
+        const fp16_t y = fp16_t(fp32_from_bits(y_bits));
+        var_feature[v] = (y < fp16_zero()) ? (fp16_zero() - y) : y;
+        hard_bit[v] = (y < fp16_zero()) ? 1u : 0u;
         node_feature[v] = var_feature[v];
     }
 
@@ -258,7 +257,7 @@ static inline void PreprocEmbedSPECoreWindow(
                 parity ^= hard_bit[v];
             }
         }
-        check_feature[c] = (parity == 0u) ? fp32_one() : (fp32_zero() - fp32_one());
+        check_feature[c] = (parity == 0u) ? fp16_one() : (fp16_zero() - fp16_one());
         node_feature[(uint32_t)CODE_N + c] = check_feature[c];
     }
 
@@ -297,24 +296,15 @@ static inline void PreprocEmbedSPECoreWindow(
                         continue;
                     }
                     if (d < src_embed_dim) {
-                        const fp32_t embed_v = preproc_read_src_embed_value(
+                        const fp16_t embed_v = preproc_read_src_embed_value(
                             sram, param_base, t, d, fp16_branch_params);
-                        // Align with fp16 global reference flow:
-                        // 1) embed-only product roundtrip
-                        // 2) preproc assembly roundtrip
-                        // 3) prelayer handoff roundtrip at X_WORK store
-                        const fp32_t x_embed = fp16_linear_roundtrip(node_feature[t] * embed_v);
-                        const fp32_t x_preproc = fp16_linear_roundtrip(x_embed);
-                        x_work_store_fp32(sram, x_base, elem_base + d, x_preproc);
+                        const fp16_t x_preproc = fp16_t(node_feature[t] * embed_v);
+                        x_work_store_fp16(sram, x_base, elem_base + d, x_preproc);
                     } else if (d < (src_embed_dim + lpe_dim)) {
                         const uint32_t lpe_d = d - src_embed_dim;
-                        // Align with fp16 global reference flow:
-                        // 1) SPE token roundtrip happens at param read
-                        // 2) preproc assembly roundtrip here
-                        // 3) prelayer handoff roundtrip at X_WORK store
-                        const fp32_t lpe_preproc = fp16_linear_roundtrip(
-                            preproc_read_lpe_token_value(sram, param_base, t, lpe_d, fp16_branch_params));
-                        x_work_store_fp32(
+                        const fp16_t lpe_preproc = preproc_read_lpe_token_value(
+                            sram, param_base, t, lpe_d, fp16_branch_params);
+                        x_work_store_fp16(
                             sram,
                             x_base,
                             elem_base + d,
