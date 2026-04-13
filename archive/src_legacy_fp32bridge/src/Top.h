@@ -1,0 +1,4339 @@
+#pragma once
+// SSOT: src/Top.h is the only Top contract definition.
+// design/AecctTop.h is wrapper/adapter only.
+// Header-only Top integration contract for FSM dispatch and runtime paths.
+// One command is consumed per top() call from ctrl_cmd.
+// CFG/PARAM/INFER payload words are consumed from data_in in their RX states.
+// HALTED emits ERR + metadata to data_out; READ_MEM is gated by legal states.
+#include "AecctTypes.h"
+#include "AecctUtil.h"
+#include "AecctProtocol.h"
+#include "AecctRanges.h"
+#include "AecctMemReq.h"
+#include "gen/SramMap.h"
+#include "gen/ModelDesc.h"
+#include "PreprocDescBringup.h"
+#include "LayerNormDesc.h"
+#include "AttnDescBringup.h"
+#include "FfnDescBringup.h"
+#include "LayerScratchDesc.h"
+#include "LayerParamBringup.h"
+#include "gen/WeightStreamOrder.h"
+#include "blocks/PreprocEmbedSPE.h"
+#include "blocks/LayerNormBlock.h"
+#include "blocks/AttnPhaseATopManagedKv.h"
+#include "blocks/AttnPhaseATopManagedQ.h"
+#include "blocks/AttnPhaseBTopManagedQkScore.h"
+#include "blocks/AttnPhaseBTopManagedSoftmaxOut.h"
+#include "blocks/TransformerLayer.h"
+#include "blocks/FinalHead.h"
+#include <cstdint>
+
+namespace aecct {
+    // Top is the integration owner for this design boundary:
+    // - owns the external 4-channel contract and state machine dispatch
+    // - owns shared SRAM lifetime/arbitration semantics
+    // - dispatches block calls with explicit base/range ownership boundaries
+    // Sub-blocks consume the ranges passed by Top and do not own global SRAM policy.
+
+    static const unsigned CFG_WORDS_EXPECTED = (unsigned)EXP_LEN_CFG_WORDS;
+    static const unsigned PARAM_WORDS_EXPECTED = (unsigned)EXP_LEN_PARAM_WORDS;
+    static const unsigned PARAM_ALIGN_WORDS = (unsigned)W_LANES;
+    static const unsigned INFER_IN_WORDS_EXPECTED = (unsigned)PREPROC_IN_WORDS_EXPECTED;
+    static const unsigned X_OUT_WORDS_EXPECTED = (unsigned)PREPROC_X_OUT_WORDS_EXPECTED;
+    static const unsigned OUT_WORDS_X_PRED = (unsigned)EXP_LEN_OUT_XPRED_WORDS;
+    static const unsigned OUT_WORDS_LOGITS = (unsigned)EXP_LEN_OUT_LOGITS_WORDS;
+    static const unsigned IN_BASE_WORD = (unsigned)PREPROC_IN_BASE_WORD_DEFAULT;
+    static const unsigned X_OUT_BASE_WORD = (unsigned)PREPROC_X_OUT_BASE_WORD_DEFAULT;
+    static const unsigned LN_X_IN_BASE_WORD = (unsigned)LN_X_IN_BASE_WORD_DEFAULT;
+    static const unsigned LN_X_OUT_BASE_WORD = (unsigned)LN_X_OUT_BASE_WORD_DEFAULT;
+    static const unsigned LN_GAMMA_BASE_WORD = (unsigned)LN_GAMMA_BASE_WORD_DEFAULT;
+    static const unsigned LN_BETA_BASE_WORD = (unsigned)LN_BETA_BASE_WORD_DEFAULT;
+    static const unsigned ATTN_X_IN_BASE_WORD = (unsigned)ATTN_X_IN_BASE_WORD_DEFAULT;
+    static const unsigned ATTN_OUT_BASE_WORD = (unsigned)ATTN_OUT_BASE_WORD_DEFAULT;
+    static const unsigned FFN_X_IN_BASE_WORD = (unsigned)FFN_X_IN_BASE_WORD_DEFAULT;
+    static const unsigned FINAL_LOGITS_BASE_WORD = (unsigned)sram_map::BASE_SCRATCH_W;
+    static const unsigned FINAL_XPRED_BASE_WORD = (unsigned)(sram_map::BASE_SCRATCH_W + OUT_WORDS_LOGITS);
+    static const unsigned INIT_WORDS = 64;
+    static const unsigned DBG_META1_LEN_WORDS = 16u;
+
+    enum DebugAction : unsigned {
+        DBG_ACTION_CLEAR = 0u,
+        DBG_ACTION_ARM = 1u,
+        DBG_ACTION_RESUME = 2u
+    };
+
+    enum DebugTriggerSel : unsigned {
+        DBG_TRIGGER_DISABLED = 0u,
+        DBG_TRIGGER_ON_LOADW_COUNT = 1u
+    };
+
+    enum CfgIndexCompat : unsigned {
+        CFG_IDX_CODE_N = (unsigned)CFG_CODE_N,
+        CFG_IDX_CODE_K = (unsigned)CFG_CODE_K,
+        CFG_IDX_CODE_C = (unsigned)CFG_CODE_C,
+        CFG_IDX_N_NODES = (unsigned)CFG_N_NODES,
+        CFG_IDX_D_MODEL = (unsigned)CFG_D_MODEL,
+        CFG_IDX_N_HEAD = (unsigned)CFG_N_HEAD,
+        CFG_IDX_N_LAYERS = (unsigned)CFG_N_LAYERS,
+        CFG_IDX_D_FFN = (unsigned)CFG_D_FFN,
+        CFG_IDX_ENABLE_LPE = (unsigned)CFG_ENABLE_LPE,
+        CFG_IDX_ENABLE_LPE_TOKEN = (unsigned)CFG_ENABLE_LPE_TOKEN,
+        CFG_IDX_OUT_MODE = (unsigned)CFG_OUT_MODE,
+        CFG_IDX_RESERVED0 = (unsigned)CFG_RESERVED0
+    };
+
+    enum RegionId : unsigned {
+        REG_X_WORK = 0,
+        REG_SCR = 1,
+        REG_W = 2,
+        REG_OOR = 255
+    };
+
+    enum ReceiverState : unsigned {
+        RX_NONE = 0,
+        RX_CFG = 1,
+        RX_PARAM = 2,
+        RX_INFER = 3
+    };
+
+    static const unsigned MEM_REQ_SLOTS = (unsigned)REQ_ID_COUNT;
+
+    struct MemArbRegs {
+        MemReq pending[MEM_REQ_SLOTS];
+        bool pending_valid[MEM_REQ_SLOTS];
+        u16_t rr_cursor[PRIO_CLASS_COUNT];
+        MemGrant grant_latched;
+        bool grant_valid;
+
+        void clear() {
+            for (unsigned i = 0; i < MEM_REQ_SLOTS; ++i) {
+                pending[i] = make_empty_mem_req();
+                pending_valid[i] = false;
+            }
+            for (unsigned p = 0; p < (unsigned)PRIO_CLASS_COUNT; ++p) {
+                rr_cursor[p] = 0;
+            }
+            grant_latched = make_empty_mem_grant();
+            grant_valid = false;
+        }
+    };
+
+    struct HaltInfo {
+        bool valid;
+        u32_t halt_reason;
+        TopState prev_state;
+        u32_t meta0_word_addr;
+        u32_t meta1_len_words;
+
+        void clear() {
+            valid = false;
+            halt_reason = 0;
+            prev_state = ST_IDLE;
+            meta0_word_addr = 0;
+            meta1_len_words = 0;
+        }
+    };
+
+    struct InferIngestContract {
+        bool start;
+        bool done;
+        u32_t in_base_word;
+        u32_t len_words_expected;
+        u32_t len_words_valid;
+        TokenRange token_range;
+        TileRange tile_range;
+        PhaseId phase_id;
+    };
+
+    // Cross-command metadata surface for Top ingest lifecycle tracking.
+    // This is local-only Top bookkeeping and does not change external protocol.
+    struct IngestMetadataSurface {
+        u32_t owner_opcode;
+        u32_t base_word;
+        u32_t len_words_expected;
+        u32_t len_words_valid;
+        bool active;
+    };
+
+    // Accepted commit metadata record (local-only Top diagnostics/provenance state).
+    // This does not alter external protocol and is only updated on successful commit acceptance.
+    struct AcceptedCommitMetadataRecord {
+        u32_t owner_opcode;
+        u32_t base_word;
+        u32_t len_words_expected;
+        u32_t len_words_valid;
+        u32_t rx_state;
+        u32_t phase_id;
+        bool phase_valid;
+        bool valid;
+    };
+
+    static inline void infer_refresh_preproc_ranges(
+        InferIngestContract& c,
+        uint32_t x_out_words
+    ) {
+        if (x_out_words == 0u) {
+            x_out_words = (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED;
+        }
+        const uint32_t token_stride = (uint32_t)PREPROC_X_TOKEN_STRIDE_WORDS;
+        const uint32_t token_count =
+            (token_stride == 0u) ? 0u : ((x_out_words + token_stride - 1u) / token_stride);
+        const uint32_t tile_count =
+            (token_stride == 0u) ? 0u :
+            attn_top_managed_tile_count(token_stride, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+        c.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+        c.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+        c.phase_id = PHASE_PREPROC;
+    }
+
+    static inline void clear_infer_ingest_contract(InferIngestContract& c) {
+        c.start = false;
+        c.done = false;
+        c.in_base_word = (u32_t)IN_BASE_WORD;
+        c.len_words_expected = (u32_t)INFER_IN_WORDS_EXPECTED;
+        c.len_words_valid = 0;
+        infer_refresh_preproc_ranges(c, (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED);
+    }
+
+    static inline IngestMetadataSurface make_ingest_metadata_surface(
+        u32_t owner_opcode,
+        u32_t base_word,
+        u32_t len_words_expected,
+        u32_t len_words_valid,
+        bool active
+    ) {
+        IngestMetadataSurface m;
+        m.owner_opcode = owner_opcode;
+        m.base_word = base_word;
+        m.len_words_expected = len_words_expected;
+        m.len_words_valid = len_words_valid;
+        m.active = active;
+        return m;
+    }
+
+    static inline uint32_t ingest_meta_expected_words(
+        const IngestMetadataSurface& m,
+        uint32_t fallback_words
+    ) {
+        uint32_t expected = (uint32_t)m.len_words_expected.to_uint();
+        if (expected == 0u) {
+            expected = fallback_words;
+        }
+        return expected;
+    }
+
+    static inline bool ingest_meta_span_in_sram(
+        const IngestMetadataSurface& m,
+        uint32_t fallback_words
+    ) {
+        const unsigned long long base = (unsigned long long)(uint32_t)m.base_word.to_uint();
+        const unsigned long long len =
+            (unsigned long long)ingest_meta_expected_words(m, fallback_words);
+        const unsigned long long end_excl = base + len;
+        return (base < (unsigned long long)sram_map::SRAM_WORDS_TOTAL) &&
+            (end_excl <= (unsigned long long)sram_map::SRAM_WORDS_TOTAL);
+    }
+
+    static inline bool ingest_meta_owner_matches_rx(
+        const IngestMetadataSurface& m,
+        ReceiverState rx
+    ) {
+        const uint32_t owner = (uint32_t)m.owner_opcode.to_uint();
+        if (owner == (uint32_t)OP_CFG_BEGIN) { return rx == RX_CFG; }
+        if (owner == (uint32_t)OP_LOAD_W) { return rx == RX_PARAM; }
+        if (owner == (uint32_t)OP_INFER) { return rx == RX_INFER; }
+        return false;
+    }
+
+    static inline bool ingest_meta_len_exact(
+        const IngestMetadataSurface& m,
+        uint32_t fallback_words
+    ) {
+        const uint32_t expected = ingest_meta_expected_words(m, fallback_words);
+        const uint32_t valid = (uint32_t)m.len_words_valid.to_uint();
+        return valid == expected;
+    }
+
+    static inline uint8_t ingest_commit_diag_error(
+        const IngestMetadataSurface& m,
+        ReceiverState rx,
+        uint32_t fallback_words,
+        uint8_t len_mismatch_err,
+        bool require_span_check
+    ) {
+        if (!ingest_meta_owner_matches_rx(m, rx)) {
+            return (uint8_t)ERR_BAD_STATE;
+        }
+        if (require_span_check && !ingest_meta_span_in_sram(m, fallback_words)) {
+            return (uint8_t)ERR_MEM_RANGE;
+        }
+        if (!ingest_meta_len_exact(m, fallback_words)) {
+            return len_mismatch_err;
+        }
+        return (uint8_t)ERR_OK;
+    }
+
+    static inline AcceptedCommitMetadataRecord make_invalid_accepted_commit_metadata_record() {
+        AcceptedCommitMetadataRecord r;
+        r.owner_opcode = 0;
+        r.base_word = 0;
+        r.len_words_expected = 0;
+        r.len_words_valid = 0;
+        r.rx_state = (u32_t)RX_NONE;
+        r.phase_id = 0;
+        r.phase_valid = false;
+        r.valid = false;
+        return r;
+    }
+
+    static inline void clear_accepted_commit_metadata_record(
+        AcceptedCommitMetadataRecord& r
+    ) {
+        r = make_invalid_accepted_commit_metadata_record();
+    }
+
+    static inline void record_accepted_commit_metadata(
+        AcceptedCommitMetadataRecord& r,
+        const IngestMetadataSurface& m,
+        ReceiverState rx,
+        u32_t phase_id,
+        bool phase_valid
+    ) {
+        r.owner_opcode = m.owner_opcode;
+        r.base_word = m.base_word;
+        r.len_words_expected = m.len_words_expected;
+        r.len_words_valid = m.len_words_valid;
+        r.rx_state = (u32_t)rx;
+        r.phase_id = phase_id;
+        r.phase_valid = phase_valid;
+        r.valid = true;
+    }
+
+    static inline uint8_t ingest_commit_diag_and_record(
+        AcceptedCommitMetadataRecord& record,
+        const IngestMetadataSurface& m,
+        ReceiverState rx,
+        uint32_t fallback_words,
+        uint8_t len_mismatch_err,
+        bool require_span_check,
+        u32_t phase_id,
+        bool phase_valid
+    ) {
+        const uint8_t err = ingest_commit_diag_error(
+            m,
+            rx,
+            fallback_words,
+            len_mismatch_err,
+            require_span_check
+        );
+        if (err == (uint8_t)ERR_OK) {
+            record_accepted_commit_metadata(record, m, rx, phase_id, phase_valid);
+        }
+        return err;
+    }
+
+    // Persistent top-level internal registers.
+    // These registers are the single source of truth for Top-owned runtime state.
+    struct TopRegs {
+        TopState state;
+        ReceiverState rx_state;
+        bool w_base_set;
+        u32_t w_base_word;
+        u32_t param_count;
+        u32_t input_count;
+        u32_t outmode;
+        u32_t infer_final_x_base_word;
+        u32_t infer_mid_dump_base_word;
+        bool infer_mid_valid;
+        u32_t infer_logits_base_word;
+        u32_t infer_xpred_base_word;
+        InferIngestContract infer_ingest_contract;
+        AcceptedCommitMetadataRecord accepted_commit_record;
+        // Local mirror for INFER payload debug/probe only; not a shared-SRAM owner contract.
+        u32_t infer_input_shadow[INFER_IN_WORDS_EXPECTED];
+        // Local mirror for EndLN input boundary debug/probe only; not a shared-SRAM owner contract.
+        u32_t infer_endln_input_base_word;
+        u32_t infer_endln_input_shadow[LN_X_TOTAL_WORDS];
+        // Local mirror for mid_norm writeback boundary debug/probe only; not a shared-SRAM owner contract.
+        u32_t infer_mid_norm_output_base_word;
+        u32_t infer_mid_norm_output_shadow[LN_X_TOTAL_WORDS];
+        bool infer_mid_norm_output_valid;
+        bool p11ac_mainline_path_taken;
+        bool p11ac_fallback_taken;
+        bool p11ad_mainline_q_path_taken;
+        bool p11ad_q_fallback_taken;
+        bool p11ae_mainline_score_path_taken;
+        bool p11ae_score_fallback_taken;
+        bool p11af_mainline_softmax_output_path_taken;
+        bool p11af_softmax_output_fallback_taken;
+        u32_t p11bc_managed_attention_target_layer_id;
+        u32_t p11bc_managed_attention_gate_taken_count;
+        u32_t p11bc_managed_attention_last_layer_id;
+        u32_t p11bd_attn_compat_shell_enabled_count;
+        u32_t p11bd_attn_compat_shell_disabled_count;
+        u32_t p11bd_attn_compat_shell_enabled_last_layer_id;
+        u32_t p11bd_attn_compat_shell_disabled_last_layer_id;
+        u32_t p11bd_target_layer_attn_compat_shell_disabled_count;
+        u32_t p11bd_non_target_layer_attn_compat_shell_enabled_count;
+        bool p11av_lid0_ffn_handoff_enable;
+        bool p11av_lid0_ffn_handoff_descriptor_valid;
+        u32_t p11av_ffn_handoff_gate_taken_count;
+        u32_t p11av_ffn_handoff_fallback_seen_count;
+        u32_t p11av_ffn_handoff_non_empty_count;
+        u32_t p11av_lid0_ffn_handoff_non_empty_count;
+        bool p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        bool p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        bool p11aw_pipeline_lid0_ffn_handoff_gate_taken;
+        bool p11aw_pipeline_lid0_ffn_handoff_fallback_seen;
+        u32_t p11aw_pipeline_ffn_handoff_gate_taken_count;
+        u32_t p11aw_pipeline_ffn_handoff_fallback_seen_count;
+        u32_t p11aw_pipeline_ffn_handoff_non_empty_count;
+        u32_t p11aw_pipeline_lid0_ffn_handoff_non_empty_count;
+        bool p11ax_lid0_attn_out_payload_enable;
+        bool p11ax_lid0_attn_out_payload_descriptor_valid;
+        u32_t p11ax_attn_out_payload_gate_taken_count;
+        u32_t p11ax_attn_out_payload_fallback_seen_count;
+        u32_t p11ax_attn_out_payload_non_empty_count;
+        u32_t p11ax_lid0_attn_out_payload_non_empty_count;
+        u32_t p11ax_lid_nonzero_attn_out_payload_fallback_seen_count;
+        bool p11ay_lid0_qkscore_mask_handoff_enable;
+        bool p11ay_lid0_qkscore_mask_handoff_descriptor_valid;
+        u32_t p11ay_qkscore_mask_handoff_gate_taken_count;
+        u32_t p11ay_qkscore_mask_handoff_fallback_seen_count;
+        u32_t p11ay_qkscore_mask_handoff_non_empty_count;
+        u32_t p11ay_lid0_qkscore_mask_handoff_non_empty_count;
+        u32_t p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count;
+        bool p11az_lid0_qkscore_kvscan_handoff_enable;
+        bool p11az_lid0_qkscore_kvscan_handoff_descriptor_valid;
+        u32_t p11az_qkscore_kvscan_handoff_gate_taken_count;
+        u32_t p11az_qkscore_kvscan_handoff_fallback_seen_count;
+        u32_t p11az_qkscore_kvscan_handoff_non_empty_count;
+        u32_t p11az_lid0_qkscore_kvscan_handoff_non_empty_count;
+        u32_t p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count;
+        bool p11ba_lid0_qkscore_qsrc_handoff_enable;
+        bool p11ba_lid0_qkscore_qsrc_handoff_descriptor_valid;
+        u32_t p11ba_qkscore_qsrc_handoff_gate_taken_count;
+        u32_t p11ba_qkscore_qsrc_handoff_fallback_seen_count;
+        u32_t p11ba_qkscore_qsrc_handoff_non_empty_count;
+        u32_t p11ba_lid0_qkscore_qsrc_handoff_non_empty_count;
+        u32_t p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count;
+        bool p11bb_lid0_qkscore_wq_handoff_enable;
+        bool p11bb_lid0_qkscore_wq_handoff_descriptor_valid;
+        u32_t p11bb_qkscore_wq_handoff_gate_taken_count;
+        u32_t p11bb_qkscore_wq_handoff_fallback_seen_count;
+        u32_t p11bb_qkscore_wq_handoff_non_empty_count;
+        u32_t p11bb_lid0_qkscore_wq_handoff_non_empty_count;
+        u32_t p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count;
+
+        // Top-controlled block contract placeholders (skeleton only).
+        PreprocBlockContract preproc_contract;
+        TransformerLayerContract transformer_contract;
+        LayerNormBlockContract layernorm_contract;
+        FinalHeadContract final_head_contract;
+
+        // Shared SRAM arbitration stub owned by Top.
+        MemArbRegs mem_arb;
+
+        // Debug/HALT control and sticky halt metadata owned by Top.
+        bool debug_armed;
+        u32_t dbg_trigger_sel;
+        u32_t dbg_k_value;
+        bool halt_active;
+        HaltInfo halt_info;
+
+        // CFG ingest shadow words and decoded runtime CFG registers.
+        u32_t cfg_words[CFG_WORDS_EXPECTED];
+        u32_t cfg_count;
+        bool cfg_ready;
+
+        u32_t cfg_magic;
+        u32_t cfg_code_n;
+        u32_t cfg_code_c;
+        u32_t cfg_d_model;
+        u32_t cfg_n_heads;
+        u32_t cfg_d_head;
+        u32_t cfg_d_ffn;
+        u32_t cfg_d_lpe;
+        u32_t cfg_n_layers;
+        u32_t cfg_out_len_x_pred;
+        u32_t cfg_out_len_logits;
+
+        void clear() {
+            state = ST_IDLE;
+            rx_state = RX_NONE;
+            w_base_set = false;
+            w_base_word = 0;
+            param_count = 0;
+            input_count = 0;
+            outmode = 0;
+            infer_final_x_base_word = 0;
+            infer_mid_dump_base_word = 0;
+            infer_mid_valid = false;
+            infer_logits_base_word = (u32_t)FINAL_LOGITS_BASE_WORD;
+            infer_xpred_base_word = (u32_t)FINAL_XPRED_BASE_WORD;
+            clear_infer_ingest_contract(infer_ingest_contract);
+            clear_accepted_commit_metadata_record(accepted_commit_record);
+            for (unsigned i = 0; i < INFER_IN_WORDS_EXPECTED; ++i) {
+                infer_input_shadow[i] = 0;
+            }
+            infer_endln_input_base_word = 0;
+            for (unsigned i = 0; i < LN_X_TOTAL_WORDS; ++i) {
+                infer_endln_input_shadow[i] = 0;
+            }
+            infer_mid_norm_output_base_word = 0;
+            for (unsigned i = 0; i < LN_X_TOTAL_WORDS; ++i) {
+                infer_mid_norm_output_shadow[i] = 0;
+            }
+            infer_mid_norm_output_valid = false;
+            p11ac_mainline_path_taken = false;
+            p11ac_fallback_taken = false;
+            p11ad_mainline_q_path_taken = false;
+            p11ad_q_fallback_taken = false;
+            p11ae_mainline_score_path_taken = false;
+            p11ae_score_fallback_taken = false;
+            p11af_mainline_softmax_output_path_taken = false;
+            p11af_softmax_output_fallback_taken = false;
+            p11bc_managed_attention_target_layer_id = 0;
+            p11bc_managed_attention_gate_taken_count = 0;
+            p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
+            p11bd_attn_compat_shell_enabled_count = 0;
+            p11bd_attn_compat_shell_disabled_count = 0;
+            p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+            p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+            p11bd_target_layer_attn_compat_shell_disabled_count = 0;
+            p11bd_non_target_layer_attn_compat_shell_enabled_count = 0;
+            p11av_lid0_ffn_handoff_enable = false;
+            p11av_lid0_ffn_handoff_descriptor_valid = false;
+            p11av_ffn_handoff_gate_taken_count = 0;
+            p11av_ffn_handoff_fallback_seen_count = 0;
+            p11av_ffn_handoff_non_empty_count = 0;
+            p11av_lid0_ffn_handoff_non_empty_count = 0;
+            p11aw_pipeline_lid0_ffn_handoff_gate_enable = false;
+            p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = false;
+            p11aw_pipeline_lid0_ffn_handoff_gate_taken = false;
+            p11aw_pipeline_lid0_ffn_handoff_fallback_seen = false;
+            p11aw_pipeline_ffn_handoff_gate_taken_count = 0;
+            p11aw_pipeline_ffn_handoff_fallback_seen_count = 0;
+            p11aw_pipeline_ffn_handoff_non_empty_count = 0;
+            p11aw_pipeline_lid0_ffn_handoff_non_empty_count = 0;
+            p11ax_lid0_attn_out_payload_enable = false;
+            p11ax_lid0_attn_out_payload_descriptor_valid = false;
+            p11ax_attn_out_payload_gate_taken_count = 0;
+            p11ax_attn_out_payload_fallback_seen_count = 0;
+            p11ax_attn_out_payload_non_empty_count = 0;
+            p11ax_lid0_attn_out_payload_non_empty_count = 0;
+            p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
+            p11ay_lid0_qkscore_mask_handoff_enable = false;
+            p11ay_lid0_qkscore_mask_handoff_descriptor_valid = false;
+            p11ay_qkscore_mask_handoff_gate_taken_count = 0;
+            p11ay_qkscore_mask_handoff_fallback_seen_count = 0;
+            p11ay_qkscore_mask_handoff_non_empty_count = 0;
+            p11ay_lid0_qkscore_mask_handoff_non_empty_count = 0;
+            p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count = 0;
+            p11az_lid0_qkscore_kvscan_handoff_enable = false;
+            p11az_lid0_qkscore_kvscan_handoff_descriptor_valid = false;
+            p11az_qkscore_kvscan_handoff_gate_taken_count = 0;
+            p11az_qkscore_kvscan_handoff_fallback_seen_count = 0;
+            p11az_qkscore_kvscan_handoff_non_empty_count = 0;
+            p11az_lid0_qkscore_kvscan_handoff_non_empty_count = 0;
+            p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count = 0;
+            p11ba_lid0_qkscore_qsrc_handoff_enable = false;
+            p11ba_lid0_qkscore_qsrc_handoff_descriptor_valid = false;
+            p11ba_qkscore_qsrc_handoff_gate_taken_count = 0;
+            p11ba_qkscore_qsrc_handoff_fallback_seen_count = 0;
+            p11ba_qkscore_qsrc_handoff_non_empty_count = 0;
+            p11ba_lid0_qkscore_qsrc_handoff_non_empty_count = 0;
+            p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count = 0;
+            p11bb_lid0_qkscore_wq_handoff_enable = false;
+            p11bb_lid0_qkscore_wq_handoff_descriptor_valid = false;
+            p11bb_qkscore_wq_handoff_gate_taken_count = 0;
+            p11bb_qkscore_wq_handoff_fallback_seen_count = 0;
+            p11bb_qkscore_wq_handoff_non_empty_count = 0;
+            p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
+            p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
+            clear_preproc_contract(preproc_contract);
+            clear_transformer_layer_contract(transformer_contract);
+            clear_layernorm_contract(layernorm_contract);
+            clear_final_head_contract(final_head_contract);
+            mem_arb.clear();
+
+            debug_armed = false;
+            dbg_trigger_sel = 0;
+            dbg_k_value = 0;
+            halt_active = false;
+            halt_info.clear();
+
+            cfg_count = 0;
+            cfg_ready = false;
+            for (unsigned i = 0; i < CFG_WORDS_EXPECTED; ++i) {
+                cfg_words[i] = 0;
+            }
+
+            cfg_magic = 0;
+            cfg_code_n = 0;
+            cfg_code_c = 0;
+            cfg_d_model = 0;
+            cfg_n_heads = 0;
+            cfg_d_head = 0;
+            cfg_d_ffn = 0;
+            cfg_d_lpe = 0;
+            cfg_n_layers = 0;
+            cfg_out_len_x_pred = 0;
+            cfg_out_len_logits = 0;
+        }
+    };
+
+    static inline TopRegs& top_regs() {
+        static TopRegs regs;
+        return regs;
+    }
+
+    // Single physical SRAM backing store.
+    static inline u32_t* top_sram() {
+        static u32_t sram[sram_map::SRAM_WORDS_TOTAL];
+        return sram;
+    }
+
+    // Internal input staging FIFO.
+    // Functional C++ model does not rely on finite depth; concrete depth is
+    // configured later by Catapult/HLS constraints.
+    static inline data_ch_t& top_in_fifo() {
+        static data_ch_t in_fifo;
+        return in_fifo;
+    }
+
+    // Backup profile IO8 bridge staging FIFOs.
+    static inline data_ch_t& top_io8_in_words_fifo() {
+        static data_ch_t in_words_fifo;
+        return in_words_fifo;
+    }
+
+    static inline data_ch_t& top_io8_out_words_fifo() {
+        static data_ch_t out_words_fifo;
+        return out_words_fifo;
+    }
+
+    struct TopIo8DeserializerState {
+        u32_t staged_word;
+        uint8_t byte_count;
+
+        void clear() {
+            staged_word = 0;
+            byte_count = 0u;
+        }
+    };
+
+    struct TopIo8SerializerState {
+        u32_t staged_word;
+        uint8_t byte_count;
+        bool valid;
+
+        void clear() {
+            staged_word = 0;
+            byte_count = 0u;
+            valid = false;
+        }
+    };
+
+    static inline TopIo8DeserializerState& top_io8_deser_state() {
+        static TopIo8DeserializerState s = { (u32_t)0u, 0u };
+        return s;
+    }
+
+    static inline TopIo8SerializerState& top_io8_ser_state() {
+        static TopIo8SerializerState s = { (u32_t)0u, 0u, false };
+        return s;
+    }
+
+    // Top-local helper: fp16 lane <-> 2-byte serialization (little-endian byte order).
+    static inline u16_t top_io8_deserialize_fp16_lane(u8_t byte0, u8_t byte1) {
+        return backup_pack_lane_from_bytes(byte0, byte1);
+    }
+
+    static inline void top_io8_serialize_fp16_lane(u16_t lane, u8_t& byte0, u8_t& byte1) {
+        backup_unpack_lane_to_bytes(lane, byte0, byte1);
+    }
+
+    // Top-local helper: one backup SRAM word (16 bytes) <-> four u32 transport words.
+    static inline void top_io8_deserialize_sram_word(
+        const u8_t bytes_in[BACKUP_WORD_BYTES],
+        u32_t words_out[BACKUP_WORD_U32S]
+    ) {
+        backup_pack_word_u32x4_from_bytes(bytes_in, words_out);
+    }
+
+    static inline void top_io8_serialize_sram_word(
+        const u32_t words_in[BACKUP_WORD_U32S],
+        u8_t bytes_out[BACKUP_WORD_BYTES]
+    ) {
+        backup_unpack_word_u32x4_to_bytes(words_in, bytes_out);
+    }
+
+    static inline void top_io8_ingest_bytes_to_word_fifo(
+        data8_ch_t& data_in_bytes,
+        data_ch_t& out_words
+    ) {
+        TopIo8DeserializerState& st = top_io8_deser_state();
+        u8_t b;
+        TOP_IO8_INGEST_BYTES_LOOP: while (data_in_bytes.nb_read(b)) {
+            st.staged_word.set_slc((int)(st.byte_count * 8u), b);
+            st.byte_count = (uint8_t)(st.byte_count + 1u);
+            if (st.byte_count == 4u) {
+                out_words.write(st.staged_word);
+                st.staged_word = 0;
+                st.byte_count = 0u;
+            }
+        }
+    }
+
+    static inline void top_io8_emit_bytes_from_word_fifo(
+        data_ch_t& in_words,
+        data8_ch_t& data_out_bytes
+    ) {
+        TopIo8SerializerState& st = top_io8_ser_state();
+        TOP_IO8_EMIT_BYTES_LOOP: while (true) {
+            if (!st.valid) {
+                if (!in_words.nb_read(st.staged_word)) {
+                    break;
+                }
+                st.byte_count = 0u;
+                st.valid = true;
+            }
+            const u8_t b = st.staged_word.template slc<8>((int)(st.byte_count * 8u));
+            data_out_bytes.write(b);
+            st.byte_count = (uint8_t)(st.byte_count + 1u);
+            if (st.byte_count == 4u) {
+                st.valid = false;
+                st.staged_word = 0;
+                st.byte_count = 0u;
+            }
+        }
+    }
+
+    static inline bool top_data_nb_read(data_ch_t& data_in, u32_t& word) {
+        if (top_in_fifo().nb_read(word)) {
+            return true;
+        }
+        u32_t staged;
+        if (!data_in.nb_read(staged)) {
+            return false;
+        }
+        top_in_fifo().write(staged);
+        return top_in_fifo().nb_read(word);
+    }
+
+    static inline u32_t top_data_read(data_ch_t& data_in) {
+        u32_t word;
+        if (top_in_fifo().nb_read(word)) {
+            return word;
+        }
+        top_in_fifo().write(data_in.read());
+        return top_in_fifo().read();
+    }
+
+    // TB debug peek helpers for observing Top-owned runtime state.
+    static inline TopState top_peek_state() { return top_regs().state; }
+    static inline unsigned top_peek_cfg_count() { return (unsigned)top_regs().cfg_count.to_uint(); }
+    static inline bool top_peek_cfg_ready() { return top_regs().cfg_ready; }
+    static inline unsigned top_peek_param_count() { return (unsigned)top_regs().param_count.to_uint(); }
+    static inline unsigned top_peek_input_count() { return (unsigned)top_regs().input_count.to_uint(); }
+    static inline u32_t top_peek_w_base_word() { return top_regs().w_base_word; }
+    static inline bool top_peek_halt_active() { return top_regs().halt_active; }
+    static inline bool top_peek_accepted_commit_record_valid() { return top_regs().accepted_commit_record.valid; }
+    static inline u32_t top_peek_accepted_commit_owner_opcode() { return top_regs().accepted_commit_record.owner_opcode; }
+    static inline u32_t top_peek_accepted_commit_base_word() { return top_regs().accepted_commit_record.base_word; }
+    static inline u32_t top_peek_accepted_commit_len_words_expected() { return top_regs().accepted_commit_record.len_words_expected; }
+    static inline u32_t top_peek_accepted_commit_len_words_valid() { return top_regs().accepted_commit_record.len_words_valid; }
+    static inline u32_t top_peek_accepted_commit_rx_state() { return top_regs().accepted_commit_record.rx_state; }
+    static inline bool top_peek_accepted_commit_phase_valid() { return top_regs().accepted_commit_record.phase_valid; }
+    static inline u32_t top_peek_accepted_commit_phase_id() { return top_regs().accepted_commit_record.phase_id; }
+
+    static inline IngestMetadataSurface cfg_metadata_surface(const TopRegs& regs) {
+        return make_ingest_metadata_surface(
+            (u32_t)OP_CFG_BEGIN,
+            (u32_t)0u,
+            (u32_t)CFG_WORDS_EXPECTED,
+            regs.cfg_count,
+            !regs.cfg_ready
+        );
+    }
+
+    static inline uint32_t fp16_branch_param_base_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_PARAM_STREAM_DEFAULT_BASE_WORD16);
+    }
+
+    static inline uint32_t fp16_branch_param_words_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_PARAM_STREAM_DEFAULT_WORDS_WORD16);
+    }
+
+    static inline uint32_t fp16_branch_w_region_base_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_W_REGION_BASE_WORD16);
+    }
+
+    static inline uint32_t fp16_branch_w_region_words_w() {
+        return storage_words_to_legacy_words_ceil(sram_map::FP16_BASELINE_W_REGION_WORDS_WORD16);
+    }
+
+    static inline bool uses_fp16_branch_param_stream(const uint32_t w_base_word) {
+        return w_base_word == fp16_branch_param_base_w();
+    }
+
+    static inline uint32_t param_words_expected_for_base(const uint32_t w_base_word) {
+        return uses_fp16_branch_param_stream(w_base_word) ?
+            fp16_branch_param_words_w() : (uint32_t)PARAM_WORDS_EXPECTED;
+    }
+
+    static inline uint32_t param_w_region_base_for_base(const uint32_t w_base_word) {
+        return uses_fp16_branch_param_stream(w_base_word) ?
+            fp16_branch_w_region_base_w() : (uint32_t)sram_map::W_REGION_BASE;
+    }
+
+    static inline uint32_t param_w_region_words_for_base(const uint32_t w_base_word) {
+        return uses_fp16_branch_param_stream(w_base_word) ?
+            fp16_branch_w_region_words_w() : (uint32_t)sram_map::W_REGION_WORDS;
+    }
+
+    static inline IngestMetadataSurface param_metadata_surface(const TopRegs& regs) {
+        const uint32_t base_word = (uint32_t)regs.w_base_word.to_uint();
+        const uint32_t expected_words = param_words_expected_for_base(base_word);
+        return make_ingest_metadata_surface(
+            (u32_t)OP_LOAD_W,
+            regs.w_base_word,
+            (u32_t)expected_words,
+            regs.param_count,
+            ((uint32_t)regs.param_count.to_uint() < expected_words)
+        );
+    }
+
+    static inline IngestMetadataSurface infer_metadata_surface(const TopRegs& regs) {
+        return make_ingest_metadata_surface(
+            (u32_t)OP_INFER,
+            regs.infer_ingest_contract.in_base_word,
+            regs.infer_ingest_contract.len_words_expected,
+            regs.infer_ingest_contract.len_words_valid,
+            regs.infer_ingest_contract.start && !regs.infer_ingest_contract.done
+        );
+    }
+    static inline u32_t top_peek_dbg_k_value() { return top_regs().dbg_k_value; }
+    static inline u32_t top_peek_outmode() { return top_regs().outmode; }
+    static inline u32_t top_peek_cfg_word(unsigned idx) {
+        if (idx >= CFG_WORDS_EXPECTED) { return (u32_t)0; }
+        return top_regs().cfg_words[idx];
+    }
+    static inline u32_t top_peek_cfg_code_n() { return top_regs().cfg_code_n; }
+    static inline u32_t top_peek_cfg_d_model() { return top_regs().cfg_d_model; }
+    static inline u32_t top_peek_cfg_n_heads() { return top_regs().cfg_n_heads; }
+    static inline u32_t top_peek_cfg_n_layers() { return top_regs().cfg_n_layers; }
+    static inline u32_t top_peek_infer_input_base_word() { return top_regs().infer_ingest_contract.in_base_word; }
+    static inline u32_t top_peek_infer_final_x_base_word() { return top_regs().infer_final_x_base_word; }
+    static inline u32_t top_peek_infer_endln_input_base_word() { return top_regs().infer_endln_input_base_word; }
+    static inline u32_t top_peek_infer_endln_input_word(unsigned idx) {
+        if (idx >= (unsigned)LN_X_TOTAL_WORDS) { return (u32_t)0u; }
+        return top_regs().infer_endln_input_shadow[idx];
+    }
+    static inline u32_t top_peek_infer_mid_norm_output_base_word() {
+        return top_regs().infer_mid_norm_output_base_word;
+    }
+    static inline bool top_peek_infer_mid_norm_output_valid() {
+        return top_regs().infer_mid_norm_output_valid;
+    }
+    static inline u32_t top_peek_infer_mid_norm_output_word(unsigned idx) {
+        if (idx >= (unsigned)LN_X_TOTAL_WORDS) { return (u32_t)0u; }
+        return top_regs().infer_mid_norm_output_shadow[idx];
+    }
+    static inline u32_t top_peek_infer_mid_dump_base_word() { return top_regs().infer_mid_dump_base_word; }
+    static inline bool top_peek_infer_mid_valid() { return top_regs().infer_mid_valid; }
+    static inline u32_t top_peek_infer_logits_base_word() { return top_regs().infer_logits_base_word; }
+    static inline u32_t top_peek_infer_xpred_base_word() { return top_regs().infer_xpred_base_word; }
+    static inline bool top_peek_p11ac_mainline_path_taken() { return top_regs().p11ac_mainline_path_taken; }
+    static inline bool top_peek_p11ac_fallback_taken() { return top_regs().p11ac_fallback_taken; }
+    static inline bool top_peek_p11ad_mainline_q_path_taken() { return top_regs().p11ad_mainline_q_path_taken; }
+    static inline bool top_peek_p11ad_q_fallback_taken() { return top_regs().p11ad_q_fallback_taken; }
+    static inline bool top_peek_p11ae_mainline_score_path_taken() { return top_regs().p11ae_mainline_score_path_taken; }
+    static inline bool top_peek_p11ae_score_fallback_taken() { return top_regs().p11ae_score_fallback_taken; }
+    static inline bool top_peek_p11af_mainline_softmax_output_path_taken() { return top_regs().p11af_mainline_softmax_output_path_taken; }
+    static inline bool top_peek_p11af_softmax_output_fallback_taken() { return top_regs().p11af_softmax_output_fallback_taken; }
+    static inline u32_t top_peek_p11bc_managed_attention_target_layer_id() {
+        return top_regs().p11bc_managed_attention_target_layer_id;
+    }
+    static inline u32_t top_peek_p11bc_managed_attention_gate_taken_count() {
+        return top_regs().p11bc_managed_attention_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11bc_managed_attention_last_layer_id() {
+        return top_regs().p11bc_managed_attention_last_layer_id;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_enabled_count() {
+        return top_regs().p11bd_attn_compat_shell_enabled_count;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_disabled_count() {
+        return top_regs().p11bd_attn_compat_shell_disabled_count;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_enabled_last_layer_id() {
+        return top_regs().p11bd_attn_compat_shell_enabled_last_layer_id;
+    }
+    static inline u32_t top_peek_p11bd_attn_compat_shell_disabled_last_layer_id() {
+        return top_regs().p11bd_attn_compat_shell_disabled_last_layer_id;
+    }
+    static inline u32_t top_peek_p11bd_target_layer_attn_compat_shell_disabled_count() {
+        return top_regs().p11bd_target_layer_attn_compat_shell_disabled_count;
+    }
+    static inline u32_t top_peek_p11bd_non_target_layer_attn_compat_shell_enabled_count() {
+        return top_regs().p11bd_non_target_layer_attn_compat_shell_enabled_count;
+    }
+    static inline bool top_peek_p11ax_lid0_attn_out_payload_enable() { return top_regs().p11ax_lid0_attn_out_payload_enable; }
+    static inline bool top_peek_p11ax_lid0_attn_out_payload_descriptor_valid() { return top_regs().p11ax_lid0_attn_out_payload_descriptor_valid; }
+    static inline u32_t top_peek_p11ax_attn_out_payload_gate_taken_count() { return top_regs().p11ax_attn_out_payload_gate_taken_count; }
+    static inline u32_t top_peek_p11ax_attn_out_payload_fallback_seen_count() { return top_regs().p11ax_attn_out_payload_fallback_seen_count; }
+    static inline u32_t top_peek_p11ax_attn_out_payload_non_empty_count() { return top_regs().p11ax_attn_out_payload_non_empty_count; }
+    static inline u32_t top_peek_p11ax_lid0_attn_out_payload_non_empty_count() { return top_regs().p11ax_lid0_attn_out_payload_non_empty_count; }
+    static inline u32_t top_peek_p11ax_lid_nonzero_attn_out_payload_fallback_seen_count() {
+        return top_regs().p11ax_lid_nonzero_attn_out_payload_fallback_seen_count;
+    }
+    static inline bool top_peek_p11ay_lid0_qkscore_mask_handoff_enable() {
+        return top_regs().p11ay_lid0_qkscore_mask_handoff_enable;
+    }
+    static inline bool top_peek_p11ay_lid0_qkscore_mask_handoff_descriptor_valid() {
+        return top_regs().p11ay_lid0_qkscore_mask_handoff_descriptor_valid;
+    }
+    static inline u32_t top_peek_p11ay_qkscore_mask_handoff_gate_taken_count() {
+        return top_regs().p11ay_qkscore_mask_handoff_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11ay_qkscore_mask_handoff_fallback_seen_count() {
+        return top_regs().p11ay_qkscore_mask_handoff_fallback_seen_count;
+    }
+    static inline u32_t top_peek_p11ay_qkscore_mask_handoff_non_empty_count() {
+        return top_regs().p11ay_qkscore_mask_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11ay_lid0_qkscore_mask_handoff_non_empty_count() {
+        return top_regs().p11ay_lid0_qkscore_mask_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count() {
+        return top_regs().p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count;
+    }
+    static inline bool top_peek_p11az_lid0_qkscore_kvscan_handoff_enable() {
+        return top_regs().p11az_lid0_qkscore_kvscan_handoff_enable;
+    }
+    static inline bool top_peek_p11az_lid0_qkscore_kvscan_handoff_descriptor_valid() {
+        return top_regs().p11az_lid0_qkscore_kvscan_handoff_descriptor_valid;
+    }
+    static inline u32_t top_peek_p11az_qkscore_kvscan_handoff_gate_taken_count() {
+        return top_regs().p11az_qkscore_kvscan_handoff_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11az_qkscore_kvscan_handoff_fallback_seen_count() {
+        return top_regs().p11az_qkscore_kvscan_handoff_fallback_seen_count;
+    }
+    static inline u32_t top_peek_p11az_qkscore_kvscan_handoff_non_empty_count() {
+        return top_regs().p11az_qkscore_kvscan_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11az_lid0_qkscore_kvscan_handoff_non_empty_count() {
+        return top_regs().p11az_lid0_qkscore_kvscan_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count() {
+        return top_regs().p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count;
+    }
+    static inline bool top_peek_p11ba_lid0_qkscore_qsrc_handoff_enable() {
+        return top_regs().p11ba_lid0_qkscore_qsrc_handoff_enable;
+    }
+    static inline bool top_peek_p11ba_lid0_qkscore_qsrc_handoff_descriptor_valid() {
+        return top_regs().p11ba_lid0_qkscore_qsrc_handoff_descriptor_valid;
+    }
+    static inline u32_t top_peek_p11ba_qkscore_qsrc_handoff_gate_taken_count() {
+        return top_regs().p11ba_qkscore_qsrc_handoff_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11ba_qkscore_qsrc_handoff_fallback_seen_count() {
+        return top_regs().p11ba_qkscore_qsrc_handoff_fallback_seen_count;
+    }
+    static inline u32_t top_peek_p11ba_qkscore_qsrc_handoff_non_empty_count() {
+        return top_regs().p11ba_qkscore_qsrc_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11ba_lid0_qkscore_qsrc_handoff_non_empty_count() {
+        return top_regs().p11ba_lid0_qkscore_qsrc_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count() {
+        return top_regs().p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count;
+    }
+    static inline bool top_peek_p11bb_lid0_qkscore_wq_handoff_enable() {
+        return top_regs().p11bb_lid0_qkscore_wq_handoff_enable;
+    }
+    static inline bool top_peek_p11bb_lid0_qkscore_wq_handoff_descriptor_valid() {
+        return top_regs().p11bb_lid0_qkscore_wq_handoff_descriptor_valid;
+    }
+    static inline u32_t top_peek_p11bb_qkscore_wq_handoff_gate_taken_count() {
+        return top_regs().p11bb_qkscore_wq_handoff_gate_taken_count;
+    }
+    static inline u32_t top_peek_p11bb_qkscore_wq_handoff_fallback_seen_count() {
+        return top_regs().p11bb_qkscore_wq_handoff_fallback_seen_count;
+    }
+    static inline u32_t top_peek_p11bb_qkscore_wq_handoff_non_empty_count() {
+        return top_regs().p11bb_qkscore_wq_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11bb_lid0_qkscore_wq_handoff_non_empty_count() {
+        return top_regs().p11bb_lid0_qkscore_wq_handoff_non_empty_count;
+    }
+    static inline u32_t top_peek_p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count() {
+        return top_regs().p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count;
+    }
+
+    static inline RegionId decode_region(const u32_t& addr_word) {
+        unsigned a = (unsigned)addr_word.to_uint();
+        if (a >= sram_map::X_WORK_BASE_W && a < (sram_map::X_WORK_BASE_W + sram_map::X_WORK_WORDS)) { return REG_X_WORK; }
+        if (a >= sram_map::BASE_SCRATCH_W && a < (sram_map::BASE_SCRATCH_W + sram_map::SIZE_SCRATCH_W)) { return REG_SCR; }
+        if (a >= sram_map::W_REGION_BASE && a < (sram_map::W_REGION_BASE + sram_map::W_REGION_WORDS)) { return REG_W; }
+        return REG_OOR;
+    }
+
+    static inline ReceiverState receiver_state_of(TopState state) {
+        if (state == ST_CFG_RX) { return RX_CFG; }
+        if (state == ST_PARAM_RX) { return RX_PARAM; }
+        if (state == ST_INFER_RX) { return RX_INFER; }
+        return RX_NONE;
+    }
+
+    static inline void refresh_receiver_state(TopRegs& regs) {
+        regs.rx_state = receiver_state_of(regs.state);
+    }
+
+    static inline void mem_arb_submit(TopRegs& regs, const MemReq& req) {
+        if (!req.valid) { return; }
+        unsigned slot = (unsigned)req.requester;
+        if (slot >= MEM_REQ_SLOTS) { return; }
+        regs.mem_arb.pending[slot] = req;
+        regs.mem_arb.pending_valid[slot] = true;
+    }
+
+    static inline bool mem_arb_grant_one(TopRegs& regs) {
+        regs.mem_arb.grant_latched = make_empty_mem_grant();
+        regs.mem_arb.grant_valid = false;
+
+        for (unsigned p = 0; p < (unsigned)PRIO_CLASS_COUNT; ++p) {
+            unsigned start = (unsigned)regs.mem_arb.rr_cursor[p].to_uint();
+            for (unsigned off = 0; off < MEM_REQ_SLOTS; ++off) {
+                unsigned slot = (start + off) % MEM_REQ_SLOTS;
+                if (!regs.mem_arb.pending_valid[slot]) { continue; }
+                const MemReq& req = regs.mem_arb.pending[slot];
+                if ((unsigned)req.prio != p) { continue; }
+
+                regs.mem_arb.grant_valid = true;
+                regs.mem_arb.grant_latched.valid = true;
+                regs.mem_arb.grant_latched.accept = true;
+                regs.mem_arb.grant_latched.requester = req.requester;
+                regs.mem_arb.grant_latched.granted_addr_word = req.addr_word;
+                regs.mem_arb.grant_latched.granted_len_words = req.len_words;
+                regs.mem_arb.grant_latched.reason = 0;
+
+                regs.mem_arb.pending_valid[slot] = false;
+                regs.mem_arb.rr_cursor[p] = (u16_t)((slot + 1u) % MEM_REQ_SLOTS);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static inline u32_t pack_init_pattern(unsigned region_id, unsigned local_idx) {
+        uint32_t v = ((region_id & 0xFFu) << 24) | (local_idx & 0x00FFFFFFu);
+        return (u32_t)v;
+    }
+
+    static inline unsigned min_u(unsigned a, unsigned b) {
+        return (a < b) ? a : b;
+    }
+
+    static inline void init_region_prefix(
+        u32_t* sram,
+        unsigned base_word,
+        unsigned region_words,
+        unsigned region_id
+    ) {
+        unsigned n = min_u(INIT_WORDS, region_words);
+        for (unsigned i = 0; i < n; ++i) {
+            sram[base_word + i] = pack_init_pattern(region_id, i);
+        }
+    }
+
+    static inline void cfg_session_clear(TopRegs& regs) {
+        regs.cfg_count = 0;
+        regs.cfg_ready = false;
+        for (unsigned i = 0; i < CFG_WORDS_EXPECTED; ++i) {
+            regs.cfg_words[i] = 0;
+        }
+    }
+
+    static inline void param_session_clear(TopRegs& regs) {
+        regs.param_count = 0;
+    }
+
+    static inline void infer_session_clear(TopRegs& regs) {
+        regs.input_count = 0;
+        clear_infer_ingest_contract(regs.infer_ingest_contract);
+    }
+
+    static inline uint32_t infer_expected_words(const TopRegs& regs) {
+        const IngestMetadataSurface meta = infer_metadata_surface(regs);
+        return ingest_meta_expected_words(meta, (uint32_t)INFER_IN_WORDS_EXPECTED);
+    }
+
+    static inline uint32_t infer_input_base_word(const TopRegs& regs) {
+        return (uint32_t)regs.infer_ingest_contract.in_base_word.to_uint();
+    }
+
+    static inline bool infer_contract_span_in_sram(const InferIngestContract& c) {
+        const IngestMetadataSurface meta = make_ingest_metadata_surface(
+            (u32_t)OP_INFER,
+            c.in_base_word,
+            c.len_words_expected,
+            c.len_words_valid,
+            c.start && !c.done
+        );
+        return ingest_meta_span_in_sram(meta, (uint32_t)INFER_IN_WORDS_EXPECTED);
+    }
+
+    static inline void infer_contract_arm_for_op_infer(TopRegs& regs) {
+        regs.infer_ingest_contract.start = true;
+        regs.infer_ingest_contract.done = false;
+        infer_refresh_preproc_ranges(
+            regs.infer_ingest_contract,
+            (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED
+        );
+    }
+
+    static inline const u32_t* infer_label_words_view(const TopRegs& regs, const u32_t* sram) {
+        const uint32_t base = infer_input_base_word(regs);
+        return &sram[base];
+    }
+
+    static inline void infer_store_one_word(
+        TopRegs& regs,
+        u32_t* sram,
+        uint32_t idx,
+        u32_t w
+    ) {
+        const uint32_t in_base = infer_input_base_word(regs);
+        sram[in_base + idx] = w;
+        regs.infer_input_shadow[idx] = w;
+        regs.infer_ingest_contract.len_words_valid = (u32_t)(idx + 1u);
+    }
+
+    static inline bool is_param_base_in_w_region(uint32_t w_base_word) {
+        const uint32_t region_base = param_w_region_base_for_base(w_base_word);
+        const uint32_t region_words = param_w_region_words_for_base(w_base_word);
+        return (w_base_word >= region_base) &&
+            (w_base_word < (region_base + region_words));
+    }
+
+    static inline bool is_param_base_aligned(uint32_t w_base_word) {
+        return ((w_base_word % PARAM_ALIGN_WORDS) == 0u);
+    }
+
+    static inline bool is_param_span_in_w_region(uint32_t w_base_word) {
+        const uint32_t region_base = param_w_region_base_for_base(w_base_word);
+        const uint32_t region_words = param_w_region_words_for_base(w_base_word);
+        const uint32_t expected_words = param_words_expected_for_base(w_base_word);
+        unsigned long long begin = (unsigned long long)w_base_word;
+        unsigned long long end_excl = begin + (unsigned long long)expected_words;
+        unsigned long long region_begin = (unsigned long long)region_base;
+        unsigned long long region_end = region_begin + (unsigned long long)region_words;
+        return (begin >= region_begin) && (end_excl <= region_end);
+    }
+
+    static inline bool param_ingest_span_legal(const TopRegs& regs) {
+        const IngestMetadataSurface meta = param_metadata_surface(regs);
+        const uint32_t expected_words = param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint());
+        const bool in_sram = ingest_meta_span_in_sram(meta, expected_words);
+        const bool in_w_region = is_param_span_in_w_region((uint32_t)regs.w_base_word.to_uint());
+        return in_sram && in_w_region;
+    }
+
+    static inline bool is_valid_outmode(uint32_t outmode) {
+        return (outmode <= 2u);
+    }
+
+    static inline uint32_t dbg_get_action(uint32_t dbg_word) {
+        return (dbg_word & 0x3u);
+    }
+
+    static inline uint32_t dbg_get_trigger_sel(uint32_t dbg_word) {
+        return ((dbg_word >> 8) & 0xFFu);
+    }
+
+    static inline uint32_t dbg_get_k_value(uint32_t dbg_word) {
+        return ((dbg_word >> 16) & 0xFFFFu);
+    }
+
+    static inline void debug_clear(TopRegs& regs) {
+        regs.debug_armed = false;
+        regs.dbg_trigger_sel = (u32_t)DBG_TRIGGER_DISABLED;
+        regs.dbg_k_value = 0;
+    }
+
+    static inline void debug_arm(TopRegs& regs, uint32_t trigger_sel, uint32_t k_value) {
+        regs.debug_armed = true;
+        regs.dbg_trigger_sel = (u32_t)trigger_sel;
+        regs.dbg_k_value = (u32_t)k_value;
+    }
+
+    static inline void enter_halted_and_emit(
+        TopRegs& regs,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        regs.halt_active = true;
+        regs.halt_info.valid = true;
+        regs.halt_info.halt_reason = (u32_t)ERR_DBG_HALT;
+        regs.halt_info.prev_state = ST_PARAM_RX;
+        regs.halt_info.meta0_word_addr = regs.w_base_word;
+        regs.halt_info.meta1_len_words = (u32_t)DBG_META1_LEN_WORDS;
+        regs.state = ST_HALTED;
+
+        // Emit ERR response and metadata words for HALTED debug state.
+        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_DBG_HALT));
+        data_out.write(regs.halt_info.meta0_word_addr);
+        data_out.write(regs.halt_info.meta1_len_words);
+    }
+
+    static inline bool handle_debug_cfg_idle(
+        TopRegs& regs,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_in
+    ) {
+        u32_t dbg_word_in = top_data_read(data_in);
+        uint32_t dbg_word = (uint32_t)dbg_word_in.to_uint();
+        uint32_t action = dbg_get_action(dbg_word);
+        uint32_t trigger_sel = dbg_get_trigger_sel(dbg_word);
+        uint32_t k_value = dbg_get_k_value(dbg_word);
+
+        if (action == DBG_ACTION_CLEAR) {
+            debug_clear(regs);
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+            return true;
+        }
+        if (action == DBG_ACTION_ARM) {
+            if (trigger_sel == DBG_TRIGGER_DISABLED) {
+                debug_clear(regs);
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+                return true;
+            }
+            if (trigger_sel == DBG_TRIGGER_ON_LOADW_COUNT) {
+                debug_arm(regs, trigger_sel, k_value);
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+                return true;
+            }
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+            return true;
+        }
+        if (action == DBG_ACTION_RESUME) {
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+            return true;
+        }
+
+        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+        return true;
+    }
+
+    static inline bool handle_debug_cfg_halted(
+        TopRegs& regs,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_in
+    ) {
+        u32_t dbg_word_in = top_data_read(data_in);
+        uint32_t dbg_word = (uint32_t)dbg_word_in.to_uint();
+        uint32_t action = dbg_get_action(dbg_word);
+
+        if (action == DBG_ACTION_CLEAR) {
+            debug_clear(regs);
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+            return true;
+        }
+        if (action == DBG_ACTION_RESUME) {
+            regs.halt_active = false;
+            regs.state = regs.halt_info.prev_state;
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_DEBUG_CFG));
+            return true;
+        }
+        if (action == DBG_ACTION_ARM) {
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+            return true;
+        }
+
+        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+        return true;
+    }
+
+    static inline void soft_reset_all(TopRegs& regs, u32_t* sram) {
+        regs.clear();
+        init_region_prefix(sram, sram_map::X_WORK_BASE_W, sram_map::X_WORK_WORDS, (unsigned)REG_X_WORK);
+        init_region_prefix(sram, sram_map::BASE_SCRATCH_W, sram_map::SIZE_SCRATCH_W, (unsigned)REG_SCR);
+        init_region_prefix(sram, sram_map::W_REGION_BASE, sram_map::W_REGION_WORDS, (unsigned)REG_W);
+    }
+
+    static inline bool cfg_validate_minimal(const TopRegs& regs) {
+        uint32_t code_n = (uint32_t)regs.cfg_words[CFG_IDX_CODE_N].to_uint();
+        uint32_t code_k = (uint32_t)regs.cfg_words[CFG_IDX_CODE_K].to_uint();
+        uint32_t code_c = (uint32_t)regs.cfg_words[CFG_IDX_CODE_C].to_uint();
+        uint32_t d_model = (uint32_t)regs.cfg_words[CFG_IDX_D_MODEL].to_uint();
+        uint32_t n_heads = (uint32_t)regs.cfg_words[CFG_IDX_N_HEAD].to_uint();
+        uint32_t d_ffn = (uint32_t)regs.cfg_words[CFG_IDX_D_FFN].to_uint();
+        uint32_t n_layers = (uint32_t)regs.cfg_words[CFG_IDX_N_LAYERS].to_uint();
+
+        if (code_n == 0u) { return false; }
+        if (code_k == 0u) { return false; }
+        if (code_k > code_n) { return false; }
+        if (code_c == 0u) { return false; }
+        if (code_c > code_n) { return false; }
+        if ((code_k + code_c) != code_n) { return false; }
+
+        if (d_model == 0u) { return false; }
+        if (n_heads == 0u) { return false; }
+        if ((d_model % n_heads) != 0u) { return false; }
+
+        if (d_ffn == 0u) { return false; }
+        if (n_layers == 0u) { return false; }
+
+        return true;
+    }
+
+    static inline void cfg_apply_to_regs(TopRegs& regs) {
+        regs.cfg_magic = 0;
+        regs.cfg_code_n = regs.cfg_words[CFG_IDX_CODE_N];
+        regs.cfg_code_c = regs.cfg_words[CFG_IDX_CODE_C];
+        regs.cfg_d_model = regs.cfg_words[CFG_IDX_D_MODEL];
+        regs.cfg_n_heads = regs.cfg_words[CFG_IDX_N_HEAD];
+        regs.cfg_d_head = regs.cfg_words[CFG_IDX_D_MODEL] / regs.cfg_words[CFG_IDX_N_HEAD];
+        regs.cfg_d_ffn = regs.cfg_words[CFG_IDX_D_FFN];
+        regs.cfg_d_lpe = regs.cfg_words[CFG_IDX_ENABLE_LPE];
+        regs.cfg_n_layers = regs.cfg_words[CFG_IDX_N_LAYERS];
+        regs.cfg_out_len_x_pred = regs.cfg_words[CFG_IDX_OUT_MODE];
+        regs.cfg_out_len_logits = regs.cfg_words[CFG_IDX_RESERVED0];
+    }
+
+    static inline void cfg_ingest_one_word(TopRegs& regs, ac_channel<ac_int<32, false> >& data_in) {
+        if (regs.cfg_ready) { return; }
+        const IngestMetadataSurface meta = cfg_metadata_surface(regs);
+        const unsigned expected_words =
+            (unsigned)ingest_meta_expected_words(meta, (uint32_t)CFG_WORDS_EXPECTED);
+        if (!ingest_meta_owner_matches_rx(meta, RX_CFG)) { return; }
+
+        u32_t w;
+        if (!top_data_nb_read(data_in, w)) { return; }
+
+        unsigned idx = (unsigned)regs.cfg_count.to_uint();
+        if (idx < expected_words) {
+            regs.cfg_words[idx] = w;
+            regs.cfg_count = regs.cfg_count + 1;
+            if ((unsigned)regs.cfg_count.to_uint() == expected_words) {
+                regs.cfg_ready = true;
+            }
+        }
+    }
+
+    static inline void param_ingest_one_word(
+        TopRegs& regs,
+        ac_channel<ac_int<32, false> >& data_in,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_out,
+        u32_t* sram
+    ) {
+        const IngestMetadataSurface meta = param_metadata_surface(regs);
+        const unsigned expected_words =
+            (unsigned)ingest_meta_expected_words(meta, param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint()));
+        if (!ingest_meta_owner_matches_rx(meta, RX_PARAM)) {
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+            return;
+        }
+
+        unsigned idx = (unsigned)regs.param_count.to_uint();
+        if (idx >= expected_words) {
+            regs.state = ST_IDLE;
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
+                meta,
+                RX_PARAM,
+                param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint()),
+                (uint8_t)ERR_PARAM_LEN_MISMATCH,
+                true,
+                (u32_t)0u,
+                false
+            );
+            if (commit_diag == (uint8_t)ERR_OK) {
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+            }
+            else {
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+            }
+            return;
+        }
+
+        u32_t w;
+        if (!top_data_nb_read(data_in, w)) { return; }
+
+        uint32_t base = (uint32_t)regs.w_base_word.to_uint();
+        uint32_t addr = base + idx;
+        sram[addr] = w;
+        regs.param_count = regs.param_count + 1;
+
+        // HALT when debug trigger matches the k-th LOAD_W word.
+        if (regs.debug_armed &&
+            ((uint32_t)regs.dbg_trigger_sel.to_uint() == (uint32_t)DBG_TRIGGER_ON_LOADW_COUNT) &&
+            (idx == (unsigned)regs.dbg_k_value.to_uint())) {
+            regs.debug_armed = false; // One-shot trigger; re-arm via DEBUG_CFG.
+            enter_halted_and_emit(regs, ctrl_rsp, data_out);
+            return;
+        }
+
+        if ((unsigned)regs.param_count.to_uint() == expected_words) {
+            // LOAD_W transaction complete.
+            regs.state = ST_IDLE;
+            const IngestMetadataSurface done_meta = param_metadata_surface(regs);
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
+                done_meta,
+                RX_PARAM,
+                param_words_expected_for_base((uint32_t)regs.w_base_word.to_uint()),
+                (uint8_t)ERR_PARAM_LEN_MISMATCH,
+                true,
+                (u32_t)0u,
+                false
+            );
+            if (commit_diag == (uint8_t)ERR_OK) {
+                ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_LOAD_W));
+            }
+            else {
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+            }
+        }
+    }
+
+    static inline void run_preproc_block(TopRegs& regs, u32_t* sram) {
+        PreprocCfg cfg;
+        uint32_t infer_in_words = (uint32_t)regs.infer_ingest_contract.len_words_valid.to_uint();
+        if (infer_in_words == 0u) {
+            infer_in_words = infer_expected_words(regs);
+        }
+        cfg.infer_in_words = (u32_t)infer_in_words;
+        cfg.x_out_words = (u32_t)X_OUT_WORDS_EXPECTED;
+        const u32_t in_base_word = regs.infer_ingest_contract.in_base_word;
+        infer_refresh_preproc_ranges(
+            regs.infer_ingest_contract,
+            (uint32_t)cfg.x_out_words.to_uint()
+        );
+
+        PreprocBlockContract& contract = regs.preproc_contract;
+        clear_preproc_contract(contract);
+        contract.start = true;
+        contract.phase_id = regs.infer_ingest_contract.phase_id;
+        contract.x_work_base_word = (u32_t)X_OUT_BASE_WORD;
+        contract.w_base_word = regs.w_base_word;
+        contract.token_range = regs.infer_ingest_contract.token_range;
+        contract.tile_range = regs.infer_ingest_contract.tile_range;
+
+        // Preproc top-fed preload is a compatibility bridge; Top still owns ingest policy.
+        u32_t topfed_in_payload[PREPROC_IN_WORDS_EXPECTED];
+        PREPROC_TOPFED_INPUT_INIT_LOOP: for (uint32_t i = 0u; i < (uint32_t)PREPROC_IN_WORDS_EXPECTED; ++i) {
+            topfed_in_payload[i] = 0;
+        }
+        const uint32_t in_base = (uint32_t)in_base_word.to_uint();
+        uint32_t preload_words = infer_in_words;
+        if (preload_words > (uint32_t)PREPROC_IN_WORDS_EXPECTED) {
+            preload_words = (uint32_t)PREPROC_IN_WORDS_EXPECTED;
+        }
+        PREPROC_TOPFED_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < preload_words; ++i) {
+            topfed_in_payload[i] = sram[in_base + i];
+        }
+
+        // Top-owned dispatch: Top builds the contract and block consumes this window.
+        PreprocEmbedSPECoreWindow<u32_t*>(
+            sram,
+            cfg,
+            in_base_word,
+            (u32_t)X_OUT_BASE_WORD,
+            contract,
+            topfed_in_payload
+        );
+        contract.done = true;
+    }
+
+    static inline void run_layernorm_block(TopRegs& regs, u32_t* sram) {
+        LayerNormCfg cfg;
+        cfg.token_count = (u32_t)LN_TOKEN_COUNT;
+        cfg.d_model = (u32_t)LN_D_MODEL;
+        cfg.eps_bits = LN_EPS_BITS;
+
+        LayerNormBlockContract& contract = regs.layernorm_contract;
+        clear_layernorm_contract(contract);
+        contract.start = true;
+        // Compatibility note: this pre-layernorm path currently shares END_LN phase id.
+        contract.phase_id = PHASE_END_LN;
+        contract.x_work_base_word = (u32_t)LN_X_IN_BASE_WORD;
+        contract.gamma_base_word = (u32_t)LN_GAMMA_BASE_WORD;
+        contract.beta_base_word = (u32_t)LN_BETA_BASE_WORD;
+
+        uint32_t token_count = (uint32_t)cfg.token_count.to_uint();
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (token_count == 0u) { token_count = (uint32_t)LN_TOKEN_COUNT; }
+        if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
+        const uint32_t tile_count =
+            attn_top_managed_tile_count(d_model, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+        contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+        // Backup bring-up contract alignment:
+        // ref_model step0 path is preproc_x -> layer0 (no standalone pre-layer LN stage).
+        // Keep Top ownership unchanged and write back in-place within the single-X_WORK baseline.
+        const uint32_t src_base = (uint32_t)LN_X_IN_BASE_WORD;
+        const uint32_t dst_base = (uint32_t)LN_X_OUT_BASE_WORD;
+        const uint32_t words = token_count * d_model;
+        TOP_PRELAYER_LN_BYPASS_COPY_LOOP: for (uint32_t i = 0u; i < words; ++i) {
+            sram[dst_base + i] = sram[src_base + i];
+        }
+        contract.done = true;
+    }
+
+    static inline CfgRegs build_layer_cfg(const TopRegs& regs) {
+        CfgRegs cfg;
+        cfg.d_model = regs.cfg_d_model;
+        cfg.n_heads = regs.cfg_n_heads;
+        cfg.d_ffn = regs.cfg_d_ffn;
+        cfg.n_layers = regs.cfg_n_layers;
+
+        if ((uint32_t)cfg.d_model.to_uint() == 0u) { cfg.d_model = (u32_t)D_MODEL; }
+        if ((uint32_t)cfg.n_heads.to_uint() == 0u) { cfg.n_heads = (u32_t)N_HEAD; }
+        if ((uint32_t)cfg.d_ffn.to_uint() == 0u) { cfg.d_ffn = (u32_t)D_FFN; }
+        if ((uint32_t)cfg.n_layers.to_uint() == 0u) { cfg.n_layers = (u32_t)N_LAYERS; }
+        return cfg;
+    }
+
+    static inline u32_t canonical_x_work_base(u32_t x_base_word) {
+        (void)x_base_word;
+        return (u32_t)sram_map::X_WORK_BASE_W;
+    }
+
+    static inline void copy_x_words(u32_t* dst, const u32_t* src, uint32_t words) {
+        TOP_COPY_X_WORDS_LOOP: for (uint32_t i = 0; i < words; ++i) {
+            dst[i] = src[i];
+        }
+    }
+
+    template<typename SramView>
+    static inline bool run_p11ac_layer0_top_managed_kv(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        u32_t x_in_base_word,
+        const LayerScratch& sc,
+        const LayerParamBase& pb,
+        bool& fallback_taken,
+        u32_t phase_entry_probe_x_base_word = (u32_t)0u,
+        const u32_t* phase_entry_probe_x_words = 0,
+        u32_t phase_entry_probe_x_words_valid = (u32_t)0u,
+        u32_t* phase_entry_probe_visible = 0,
+        u32_t* phase_entry_probe_owner_ok = 0,
+        u32_t* phase_entry_probe_compare_ok = 0
+    ) {
+        AttnCfg attn_cfg;
+        attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        attn_cfg.d_model = cfg.d_model;
+        attn_cfg.n_heads = cfg.n_heads;
+        uint32_t d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)attn_cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        attn_cfg.d_model = (u32_t)d_model;
+        attn_cfg.n_heads = (u32_t)n_heads;
+        attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+        // P11AC_MAINLINE_TOP_CALLSITE
+        return attn_phasea_top_managed_kv_mainline(
+            sram,
+            pb.param_base_word,
+            x_in_base_word,
+            attn_cfg,
+            sc.attn,
+            fallback_taken,
+            phase_entry_probe_x_base_word,
+            phase_entry_probe_x_words,
+            phase_entry_probe_x_words_valid,
+            phase_entry_probe_visible,
+            phase_entry_probe_owner_ok,
+            phase_entry_probe_compare_ok
+        );
+    }
+
+    template<typename SramView>
+    static inline bool run_p11ad_layer0_top_managed_q(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        u32_t x_in_base_word,
+        const LayerScratch& sc,
+        const LayerParamBase& pb,
+        bool& fallback_taken,
+        u32_t phase_entry_probe_x_base_word = (u32_t)0u,
+        const u32_t* phase_entry_probe_x_words = 0,
+        u32_t phase_entry_probe_x_words_valid = (u32_t)0u,
+        u32_t* phase_entry_probe_visible = 0,
+        u32_t* phase_entry_probe_owner_ok = 0,
+        u32_t* phase_entry_probe_compare_ok = 0
+    ) {
+        AttnCfg attn_cfg;
+        attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        attn_cfg.d_model = cfg.d_model;
+        attn_cfg.n_heads = cfg.n_heads;
+        uint32_t d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)attn_cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        attn_cfg.d_model = (u32_t)d_model;
+        attn_cfg.n_heads = (u32_t)n_heads;
+        attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+        // P11AD_MAINLINE_TOP_Q_CALLSITE
+        return attn_phasea_top_managed_q_mainline(
+            sram,
+            pb.param_base_word,
+            x_in_base_word,
+            attn_cfg,
+            sc.attn,
+            fallback_taken,
+            phase_entry_probe_x_base_word,
+            phase_entry_probe_x_words,
+            phase_entry_probe_x_words_valid,
+            phase_entry_probe_visible,
+            phase_entry_probe_owner_ok,
+            phase_entry_probe_compare_ok
+        );
+    }
+
+    template<typename SramView>
+    static inline bool run_p11ae_layer0_top_managed_qk_score(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t token_idx,
+        bool& fallback_taken,
+        u32_t phase_entry_probe_q_base_word = (u32_t)0u,
+        u32_t phase_entry_probe_k_base_word = (u32_t)0u,
+        const u32_t* phase_entry_probe_q_words = 0,
+        const u32_t* phase_entry_probe_k_words = 0,
+        u32_t phase_entry_probe_words_valid = (u32_t)0u,
+        u32_t* phase_entry_probe_visible = 0,
+        u32_t* phase_entry_probe_owner_ok = 0,
+        u32_t* phase_entry_probe_compare_ok = 0,
+        u32_t score_tile_bridge_base_word = (u32_t)0u,
+        const u32_t* score_tile_bridge_words = 0,
+        u32_t score_tile_bridge_words_valid = (u32_t)0u,
+        u32_t score_tile_bridge_key_begin = (u32_t)0u,
+        u32_t* score_tile_bridge_visible = 0,
+        u32_t* score_tile_bridge_owner_ok = 0,
+        u32_t* score_tile_bridge_consumed = 0,
+        u32_t* score_tile_bridge_compare_ok = 0,
+        u32_t score_tile_bridge_head_idx = (u32_t)0u,
+        u32_t score_tile_bridge_family_case_count = (u32_t)0u,
+        const u32_t* score_tile_bridge_family_base_words = 0,
+        const u32_t* score_tile_bridge_family_words = 0,
+        const u32_t* score_tile_bridge_family_words_valid = 0,
+        const u32_t* score_tile_bridge_family_key_begin = 0,
+        const u32_t* score_tile_bridge_family_head_idx = 0,
+        u32_t* score_tile_bridge_family_visible_count = 0,
+        u32_t* score_tile_bridge_family_owner_ok = 0,
+        u32_t* score_tile_bridge_family_consumed_count = 0,
+        u32_t* score_tile_bridge_family_compare_ok = 0,
+        u32_t* score_tile_bridge_family_case_mask = 0
+    ) {
+        AttnCfg attn_cfg;
+        attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        attn_cfg.d_model = cfg.d_model;
+        attn_cfg.n_heads = cfg.n_heads;
+        uint32_t d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)attn_cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        attn_cfg.d_model = (u32_t)d_model;
+        attn_cfg.n_heads = (u32_t)n_heads;
+        attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+        // P11AE_MAINLINE_TOP_SCORE_CALLSITE
+        return attn_phaseb_top_managed_qk_score_mainline(
+            sram,
+            attn_cfg,
+            sc.attn,
+            token_idx,
+            fallback_taken,
+            phase_entry_probe_q_base_word,
+            phase_entry_probe_k_base_word,
+            phase_entry_probe_q_words,
+            phase_entry_probe_k_words,
+            phase_entry_probe_words_valid,
+            phase_entry_probe_visible,
+            phase_entry_probe_owner_ok,
+            phase_entry_probe_compare_ok,
+            score_tile_bridge_base_word,
+            score_tile_bridge_words,
+            score_tile_bridge_words_valid,
+            score_tile_bridge_key_begin,
+            score_tile_bridge_visible,
+            score_tile_bridge_owner_ok,
+            score_tile_bridge_consumed,
+            score_tile_bridge_compare_ok,
+            score_tile_bridge_head_idx,
+            score_tile_bridge_family_case_count,
+            score_tile_bridge_family_base_words,
+            score_tile_bridge_family_words,
+            score_tile_bridge_family_words_valid,
+            score_tile_bridge_family_key_begin,
+            score_tile_bridge_family_head_idx,
+            score_tile_bridge_family_visible_count,
+            score_tile_bridge_family_owner_ok,
+            score_tile_bridge_family_consumed_count,
+            score_tile_bridge_family_compare_ok,
+            score_tile_bridge_family_case_mask
+        );
+    }
+
+    template<typename SramView>
+    static inline bool run_p11af_layer0_top_managed_softmax_out(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t token_idx,
+        bool& fallback_taken,
+        u32_t phase_entry_probe_v_base_word = (u32_t)0u,
+        const u32_t* phase_entry_probe_v_words = 0,
+        u32_t phase_entry_probe_v_words_valid = (u32_t)0u,
+        u32_t* phase_entry_probe_visible = 0,
+        u32_t* phase_entry_probe_owner_ok = 0,
+        u32_t* phase_entry_probe_compare_ok = 0,
+        u32_t phase_tile_bridge_v_base_word = (u32_t)0u,
+        const u32_t* phase_tile_bridge_v_words = 0,
+        u32_t phase_tile_bridge_v_words_valid = (u32_t)0u,
+        u32_t phase_tile_bridge_d_tile_idx = (u32_t)0u,
+        u32_t* phase_tile_bridge_visible = 0,
+        u32_t* phase_tile_bridge_owner_ok = 0,
+        u32_t* phase_tile_bridge_consumed = 0,
+        u32_t* phase_tile_bridge_compare_ok = 0,
+        u32_t phase_tile_bridge_family_case_count = (u32_t)0u,
+        const u32_t* phase_tile_bridge_family_v_base_words = 0,
+        const u32_t* phase_tile_bridge_family_v_words = 0,
+        const u32_t* phase_tile_bridge_family_v_words_valid = 0,
+        const u32_t* phase_tile_bridge_family_d_tile_idx = 0,
+        u32_t* phase_tile_bridge_family_visible_count = 0,
+        u32_t* phase_tile_bridge_family_owner_ok = 0,
+        u32_t* phase_tile_bridge_family_consumed_count = 0,
+        u32_t* phase_tile_bridge_family_compare_ok = 0,
+        u32_t* phase_tile_bridge_family_case_mask = 0,
+        const u32_t* phase_tile_bridge_family_head_idx = 0,
+        const u32_t* phase_tile_bridge_family_key_token_begin = 0,
+        const u32_t* phase_tile_bridge_family_key_token_count = 0,
+        u32_t* phase_tile_bridge_family_desc_visible_count = 0,
+        u32_t* phase_tile_bridge_family_desc_case_mask = 0,
+        u32_t* phase_tile_bridge_family_renorm_selected_count = 0,
+        u32_t* phase_tile_bridge_family_renorm_case_mask = 0,
+        u32_t* phase_tile_bridge_family_writeback_selected_count = 0,
+        u32_t* phase_tile_bridge_family_writeback_case_mask = 0,
+        u32_t* phase_tile_bridge_family_writeback_touch_count = 0,
+        u32_t phase_tile_bridge_family_writeback_selected_base_word = (u32_t)0u,
+        const u32_t* phase_tile_bridge_family_writeback_selected_words = 0,
+        u32_t phase_tile_bridge_family_writeback_selected_words_valid = (u32_t)0u,
+        u32_t* phase_tile_bridge_family_writeback_selected_consumed_count = 0,
+        u32_t* phase_tile_bridge_family_writeback_selected_owner_ok = 0,
+        u32_t* phase_tile_bridge_family_writeback_selected_compare_ok = 0,
+        u32_t phase_tile_bridge_family_writeback_selected_family_case_count = (u32_t)0u,
+        const u32_t* phase_tile_bridge_family_writeback_selected_family_base_words = 0,
+        const u32_t* phase_tile_bridge_family_writeback_selected_family_words = 0,
+        const u32_t* phase_tile_bridge_family_writeback_selected_family_words_valid = 0
+    ) {
+        AttnCfg attn_cfg;
+        attn_cfg.token_count = (u32_t)ATTN_TOKEN_COUNT;
+        attn_cfg.d_model = cfg.d_model;
+        attn_cfg.n_heads = cfg.n_heads;
+        uint32_t d_model = (uint32_t)attn_cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)attn_cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        attn_cfg.d_model = (u32_t)d_model;
+        attn_cfg.n_heads = (u32_t)n_heads;
+        attn_cfg.d_head = (u32_t)(d_model / n_heads);
+
+        // P11AF_MAINLINE_TOP_SOFTMAX_OUT_CALLSITE
+        return attn_phaseb_top_managed_softmax_out_mainline(
+            sram,
+            attn_cfg,
+            sc.attn,
+            token_idx,
+            sc.attn_out_base_word,
+            fallback_taken,
+            phase_entry_probe_v_base_word,
+            phase_entry_probe_v_words,
+            phase_entry_probe_v_words_valid,
+            phase_entry_probe_visible,
+            phase_entry_probe_owner_ok,
+            phase_entry_probe_compare_ok,
+            phase_tile_bridge_v_base_word,
+            phase_tile_bridge_v_words,
+            phase_tile_bridge_v_words_valid,
+            phase_tile_bridge_d_tile_idx,
+            phase_tile_bridge_visible,
+            phase_tile_bridge_owner_ok,
+            phase_tile_bridge_consumed,
+            phase_tile_bridge_compare_ok,
+            phase_tile_bridge_family_case_count,
+            phase_tile_bridge_family_v_base_words,
+            phase_tile_bridge_family_v_words,
+            phase_tile_bridge_family_v_words_valid,
+            phase_tile_bridge_family_d_tile_idx,
+            phase_tile_bridge_family_visible_count,
+            phase_tile_bridge_family_owner_ok,
+            phase_tile_bridge_family_consumed_count,
+            phase_tile_bridge_family_compare_ok,
+            phase_tile_bridge_family_case_mask,
+            phase_tile_bridge_family_head_idx,
+            phase_tile_bridge_family_key_token_begin,
+            phase_tile_bridge_family_key_token_count,
+            phase_tile_bridge_family_desc_visible_count,
+            phase_tile_bridge_family_desc_case_mask,
+            phase_tile_bridge_family_renorm_selected_count,
+            phase_tile_bridge_family_renorm_case_mask,
+            phase_tile_bridge_family_writeback_selected_count,
+            phase_tile_bridge_family_writeback_case_mask,
+            phase_tile_bridge_family_writeback_touch_count,
+            phase_tile_bridge_family_writeback_selected_base_word,
+            phase_tile_bridge_family_writeback_selected_words,
+            phase_tile_bridge_family_writeback_selected_words_valid,
+            phase_tile_bridge_family_writeback_selected_consumed_count,
+            phase_tile_bridge_family_writeback_selected_owner_ok,
+            phase_tile_bridge_family_writeback_selected_compare_ok,
+            phase_tile_bridge_family_writeback_selected_family_case_count,
+            phase_tile_bridge_family_writeback_selected_family_base_words,
+            phase_tile_bridge_family_writeback_selected_family_words,
+            phase_tile_bridge_family_writeback_selected_family_words_valid
+        );
+    }
+
+    static inline void load_mid_or_end_norm_params(
+        bool is_mid_norm,
+        u32_t* sram,
+        uint32_t param_base_word,
+        uint32_t gamma_base,
+        uint32_t beta_base,
+        uint32_t d_model
+    ) {
+        const uint32_t norm_w_id = is_mid_norm ? 65u : 64u;
+        const uint32_t norm_b_id = is_mid_norm ? 17u : 16u;
+        const uint32_t norm_w_base = param_base_word + kParamMeta[norm_w_id].offset_w;
+        const uint32_t norm_b_base = param_base_word + kParamMeta[norm_b_id].offset_w;
+
+        TOP_NORM_PARAM_COPY_LOOP: for (uint32_t c = 0; c < d_model; ++c) {
+            sram[gamma_base + c] = sram[norm_w_base + c];
+            sram[beta_base + c] = sram[norm_b_base + c];
+        }
+    }
+
+    static inline void top_preload_layer_sublayer1_norm_params(
+        u32_t* sram,
+        const LayerParamBase& pb,
+        u32_t layer_id,
+        const LayerScratch& sc,
+        uint32_t d_model
+    ) {
+        const uint32_t gamma_base = (uint32_t)sc.ffn.ln_gamma_base_word.to_uint();
+        const uint32_t beta_base = (uint32_t)sc.ffn.ln_beta_base_word.to_uint();
+        load_layer_sublayer1_norm_params(
+            sram,
+            (uint32_t)pb.param_base_word.to_uint(),
+            (uint32_t)layer_id.to_uint(),
+            gamma_base,
+            beta_base,
+            d_model
+        );
+    }
+
+    static inline void run_mid_or_end_layernorm(
+        bool is_mid_norm,
+        const CfgRegs& cfg_regs,
+        u32_t* sram,
+        u32_t param_base_word,
+        u32_t x_in_base_word,
+        u32_t x_out_base_word,
+        LayerNormBlockContract* top_owned_contract = 0
+    ) {
+        uint32_t d_model = (uint32_t)cfg_regs.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)LN_D_MODEL; }
+
+        uint32_t gamma_base = (uint32_t)LN_GAMMA_BASE_WORD;
+        uint32_t beta_base = (uint32_t)LN_BETA_BASE_WORD;
+        load_mid_or_end_norm_params(is_mid_norm, sram, (uint32_t)param_base_word.to_uint(), gamma_base, beta_base, d_model);
+
+        LayerNormCfg ln_cfg;
+        ln_cfg.token_count = (u32_t)LN_TOKEN_COUNT;
+        ln_cfg.d_model = (u32_t)d_model;
+        ln_cfg.eps_bits = LN_EPS_BITS;
+
+        LayerNormBlockContract local_contract;
+        LayerNormBlockContract& contract =
+            (top_owned_contract != 0) ? *top_owned_contract : local_contract;
+        clear_layernorm_contract(contract);
+        contract.start = true;
+        contract.phase_id = is_mid_norm ? PHASE_MID_LN : PHASE_END_LN;
+        contract.x_work_base_word = x_in_base_word;
+        contract.gamma_base_word = (u32_t)gamma_base;
+        contract.beta_base_word = (u32_t)beta_base;
+        contract.token_range = make_token_range((u32_t)0u, (u32_t)LN_TOKEN_COUNT);
+        const uint32_t tile_count =
+            attn_top_managed_tile_count(d_model, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+
+        LayerNormBlockCoreWindow<u32_t*>(
+            sram,
+            ln_cfg,
+            x_in_base_word,
+            x_out_base_word,
+            contract
+        );
+        contract.done = true;
+    }
+
+    // Top-side representative helper for FFN seam assembly.
+    // This is a local-only caller convenience surface and does not change external protocol.
+    static inline TransformerLayerFfnTopfedHandoffDesc top_make_transformer_layer_ffn_topfed_handoff_desc(
+        const u32_t* topfed_w1_x_words = 0,
+        u32_t topfed_w1_x_words_valid = (u32_t)0u,
+        const u32_t* topfed_w1_weight_words = 0,
+        u32_t topfed_w1_weight_words_valid = (u32_t)0u,
+        const u32_t* topfed_w1_bias_words = 0,
+        u32_t topfed_w1_bias_words_valid = (u32_t)0u,
+        const u32_t* topfed_w2_input_words = 0,
+        u32_t topfed_w2_input_words_valid = (u32_t)0u,
+        const u32_t* topfed_w2_weight_words = 0,
+        u32_t topfed_w2_weight_words_valid = (u32_t)0u,
+        const u32_t* topfed_w2_bias_words = 0,
+        u32_t topfed_w2_bias_words_valid = (u32_t)0u
+    ) {
+        return make_transformer_layer_ffn_topfed_handoff_desc(
+            topfed_w1_x_words,
+            topfed_w1_x_words_valid,
+            topfed_w1_weight_words,
+            topfed_w1_weight_words_valid,
+            topfed_w1_bias_words,
+            topfed_w1_bias_words_valid,
+            topfed_w2_input_words,
+            topfed_w2_input_words_valid,
+            topfed_w2_weight_words,
+            topfed_w2_weight_words_valid,
+            topfed_w2_bias_words,
+            topfed_w2_bias_words_valid
+        );
+    }
+
+    // local-only representative helper:
+    // - scope is bounded to lid==0 smoke feed verification
+    // - payload is fixed and owned by caller-provided local buffers
+    // - production Top ownership semantics remain unchanged
+    static inline TransformerLayerFfnTopfedHandoffDesc top_make_lid0_local_only_ffn_fixed_handoff_desc(
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t (&topfed_w1_x_words)[FFN_X_WORDS],
+        u32_t (&topfed_w1_weight_words)[FFN_W1_WEIGHT_WORDS],
+        u32_t (&topfed_w1_bias_words)[FFN_W1_BIAS_WORDS],
+        u32_t (&topfed_w2_input_words)[FFN_W2_INPUT_WORDS],
+        u32_t (&topfed_w2_weight_words)[FFN_W2_WEIGHT_WORDS],
+        u32_t (&topfed_w2_bias_words)[FFN_W2_BIAS_WORDS]
+    ) {
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return make_transformer_layer_ffn_topfed_handoff_desc();
+        }
+
+        const u32_t fp32_half_bits = (u32_t)0x3f000000u;     // 0.5f
+        const u32_t fp32_one_bits = (u32_t)0x3f800000u;      // 1.0f
+        const u32_t fp32_two_bits = (u32_t)0x40000000u;      // 2.0f
+        const u32_t fp32_three_bits = (u32_t)0x40400000u;    // 3.0f
+        const u32_t fp32_minus_one_bits = (u32_t)0xbf800000u;// -1.0f
+
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_X_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_X_WORDS; ++i) {
+            topfed_w1_x_words[i] = ((i & 0x1u) == 0u) ? fp32_two_bits : fp32_half_bits;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_WEIGHT_WORDS; ++i) {
+            topfed_w1_weight_words[i] = ((i & 0x3u) == 0u) ? fp32_minus_one_bits : fp32_half_bits;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W1_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W1_BIAS_WORDS; ++i) {
+            topfed_w1_bias_words[i] = fp32_three_bits;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_INPUT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_INPUT_WORDS; ++i) {
+            topfed_w2_input_words[i] = ((i & 0x1u) == 0u) ? fp32_three_bits : fp32_half_bits;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_WEIGHT_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_WEIGHT_WORDS; ++i) {
+            topfed_w2_weight_words[i] = ((i & 0x3u) == 0u) ? fp32_minus_one_bits : fp32_two_bits;
+        }
+        TOP_LID0_LOCAL_ONLY_FFN_FIXED_W2_BIAS_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)FFN_W2_BIAS_WORDS; ++i) {
+            topfed_w2_bias_words[i] = fp32_three_bits;
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        uint32_t d_ffn = (uint32_t)cfg.d_ffn.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)FFN_D_MODEL; }
+        if (d_ffn == 0u) { d_ffn = (uint32_t)FFN_D_FFN; }
+        const uint32_t token_count = (uint32_t)FFN_TOKEN_COUNT;
+        uint32_t w1_x_words_valid = token_count * d_model;
+        uint32_t w1_weight_words_valid = d_ffn * d_model;
+        uint32_t w1_bias_words_valid = d_ffn;
+        uint32_t w2_input_words_valid = token_count * d_ffn;
+        uint32_t w2_weight_words_valid = d_model * d_ffn;
+        uint32_t w2_bias_words_valid = d_model;
+
+        if (w1_x_words_valid > (uint32_t)FFN_X_WORDS) { w1_x_words_valid = (uint32_t)FFN_X_WORDS; }
+        if (w1_weight_words_valid > (uint32_t)FFN_W1_WEIGHT_WORDS) { w1_weight_words_valid = (uint32_t)FFN_W1_WEIGHT_WORDS; }
+        if (w1_bias_words_valid > (uint32_t)FFN_W1_BIAS_WORDS) { w1_bias_words_valid = (uint32_t)FFN_W1_BIAS_WORDS; }
+        if (w2_input_words_valid > (uint32_t)FFN_W2_INPUT_WORDS) { w2_input_words_valid = (uint32_t)FFN_W2_INPUT_WORDS; }
+        if (w2_weight_words_valid > (uint32_t)FFN_W2_WEIGHT_WORDS) { w2_weight_words_valid = (uint32_t)FFN_W2_WEIGHT_WORDS; }
+        if (w2_bias_words_valid > (uint32_t)FFN_W2_BIAS_WORDS) { w2_bias_words_valid = (uint32_t)FFN_W2_BIAS_WORDS; }
+
+        if (!descriptor_valid) {
+            w1_x_words_valid = 0u;
+            w1_weight_words_valid = 0u;
+            w1_bias_words_valid = 0u;
+            w2_input_words_valid = 0u;
+            w2_weight_words_valid = 0u;
+            w2_bias_words_valid = 0u;
+        }
+
+        return top_make_transformer_layer_ffn_topfed_handoff_desc(
+            topfed_w1_x_words,
+            (u32_t)w1_x_words_valid,
+            topfed_w1_weight_words,
+            (u32_t)w1_weight_words_valid,
+            topfed_w1_bias_words,
+            (u32_t)w1_bias_words_valid,
+            topfed_w2_input_words,
+            (u32_t)w2_input_words_valid,
+            topfed_w2_weight_words,
+            (u32_t)w2_weight_words_valid,
+            topfed_w2_bias_words,
+            (u32_t)w2_bias_words_valid
+        );
+    }
+
+    static inline bool transformer_layer_ffn_handoff_desc_non_empty(
+        const TransformerLayerFfnTopfedHandoffDesc& desc
+    ) {
+        const bool w1_ready =
+            (desc.topfed_w1_x_words != 0) &&
+            ((uint32_t)desc.topfed_w1_x_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w1_weight_words != 0) &&
+            ((uint32_t)desc.topfed_w1_weight_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w1_bias_words != 0) &&
+            ((uint32_t)desc.topfed_w1_bias_words_valid.to_uint() > 0u);
+        const bool w2_ready =
+            (desc.topfed_w2_input_words != 0) &&
+            ((uint32_t)desc.topfed_w2_input_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w2_weight_words != 0) &&
+            ((uint32_t)desc.topfed_w2_weight_words_valid.to_uint() > 0u) &&
+            (desc.topfed_w2_bias_words != 0) &&
+            ((uint32_t)desc.topfed_w2_bias_words_valid.to_uint() > 0u);
+        return w1_ready && w2_ready;
+    }
+
+    // local-only representative run-loop feed helper for lid==0.
+    static inline TransformerLayerFfnTopfedHandoffDesc top_make_runloop_lid0_local_only_ffn_handoff_desc(
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid
+    ) {
+        static u32_t topfed_w1_x_words[FFN_X_WORDS];
+        static u32_t topfed_w1_weight_words[FFN_W1_WEIGHT_WORDS];
+        static u32_t topfed_w1_bias_words[FFN_W1_BIAS_WORDS];
+        static u32_t topfed_w2_input_words[FFN_W2_INPUT_WORDS];
+        static u32_t topfed_w2_weight_words[FFN_W2_WEIGHT_WORDS];
+        static u32_t topfed_w2_bias_words[FFN_W2_BIAS_WORDS];
+        return top_make_lid0_local_only_ffn_fixed_handoff_desc(
+            cfg,
+            layer_id,
+            handoff_enable,
+            descriptor_valid,
+            topfed_w1_x_words,
+            topfed_w1_weight_words,
+            topfed_w1_bias_words,
+            topfed_w2_input_words,
+            topfed_w2_weight_words,
+            topfed_w2_bias_words
+        );
+    }
+
+    static inline u32_t top_lid0_local_only_attn_out_fixed_payload_word(uint32_t word_index) {
+        return (u32_t)(0xA7000000u + word_index);
+    }
+
+    // local-only representative run-loop feed helper for Attn OUT payload seam.
+    static inline void top_make_runloop_lid0_local_only_attn_out_payload_handoff(
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid,
+        bool& topfed_payload_enable,
+        const u32_t*& topfed_payload_words,
+        u32_t& topfed_payload_words_valid
+    ) {
+        topfed_payload_enable = false;
+        topfed_payload_words = 0;
+        topfed_payload_words_valid = (u32_t)0u;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        static u32_t topfed_payload_words_local[ATTN_TENSOR_WORDS];
+        TOP_LID0_LOCAL_ONLY_ATTN_OUT_PAYLOAD_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)ATTN_TENSOR_WORDS; ++i) {
+            topfed_payload_words_local[i] = top_lid0_local_only_attn_out_fixed_payload_word(i);
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
+        uint32_t payload_words_valid = token_count * d_model;
+        if (payload_words_valid > (uint32_t)ATTN_TENSOR_WORDS) {
+            payload_words_valid = (uint32_t)ATTN_TENSOR_WORDS;
+        }
+        if (!descriptor_valid) {
+            payload_words_valid = 0u;
+        }
+
+        topfed_payload_enable = true;
+        topfed_payload_words = topfed_payload_words_local;
+        topfed_payload_words_valid = (u32_t)payload_words_valid;
+    }
+
+    // local-only representative run-loop feed helper for Phase-B QkScore MASK family seam.
+    // This helper is bounded to one family case (head0/key0) and keeps production protocol unchanged.
+    template<typename SramView>
+    static inline void top_make_runloop_lid0_local_only_qkscore_mask_family_handoff(
+        SramView&& sram,
+        const LayerScratch& sc,
+        u32_t layer_id,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t& score_tile_bridge_family_case_count,
+        const u32_t*& score_tile_bridge_family_base_words,
+        const u32_t*& score_tile_bridge_family_words,
+        const u32_t*& score_tile_bridge_family_words_valid,
+        const u32_t*& score_tile_bridge_family_key_begin,
+        const u32_t*& score_tile_bridge_family_head_idx
+    ) {
+        score_tile_bridge_family_case_count = (u32_t)0u;
+        score_tile_bridge_family_base_words = 0;
+        score_tile_bridge_family_words = 0;
+        score_tile_bridge_family_words_valid = 0;
+        score_tile_bridge_family_key_begin = 0;
+        score_tile_bridge_family_head_idx = 0;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        static u32_t family_base_words_local[1];
+        static u32_t family_words_local[ATTN_TOKEN_COUNT];
+        static u32_t family_words_valid_local[1];
+        static u32_t family_key_begin_local[1];
+        static u32_t family_head_idx_local[1];
+        const uint32_t score_base = (uint32_t)sc.attn.score_base_word.to_uint();
+
+        family_base_words_local[0] = (u32_t)score_base;
+        family_key_begin_local[0] = (u32_t)0u;
+        family_head_idx_local[0] = (u32_t)0u;
+        family_words_valid_local[0] = descriptor_valid ? (u32_t)1u : (u32_t)0u;
+        TOP_LID0_LOCAL_ONLY_QKSCORE_MASK_FAMILY_WORD_PRELOAD_LOOP: for (uint32_t i = 0u; i < (uint32_t)ATTN_TOKEN_COUNT; ++i) {
+            family_words_local[i] = sram[score_base + i];
+        }
+
+        score_tile_bridge_family_case_count = (u32_t)1u;
+        score_tile_bridge_family_base_words = family_base_words_local;
+        score_tile_bridge_family_words = family_words_local;
+        score_tile_bridge_family_words_valid = family_words_valid_local;
+        score_tile_bridge_family_key_begin = family_key_begin_local;
+        score_tile_bridge_family_head_idx = family_head_idx_local;
+    }
+
+    // local-only representative run-loop feed helper for Phase-B KVSCAN seam.
+    // The handoff is bounded to lid==0 and one probe tile, and remains default-off.
+    template<typename SramView>
+    static inline void top_make_runloop_lid0_local_only_qkscore_kvscan_probe_handoff(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t layer_id,
+        u32_t token_idx,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t& phase_entry_probe_q_base_word,
+        u32_t& phase_entry_probe_k_base_word,
+        const u32_t*& phase_entry_probe_q_words,
+        const u32_t*& phase_entry_probe_k_words,
+        u32_t& phase_entry_probe_words_valid
+    ) {
+        phase_entry_probe_q_base_word = (u32_t)0u;
+        phase_entry_probe_k_base_word = (u32_t)0u;
+        phase_entry_probe_q_words = 0;
+        phase_entry_probe_k_words = 0;
+        phase_entry_probe_words_valid = (u32_t)0u;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        uint32_t d_head = d_model / n_heads;
+        if (d_head == 0u) { d_head = (uint32_t)ATTN_D_HEAD; }
+
+        uint32_t probe_words_valid = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        if (probe_words_valid > d_head) {
+            probe_words_valid = d_head;
+        }
+        if (probe_words_valid == 0u) {
+            return;
+        }
+
+        static u32_t probe_q_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        static u32_t probe_k_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        const uint32_t token = (uint32_t)token_idx.to_uint();
+        const uint32_t q_base = (uint32_t)sc.attn.q_base_word.to_uint();
+        const uint32_t k_base = (uint32_t)sc.attn.k_base_word.to_uint();
+        const uint32_t q_row_base = q_base + token * d_model;
+
+        TOP_LID0_LOCAL_ONLY_QKSCORE_KVSCAN_PROBE_PRELOAD_LOOP: for (uint32_t i = 0u; i < probe_words_valid; ++i) {
+            probe_q_words_local[i] = sram[q_row_base + i];
+            probe_k_words_local[i] = sram[k_base + i];
+        }
+        if (!descriptor_valid) {
+            probe_k_words_local[0] = (u32_t)((uint32_t)probe_k_words_local[0].to_uint() ^ 0x00000001u);
+        }
+
+        phase_entry_probe_q_base_word = (u32_t)q_row_base;
+        phase_entry_probe_k_base_word = (u32_t)k_base;
+        phase_entry_probe_q_words = probe_q_words_local;
+        phase_entry_probe_k_words = probe_k_words_local;
+        phase_entry_probe_words_valid = (u32_t)probe_words_valid;
+    }
+
+    // local-only representative run-loop feed helper for Phase-B QSRC seam.
+    // This seam reuses the phase-entry probe payload, but only mutates Q on invalid.
+    template<typename SramView>
+    static inline void top_make_runloop_lid0_local_only_qkscore_qsrc_probe_handoff(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t layer_id,
+        u32_t token_idx,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t& phase_entry_probe_q_base_word,
+        u32_t& phase_entry_probe_k_base_word,
+        const u32_t*& phase_entry_probe_q_words,
+        const u32_t*& phase_entry_probe_k_words,
+        u32_t& phase_entry_probe_words_valid
+    ) {
+        phase_entry_probe_q_base_word = (u32_t)0u;
+        phase_entry_probe_k_base_word = (u32_t)0u;
+        phase_entry_probe_q_words = 0;
+        phase_entry_probe_k_words = 0;
+        phase_entry_probe_words_valid = (u32_t)0u;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        uint32_t d_head = d_model / n_heads;
+        if (d_head == 0u) { d_head = (uint32_t)ATTN_D_HEAD; }
+
+        uint32_t probe_words_valid = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        if (probe_words_valid > d_head) {
+            probe_words_valid = d_head;
+        }
+        if (probe_words_valid == 0u) {
+            return;
+        }
+
+        static u32_t probe_q_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        static u32_t probe_k_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        const uint32_t token = (uint32_t)token_idx.to_uint();
+        const uint32_t q_base = (uint32_t)sc.attn.q_base_word.to_uint();
+        const uint32_t k_base = (uint32_t)sc.attn.k_base_word.to_uint();
+        const uint32_t q_row_base = q_base + token * d_model;
+
+        TOP_LID0_LOCAL_ONLY_QKSCORE_QSRC_PROBE_PRELOAD_LOOP: for (uint32_t i = 0u; i < probe_words_valid; ++i) {
+            probe_q_words_local[i] = sram[q_row_base + i];
+            probe_k_words_local[i] = sram[k_base + i];
+        }
+        if (!descriptor_valid) {
+            probe_q_words_local[0] = (u32_t)((uint32_t)probe_q_words_local[0].to_uint() ^ 0x00000001u);
+        }
+
+        phase_entry_probe_q_base_word = (u32_t)q_row_base;
+        phase_entry_probe_k_base_word = (u32_t)k_base;
+        phase_entry_probe_q_words = probe_q_words_local;
+        phase_entry_probe_k_words = probe_k_words_local;
+        phase_entry_probe_words_valid = (u32_t)probe_words_valid;
+    }
+
+    // local-only representative run-loop feed helper for Phase-B WQ seam.
+    // This handoff feeds weighted-Q probe words through the same bounded phase-entry slot.
+    template<typename SramView>
+    static inline void top_make_runloop_lid0_local_only_qkscore_wq_probe_handoff(
+        SramView&& sram,
+        const CfgRegs& cfg,
+        const LayerScratch& sc,
+        u32_t layer_id,
+        u32_t token_idx,
+        bool handoff_enable,
+        bool descriptor_valid,
+        u32_t& phase_entry_probe_q_base_word,
+        u32_t& phase_entry_probe_k_base_word,
+        const u32_t*& phase_entry_probe_q_words,
+        const u32_t*& phase_entry_probe_k_words,
+        u32_t& phase_entry_probe_words_valid
+    ) {
+        phase_entry_probe_q_base_word = (u32_t)0u;
+        phase_entry_probe_k_base_word = (u32_t)0u;
+        phase_entry_probe_q_words = 0;
+        phase_entry_probe_k_words = 0;
+        phase_entry_probe_words_valid = (u32_t)0u;
+        if (!handoff_enable || (uint32_t)layer_id.to_uint() != 0u) {
+            return;
+        }
+
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        uint32_t n_heads = (uint32_t)cfg.n_heads.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        if (n_heads == 0u) { n_heads = (uint32_t)ATTN_N_HEADS; }
+        if (n_heads == 0u) { n_heads = 1u; }
+        if ((d_model % n_heads) != 0u) { n_heads = 1u; }
+        uint32_t d_head = d_model / n_heads;
+        if (d_head == 0u) { d_head = (uint32_t)ATTN_D_HEAD; }
+
+        uint32_t probe_words_valid = (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS;
+        if (probe_words_valid > d_head) {
+            probe_words_valid = d_head;
+        }
+        if (probe_words_valid == 0u) {
+            return;
+        }
+
+        static u32_t probe_q_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        static u32_t probe_k_words_local[ATTN_TOP_MANAGED_WORK_TILE_WORDS];
+        const uint32_t token = (uint32_t)token_idx.to_uint();
+        const uint32_t q_base = (uint32_t)sc.attn.q_base_word.to_uint();
+        const uint32_t k_base = (uint32_t)sc.attn.k_base_word.to_uint();
+        const uint32_t q_row_base = q_base + token * d_model;
+
+        TOP_LID0_LOCAL_ONLY_QKSCORE_WQ_PROBE_PRELOAD_LOOP: for (uint32_t i = 0u; i < probe_words_valid; ++i) {
+            probe_q_words_local[i] = sram[q_row_base + i];
+            probe_k_words_local[i] = sram[k_base + i];
+        }
+        if (!descriptor_valid) {
+            probe_q_words_local[0] = (u32_t)((uint32_t)probe_q_words_local[0].to_uint() ^ 0x00000004u);
+        }
+
+        phase_entry_probe_q_base_word = (u32_t)q_row_base;
+        phase_entry_probe_k_base_word = (u32_t)k_base;
+        phase_entry_probe_q_words = probe_q_words_local;
+        phase_entry_probe_k_words = probe_k_words_local;
+        phase_entry_probe_words_valid = (u32_t)probe_words_valid;
+    }
+
+    // Top owns this policy decision.
+    // Downstream blocks consume the flag and must not redefine ownership semantics.
+    static inline bool top_attn_out_topfed_payload_descriptor_ready(
+        bool attn_out_topfed_payload_enable,
+        const u32_t* attn_out_topfed_payload_words,
+        u32_t attn_out_topfed_payload_words_valid
+    ) {
+        // Top decides readiness here; downstream blocks only consume this policy output.
+        if (!attn_out_topfed_payload_enable) {
+            return false;
+        }
+        if (attn_out_topfed_payload_words == 0) {
+            return false;
+        }
+        const uint32_t payload_words_valid =
+            (uint32_t)attn_out_topfed_payload_words_valid.to_uint();
+        return payload_words_valid >= (uint32_t)ATTN_TENSOR_WORDS;
+    }
+
+    // Top owns this policy decision.
+    // Downstream blocks consume the flag and must not redefine ownership semantics.
+    static inline bool top_should_enable_attn_compat_shell(
+        bool kv_prebuilt_from_top_managed,
+        bool q_prebuilt_from_top_managed,
+        bool score_prebuilt_from_top_managed,
+        bool out_prebuilt_from_top_managed,
+        bool attn_out_topfed_payload_enable,
+        const u32_t* attn_out_topfed_payload_words,
+        u32_t attn_out_topfed_payload_words_valid
+    ) {
+        const bool attn_fully_prebuilt_from_top_managed =
+            kv_prebuilt_from_top_managed &&
+            q_prebuilt_from_top_managed &&
+            score_prebuilt_from_top_managed &&
+            out_prebuilt_from_top_managed;
+        const bool attn_out_topfed_payload_ready =
+            top_attn_out_topfed_payload_descriptor_ready(
+                attn_out_topfed_payload_enable,
+                attn_out_topfed_payload_words,
+                attn_out_topfed_payload_words_valid
+            );
+        // Compatibility shell is needed for incomplete prebuild coverage or ready OUT payload consume.
+        return (!attn_fully_prebuilt_from_top_managed) || attn_out_topfed_payload_ready;
+    }
+
+    static inline void top_dispatch_transformer_layer(
+        u32_t* sram,
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        u32_t x_in_base_word,
+        u32_t x_out_base_word,
+        const LayerScratch& sc,
+        const LayerParamBase& pb,
+        bool kv_prebuilt_from_top_managed = false,
+        bool q_prebuilt_from_top_managed = false,
+        bool score_prebuilt_from_top_managed = false,
+        bool out_prebuilt_from_top_managed = false,
+        bool sublayer1_norm_preloaded_by_top = false,
+        TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+            make_transformer_layer_ffn_topfed_handoff_desc(),
+        bool attn_out_topfed_payload_enable = false,
+        const u32_t* attn_out_topfed_payload_words = 0,
+        u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
+    ) {
+        // Resolve compatibility shell policy at Top before dispatch.
+        const bool attn_compat_shell_enable = top_should_enable_attn_compat_shell(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid
+        );
+        TransformerLayer(
+            sram,
+            cfg,
+            layer_id,
+            x_in_base_word,
+            x_out_base_word,
+            sc,
+            pb,
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            sublayer1_norm_preloaded_by_top,
+            ffn_topfed_handoff_desc,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid,
+            attn_compat_shell_enable
+        );
+    }
+
+    template<uint32_t SRAM_WORDS>
+    static inline void top_dispatch_transformer_layer_top_managed_attn_bridge(
+        u32_t (&sram)[SRAM_WORDS],
+        const CfgRegs& cfg,
+        u32_t layer_id,
+        u32_t x_in_base_word,
+        u32_t x_out_base_word,
+        const LayerScratch& sc,
+        const LayerParamBase& pb,
+        bool kv_prebuilt_from_top_managed = false,
+        bool q_prebuilt_from_top_managed = false,
+        bool score_prebuilt_from_top_managed = false,
+        bool out_prebuilt_from_top_managed = false,
+        bool sublayer1_norm_preloaded_by_top = false,
+        TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+            make_transformer_layer_ffn_topfed_handoff_desc(),
+        bool attn_out_topfed_payload_enable = false,
+        const u32_t* attn_out_topfed_payload_words = 0,
+        u32_t attn_out_topfed_payload_words_valid = (u32_t)0u
+    ) {
+        // Same policy seam for the array-window bridge entry.
+        const bool attn_compat_shell_enable = top_should_enable_attn_compat_shell(
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid
+        );
+        TransformerLayerTopManagedAttnBridge(
+            sram,
+            cfg,
+            layer_id,
+            x_in_base_word,
+            x_out_base_word,
+            sc,
+            pb,
+            kv_prebuilt_from_top_managed,
+            q_prebuilt_from_top_managed,
+            score_prebuilt_from_top_managed,
+            out_prebuilt_from_top_managed,
+            sublayer1_norm_preloaded_by_top,
+            ffn_topfed_handoff_desc,
+            attn_out_topfed_payload_enable,
+            attn_out_topfed_payload_words,
+            attn_out_topfed_payload_words_valid,
+            attn_compat_shell_enable
+        );
+    }
+
+    // Top-level layer orchestration boundary.
+    // Top owns: layer loop scheduling, X_WORK page alternation, mid/end LN insertion,
+    // and latching "mainline taken" vs "fallback taken" status for reviewer-visible checks.
+    // TransformerLayer owns: per-layer compute under the base words handed in by Top.
+    // Read this function in three passes:
+    // 1) reset/clear reviewer-visible observability counters
+    // 2) per-layer dispatch + seam selection (managed attention / FFN handoff / payload hooks)
+    // 3) mid-LN and end-LN insertion around the layer loop
+    static inline void run_transformer_layer_loop(
+        TopRegs& regs,
+        u32_t* sram,
+        bool lid0_local_only_ffn_handoff_enable = false,
+        bool lid0_local_only_ffn_handoff_descriptor_valid = true,
+        bool lid0_local_only_attn_out_payload_enable = false,
+        bool lid0_local_only_attn_out_payload_descriptor_valid = true,
+        bool lid0_local_only_qkscore_mask_handoff_enable = false,
+        bool lid0_local_only_qkscore_mask_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_kvscan_handoff_enable = false,
+        bool lid0_local_only_qkscore_kvscan_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_qsrc_handoff_enable = false,
+        bool lid0_local_only_qkscore_qsrc_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_wq_handoff_enable = false,
+        bool lid0_local_only_qkscore_wq_handoff_descriptor_valid = true
+    ) {
+        CfgRegs cfg = build_layer_cfg(regs);
+        uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        int mid_index = (int)(n_layers / 2u) - 1;
+
+        u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
+        u32_t x_out_base = canonical_x_work_base(x_in_base);
+        bool mid_valid = false;
+        static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
+        regs.infer_mid_norm_output_valid = false;
+        regs.infer_mid_norm_output_base_word = 0;
+        regs.p11ac_mainline_path_taken = false;
+        regs.p11ac_fallback_taken = false;
+        regs.p11ad_mainline_q_path_taken = false;
+        regs.p11ad_q_fallback_taken = false;
+        regs.p11ae_mainline_score_path_taken = false;
+        regs.p11ae_score_fallback_taken = false;
+        regs.p11af_mainline_softmax_output_path_taken = false;
+        regs.p11af_softmax_output_fallback_taken = false;
+        const uint32_t configured_managed_attn_target_layer =
+            (uint32_t)regs.p11bc_managed_attention_target_layer_id.to_uint();
+        const uint32_t managed_attn_target_layer =
+            (configured_managed_attn_target_layer < n_layers) ? configured_managed_attn_target_layer : 0u;
+        regs.p11bc_managed_attention_target_layer_id = (u32_t)managed_attn_target_layer;
+        regs.p11bc_managed_attention_gate_taken_count = 0;
+        regs.p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_enabled_count = 0;
+        regs.p11bd_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_target_layer_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count = 0;
+        regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
+        regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
+        regs.p11av_ffn_handoff_gate_taken_count = 0;
+        regs.p11av_ffn_handoff_fallback_seen_count = 0;
+        regs.p11av_ffn_handoff_non_empty_count = 0;
+        regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_enable = lid0_local_only_attn_out_payload_enable;
+        regs.p11ax_lid0_attn_out_payload_descriptor_valid = lid0_local_only_attn_out_payload_descriptor_valid;
+        regs.p11ax_attn_out_payload_gate_taken_count = 0;
+        regs.p11ax_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ax_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_enable = lid0_local_only_qkscore_mask_handoff_enable;
+        regs.p11ay_lid0_qkscore_mask_handoff_descriptor_valid = lid0_local_only_qkscore_mask_handoff_descriptor_valid;
+        regs.p11ay_qkscore_mask_handoff_gate_taken_count = 0;
+        regs.p11ay_qkscore_mask_handoff_fallback_seen_count = 0;
+        regs.p11ay_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count = 0;
+        regs.p11az_lid0_qkscore_kvscan_handoff_enable = lid0_local_only_qkscore_kvscan_handoff_enable;
+        regs.p11az_lid0_qkscore_kvscan_handoff_descriptor_valid = lid0_local_only_qkscore_kvscan_handoff_descriptor_valid;
+        regs.p11az_qkscore_kvscan_handoff_gate_taken_count = 0;
+        regs.p11az_qkscore_kvscan_handoff_fallback_seen_count = 0;
+        regs.p11az_qkscore_kvscan_handoff_non_empty_count = 0;
+        regs.p11az_lid0_qkscore_kvscan_handoff_non_empty_count = 0;
+        regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count = 0;
+        regs.p11ba_lid0_qkscore_qsrc_handoff_enable = lid0_local_only_qkscore_qsrc_handoff_enable;
+        regs.p11ba_lid0_qkscore_qsrc_handoff_descriptor_valid = lid0_local_only_qkscore_qsrc_handoff_descriptor_valid;
+        regs.p11ba_qkscore_qsrc_handoff_gate_taken_count = 0;
+        regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count = 0;
+        regs.p11ba_qkscore_qsrc_handoff_non_empty_count = 0;
+        regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count = 0;
+        regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_enable = lid0_local_only_qkscore_wq_handoff_enable;
+        regs.p11bb_lid0_qkscore_wq_handoff_descriptor_valid = lid0_local_only_qkscore_wq_handoff_descriptor_valid;
+        regs.p11bb_qkscore_wq_handoff_gate_taken_count = 0;
+        regs.p11bb_qkscore_wq_handoff_fallback_seen_count = 0;
+        regs.p11bb_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
+
+        // Top-layer loop is the ownership seam: Top decides layer policy, blocks consume it.
+        TOP_LAYER_ORCHESTRATION_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
+            if (lid0_local_only_qkscore_mask_handoff_enable) {
+                regs.p11ay_qkscore_mask_handoff_gate_taken_count =
+                    regs.p11ay_qkscore_mask_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_kvscan_handoff_enable) {
+                regs.p11az_qkscore_kvscan_handoff_gate_taken_count =
+                    regs.p11az_qkscore_kvscan_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_qsrc_handoff_enable) {
+                regs.p11ba_qkscore_qsrc_handoff_gate_taken_count =
+                    regs.p11ba_qkscore_qsrc_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_gate_taken_count =
+                    regs.p11bb_qkscore_wq_handoff_gate_taken_count + (u32_t)1u;
+            }
+            // Prebuilt flags are per-layer Top decisions, not block-local policy.
+            LayerScratch sc = make_layer_scratch(x_in_base);
+            LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
+            bool q_prebuilt_from_top_managed = false;
+            bool kv_prebuilt_from_top_managed = false;
+            bool score_prebuilt_from_top_managed = false;
+            bool out_prebuilt_from_top_managed = false;
+            const bool is_managed_attention_layer = (lid == managed_attn_target_layer);
+
+            // P11AC mainline wiring is intentionally scoped to one
+            // local-only managed-attention target layer per run.
+            if (is_managed_attention_layer) {
+                regs.p11bc_managed_attention_gate_taken_count =
+                    regs.p11bc_managed_attention_gate_taken_count + (u32_t)1u;
+                regs.p11bc_managed_attention_last_layer_id = (u32_t)lid;
+                // Managed prebuilds are allowed only on the selected target layer.
+                // Fallback meaning is established and latched here for reviewer evidence.
+                bool q_fallback_taken = true;
+                q_prebuilt_from_top_managed = run_p11ad_layer0_top_managed_q(
+                    sram,
+                    cfg,
+                    x_in_base,
+                    sc,
+                    pb,
+                    q_fallback_taken
+                );
+                regs.p11ad_mainline_q_path_taken = q_prebuilt_from_top_managed;
+                regs.p11ad_q_fallback_taken = q_fallback_taken;
+
+                bool fallback_taken = true;
+                kv_prebuilt_from_top_managed = run_p11ac_layer0_top_managed_kv(
+                    sram,
+                    cfg,
+                    x_in_base,
+                    sc,
+                    pb,
+                    fallback_taken
+                );
+                regs.p11ac_mainline_path_taken = kv_prebuilt_from_top_managed;
+                regs.p11ac_fallback_taken = fallback_taken;
+
+                bool ae_mainline_score_path_taken = true;
+                bool af_mainline_softmax_output_path_taken = true;
+                bool qkscore_mask_handoff_non_empty_for_layer = false;
+                bool qkscore_mask_handoff_applied_for_layer = false;
+                bool qkscore_kvscan_handoff_non_empty_for_layer = false;
+                bool qkscore_kvscan_handoff_applied_for_layer = false;
+                bool qkscore_qsrc_handoff_non_empty_for_layer = false;
+                bool qkscore_qsrc_handoff_applied_for_layer = false;
+                bool qkscore_wq_handoff_non_empty_for_layer = false;
+                bool qkscore_wq_handoff_applied_for_layer = false;
+                // AE/AF mainline is only legal after both AD(Q) and AC(KV) prebuilds succeed.
+                if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
+                    const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
+                    TOP_P11AEAF_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+                        bool score_fallback_taken = true;
+                        bool score_mainline_taken = false;
+                        // Compatibility handoff priority for AE: mask family -> WQ probe -> QSRC probe -> KVSCAN probe.
+                        if (lid0_local_only_qkscore_mask_handoff_enable && is_managed_attention_layer) {
+                            bool warmup_fallback_taken = true;
+                            const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                warmup_fallback_taken
+                            );
+                            if (!warmup_mainline_taken || warmup_fallback_taken) {
+                                ae_mainline_score_path_taken = false;
+                                af_mainline_softmax_output_path_taken = false;
+                                break;
+                            }
+
+                            u32_t score_tile_bridge_family_case_count = (u32_t)0u;
+                            const u32_t* score_tile_bridge_family_base_words = 0;
+                            const u32_t* score_tile_bridge_family_words = 0;
+                            const u32_t* score_tile_bridge_family_words_valid = 0;
+                            const u32_t* score_tile_bridge_family_key_begin = 0;
+                            const u32_t* score_tile_bridge_family_head_idx = 0;
+                            top_make_runloop_lid0_local_only_qkscore_mask_family_handoff(
+                                sram,
+                                sc,
+                                (u32_t)lid,
+                                lid0_local_only_qkscore_mask_handoff_enable,
+                                lid0_local_only_qkscore_mask_handoff_descriptor_valid,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx
+                            );
+                            qkscore_mask_handoff_applied_for_layer = true;
+                            if (score_tile_bridge_family_case_count.to_uint() > 0u &&
+                                score_tile_bridge_family_words_valid != 0 &&
+                                score_tile_bridge_family_words_valid[0].to_uint() > 0u) {
+                                qkscore_mask_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                            );
+                        // WQ probe bridge is a compatibility branch when mask-family handoff is not selected.
+                        } else if (lid0_local_only_qkscore_wq_handoff_enable && is_managed_attention_layer) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_wq_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_wq_handoff_enable,
+                                lid0_local_only_qkscore_wq_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_wq_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_wq_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                        // QSRC probe bridge keeps descriptor ownership observable at AE entry.
+                        } else if (lid0_local_only_qkscore_qsrc_handoff_enable && is_managed_attention_layer) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_qsrc_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_qsrc_handoff_enable,
+                                lid0_local_only_qkscore_qsrc_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_qsrc_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_qsrc_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                        // KVSCAN probe bridge is the last compatibility branch before plain AE mainline.
+                        } else if (lid0_local_only_qkscore_kvscan_handoff_enable && is_managed_attention_layer) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_kvscan_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_kvscan_handoff_enable,
+                                lid0_local_only_qkscore_kvscan_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_kvscan_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_kvscan_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                        } else {
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken
+                            );
+                        }
+                        if (!score_mainline_taken || score_fallback_taken) {
+                            ae_mainline_score_path_taken = false;
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+
+                        bool softmax_out_fallback_taken = true;
+                        const bool softmax_out_mainline_taken =
+                            run_p11af_layer0_top_managed_softmax_out(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                softmax_out_fallback_taken
+                            );
+                        if (!softmax_out_mainline_taken || softmax_out_fallback_taken) {
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+                    }
+                } else {
+                    ae_mainline_score_path_taken = false;
+                    af_mainline_softmax_output_path_taken = false;
+                }
+
+                // Fallback counters increment when a handoff is enabled but not consumed as a valid non-empty bridge.
+                if (lid0_local_only_qkscore_mask_handoff_enable) {
+                    if (qkscore_mask_handoff_applied_for_layer &&
+                        qkscore_mask_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11ay_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                            regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+                if (lid0_local_only_qkscore_kvscan_handoff_enable) {
+                    if (qkscore_kvscan_handoff_applied_for_layer &&
+                        qkscore_kvscan_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11az_qkscore_kvscan_handoff_non_empty_count =
+                            regs.p11az_qkscore_kvscan_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11az_lid0_qkscore_kvscan_handoff_non_empty_count =
+                            regs.p11az_lid0_qkscore_kvscan_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11az_qkscore_kvscan_handoff_fallback_seen_count =
+                            regs.p11az_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+                if (lid0_local_only_qkscore_qsrc_handoff_enable) {
+                    if (qkscore_qsrc_handoff_applied_for_layer &&
+                        qkscore_qsrc_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11ba_qkscore_qsrc_handoff_non_empty_count =
+                            regs.p11ba_qkscore_qsrc_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count =
+                            regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count =
+                            regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+                if (lid0_local_only_qkscore_wq_handoff_enable) {
+                    if (qkscore_wq_handoff_applied_for_layer &&
+                        qkscore_wq_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11bb_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                            regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+
+                score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
+                out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
+                regs.p11ae_mainline_score_path_taken = ae_mainline_score_path_taken;
+                regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
+                regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
+                regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
+            } else if (lid0_local_only_qkscore_mask_handoff_enable && !is_managed_attention_layer) {
+                regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_kvscan_handoff_enable) {
+                regs.p11az_qkscore_kvscan_handoff_fallback_seen_count =
+                    regs.p11az_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count =
+                    regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_qsrc_handoff_enable) {
+                regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count =
+                    regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count =
+                    regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+            }
+
+            top_preload_layer_sublayer1_norm_params(
+                sram,
+                pb,
+                (u32_t)lid,
+                sc,
+                d_model
+            );
+
+            const TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+                top_make_runloop_lid0_local_only_ffn_handoff_desc(
+                    cfg,
+                    (u32_t)lid,
+                    lid0_local_only_ffn_handoff_enable,
+                    lid0_local_only_ffn_handoff_descriptor_valid
+                );
+            if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_gate_taken_count =
+                    regs.p11av_ffn_handoff_gate_taken_count + (u32_t)1u;
+            }
+            // FFN handoff seam: non-empty descriptor means Top-fed payload was accepted by policy.
+            const bool ffn_topfed_handoff_non_empty =
+                transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
+            if (ffn_topfed_handoff_non_empty) {
+                regs.p11av_ffn_handoff_non_empty_count =
+                    regs.p11av_ffn_handoff_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11av_lid0_ffn_handoff_non_empty_count =
+                        regs.p11av_lid0_ffn_handoff_non_empty_count + (u32_t)1u;
+                }
+            } else if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_fallback_seen_count =
+                    regs.p11av_ffn_handoff_fallback_seen_count + (u32_t)1u;
+            }
+
+            bool attn_out_topfed_payload_enable_for_layer = false;
+            const u32_t* attn_out_topfed_payload_words_for_layer = 0;
+            u32_t attn_out_topfed_payload_words_valid_for_layer = (u32_t)0u;
+            top_make_runloop_lid0_local_only_attn_out_payload_handoff(
+                cfg,
+                (u32_t)lid,
+                lid0_local_only_attn_out_payload_enable,
+                lid0_local_only_attn_out_payload_descriptor_valid,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+            if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_gate_taken_count =
+                    regs.p11ax_attn_out_payload_gate_taken_count + (u32_t)1u;
+            }
+            // Top computes OUT descriptor readiness once; downstream uses this as a consume policy.
+            const bool attn_out_topfed_payload_non_empty =
+                top_attn_out_topfed_payload_descriptor_ready(
+                    attn_out_topfed_payload_enable_for_layer,
+                    attn_out_topfed_payload_words_for_layer,
+                    attn_out_topfed_payload_words_valid_for_layer
+                );
+            if (attn_out_topfed_payload_non_empty) {
+                regs.p11ax_attn_out_payload_non_empty_count =
+                    regs.p11ax_attn_out_payload_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11ax_lid0_attn_out_payload_non_empty_count =
+                        regs.p11ax_lid0_attn_out_payload_non_empty_count + (u32_t)1u;
+                }
+            } else if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_fallback_seen_count =
+                    regs.p11ax_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                if (lid != 0u) {
+                    regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count =
+                        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                }
+            }
+
+            // Dispatch one logical layer with explicit X_WORK/SCRATCH/W_REGION boundaries.
+            // Top computes shell policy once per layer and passes it through dispatch.
+            const bool attn_compat_shell_enable_for_layer = top_should_enable_attn_compat_shell(
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+            if (attn_compat_shell_enable_for_layer) {
+                regs.p11bd_attn_compat_shell_enabled_count =
+                    regs.p11bd_attn_compat_shell_enabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)lid;
+                if (!is_managed_attention_layer) {
+                    regs.p11bd_non_target_layer_attn_compat_shell_enabled_count =
+                        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count + (u32_t)1u;
+                }
+            } else {
+                regs.p11bd_attn_compat_shell_disabled_count =
+                    regs.p11bd_attn_compat_shell_disabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)lid;
+                if (is_managed_attention_layer) {
+                    regs.p11bd_target_layer_attn_compat_shell_disabled_count =
+                        regs.p11bd_target_layer_attn_compat_shell_disabled_count + (u32_t)1u;
+                }
+            }
+            // Dispatch boundary: policy and handoff descriptors are handed off, not reinterpreted.
+            top_dispatch_transformer_layer(
+                sram,
+                cfg,
+                (u32_t)lid,
+                x_in_base,
+                x_out_base,
+                sc,
+                pb,
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                true,
+                ffn_topfed_handoff_desc,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+
+            x_in_base = x_out_base;
+            x_out_base = canonical_x_work_base(x_in_base);
+
+            if ((int)lid == mid_index) {
+                // mid LN must be out-of-place: current_x -> other_x
+                run_mid_or_end_layernorm(
+                    true,
+                    cfg,
+                    sram,
+                    regs.w_base_word,
+                    x_in_base,
+                    x_out_base,
+                    &regs.layernorm_contract
+                );
+                regs.infer_mid_norm_output_base_word = x_out_base;
+                copy_x_words(
+                    regs.infer_mid_norm_output_shadow,
+                    &sram[(uint32_t)x_out_base.to_uint()],
+                    (uint32_t)LN_X_TOTAL_WORDS
+                );
+                regs.infer_mid_norm_output_valid = true;
+                x_in_base = x_out_base;
+                x_out_base = canonical_x_work_base(x_in_base);
+
+                copy_x_words(mid_snapshot, &sram[(uint32_t)x_in_base.to_uint()], (uint32_t)LN_X_TOTAL_WORDS);
+                mid_valid = true;
+            }
+        }
+
+        // EndLN input boundary snapshot for local-only producer/consumer debug.
+        regs.infer_endln_input_base_word = x_in_base;
+        copy_x_words(
+            regs.infer_endln_input_shadow,
+            &sram[(uint32_t)x_in_base.to_uint()],
+            (uint32_t)LN_X_TOTAL_WORDS
+        );
+        // end LN must be out-of-place and always runs before FinalHead.
+        run_mid_or_end_layernorm(
+            false,
+            cfg,
+            sram,
+            regs.w_base_word,
+            x_in_base,
+            x_out_base,
+            &regs.layernorm_contract
+        );
+        x_in_base = x_out_base;
+        x_out_base = canonical_x_work_base(x_in_base);
+
+        regs.infer_final_x_base_word = x_in_base;
+        if (mid_valid) {
+            regs.infer_mid_valid = true;
+            regs.infer_mid_dump_base_word = x_out_base;
+            copy_x_words(&sram[(uint32_t)x_out_base.to_uint()], mid_snapshot, (uint32_t)LN_X_TOTAL_WORDS);
+        }
+        else {
+            regs.infer_mid_valid = false;
+            regs.infer_mid_dump_base_word = 0;
+            regs.infer_mid_norm_output_valid = false;
+            regs.infer_mid_norm_output_base_word = 0;
+        }
+    }
+
+    // P00-011AN: Catapult-facing deep Attn boundary variant.
+    // Top remains the sole SRAM owner; this variant only changes the first deep
+    // Attn callsite boundary by dispatching through the Attn array-shaped bridge.
+    template<uint32_t SRAM_WORDS>
+    static inline void run_transformer_layer_loop_top_managed_attn_bridge(
+        TopRegs& regs,
+        u32_t (&sram)[SRAM_WORDS],
+        bool lid0_local_only_ffn_handoff_enable = false,
+        bool lid0_local_only_ffn_handoff_descriptor_valid = true,
+        bool lid0_local_only_attn_out_payload_enable = false,
+        bool lid0_local_only_attn_out_payload_descriptor_valid = true,
+        bool lid0_local_only_qkscore_mask_handoff_enable = false,
+        bool lid0_local_only_qkscore_mask_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_kvscan_handoff_enable = false,
+        bool lid0_local_only_qkscore_kvscan_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_qsrc_handoff_enable = false,
+        bool lid0_local_only_qkscore_qsrc_handoff_descriptor_valid = true,
+        bool lid0_local_only_qkscore_wq_handoff_enable = false,
+        bool lid0_local_only_qkscore_wq_handoff_descriptor_valid = true
+    ) {
+        CfgRegs cfg = build_layer_cfg(regs);
+        uint32_t n_layers = (uint32_t)cfg.n_layers.to_uint();
+        uint32_t d_model = (uint32_t)cfg.d_model.to_uint();
+        if (d_model == 0u) { d_model = (uint32_t)ATTN_D_MODEL; }
+        int mid_index = (int)(n_layers / 2u) - 1;
+
+        u32_t x_in_base = (u32_t)LN_X_OUT_BASE_WORD;
+        u32_t x_out_base = canonical_x_work_base(x_in_base);
+        bool mid_valid = false;
+        static u32_t mid_snapshot[LN_X_TOTAL_WORDS];
+        regs.infer_mid_norm_output_valid = false;
+        regs.infer_mid_norm_output_base_word = 0;
+        regs.p11ac_mainline_path_taken = false;
+        regs.p11ac_fallback_taken = false;
+        regs.p11ad_mainline_q_path_taken = false;
+        regs.p11ad_q_fallback_taken = false;
+        regs.p11ae_mainline_score_path_taken = false;
+        regs.p11ae_score_fallback_taken = false;
+        regs.p11af_mainline_softmax_output_path_taken = false;
+        regs.p11af_softmax_output_fallback_taken = false;
+        const uint32_t configured_managed_attn_target_layer =
+            (uint32_t)regs.p11bc_managed_attention_target_layer_id.to_uint();
+        const uint32_t managed_attn_target_layer =
+            (configured_managed_attn_target_layer < n_layers) ? configured_managed_attn_target_layer : 0u;
+        regs.p11bc_managed_attention_target_layer_id = (u32_t)managed_attn_target_layer;
+        regs.p11bc_managed_attention_gate_taken_count = 0;
+        regs.p11bc_managed_attention_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_enabled_count = 0;
+        regs.p11bd_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)0xFFFFFFFFu;
+        regs.p11bd_target_layer_attn_compat_shell_disabled_count = 0;
+        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count = 0;
+        regs.p11av_lid0_ffn_handoff_enable = lid0_local_only_ffn_handoff_enable;
+        regs.p11av_lid0_ffn_handoff_descriptor_valid = lid0_local_only_ffn_handoff_descriptor_valid;
+        regs.p11av_ffn_handoff_gate_taken_count = 0;
+        regs.p11av_ffn_handoff_fallback_seen_count = 0;
+        regs.p11av_ffn_handoff_non_empty_count = 0;
+        regs.p11av_lid0_ffn_handoff_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_enable = lid0_local_only_attn_out_payload_enable;
+        regs.p11ax_lid0_attn_out_payload_descriptor_valid = lid0_local_only_attn_out_payload_descriptor_valid;
+        regs.p11ax_attn_out_payload_gate_taken_count = 0;
+        regs.p11ax_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ax_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid0_attn_out_payload_non_empty_count = 0;
+        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_enable = lid0_local_only_qkscore_mask_handoff_enable;
+        regs.p11ay_lid0_qkscore_mask_handoff_descriptor_valid = lid0_local_only_qkscore_mask_handoff_descriptor_valid;
+        regs.p11ay_qkscore_mask_handoff_gate_taken_count = 0;
+        regs.p11ay_qkscore_mask_handoff_fallback_seen_count = 0;
+        regs.p11ay_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count = 0;
+        regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count = 0;
+        regs.p11az_lid0_qkscore_kvscan_handoff_enable = lid0_local_only_qkscore_kvscan_handoff_enable;
+        regs.p11az_lid0_qkscore_kvscan_handoff_descriptor_valid = lid0_local_only_qkscore_kvscan_handoff_descriptor_valid;
+        regs.p11az_qkscore_kvscan_handoff_gate_taken_count = 0;
+        regs.p11az_qkscore_kvscan_handoff_fallback_seen_count = 0;
+        regs.p11az_qkscore_kvscan_handoff_non_empty_count = 0;
+        regs.p11az_lid0_qkscore_kvscan_handoff_non_empty_count = 0;
+        regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count = 0;
+        regs.p11ba_lid0_qkscore_qsrc_handoff_enable = lid0_local_only_qkscore_qsrc_handoff_enable;
+        regs.p11ba_lid0_qkscore_qsrc_handoff_descriptor_valid = lid0_local_only_qkscore_qsrc_handoff_descriptor_valid;
+        regs.p11ba_qkscore_qsrc_handoff_gate_taken_count = 0;
+        regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count = 0;
+        regs.p11ba_qkscore_qsrc_handoff_non_empty_count = 0;
+        regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count = 0;
+        regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_enable = lid0_local_only_qkscore_wq_handoff_enable;
+        regs.p11bb_lid0_qkscore_wq_handoff_descriptor_valid = lid0_local_only_qkscore_wq_handoff_descriptor_valid;
+        regs.p11bb_qkscore_wq_handoff_gate_taken_count = 0;
+        regs.p11bb_qkscore_wq_handoff_fallback_seen_count = 0;
+        regs.p11bb_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count = 0;
+        regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count = 0;
+
+        // AN runloop keeps the same ownership seam: Top selects policy, blocks consume descriptors.
+        TOP_LAYER_ORCHESTRATION_AN_LOOP: for (uint32_t lid = 0; lid < n_layers; ++lid) {
+            if (lid0_local_only_qkscore_mask_handoff_enable) {
+                regs.p11ay_qkscore_mask_handoff_gate_taken_count =
+                    regs.p11ay_qkscore_mask_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_kvscan_handoff_enable) {
+                regs.p11az_qkscore_kvscan_handoff_gate_taken_count =
+                    regs.p11az_qkscore_kvscan_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_qsrc_handoff_enable) {
+                regs.p11ba_qkscore_qsrc_handoff_gate_taken_count =
+                    regs.p11ba_qkscore_qsrc_handoff_gate_taken_count + (u32_t)1u;
+            }
+            if (lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_gate_taken_count =
+                    regs.p11bb_qkscore_wq_handoff_gate_taken_count + (u32_t)1u;
+            }
+            // These flags are Top-managed decisions for this layer dispatch only.
+            LayerScratch sc = make_layer_scratch(x_in_base);
+            LayerParamBase pb = make_layer_param_base(regs.w_base_word, (u32_t)lid);
+            bool q_prebuilt_from_top_managed = false;
+            bool kv_prebuilt_from_top_managed = false;
+            bool score_prebuilt_from_top_managed = false;
+            bool out_prebuilt_from_top_managed = false;
+            const bool is_managed_attention_layer = (lid == managed_attn_target_layer);
+
+            if (is_managed_attention_layer) {
+                regs.p11bc_managed_attention_gate_taken_count =
+                    regs.p11bc_managed_attention_gate_taken_count + (u32_t)1u;
+                regs.p11bc_managed_attention_last_layer_id = (u32_t)lid;
+                bool q_fallback_taken = true;
+                q_prebuilt_from_top_managed = run_p11ad_layer0_top_managed_q(
+                    sram,
+                    cfg,
+                    x_in_base,
+                    sc,
+                    pb,
+                    q_fallback_taken
+                );
+                regs.p11ad_mainline_q_path_taken = q_prebuilt_from_top_managed;
+                regs.p11ad_q_fallback_taken = q_fallback_taken;
+
+                bool fallback_taken = true;
+                kv_prebuilt_from_top_managed = run_p11ac_layer0_top_managed_kv(
+                    sram,
+                    cfg,
+                    x_in_base,
+                    sc,
+                    pb,
+                    fallback_taken
+                );
+                regs.p11ac_mainline_path_taken = kv_prebuilt_from_top_managed;
+                regs.p11ac_fallback_taken = fallback_taken;
+
+                bool ae_mainline_score_path_taken = true;
+                bool af_mainline_softmax_output_path_taken = true;
+                bool qkscore_mask_handoff_non_empty_for_layer = false;
+                bool qkscore_mask_handoff_applied_for_layer = false;
+                bool qkscore_kvscan_handoff_non_empty_for_layer = false;
+                bool qkscore_kvscan_handoff_applied_for_layer = false;
+                bool qkscore_qsrc_handoff_non_empty_for_layer = false;
+                bool qkscore_qsrc_handoff_applied_for_layer = false;
+                bool qkscore_wq_handoff_non_empty_for_layer = false;
+                bool qkscore_wq_handoff_applied_for_layer = false;
+                // Score/softmax mainline is entered only when both Q and KV prebuilds are valid.
+                if (q_prebuilt_from_top_managed && kv_prebuilt_from_top_managed) {
+                    const uint32_t token_count = (uint32_t)ATTN_TOKEN_COUNT;
+                    TOP_P11AEAF_AN_TOKEN_LOOP: for (uint32_t t = 0u; t < token_count; ++t) {
+                        bool score_fallback_taken = true;
+                        bool score_mainline_taken = false;
+                        // Compatibility handoff selection order is intentional for AE ownership visibility.
+                        if (lid0_local_only_qkscore_mask_handoff_enable && is_managed_attention_layer) {
+                            bool warmup_fallback_taken = true;
+                            const bool warmup_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                warmup_fallback_taken
+                            );
+                            if (!warmup_mainline_taken || warmup_fallback_taken) {
+                                ae_mainline_score_path_taken = false;
+                                af_mainline_softmax_output_path_taken = false;
+                                break;
+                            }
+
+                            u32_t score_tile_bridge_family_case_count = (u32_t)0u;
+                            const u32_t* score_tile_bridge_family_base_words = 0;
+                            const u32_t* score_tile_bridge_family_words = 0;
+                            const u32_t* score_tile_bridge_family_words_valid = 0;
+                            const u32_t* score_tile_bridge_family_key_begin = 0;
+                            const u32_t* score_tile_bridge_family_head_idx = 0;
+                            top_make_runloop_lid0_local_only_qkscore_mask_family_handoff(
+                                sram,
+                                sc,
+                                (u32_t)lid,
+                                lid0_local_only_qkscore_mask_handoff_enable,
+                                lid0_local_only_qkscore_mask_handoff_descriptor_valid,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx
+                            );
+                            qkscore_mask_handoff_applied_for_layer = true;
+                            if (score_tile_bridge_family_case_count.to_uint() > 0u &&
+                                score_tile_bridge_family_words_valid != 0 &&
+                                score_tile_bridge_family_words_valid[0].to_uint() > 0u) {
+                                qkscore_mask_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                0,
+                                (u32_t)0u,
+                                (u32_t)0u,
+                                0,
+                                0,
+                                0,
+                                0,
+                                (u32_t)0u,
+                                score_tile_bridge_family_case_count,
+                                score_tile_bridge_family_base_words,
+                                score_tile_bridge_family_words,
+                                score_tile_bridge_family_words_valid,
+                                score_tile_bridge_family_key_begin,
+                                score_tile_bridge_family_head_idx,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                            );
+                        // WQ probe bridge path.
+                        } else if (lid0_local_only_qkscore_wq_handoff_enable && is_managed_attention_layer) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_wq_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_wq_handoff_enable,
+                                lid0_local_only_qkscore_wq_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_wq_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_wq_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                        // QSRC probe bridge path.
+                        } else if (lid0_local_only_qkscore_qsrc_handoff_enable && is_managed_attention_layer) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_qsrc_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_qsrc_handoff_enable,
+                                lid0_local_only_qkscore_qsrc_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_qsrc_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_qsrc_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                        // KVSCAN probe bridge path.
+                        } else if (lid0_local_only_qkscore_kvscan_handoff_enable && is_managed_attention_layer) {
+                            u32_t phase_entry_probe_q_base_word = (u32_t)0u;
+                            u32_t phase_entry_probe_k_base_word = (u32_t)0u;
+                            const u32_t* phase_entry_probe_q_words = 0;
+                            const u32_t* phase_entry_probe_k_words = 0;
+                            u32_t phase_entry_probe_words_valid = (u32_t)0u;
+                            top_make_runloop_lid0_local_only_qkscore_kvscan_probe_handoff(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)lid,
+                                (u32_t)t,
+                                lid0_local_only_qkscore_kvscan_handoff_enable,
+                                lid0_local_only_qkscore_kvscan_handoff_descriptor_valid,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                            qkscore_kvscan_handoff_applied_for_layer = true;
+                            if (phase_entry_probe_q_words != 0 &&
+                                phase_entry_probe_k_words != 0 &&
+                                (uint32_t)phase_entry_probe_words_valid.to_uint() > 0u) {
+                                qkscore_kvscan_handoff_non_empty_for_layer = true;
+                            }
+
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken,
+                                phase_entry_probe_q_base_word,
+                                phase_entry_probe_k_base_word,
+                                phase_entry_probe_q_words,
+                                phase_entry_probe_k_words,
+                                phase_entry_probe_words_valid
+                            );
+                        } else {
+                            score_mainline_taken = run_p11ae_layer0_top_managed_qk_score(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                score_fallback_taken
+                            );
+                        }
+                        if (!score_mainline_taken || score_fallback_taken) {
+                            ae_mainline_score_path_taken = false;
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+
+                        bool softmax_out_fallback_taken = true;
+                        const bool softmax_out_mainline_taken =
+                            run_p11af_layer0_top_managed_softmax_out(
+                                sram,
+                                cfg,
+                                sc,
+                                (u32_t)t,
+                                softmax_out_fallback_taken
+                            );
+                        if (!softmax_out_mainline_taken || softmax_out_fallback_taken) {
+                            af_mainline_softmax_output_path_taken = false;
+                            break;
+                        }
+                    }
+                } else {
+                    ae_mainline_score_path_taken = false;
+                    af_mainline_softmax_output_path_taken = false;
+                }
+
+                // Enabled-but-unconsumed bridges are recorded as fallback evidence.
+                if (lid0_local_only_qkscore_mask_handoff_enable) {
+                    if (qkscore_mask_handoff_applied_for_layer &&
+                        qkscore_mask_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11ay_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count =
+                            regs.p11ay_lid0_qkscore_mask_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                            regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+                if (lid0_local_only_qkscore_kvscan_handoff_enable) {
+                    if (qkscore_kvscan_handoff_applied_for_layer &&
+                        qkscore_kvscan_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11az_qkscore_kvscan_handoff_non_empty_count =
+                            regs.p11az_qkscore_kvscan_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11az_lid0_qkscore_kvscan_handoff_non_empty_count =
+                            regs.p11az_lid0_qkscore_kvscan_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11az_qkscore_kvscan_handoff_fallback_seen_count =
+                            regs.p11az_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+                if (lid0_local_only_qkscore_qsrc_handoff_enable) {
+                    if (qkscore_qsrc_handoff_applied_for_layer &&
+                        qkscore_qsrc_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11ba_qkscore_qsrc_handoff_non_empty_count =
+                            regs.p11ba_qkscore_qsrc_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count =
+                            regs.p11ba_lid0_qkscore_qsrc_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count =
+                            regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+                if (lid0_local_only_qkscore_wq_handoff_enable) {
+                    if (qkscore_wq_handoff_applied_for_layer &&
+                        qkscore_wq_handoff_non_empty_for_layer &&
+                        ae_mainline_score_path_taken) {
+                        regs.p11bb_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                        regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count =
+                            regs.p11bb_lid0_qkscore_wq_handoff_non_empty_count + (u32_t)1u;
+                    } else {
+                        regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                            regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                    }
+                }
+
+                score_prebuilt_from_top_managed = ae_mainline_score_path_taken;
+                out_prebuilt_from_top_managed = af_mainline_softmax_output_path_taken;
+                regs.p11ae_mainline_score_path_taken = ae_mainline_score_path_taken;
+                regs.p11ae_score_fallback_taken = !ae_mainline_score_path_taken;
+                regs.p11af_mainline_softmax_output_path_taken = af_mainline_softmax_output_path_taken;
+                regs.p11af_softmax_output_fallback_taken = !af_mainline_softmax_output_path_taken;
+            } else if (lid0_local_only_qkscore_mask_handoff_enable && !is_managed_attention_layer) {
+                regs.p11ay_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count =
+                    regs.p11ay_lid_nonzero_qkscore_mask_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_kvscan_handoff_enable) {
+                regs.p11az_qkscore_kvscan_handoff_fallback_seen_count =
+                    regs.p11az_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count =
+                    regs.p11az_lid_nonzero_qkscore_kvscan_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_qsrc_handoff_enable) {
+                regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count =
+                    regs.p11ba_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count =
+                    regs.p11ba_lid_nonzero_qkscore_qsrc_handoff_fallback_seen_count + (u32_t)1u;
+            }
+            if (!is_managed_attention_layer && lid0_local_only_qkscore_wq_handoff_enable) {
+                regs.p11bb_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+                regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count =
+                    regs.p11bb_lid_nonzero_qkscore_wq_handoff_fallback_seen_count + (u32_t)1u;
+            }
+
+            top_preload_layer_sublayer1_norm_params(
+                sram,
+                pb,
+                (u32_t)lid,
+                sc,
+                d_model
+            );
+
+            const TransformerLayerFfnTopfedHandoffDesc ffn_topfed_handoff_desc =
+                top_make_runloop_lid0_local_only_ffn_handoff_desc(
+                    cfg,
+                    (u32_t)lid,
+                    lid0_local_only_ffn_handoff_enable,
+                    lid0_local_only_ffn_handoff_descriptor_valid
+                );
+            if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_gate_taken_count =
+                    regs.p11av_ffn_handoff_gate_taken_count + (u32_t)1u;
+            }
+            // FFN handoff descriptors are accepted only when payload spans are non-empty.
+            const bool ffn_topfed_handoff_non_empty =
+                transformer_layer_ffn_handoff_desc_non_empty(ffn_topfed_handoff_desc);
+            if (ffn_topfed_handoff_non_empty) {
+                regs.p11av_ffn_handoff_non_empty_count =
+                    regs.p11av_ffn_handoff_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11av_lid0_ffn_handoff_non_empty_count =
+                        regs.p11av_lid0_ffn_handoff_non_empty_count + (u32_t)1u;
+                }
+            } else if (lid0_local_only_ffn_handoff_enable) {
+                regs.p11av_ffn_handoff_fallback_seen_count =
+                    regs.p11av_ffn_handoff_fallback_seen_count + (u32_t)1u;
+            }
+
+            bool attn_out_topfed_payload_enable_for_layer = false;
+            const u32_t* attn_out_topfed_payload_words_for_layer = 0;
+            u32_t attn_out_topfed_payload_words_valid_for_layer = (u32_t)0u;
+            top_make_runloop_lid0_local_only_attn_out_payload_handoff(
+                cfg,
+                (u32_t)lid,
+                lid0_local_only_attn_out_payload_enable,
+                lid0_local_only_attn_out_payload_descriptor_valid,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+            if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_gate_taken_count =
+                    regs.p11ax_attn_out_payload_gate_taken_count + (u32_t)1u;
+            }
+            // Top computes OUT descriptor readiness once; downstream uses this as a consume policy.
+            const bool attn_out_topfed_payload_non_empty =
+                top_attn_out_topfed_payload_descriptor_ready(
+                    attn_out_topfed_payload_enable_for_layer,
+                    attn_out_topfed_payload_words_for_layer,
+                    attn_out_topfed_payload_words_valid_for_layer
+                );
+            if (attn_out_topfed_payload_non_empty) {
+                regs.p11ax_attn_out_payload_non_empty_count =
+                    regs.p11ax_attn_out_payload_non_empty_count + (u32_t)1u;
+                if (lid == 0u) {
+                    regs.p11ax_lid0_attn_out_payload_non_empty_count =
+                        regs.p11ax_lid0_attn_out_payload_non_empty_count + (u32_t)1u;
+                }
+            } else if (lid0_local_only_attn_out_payload_enable) {
+                regs.p11ax_attn_out_payload_fallback_seen_count =
+                    regs.p11ax_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                if (lid != 0u) {
+                    regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count =
+                        regs.p11ax_lid_nonzero_attn_out_payload_fallback_seen_count + (u32_t)1u;
+                }
+            }
+
+            // Top computes compatibility shell policy once and forwards it to TransformerLayer.
+            const bool attn_compat_shell_enable_for_layer = top_should_enable_attn_compat_shell(
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+            if (attn_compat_shell_enable_for_layer) {
+                regs.p11bd_attn_compat_shell_enabled_count =
+                    regs.p11bd_attn_compat_shell_enabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_enabled_last_layer_id = (u32_t)lid;
+                if (!is_managed_attention_layer) {
+                    regs.p11bd_non_target_layer_attn_compat_shell_enabled_count =
+                        regs.p11bd_non_target_layer_attn_compat_shell_enabled_count + (u32_t)1u;
+                }
+            } else {
+                regs.p11bd_attn_compat_shell_disabled_count =
+                    regs.p11bd_attn_compat_shell_disabled_count + (u32_t)1u;
+                regs.p11bd_attn_compat_shell_disabled_last_layer_id = (u32_t)lid;
+                if (is_managed_attention_layer) {
+                    regs.p11bd_target_layer_attn_compat_shell_disabled_count =
+                        regs.p11bd_target_layer_attn_compat_shell_disabled_count + (u32_t)1u;
+                }
+            }
+            // Dispatch boundary: pass policy and descriptors through without changing ownership rules.
+            top_dispatch_transformer_layer_top_managed_attn_bridge(
+                sram,
+                cfg,
+                (u32_t)lid,
+                x_in_base,
+                x_out_base,
+                sc,
+                pb,
+                kv_prebuilt_from_top_managed,
+                q_prebuilt_from_top_managed,
+                score_prebuilt_from_top_managed,
+                out_prebuilt_from_top_managed,
+                true,
+                ffn_topfed_handoff_desc,
+                attn_out_topfed_payload_enable_for_layer,
+                attn_out_topfed_payload_words_for_layer,
+                attn_out_topfed_payload_words_valid_for_layer
+            );
+
+            x_in_base = x_out_base;
+            x_out_base = canonical_x_work_base(x_in_base);
+
+            if ((int)lid == mid_index) {
+                run_mid_or_end_layernorm(
+                    true,
+                    cfg,
+                    sram,
+                    regs.w_base_word,
+                    x_in_base,
+                    x_out_base,
+                    &regs.layernorm_contract
+                );
+                regs.infer_mid_norm_output_base_word = x_out_base;
+                copy_x_words(
+                    regs.infer_mid_norm_output_shadow,
+                    &sram[(uint32_t)x_out_base.to_uint()],
+                    (uint32_t)LN_X_TOTAL_WORDS
+                );
+                regs.infer_mid_norm_output_valid = true;
+                x_in_base = x_out_base;
+                x_out_base = canonical_x_work_base(x_in_base);
+
+                copy_x_words(mid_snapshot, &sram[(uint32_t)x_in_base.to_uint()], (uint32_t)LN_X_TOTAL_WORDS);
+                mid_valid = true;
+            }
+        }
+
+        // EndLN input boundary snapshot for local-only producer/consumer debug.
+        regs.infer_endln_input_base_word = x_in_base;
+        copy_x_words(
+            regs.infer_endln_input_shadow,
+            &sram[(uint32_t)x_in_base.to_uint()],
+            (uint32_t)LN_X_TOTAL_WORDS
+        );
+        run_mid_or_end_layernorm(
+            false,
+            cfg,
+            sram,
+            regs.w_base_word,
+            x_in_base,
+            x_out_base,
+            &regs.layernorm_contract
+        );
+        x_in_base = x_out_base;
+        x_out_base = canonical_x_work_base(x_in_base);
+
+        regs.infer_final_x_base_word = x_in_base;
+        if (mid_valid) {
+            regs.infer_mid_valid = true;
+            regs.infer_mid_dump_base_word = x_out_base;
+            copy_x_words(&sram[(uint32_t)x_out_base.to_uint()], mid_snapshot, (uint32_t)LN_X_TOTAL_WORDS);
+        } else {
+            regs.infer_mid_valid = false;
+            regs.infer_mid_dump_base_word = 0;
+            regs.infer_mid_norm_output_valid = false;
+            regs.infer_mid_norm_output_base_word = 0;
+        }
+    }
+
+    static inline void run_pipeline_transformer_layer_loop_with_local_ffn_handoff(
+        TopRegs& regs,
+        u32_t* sram
+    ) {
+        const bool gate_enable = regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        const bool descriptor_valid = regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_taken = gate_enable;
+        run_transformer_layer_loop(
+            regs,
+            sram,
+            gate_enable,
+            descriptor_valid
+        );
+        regs.p11aw_pipeline_ffn_handoff_gate_taken_count = regs.p11av_ffn_handoff_gate_taken_count;
+        regs.p11aw_pipeline_ffn_handoff_fallback_seen_count = regs.p11av_ffn_handoff_fallback_seen_count;
+        regs.p11aw_pipeline_ffn_handoff_non_empty_count = regs.p11av_ffn_handoff_non_empty_count;
+        regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count = regs.p11av_lid0_ffn_handoff_non_empty_count;
+        regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen =
+            ((uint32_t)regs.p11aw_pipeline_ffn_handoff_fallback_seen_count.to_uint() > 0u);
+    }
+
+    template<uint32_t SRAM_WORDS>
+    static inline void run_pipeline_transformer_layer_loop_top_managed_attn_bridge_with_local_ffn_handoff(
+        TopRegs& regs,
+        u32_t (&sram)[SRAM_WORDS]
+    ) {
+        const bool gate_enable = regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        const bool descriptor_valid = regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_taken = gate_enable;
+        run_transformer_layer_loop_top_managed_attn_bridge(
+            regs,
+            sram,
+            gate_enable,
+            descriptor_valid
+        );
+        regs.p11aw_pipeline_ffn_handoff_gate_taken_count = regs.p11av_ffn_handoff_gate_taken_count;
+        regs.p11aw_pipeline_ffn_handoff_fallback_seen_count = regs.p11av_ffn_handoff_fallback_seen_count;
+        regs.p11aw_pipeline_ffn_handoff_non_empty_count = regs.p11av_ffn_handoff_non_empty_count;
+        regs.p11aw_pipeline_lid0_ffn_handoff_non_empty_count = regs.p11av_lid0_ffn_handoff_non_empty_count;
+        regs.p11aw_pipeline_lid0_ffn_handoff_fallback_seen =
+            ((uint32_t)regs.p11aw_pipeline_ffn_handoff_fallback_seen_count.to_uint() > 0u);
+    }
+
+    static inline bool run_infer_pipeline_finalize(
+        TopRegs& regs,
+        u32_t* sram,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        HeadParamBase hp = make_head_param_base(regs.w_base_word);
+        const u32_t outmode = regs.outmode;
+        const CfgRegs layer_cfg = build_layer_cfg(regs);
+        FinalHeadContract& contract = regs.final_head_contract;
+        clear_final_head_contract(contract);
+        contract.start = true;
+        contract.phase_id = PHASE_FINAL_HEAD;
+        contract.x_work_base_word = regs.infer_final_x_base_word;
+        contract.final_scalar_base_word = (u32_t)sram_map::SCR_FINAL_SCALAR_BASE_W;
+        contract.w_base_word = hp.param_base_word;
+        contract.token_range = make_token_range((u32_t)0u, (u32_t)N_NODES);
+        const uint32_t class_tile_count = attn_top_managed_tile_count(
+            (uint32_t)EXP_LEN_OUT_LOGITS_WORDS,
+            (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS
+        );
+        contract.tile_range = make_tile_range((u32_t)0u, (u32_t)class_tile_count);
+
+        (void)FinalHeadCorePassABTopManaged<u32_t*>(
+            sram,
+            layer_cfg,
+            regs.infer_final_x_base_word,
+            infer_label_words_view(regs, sram),
+            regs.infer_logits_base_word,
+            regs.infer_xpred_base_word,
+            hp,
+            contract,
+            &data_out,
+            outmode,
+            0
+        );
+        contract.done = true;
+        const uint32_t mode = (uint32_t)outmode.to_uint();
+        return (mode == (uint32_t)FINAL_HEAD_OUTMODE_XPRED) ||
+            (mode == (uint32_t)FINAL_HEAD_OUTMODE_LOGITS);
+    }
+
+    static inline bool run_infer_pipeline(
+        TopRegs& regs,
+        u32_t* sram,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        run_preproc_block(regs, sram);
+        run_layernorm_block(regs, sram);
+        run_pipeline_transformer_layer_loop_with_local_ffn_handoff(regs, sram);
+        return run_infer_pipeline_finalize(regs, sram, data_out);
+    }
+
+    static inline bool run_infer_pipeline_mainline(
+        TopRegs& regs,
+        u32_t* sram,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        const bool saved_gate_enable = regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable;
+        const bool saved_descriptor_valid = regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid;
+        // Mainline OP_INFER path must not consume local-only FFN fixed handoff payload.
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = false;
+        regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = false;
+        const bool finalhead_streamed = run_infer_pipeline(regs, sram, data_out);
+        regs.p11aw_pipeline_lid0_ffn_handoff_gate_enable = saved_gate_enable;
+        regs.p11aw_pipeline_lid0_ffn_handoff_descriptor_valid = saved_descriptor_valid;
+        return finalhead_streamed;
+    }
+
+    template<uint32_t SRAM_WORDS>
+    static inline bool run_infer_pipeline_top_managed_attn_bridge(
+        TopRegs& regs,
+        u32_t (&sram)[SRAM_WORDS],
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        run_preproc_block(regs, sram);
+        run_layernorm_block(regs, sram);
+        run_pipeline_transformer_layer_loop_top_managed_attn_bridge_with_local_ffn_handoff(
+            regs,
+            sram
+        );
+        return run_infer_pipeline_finalize(regs, sram, data_out);
+    }
+
+    static inline void infer_emit_outmode_payload(
+        const TopRegs& regs,
+        ac_channel<ac_int<32, false> >& data_out,
+        const u32_t* sram
+    ) {
+        // Output/write-back boundary owned by Top:
+        // Top selects which finalized output region is streamed to data_out.
+        uint32_t mode = (uint32_t)regs.outmode.to_uint();
+        if (mode == 2u) {
+            return;
+        }
+        if (mode == 0u) {
+            uint32_t base = (uint32_t)regs.infer_xpred_base_word.to_uint();
+            TOP_OUTMODE_XPRED_WRITEBACK_LOOP: for (unsigned i = 0; i < OUT_WORDS_X_PRED; ++i) {
+                data_out.write(sram[base + i]);
+            }
+            return;
+        }
+        if (mode == 1u) {
+            uint32_t base = (uint32_t)regs.infer_logits_base_word.to_uint();
+            TOP_OUTMODE_LOGITS_WRITEBACK_LOOP: for (unsigned i = 0; i < OUT_WORDS_LOGITS; ++i) {
+                data_out.write(sram[base + i]);
+            }
+            return;
+        }
+    }
+
+    static inline void infer_ingest_one_word(
+        TopRegs& regs,
+        ac_channel<ac_int<32, false> >& data_in,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_out,
+        u32_t* sram
+    ) {
+        const IngestMetadataSurface meta = infer_metadata_surface(regs);
+        const uint32_t expected_words =
+            ingest_meta_expected_words(meta, (uint32_t)INFER_IN_WORDS_EXPECTED);
+        if (!ingest_meta_owner_matches_rx(meta, RX_INFER)) {
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+            return;
+        }
+
+        unsigned idx = (unsigned)regs.input_count.to_uint();
+        if (idx >= expected_words) {
+            regs.state = ST_IDLE;
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
+                meta,
+                RX_INFER,
+                (uint32_t)INFER_IN_WORDS_EXPECTED,
+                (uint8_t)ERR_BAD_STATE,
+                true,
+                regs.infer_ingest_contract.phase_id,
+                true
+            );
+            if (commit_diag != (uint8_t)ERR_OK) {
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+                return;
+            }
+
+            regs.infer_ingest_contract.done = true;
+            const bool finalhead_streamed = run_infer_pipeline_mainline(regs, sram, data_out);
+            if (!finalhead_streamed) {
+                infer_emit_outmode_payload(regs, data_out, sram);
+            }
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
+            return;
+        }
+
+        u32_t w;
+        if (!top_data_nb_read(data_in, w)) { return; }
+
+        infer_store_one_word(regs, sram, idx, w);
+        regs.input_count = regs.input_count + 1;
+
+        if ((unsigned)regs.input_count.to_uint() == expected_words) {
+            const IngestMetadataSurface done_meta = infer_metadata_surface(regs);
+            const uint8_t commit_diag = ingest_commit_diag_and_record(
+                regs.accepted_commit_record,
+                done_meta,
+                RX_INFER,
+                (uint32_t)INFER_IN_WORDS_EXPECTED,
+                (uint8_t)ERR_BAD_STATE,
+                true,
+                regs.infer_ingest_contract.phase_id,
+                true
+            );
+            if (commit_diag != (uint8_t)ERR_OK) {
+                regs.state = ST_IDLE;
+                ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+                return;
+            }
+
+            regs.infer_ingest_contract.done = true;
+            const bool finalhead_streamed = run_infer_pipeline_mainline(regs, sram, data_out);
+            if (!finalhead_streamed) {
+                infer_emit_outmode_payload(regs, data_out, sram);
+            }
+            regs.state = ST_IDLE;
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_INFER));
+        }
+    }
+
+    static inline void handle_read_mem(
+        TopRegs& regs,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_in,
+        ac_channel<ac_int<32, false> >& data_out,
+        u32_t* sram
+    ) {
+        // Debug read-back path owned by Top. This does not transfer SRAM ownership.
+        // READ_MEM payload: addr_word then len_words, both in u32 words.
+        u32_t addr_word_in = top_data_read(data_in);
+        u32_t len_words_in = top_data_read(data_in);
+
+        MemReq req = make_empty_mem_req();
+        req.valid = true;
+        req.requester = REQ_DEBUG_READ_MEM;
+        req.prio = PRIO_DEBUG_READ_MEM;
+        req.is_write = false;
+        req.addr_word = addr_word_in;
+        req.len_words = len_words_in;
+        req.tag = 0;
+        mem_arb_submit(regs, req);
+        (void)mem_arb_grant_one(regs);
+
+        unsigned long long addr_word = (unsigned long long)(uint32_t)addr_word_in.to_uint();
+        unsigned long long len_words = (unsigned long long)(uint32_t)len_words_in.to_uint();
+
+        if (len_words == 0ull) {
+            ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_READ_MEM));
+            return;
+        }
+
+        if (addr_word >= (unsigned long long)sram_map::SRAM_WORDS_TOTAL ||
+            (addr_word + len_words) > (unsigned long long)sram_map::SRAM_WORDS_TOTAL) {
+            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
+            return;
+        }
+
+        TOP_READ_MEM_STREAM_LOOP: for (unsigned long long i = 0ull; i < len_words; ++i) {
+            unsigned idx = (unsigned)(addr_word + i);
+            data_out.write(sram[idx]);
+        }
+        ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_READ_MEM));
+    }
+
+    // Top dispatch entrypoint for the external 4-channel contract.
+    // Top accepts commands, validates state/range constraints, and dispatches block execution.
+    // Top functional entrypoint for command dispatch and RX-state servicing.
+    // Fast reading order:
+    // 1) ST_IDLE command decode
+    // 2) RX-state payload ingestion (CFG / PARAM / INFER)
+    // 3) HALTED / READ_MEM / debug side paths
+    static inline void top(
+        ac_channel<ac_int<16, false> >& ctrl_cmd,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<32, false> >& data_in,
+        ac_channel<ac_int<32, false> >& data_out
+    ) {
+        TopRegs& regs = top_regs();
+        u32_t* sram = top_sram();
+        (void)top_in_fifo(); // Ensure in_fifo exists in Top contract.
+        (void)mem_arb_grant_one(regs); // Deterministic arbiter stub step.
+        refresh_receiver_state(regs);
+
+        ac_int<16, false> cmdw;
+        bool has_cmd = ctrl_cmd.nb_read(cmdw);
+
+        if (has_cmd) {
+            uint8_t op = unpack_ctrl_cmd_opcode(cmdw);
+
+            if (regs.state == ST_IDLE) {
+                if (op == (uint8_t)OP_NOOP) {
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_NOOP));
+                }
+                else if (op == (uint8_t)OP_SOFT_RESET) {
+                    soft_reset_all(regs, sram);
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SOFT_RESET));
+                }
+                else if (op == (uint8_t)OP_CFG_BEGIN) {
+                    regs.state = ST_CFG_RX;
+                    cfg_session_clear(regs);
+                    ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_CFG_BEGIN));
+                }
+                else if (op == (uint8_t)OP_CFG_COMMIT) {
+                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                }
+                else if (op == (uint8_t)OP_SET_W_BASE) {
+                    u32_t w_base_in = top_data_read(data_in);
+                    uint32_t w_base_word = (uint32_t)w_base_in.to_uint();
+
+                    if (!is_param_base_in_w_region(w_base_word)) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_PARAM_BASE_RANGE));
+                    }
+                    else if (!is_param_base_aligned(w_base_word)) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_PARAM_BASE_ALIGN));
+                    }
+                    else {
+                        regs.w_base_set = true;
+                        regs.w_base_word = w_base_in;
+                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_SET_W_BASE));
+                    }
+                }
+                else if (op == (uint8_t)OP_LOAD_W) {
+                    if (!regs.w_base_set) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                    }
+                    else if (!param_ingest_span_legal(regs)) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
+                    }
+                    else {
+                        regs.state = ST_PARAM_RX;
+                        param_session_clear(regs);
+                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_LOAD_W));
+                    }
+                }
+                else if (op == (uint8_t)OP_SET_OUTMODE) {
+                    u32_t outmode_in = top_data_read(data_in);
+                    uint32_t outmode = (uint32_t)outmode_in.to_uint();
+                    if (!is_valid_outmode(outmode)) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_ARG));
+                    }
+                    else {
+                        regs.outmode = outmode_in;
+                        ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SET_OUTMODE));
+                    }
+                }
+                else if (op == (uint8_t)OP_INFER) {
+                    if (!regs.cfg_ready) {
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                    }
+                    else {
+                        infer_session_clear(regs);
+                        infer_contract_arm_for_op_infer(regs);
+                        const IngestMetadataSurface infer_meta = infer_metadata_surface(regs);
+                        if (!ingest_meta_span_in_sram(infer_meta, (uint32_t)INFER_IN_WORDS_EXPECTED)) {
+                            ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_MEM_RANGE));
+                        } else {
+                            regs.state = ST_INFER_RX;
+                            ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_INFER));
+                        }
+                    }
+                }
+                else if (op == (uint8_t)OP_READ_MEM) {
+                    handle_read_mem(regs, ctrl_rsp, data_in, data_out, sram);
+                }
+                else if (op == (uint8_t)OP_DEBUG_CFG) {
+                    handle_debug_cfg_idle(regs, ctrl_rsp, data_in);
+                }
+                else {
+                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_UNIMPL));
+                }
+            }
+            else if (regs.state == ST_CFG_RX) {
+                if (op == (uint8_t)OP_CFG_COMMIT) {
+                    const IngestMetadataSurface cfg_meta = cfg_metadata_surface(regs);
+                    const uint8_t commit_diag = ingest_commit_diag_error(
+                        cfg_meta,
+                        RX_CFG,
+                        (uint32_t)CFG_WORDS_EXPECTED,
+                        (uint8_t)ERR_CFG_LEN_MISMATCH,
+                        false
+                    );
+                    if (commit_diag != (uint8_t)ERR_OK) {
+                        // CFG_COMMIT requires exact expected ingest length before legality checks.
+                        ctrl_rsp.write(pack_ctrl_rsp_err(commit_diag));
+                    }
+                    else if (!cfg_validate_minimal(regs)) {
+                        // Illegal CFG resets session state back to IDLE and clears CFG words.
+                        regs.state = ST_IDLE;
+                        cfg_session_clear(regs);
+                        ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_CFG_ILLEGAL));
+                    }
+                    else {
+                        cfg_apply_to_regs(regs);
+                        record_accepted_commit_metadata(
+                            regs.accepted_commit_record,
+                            cfg_meta,
+                            RX_CFG,
+                            (u32_t)0u,
+                            false
+                        );
+                        regs.state = ST_IDLE;
+                        ctrl_rsp.write(pack_ctrl_rsp_ok((uint8_t)OP_CFG_COMMIT));
+                    }
+                }
+                else if (op == (uint8_t)OP_SOFT_RESET) {
+                    soft_reset_all(regs, sram);
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SOFT_RESET));
+                }
+                else if (op == (uint8_t)OP_NOOP) {
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_NOOP));
+                }
+                else {
+                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                }
+            }
+            else if (regs.state == ST_PARAM_RX) {
+                if (op == (uint8_t)OP_SOFT_RESET) {
+                    soft_reset_all(regs, sram);
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SOFT_RESET));
+                }
+                else if (op == (uint8_t)OP_NOOP) {
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_NOOP));
+                }
+                else {
+                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                }
+            }
+            else if (regs.state == ST_INFER_RX) {
+                if (op == (uint8_t)OP_SOFT_RESET) {
+                    soft_reset_all(regs, sram);
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SOFT_RESET));
+                }
+                else if (op == (uint8_t)OP_NOOP) {
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_NOOP));
+                }
+                else {
+                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                }
+            }
+            else if (regs.state == ST_HALTED) {
+                if (op == (uint8_t)OP_READ_MEM) {
+                    handle_read_mem(regs, ctrl_rsp, data_in, data_out, sram);
+                }
+                else if (op == (uint8_t)OP_DEBUG_CFG) {
+                    handle_debug_cfg_halted(regs, ctrl_rsp, data_in);
+                }
+                else if (op == (uint8_t)OP_SOFT_RESET) {
+                    soft_reset_all(regs, sram);
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_SOFT_RESET));
+                }
+                else if (op == (uint8_t)OP_NOOP) {
+                    ctrl_rsp.write(pack_ctrl_rsp_done((uint8_t)OP_NOOP));
+                }
+                else {
+                    ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_BAD_STATE));
+                }
+            }
+            else {
+                ctrl_rsp.write(pack_ctrl_rsp_err((uint8_t)ERR_INTERNAL));
+            }
+        }
+        else {
+            // No command this cycle: service one payload word for the active RX state.
+            if (regs.state == ST_CFG_RX && !regs.cfg_ready) {
+                cfg_ingest_one_word(regs, data_in);
+            }
+            else if (regs.state == ST_PARAM_RX) {
+                param_ingest_one_word(regs, data_in, ctrl_rsp, data_out, sram);
+            }
+            else if (regs.state == ST_INFER_RX) {
+                infer_ingest_one_word(regs, data_in, ctrl_rsp, data_out, sram);
+            }
+        }
+        refresh_receiver_state(regs);
+    }
+
+    // Backup profile external boundary:
+    // - data_in/data_out are serialized IO8 channels
+    // - internal Top/shared-SRAM ownership and word-path behavior remain unchanged
+    static inline void top(
+        ac_channel<ac_int<16, false> >& ctrl_cmd,
+        ac_channel<ac_int<16, false> >& ctrl_rsp,
+        ac_channel<ac_int<8, false> >& data_in,
+        ac_channel<ac_int<8, false> >& data_out
+    ) {
+        data_ch_t& io8_in_words = top_io8_in_words_fifo();
+        data_ch_t& io8_out_words = top_io8_out_words_fifo();
+
+        top_io8_ingest_bytes_to_word_fifo(data_in, io8_in_words);
+        top(ctrl_cmd, ctrl_rsp, io8_in_words, io8_out_words);
+        top_io8_emit_bytes_from_word_fifo(io8_out_words, data_out);
+    }
+
+} // namespace aecct
