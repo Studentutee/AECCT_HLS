@@ -421,24 +421,27 @@ static inline bool attn_phasea_top_managed_q_mainline(
         return false;
     }
 
-    const ParamMeta wq_payload_meta = kParamMeta[wq_meta.weight_param_id];
-    const ParamMeta wq_inv_meta = kParamMeta[wq_meta.inv_sw_param_id];
     if (wq_meta.payload_words_2b > (uint32_t)kTernaryLiveL0WqPayloadWords) {
         return false;
     }
-    if (wq_payload_meta.len_w < wq_meta.payload_words_2b || wq_inv_meta.len_w == 0u) {
-        return false;
-    }
-
-    const uint32_t param_base = (uint32_t)param_base_word.to_uint();
-    const uint32_t wq_payload_base = param_base + wq_payload_meta.offset_w;
-    const uint32_t wq_inv_addr = param_base + wq_inv_meta.offset_w;
 
     u32_t wq_payload_words[kTernaryLiveL0WqPayloadWords];
-    for (uint32_t i = 0u; i < wq_meta.payload_words_2b; ++i) {
-        wq_payload_words[i] = sram[wq_payload_base + i];
+    if (!ternary_linear_live_load_payload_words_view(
+            sram,
+            param_base_word,
+            QLM_L0_WQ,
+            wq_payload_words,
+            (uint32_t)kTernaryLiveL0WqPayloadWords)) {
+        return false;
     }
-    const u32_t wq_inv_sw_bits = sram[wq_inv_addr];
+    u32_t wq_inv_sw_bits = (u32_t)0u;
+    if (!ternary_linear_live_read_inv_sw_bits_view(
+            sram,
+            param_base_word,
+            QLM_L0_WQ,
+            wq_inv_sw_bits)) {
+        return false;
+    }
 
     const uint32_t x_base = (uint32_t)x_in_base_word.to_uint();
     const uint32_t q_base = (uint32_t)sc.q_base_word.to_uint();
