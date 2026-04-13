@@ -550,33 +550,34 @@ static inline bool attn_phasea_top_managed_kv_mainline(
         return false;
     }
 
-    const ParamMeta wk_payload_meta = kParamMeta[wk_meta.weight_param_id];
-    const ParamMeta wk_inv_meta = kParamMeta[wk_meta.inv_sw_param_id];
-    const ParamMeta wv_payload_meta = kParamMeta[wv_meta.weight_param_id];
-    const ParamMeta wv_inv_meta = kParamMeta[wv_meta.inv_sw_param_id];
-    if (wk_payload_meta.len_w < wk_meta.payload_words_2b || wk_inv_meta.len_w == 0u) {
-        return false;
-    }
-    if (wv_payload_meta.len_w < wv_meta.payload_words_2b || wv_inv_meta.len_w == 0u) {
-        return false;
-    }
-
-    const uint32_t param_base = (uint32_t)param_base_word.to_uint();
-    const uint32_t wk_payload_base = param_base + wk_payload_meta.offset_w;
-    const uint32_t wv_payload_base = param_base + wv_payload_meta.offset_w;
-    const uint32_t wk_inv_addr = param_base + wk_inv_meta.offset_w;
-    const uint32_t wv_inv_addr = param_base + wv_inv_meta.offset_w;
-
     u32_t wk_payload_words[kTernaryLiveL0WkPayloadWords];
     u32_t wv_payload_words[kTernaryLiveL0WvPayloadWords];
-    for (uint32_t i = 0u; i < wk_meta.payload_words_2b; ++i) {
-        wk_payload_words[i] = sram[wk_payload_base + i];
+    if (!ternary_linear_live_load_payload_words_view(
+            sram,
+            param_base_word,
+            QLM_L0_WK,
+            wk_payload_words,
+            (uint32_t)kTernaryLiveL0WkPayloadWords)) {
+        return false;
     }
-    for (uint32_t i = 0u; i < wv_meta.payload_words_2b; ++i) {
-        wv_payload_words[i] = sram[wv_payload_base + i];
+    if (!ternary_linear_live_load_payload_words_view(
+            sram,
+            param_base_word,
+            QLM_L0_WV,
+            wv_payload_words,
+            (uint32_t)kTernaryLiveL0WvPayloadWords)) {
+        return false;
     }
-    const u32_t wk_inv_sw_bits = sram[wk_inv_addr];
-    const u32_t wv_inv_sw_bits = sram[wv_inv_addr];
+    u32_t wk_inv_sw_bits = (u32_t)0u;
+    u32_t wv_inv_sw_bits = (u32_t)0u;
+    if (!ternary_linear_live_read_inv_sw_bits_view(
+            sram, param_base_word, QLM_L0_WK, wk_inv_sw_bits)) {
+        return false;
+    }
+    if (!ternary_linear_live_read_inv_sw_bits_view(
+            sram, param_base_word, QLM_L0_WV, wv_inv_sw_bits)) {
+        return false;
+    }
 
     const uint32_t x_base = (uint32_t)x_in_base_word.to_uint();
     const uint32_t k_base = (uint32_t)sc.k_base_word.to_uint();
