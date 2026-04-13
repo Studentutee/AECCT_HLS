@@ -1,7 +1,8 @@
 #ifndef AECCT_REF_INV_SQRT_APPROX_H
 #define AECCT_REF_INV_SQRT_APPROX_H
 
-#include "ac_std_float.h"
+#include "RefTypes.h"
+#include <cmath>
 
 namespace aecct_ref {
 
@@ -527,39 +528,33 @@ static const float g_ref_inv_sqrt_lut[512] = {
   3.535533906e-01f
 };
 
-static inline int ref_invsqrt_idx(ref_invsqrt_fp32_t x) {
-  ref_invsqrt_fp32_t xf = x;
-  if (xf < ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN)) xf = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN);
-  if (xf > ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX)) xf = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX);
-  ref_invsqrt_fp32_t pos = (xf - ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN)) * ref_invsqrt_fp32_t(REF_INV_SQRT_IDX_SCALE);
-  int idx = (pos + ref_invsqrt_fp32_t(0.5f)).to_float();
+template <typename FloatT>
+static inline int ref_invsqrt_idx(FloatT x) {
+  float xf = x.to_float();
+  if (xf < REF_INV_SQRT_X_MIN) xf = REF_INV_SQRT_X_MIN;
+  if (xf > REF_INV_SQRT_X_MAX) xf = REF_INV_SQRT_X_MAX;
+  const float pos = (xf - REF_INV_SQRT_X_MIN) * REF_INV_SQRT_IDX_SCALE;
+  int idx = static_cast<int>(std::floor(pos + 0.5f));
   if (idx < 0) idx = 0;
   if (idx >= REF_INV_SQRT_LUT_SIZE) idx = REF_INV_SQRT_LUT_SIZE - 1;
   return idx;
 }
 
-static inline ref_invsqrt_fp32_t ref_inv_sqrt_approx(ref_invsqrt_fp32_t x) {
-  ref_invsqrt_fp32_t x_safe = x;
-  if (x_safe < ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN)) x_safe = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN);
-  if (x_safe > ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX)) x_safe = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX);
-  int idx = ref_invsqrt_idx(x_safe);
-  ref_invsqrt_fp32_t y0 = ref_invsqrt_fp32_t(g_ref_inv_sqrt_lut[idx]);
-  return y0;
+template <typename FloatT>
+static inline FloatT ref_inv_sqrt_approx(FloatT x) {
+  const int idx = ref_invsqrt_idx(x);
+  return FloatT(g_ref_inv_sqrt_lut[idx]);
 }
 
-static inline ref_invsqrt_fp32_t ref_inv_sqrt_nr1_approx(ref_invsqrt_fp32_t x) {
-  ref_invsqrt_fp32_t x_safe = x;
-  if (x_safe < ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN)) x_safe = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MIN);
-  if (x_safe > ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX)) x_safe = ref_invsqrt_fp32_t(REF_INV_SQRT_X_MAX);
-  // LUT index is formed from linearly binned x over [X_MIN, X_MAX].
-  const int idx = ref_invsqrt_idx(x_safe);
-  const ref_invsqrt_fp32_t y0 = ref_invsqrt_fp32_t(g_ref_inv_sqrt_lut[idx]);
-  // Exactly one Newton-Raphson step:
-  // y1 = y0 * (1.5 - 0.5 * x * y0 * y0)
-  const ref_invsqrt_fp32_t half = ref_invsqrt_fp32_t(0.5f);
-  const ref_invsqrt_fp32_t one_point_five = ref_invsqrt_fp32_t(1.5f);
-  const ref_invsqrt_fp32_t y1 = y0 * (one_point_five - (half * x_safe * y0 * y0));
-  return y1;
+template <typename FloatT>
+static inline FloatT ref_inv_sqrt_nr1_approx(FloatT x) {
+  float x_safe = x.to_float();
+  if (x_safe < REF_INV_SQRT_X_MIN) x_safe = REF_INV_SQRT_X_MIN;
+  if (x_safe > REF_INV_SQRT_X_MAX) x_safe = REF_INV_SQRT_X_MAX;
+  const int idx = ref_invsqrt_idx(FloatT(x_safe));
+  const float y0 = g_ref_inv_sqrt_lut[idx];
+  const float y1 = y0 * (1.5f - (0.5f * x_safe * y0 * y0));
+  return FloatT(y1);
 }
 
 } // namespace aecct_ref
