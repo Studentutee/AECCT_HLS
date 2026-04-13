@@ -335,6 +335,33 @@ static inline bool build_preproc_x_ref_word16(const uint32_t sample_idx,
   return true;
 }
 
+static inline void seed_word16_into_sram(aecct::u16_t* sram,
+                                         const uint32_t base_word16,
+                                         const std::vector<uint16_t>& words16) {
+  for (uint32_t i = 0u; i < (uint32_t)words16.size(); ++i) {
+    sram[base_word16 + i] = (aecct::u16_t)words16[i];
+  }
+}
+
+static inline bool seed_param_image_word16_into_sram(aecct::u16_t* sram,
+                                                     std::vector<uint16_t>& param_word16_out) {
+  if (!build_param_image_word16(param_word16_out)) {
+    return false;
+  }
+  seed_word16_into_sram(sram,
+                        sram_map::FP16_BASELINE_PARAM_STREAM_DEFAULT_BASE_WORD16,
+                        param_word16_out);
+  return true;
+}
+
+static inline void extract_x_work_word16_from_word16_sram(const aecct::u16_t* sram,
+                                                          std::vector<uint16_t>& out_words16) {
+  out_words16.assign(sram_map::FP16_BASELINE_X_WORK_WORDS_WORD16, 0u);
+  for (uint32_t i = 0u; i < sram_map::FP16_BASELINE_X_WORK_WORDS_WORD16; ++i) {
+    out_words16[i] = (uint16_t)sram[sram_map::FP16_BASELINE_X_WORK_BASE_WORD16 + i].to_uint();
+  }
+}
+
 static inline void seed_u32_words_into_sram(aecct::u32_t* sram,
                                             const uint32_t base_word,
                                             const std::vector<uint32_t>& words_u32) {

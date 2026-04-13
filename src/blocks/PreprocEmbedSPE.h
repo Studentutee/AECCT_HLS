@@ -67,18 +67,18 @@ static inline uint32_t preproc_fp16_branch_param_base_w() {
 }
 
 static inline bool preproc_uses_fp16_branch_params(const u32_t& w_base_word) {
-    return (uint32_t)w_base_word.to_uint() == preproc_fp16_branch_param_base_w();
+    const uint32_t base = (uint32_t)w_base_word.to_uint();
+    return (base == preproc_fp16_branch_param_base_w()) ||
+           (base == sram_map::FP16_BASELINE_PARAM_STREAM_DEFAULT_BASE_WORD16);
 }
 
 template<typename SramView>
-static inline u16_t preproc_read_word16_from_u32_sram(
+static inline u16_t preproc_read_word16_from_sram(
     const SramView& sram,
-    uint32_t base_word32,
+    uint32_t base_word16,
     uint32_t word16_offset
 ) {
-    const uint32_t addr_word32 = base_word32 + (word16_offset >> 1);
-    const uint32_t lane_idx = word16_offset & 1u;
-    return unpack_fp16_lane(sram[addr_word32], lane_idx);
+    return sram_word16_load(sram, sram_word16_base_from_word_arg<SramView>(base_word16) + word16_offset);
 }
 
 template<typename SramView>
@@ -87,7 +87,7 @@ static inline fp16_t preproc_read_fp16_param(
     uint32_t base_word32,
     uint32_t word16_offset
 ) {
-    return fp16_from_bits(preproc_read_word16_from_u32_sram(sram, base_word32, word16_offset));
+    return fp16_from_bits(preproc_read_word16_from_sram(sram, base_word32, word16_offset));
 }
 
 template<typename SramView>
@@ -101,7 +101,7 @@ static inline uint32_t preproc_read_h_bit(
     const Fp16BranchStorageDesc h_desc = fp16_branch_weight_storage_desc(BCH_H_BITPACK);
     const uint32_t word16_index = bit_index >> 4;
     const uint32_t bit_in_word16 = bit_index & 15u;
-    const uint16_t h_word16 = (uint16_t)preproc_read_word16_from_u32_sram(
+    const uint16_t h_word16 = (uint16_t)preproc_read_word16_from_sram(
         sram,
         param_base,
         h_desc.offset_words16 + word16_index).to_uint();
@@ -175,14 +175,19 @@ static inline void PreprocEmbedSPECoreWindow(
     uint32_t infer_in_words = (uint32_t)cfg.infer_in_words.to_uint();
     uint32_t x_out_words = (uint32_t)cfg.x_out_words.to_uint();
     if (infer_in_words == 0u) { infer_in_words = (uint32_t)PREPROC_IN_WORDS_EXPECTED; }
-    if (x_out_words == 0u) { x_out_words = (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED; }
+    if constexpr (std::is_same_v<sram_elem_t<SramView>, u16_t>) {
+        if (x_out_words == 0u) { x_out_words = sram_map::FP16_BASELINE_X_WORK_WORDS_WORD16; }
+    } else {
+        if (x_out_words == 0u) { x_out_words = (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED; }
+    }
     if (x_out_words == 0u) {
         return;
     }
 
     const uint32_t in_base = (uint32_t)in_base_word.to_uint();
     const uint32_t x_base = (uint32_t)x_out_base_word.to_uint();
-    const uint32_t token_stride = (uint32_t)PREPROC_X_TOKEN_STRIDE_WORDS;
+    const uint32_t token_stride = std::is_same_v<sram_elem_t<SramView>, u16_t> ?
+        (uint32_t)D_MODEL : (uint32_t)PREPROC_X_TOKEN_STRIDE_WORDS;
     if (token_stride == 0u) {
         return;
     }
@@ -226,10 +231,14 @@ static inline void PreprocEmbedSPECoreWindow(
     fp16_t node_feature[N_NODES];
 
     PREPROC_VAR_FEATURE_INIT_LOOP: for (uint32_t v = 0u; v < (uint32_t)CODE_N; ++v) {
-        const u32_t y_bits =
-            (v < infer_in_words) ?
-                ((topfed_in_words != 0) ? topfed_in_words[v] : sram[in_base + v]) :
-                (u32_t)0u;
+        u32_t y_bits = (u32_t)0u;
+        if (v < infer_in_words) {
+            if (topfed_in_words != 0) {
+                y_bits = topfed_in_words[v];
+            } else {
+                y_bits = (u32_t)sram[in_base + v];
+            }
+        }
         const fp16_t y = fp16_from_bits(fp16_lane_from_fp32_bits(y_bits));
         const bool neg = (y < fp16_zero());
         var_feature[v] = neg ? (fp16_zero() - y) : y;
@@ -363,6 +372,42 @@ static inline void PreprocEmbedSPE(
         in_base_word,
         x_out_base_word,
         contract
+    );
+    contract.done = true;
+}
+
+static inline void PreprocEmbedSPEWord16(
+    u16_t* sram,
+    const PreprocCfg& cfg,
+    u32_t in_base_word,
+    u32_t x_out_base_word,
+    const u32_t* topfed_in_words,
+    u32_t w_base_word
+) {
+    PreprocBlockContract contract;
+    clear_preproc_contract(contract);
+    contract.start = true;
+    contract.phase_id = PHASE_PREPROC;
+    contract.x_work_base_word = x_out_base_word;
+    contract.w_base_word = w_base_word;
+
+    uint32_t x_out_words = (uint32_t)cfg.x_out_words.to_uint();
+    if (x_out_words == 0u) { x_out_words = (uint32_t)PREPROC_X_OUT_WORDS_EXPECTED; }
+    const uint32_t token_stride = (uint32_t)D_MODEL;
+    const uint32_t token_count =
+        (token_stride == 0u) ? 0u : ((x_out_words + token_stride - 1u) / token_stride);
+    const uint32_t tile_count =
+        (token_stride == 0u) ? 0u : attn_top_managed_tile_count(token_stride, (uint32_t)ATTN_TOP_MANAGED_WORK_TILE_WORDS);
+    contract.token_range = make_token_range((u32_t)0u, (u32_t)token_count);
+    contract.tile_range = make_tile_range((u32_t)0u, (u32_t)tile_count);
+
+    PreprocEmbedSPECoreWindow<u16_t*>(
+        sram,
+        cfg,
+        in_base_word,
+        x_out_base_word,
+        contract,
+        topfed_in_words
     );
     contract.done = true;
 }
