@@ -2,7 +2,6 @@
 
 #include <cassert>
 #include <cmath>
-#include <cstdint>
 
 #include "weights.h"
 
@@ -11,6 +10,11 @@ namespace {
 
 static inline ref_fp32_t make_ref_fp32(float x) {
   return ref_fp32_t(x);
+}
+
+template<ac_ieee_float_format FloatFormat>
+static inline ref_fp32_t make_ref_fp32_from_island(ac_ieee_float<FloatFormat> x) {
+  return ref_fp32_t(x.to_float());
 }
 
 } // namespace
@@ -30,6 +34,14 @@ void RefModelOptimized::set_run_config(const RefRunConfig& cfg) {
 
 RefRunConfig RefModelOptimized::get_run_config() const {
   return run_cfg_;
+}
+
+void RefModelOptimized::set_numeric_config(const RefOptimizedNumericConfig& cfg) {
+  numeric_cfg_ = cfg;
+}
+
+RefOptimizedNumericConfig RefModelOptimized::get_numeric_config() const {
+  return numeric_cfg_;
 }
 
 void RefModelOptimized::infer_step0(const RefModelIO& io) {
@@ -55,12 +67,10 @@ bool RefModelOptimized::stage_step0_phase_a(const RefModelIO& io, int batch_inde
     return false;
   }
 
-  clear_formal_storage();
-  build_preproc_x_work_from_input(&io.input_y_fp32[batch_index * io.N]);
-  materialize_layer0_kv_from_x_work();
-  last_staged_sample_index_ = batch_index;
-  phase_a_valid_ = true;
-  return true;
+  if (numeric_cfg_.float_mode == REF_OPT_FLOAT16) {
+    return stage_step0_phase_a_with_float<binary16>(io, batch_index);
+  }
+  return stage_step0_phase_a_with_float<binary32>(io, batch_index);
 }
 
 int RefModelOptimized::last_staged_sample_index() const {
@@ -119,36 +129,54 @@ void RefModelOptimized::clear_formal_storage() {
   phase_a_valid_ = false;
 }
 
+template<ac_ieee_float_format FloatFormat>
+bool RefModelOptimized::stage_step0_phase_a_with_float(
+  const RefModelIO& io,
+  int batch_index) {
+  clear_formal_storage();
+  build_preproc_x_work_from_input<FloatFormat>(&io.input_y_fp32[batch_index * io.N]);
+  materialize_layer0_kv_from_x_work<FloatFormat>();
+  last_staged_sample_index_ = batch_index;
+  phase_a_valid_ = true;
+  return true;
+}
+
+template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::build_preproc_x_work_from_input(const double* input_y_fp32) {
-  ref_fp32_t node_feature[TOKENS_T];
-  int y_hard[VAR_N];
+  ac_ieee_float<FloatFormat> node_feature[TOKENS_T];
+  ac_int<1, false> y_hard[VAR_N];
 
   for (int i = 0; i < VAR_N; ++i) {
-    const ref_fp32_t y = make_ref_fp32(static_cast<float>(input_y_fp32[i]));
-    node_feature[i] = fp32_abs_local(y);
-    y_hard[i] = (y < make_ref_fp32(0.0f)) ? 1 : 0;
+    const ac_ieee_float<FloatFormat> y(static_cast<float>(input_y_fp32[i]));
+    node_feature[i] = float_abs_local<FloatFormat>(y);
+    y_hard[i] = (y < ac_ieee_float<FloatFormat>(0.0f)) ? ac_int<1, false>(1) : ac_int<1, false>(0);
   }
   for (int c = 0; c < CHECK_N; ++c) {
-    int parity = 0;
+    ac_int<1, false> parity = 0;
     for (int v = 0; v < VAR_N; ++v) {
       if (h_H[c * VAR_N + v].to_int() != 0) {
-        parity ^= y_hard[v];
+        parity = ac_int<1, false>(parity ^ y_hard[v]);
       }
     }
-    node_feature[VAR_N + c] = (parity == 0) ? make_ref_fp32(1.0f) : make_ref_fp32(-1.0f);
+    node_feature[VAR_N + c] =
+      (parity == 0) ? ac_ieee_float<FloatFormat>(1.0f) : ac_ieee_float<FloatFormat>(-1.0f);
   }
 
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int k = 0; k < 24; ++k) {
-      x_work_[t][k] =
-        node_feature[t] * make_ref_fp32(static_cast<float>(w_src_embed[t * 24 + k]));
+      const ac_ieee_float<FloatFormat> embed =
+        node_feature[t] * ac_ieee_float<FloatFormat>(static_cast<float>(w_src_embed[t * 24 + k]));
+      x_work_[t][k] = make_ref_fp32_from_island<FloatFormat>(embed);
     }
     for (int k = 0; k < 8; ++k) {
-      x_work_[t][24 + k] = make_ref_fp32(static_cast<float>(w_lpe_token[t * 8 + k]));
+      const ac_ieee_float<FloatFormat> lpe =
+        ac_ieee_float<FloatFormat>(static_cast<float>(w_lpe_token[t * 8 + k]));
+      x_work_[t][24 + k] = make_ref_fp32_from_island<FloatFormat>(lpe);
     }
   }
 }
 
+template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::materialize_layer0_kv_from_x_work() {
   // Free-point rule:
   // X_WORK remains the source of truth until both SCR_K and SCR_V have been
@@ -158,14 +186,14 @@ void RefModelOptimized::materialize_layer0_kv_from_x_work() {
   const float s_w_v = static_cast<float>(w_decoder_layers_0_self_attn_linears_2_s_w[0]);
 
   for (int t = 0; t < TOKENS_T; ++t) {
-    quant_linear_token_32_to32_native(
+    quant_linear_token_32_to32_native<FloatFormat>(
       x_work_[t],
       w_decoder_layers_0_self_attn_linears_1_weight,
       w_decoder_layers_0_self_attn_linears_1_bias,
       s_x_in,
       s_w_k,
       scr_k_[t]);
-    quant_linear_token_32_to32_native(
+    quant_linear_token_32_to32_native<FloatFormat>(
       x_work_[t],
       w_decoder_layers_0_self_attn_linears_2_weight,
       w_decoder_layers_0_self_attn_linears_2_bias,
@@ -179,34 +207,44 @@ ref_fp32_t RefModelOptimized::fp32_abs_local(ref_fp32_t x) {
   return (x < make_ref_fp32(0.0f)) ? (make_ref_fp32(0.0f) - x) : x;
 }
 
-int16_t RefModelOptimized::quantize_int8_to_i16_local(ref_fp32_t x, float s_x) {
-  int32_t q = static_cast<int32_t>(std::lround(x.to_float() * s_x));
-  if (q > 127) q = 127;
-  if (q < -127) q = -127;
-  return static_cast<int16_t>(q);
+template<ac_ieee_float_format FloatFormat>
+ac_ieee_float<FloatFormat> RefModelOptimized::float_abs_local(
+  ac_ieee_float<FloatFormat> x) {
+  return (x < ac_ieee_float<FloatFormat>(0.0f))
+    ? (ac_ieee_float<FloatFormat>(0.0f) - x)
+    : x;
 }
 
-int16_t RefModelOptimized::decode_ternary_weight_sign_i16_local(double w) {
-  if (w == 1.0 || w == 1.0f) return static_cast<int16_t>(1);
-  if (w == -1.0 || w == -1.0f) return static_cast<int16_t>(-1);
-  if (w == 0.0 || w == -0.0 || w == 0.0f || w == -0.0f) return static_cast<int16_t>(0);
-  if (w >= 0.5) return static_cast<int16_t>(1);
-  if (w <= -0.5) return static_cast<int16_t>(-1);
-  return static_cast<int16_t>(0);
+ac_int<8, true> RefModelOptimized::quantize_int8_to_i8_local(ref_fp32_t x, float s_x) {
+  const double scaled = static_cast<double>(x.to_float()) * static_cast<double>(s_x);
+  if (scaled >= 127.0) {
+    return ac_int<8, true>(127);
+  }
+  if (scaled <= -127.0) {
+    return ac_int<8, true>(-127);
+  }
+  return ac_int<8, true>(static_cast<signed char>(std::lround(scaled)));
 }
 
-int16_t RefModelOptimized::accumulate_ternary_mac_i16_local(
-  int16_t acc_i16,
-  int16_t qx_i16,
-  int16_t ternary_sign_i16) {
-  int32_t sum =
-    static_cast<int32_t>(acc_i16) +
-    (static_cast<int32_t>(qx_i16) * static_cast<int32_t>(ternary_sign_i16));
-  if (sum > 32767) sum = 32767;
-  if (sum < -32768) sum = -32768;
-  return static_cast<int16_t>(sum);
+ac_int<2, true> RefModelOptimized::decode_ternary_weight_sign_i2_local(double w) {
+  if (w == 1.0 || w == 1.0f) return ac_int<2, true>(1);
+  if (w == -1.0 || w == -1.0f) return ac_int<2, true>(-1);
+  if (w == 0.0 || w == -0.0 || w == 0.0f || w == -0.0f) return ac_int<2, true>(0);
+  if (w >= 0.5) return ac_int<2, true>(1);
+  if (w <= -0.5) return ac_int<2, true>(-1);
+  return ac_int<2, true>(0);
 }
 
+ac_int<16, true> RefModelOptimized::accumulate_ternary_mac_i16_local(
+  ac_int<16, true> acc_i16,
+  ac_int<8, true> qx_i8,
+  ac_int<2, true> ternary_sign_i2) {
+  const ac_int<16, true> mac_i16 = qx_i8 * ternary_sign_i2;
+  const ac_int<16, true> next_acc_i16 = acc_i16 + mac_i16;
+  return next_acc_i16;
+}
+
+template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::quant_linear_token_32_to32_native(
   const ref_fp32_t x[D_MODEL],
   const double w[D_MODEL * D_MODEL],
@@ -214,24 +252,62 @@ void RefModelOptimized::quant_linear_token_32_to32_native(
   float s_x,
   float s_w,
   ref_fp32_t y[D_MODEL]) {
-  const ref_fp32_t inv =
-    make_ref_fp32(1.0f) / (make_ref_fp32(s_x) * make_ref_fp32(s_w));
-  int16_t qx_i16[D_MODEL];
+  const ac_ieee_float<FloatFormat> inv =
+    ac_ieee_float<FloatFormat>(1.0f) /
+    (ac_ieee_float<FloatFormat>(s_x) * ac_ieee_float<FloatFormat>(s_w));
+  ac_int<8, true> qx_i8[D_MODEL];
   for (int i = 0; i < D_MODEL; ++i) {
-    qx_i16[i] = quantize_int8_to_i16_local(x[i], s_x);
+    qx_i8[i] = quantize_int8_to_i8_local(x[i], s_x);
   }
   for (int o = 0; o < D_MODEL; ++o) {
-    int16_t acc_i16 = 0;
+    ac_int<16, true> acc_i16 = 0;
     const int base = o * D_MODEL;
     for (int i = 0; i < D_MODEL; ++i) {
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
-        qx_i16[i],
-        decode_ternary_weight_sign_i16_local(w[base + i]));
+        qx_i8[i],
+        decode_ternary_weight_sign_i2_local(w[base + i]));
     }
-    y[o] = make_ref_fp32(static_cast<float>(b[o])) +
-           (make_ref_fp32(static_cast<float>(acc_i16)) * inv);
+    const ac_ieee_float<FloatFormat> bias_island(static_cast<float>(b[o]));
+    const ac_ieee_float<FloatFormat> acc_island(acc_i16.to_int());
+    const ac_ieee_float<FloatFormat> y_island = bias_island + (acc_island * inv);
+    y[o] = make_ref_fp32_from_island<FloatFormat>(y_island);
   }
 }
+
+template bool RefModelOptimized::stage_step0_phase_a_with_float<binary16>(
+  const RefModelIO& io,
+  int batch_index);
+template bool RefModelOptimized::stage_step0_phase_a_with_float<binary32>(
+  const RefModelIO& io,
+  int batch_index);
+
+template void RefModelOptimized::build_preproc_x_work_from_input<binary16>(
+  const double* input_y_fp32);
+template void RefModelOptimized::build_preproc_x_work_from_input<binary32>(
+  const double* input_y_fp32);
+
+template void RefModelOptimized::materialize_layer0_kv_from_x_work<binary16>();
+template void RefModelOptimized::materialize_layer0_kv_from_x_work<binary32>();
+
+template ac_ieee_float<binary16> RefModelOptimized::float_abs_local<binary16>(
+  ac_ieee_float<binary16> x);
+template ac_ieee_float<binary32> RefModelOptimized::float_abs_local<binary32>(
+  ac_ieee_float<binary32> x);
+
+template void RefModelOptimized::quant_linear_token_32_to32_native<binary16>(
+  const ref_fp32_t x[D_MODEL],
+  const double w[D_MODEL * D_MODEL],
+  const double b[D_MODEL],
+  float s_x,
+  float s_w,
+  ref_fp32_t y[D_MODEL]);
+template void RefModelOptimized::quant_linear_token_32_to32_native<binary32>(
+  const ref_fp32_t x[D_MODEL],
+  const double w[D_MODEL * D_MODEL],
+  const double b[D_MODEL],
+  float s_x,
+  float s_w,
+  ref_fp32_t y[D_MODEL]);
 
 } // namespace aecct_ref

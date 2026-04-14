@@ -1,8 +1,21 @@
 #pragma once
 
+#include "ac_int.h"
+#include "ac_std_float.h"
 #include "RefModel.h"
 
 namespace aecct_ref {
+
+enum RefOptimizedFloatMode {
+  REF_OPT_FLOAT16 = 0,
+  REF_OPT_FLOAT32 = 1
+};
+
+struct RefOptimizedNumericConfig {
+  RefOptimizedNumericConfig() : float_mode(REF_OPT_FLOAT32) {}
+
+  RefOptimizedFloatMode float_mode;
+};
 
 class RefModelOptimized {
 public:
@@ -10,6 +23,8 @@ public:
 
   void set_run_config(const RefRunConfig& cfg);
   RefRunConfig get_run_config() const;
+  void set_numeric_config(const RefOptimizedNumericConfig& cfg);
+  RefOptimizedNumericConfig get_numeric_config() const;
 
   // Partial optimized pipeline:
   // Step 2/3 currently materialize preproc into X_WORK and layer-0 K/V into
@@ -39,16 +54,26 @@ private:
   static const int FF_DIM = 128;
 
   void clear_formal_storage();
+  template<ac_ieee_float_format FloatFormat>
+  bool stage_step0_phase_a_with_float(
+    const RefModelIO& io,
+    int batch_index);
+  template<ac_ieee_float_format FloatFormat>
   void build_preproc_x_work_from_input(const double* input_y_fp32);
+  template<ac_ieee_float_format FloatFormat>
   void materialize_layer0_kv_from_x_work();
 
   static ref_fp32_t fp32_abs_local(ref_fp32_t x);
-  static int16_t quantize_int8_to_i16_local(ref_fp32_t x, float s_x);
-  static int16_t decode_ternary_weight_sign_i16_local(double w);
-  static int16_t accumulate_ternary_mac_i16_local(
-    int16_t acc_i16,
-    int16_t qx_i16,
-    int16_t ternary_sign_i16);
+  template<ac_ieee_float_format FloatFormat>
+  static ac_ieee_float<FloatFormat> float_abs_local(
+    ac_ieee_float<FloatFormat> x);
+  static ac_int<8, true> quantize_int8_to_i8_local(ref_fp32_t x, float s_x);
+  static ac_int<2, true> decode_ternary_weight_sign_i2_local(double w);
+  static ac_int<16, true> accumulate_ternary_mac_i16_local(
+    ac_int<16, true> acc_i16,
+    ac_int<8, true> qx_i8,
+    ac_int<2, true> ternary_sign_i2);
+  template<ac_ieee_float_format FloatFormat>
   static void quant_linear_token_32_to32_native(
     const ref_fp32_t x[D_MODEL],
     const double w[D_MODEL * D_MODEL],
@@ -59,6 +84,7 @@ private:
 
 private:
   RefRunConfig run_cfg_;
+  RefOptimizedNumericConfig numeric_cfg_;
   RefModel legacy_ref_;
 
   // Formal major storage.
