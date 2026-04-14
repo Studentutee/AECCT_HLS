@@ -452,6 +452,45 @@ static bool run_mode_has_dual_path(CliRunMode mode) {
          mode == CliRunMode::EXPLORE;
 }
 
+static const char* precision_mode_cli_token(aecct_ref::RefPrecisionMode mode) {
+  switch (mode) {
+    case aecct_ref::RefPrecisionMode::BASELINE_FP32:
+      return "baseline_fp32";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD:
+      return "generic_e4m3_finalhead";
+    case aecct_ref::RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS:
+      return "strict_ternary_linear_stress";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_FRAG_BISECT:
+      return "generic_e4m3_frag_bisect";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_EXCEPT_G5:
+      return "generic_e4m3_except_g5";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G4:
+      return "generic_e4m3_g5_g4";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G1:
+      return "generic_e4m3_g5_g1";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G3:
+      return "generic_e4m3_g5_g3";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G5_G2:
+      return "generic_e4m3_g5_g2";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_EMBED_ONLY:
+      return "generic_e4m3_g2_embed_only";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_SPE_ONLY:
+      return "generic_e4m3_g2_spe_only";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PREPROC_ASSEMBLY:
+      return "generic_e4m3_g2_preproc_assembly";
+    case aecct_ref::RefPrecisionMode::GENERIC_E4M3_G2_PRELAYER_HANDOFF:
+      return "generic_e4m3_g2_prelayer_handoff";
+    case aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE3_EMBED_G2:
+      return "int8_fixedexp_zone3_embed_g2";
+    case aecct_ref::RefPrecisionMode::INT8_FIXEDEXP_ZONE4_EMBED_G2:
+      return "int8_fixedexp_zone4_embed_g2";
+    case aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL:
+      return "fp16_replace_fp32_global";
+    default:
+      return "unknown_precision_mode";
+  }
+}
+
 static void print_usage() {
   std::printf("Usage: ref_sim [pattern_index] [options]\n");
   std::printf("Options:\n");
@@ -462,8 +501,9 @@ static void print_usage() {
   std::printf("  --stage S0|S1|S2|S3|S4\n");
   std::printf("  --precision-exp MODE\n");
   std::printf("      baseline_fp32 = baseline (default)\n");
-  std::printf("      generic_e4m3_* / full_e4m3_* / int8_fixedexp_* / fp16_replace_fp32_global = experiment-only\n");
-  std::printf("      values: baseline_fp32|generic_e4m3_finalhead|full_e4m3_nonlinear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2|fp16_replace_fp32_global\n");
+  std::printf("      generic_e4m3_* / strict_ternary_linear_stress / int8_fixedexp_* / fp16_replace_fp32_global = experiment-only\n");
+  std::printf("      values: baseline_fp32|generic_e4m3_finalhead|strict_ternary_linear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2|fp16_replace_fp32_global\n");
+  std::printf("      deprecated alias: full_e4m3_nonlinear_stress -> strict_ternary_linear_stress\n");
   std::printf("  --frag-group NONE|G1|G2|G3|G4|G5|C1|C2|C3|C4\n");
   std::printf("  --summary-only\n");
   std::printf("  --quiet (alias of --summary-only)\n");
@@ -486,7 +526,7 @@ static void print_usage() {
   std::printf("Examples:\n");
   std::printf("  ref_sim --mode baseline --pattern 0\n");
   std::printf("  ref_sim --mode experiment --precision-exp fp16_replace_fp32_global --pattern 0\n");
-  std::printf("  ref_sim --mode compare --precision-exp fp16_replace_fp32_global --pattern-begin 0 --pattern-count 32\n");
+  std::printf("  ref_sim --mode compare --precision-exp strict_ternary_linear_stress --pattern-begin 0 --pattern-count 8\n");
 }
 
 static bool parse_run_mode(const char* text, CliRunMode& mode) {
@@ -593,7 +633,12 @@ static bool parse_finalhead_stage(const char* text, aecct_ref::RefFinalHeadExplo
   return false;
 }
 
-static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& mode) {
+static bool parse_precision_mode(const char* text,
+                                 aecct_ref::RefPrecisionMode& mode,
+                                 bool* used_deprecated_alias = nullptr) {
+  if (used_deprecated_alias != nullptr) {
+    *used_deprecated_alias = false;
+  }
   if (std::strcmp(text, "baseline_fp32") == 0 || std::strcmp(text, "fp32") == 0) {
     mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
     return true;
@@ -602,8 +647,15 @@ static bool parse_precision_mode(const char* text, aecct_ref::RefPrecisionMode& 
     mode = aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
     return true;
   }
+  if (std::strcmp(text, "strict_ternary_linear_stress") == 0) {
+    mode = aecct_ref::RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS;
+    return true;
+  }
   if (std::strcmp(text, "full_e4m3_nonlinear_stress") == 0) {
     mode = aecct_ref::RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS;
+    if (used_deprecated_alias != nullptr) {
+      *used_deprecated_alias = true;
+    }
     return true;
   }
   if (std::strcmp(text, "generic_e4m3_frag_bisect") == 0) {
@@ -860,9 +912,13 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
         std::printf("Missing value after --precision-exp\n");
         return CliParseResult::ERROR;
       }
-      if (!parse_precision_mode(argv[++i], opts.experiment_precision_mode)) {
+      bool used_deprecated_precision_alias = false;
+      if (!parse_precision_mode(argv[++i], opts.experiment_precision_mode, &used_deprecated_precision_alias)) {
         std::printf("Unsupported --precision-exp value: %s\n", argv[i]);
         return CliParseResult::ERROR;
+      }
+      if (used_deprecated_precision_alias) {
+        std::printf("deprecated precision-exp token: full_e4m3_nonlinear_stress -> strict_ternary_linear_stress\n");
       }
       opts.experiment_precision_explicit = true;
       continue;
@@ -4041,13 +4097,13 @@ int main(int argc, char** argv) {
     use_experiment_banner_cfg ? opts.experiment_ln_mode : opts.ln_mode;
   std::printf("  mode           : %s\n", run_mode_to_string(opts.run_mode));
   std::printf("  precision_mode : %s%s\n",
-              aecct_ref::to_string(banner_precision_mode),
+              precision_mode_cli_token(banner_precision_mode),
               (use_experiment_banner_cfg && !opts.experiment_precision_explicit) ? " (default)" : "");
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
   std::printf("  softmax_exp_mode: %s\n", aecct_ref::to_string(banner_softmax_mode));
   std::printf("  ln_mode        : %s\n", aecct_ref::to_string(banner_ln_mode));
-  std::printf("  precision(base): %s\n", aecct_ref::to_string(effective_baseline_precision));
-  std::printf("  precision(exp) : %s\n", aecct_ref::to_string(opts.experiment_precision_mode));
+  std::printf("  precision(base): %s\n", precision_mode_cli_token(effective_baseline_precision));
+  std::printf("  precision(exp) : %s\n", precision_mode_cli_token(opts.experiment_precision_mode));
   std::printf("  softmax_exp_mode(base): %s\n", aecct_ref::to_string(baseline_softmax_mode));
   std::printf("  softmax_exp_mode(exp) : %s\n", aecct_ref::to_string(experiment_softmax_mode));
   std::printf("  ln_mode(base)  : %s\n", aecct_ref::to_string(opts.ln_mode));
