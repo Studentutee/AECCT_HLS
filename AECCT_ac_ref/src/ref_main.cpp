@@ -739,7 +739,7 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.experiment_ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
   opts.finalhead_stage = aecct_ref::RefFinalHeadExploreStage::S0;
-  opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
+  opts.experiment_precision_mode = aecct_ref::RefPrecisionMode::BASELINE_FP32;
   opts.experiment_precision_explicit = false;
   opts.frag_group = aecct_ref::RefFragGroup::NONE;
 

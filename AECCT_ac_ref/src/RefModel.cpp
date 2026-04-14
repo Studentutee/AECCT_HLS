@@ -23,7 +23,7 @@
 namespace aecct_ref {
 namespace {
 
-typedef ref_fp16_t fp32_ref_t;
+typedef ref_fp32_t fp32_ref_t;
 
 constexpr uint32_t ref_align_up_u32(uint32_t x, uint32_t a) {
   return ((x + a - 1u) / a) * a;
@@ -63,6 +63,8 @@ static constexpr int FF_DIM = 128;
 static constexpr float LN_EPS_F32 = 1.0e-5f;
 static constexpr float LN_INV_D_F32 = 0.03125f; // 1/32
 static constexpr float LN_VAR_FLOOR_F32 = 0.0f;
+static constexpr float REF_FP16_MAX_FINITE = 65504.0f;
+static constexpr float REF_FP32_MAX_FINITE = std::numeric_limits<float>::max();
 static constexpr int LN_TILE_D = 8;
 static const fp32_ref_t kActQMin = fp32_ref_t(-127.0f);
 static const fp32_ref_t kActQMax = fp32_ref_t(127.0f);
@@ -173,26 +175,26 @@ static inline fp32_ref_t fp32_abs(fp32_ref_t x) {
   return (x < fp32_ref_t(0.0f)) ? (fp32_ref_t(0.0f) - x) : x;
 }
 
-static inline float ref_fp16_clamp_finite(float x) {
+static inline float ref_fp32_clamp_finite(float x) {
   if (std::isnan(x)) return 0.0f;
-  if (std::isinf(x)) return std::signbit(x) ? -65504.0f : 65504.0f;
-  if (x > 65504.0f) return 65504.0f;
-  if (x < -65504.0f) return -65504.0f;
+  if (std::isinf(x)) return std::signbit(x) ? -REF_FP32_MAX_FINITE : REF_FP32_MAX_FINITE;
+  if (x > REF_FP32_MAX_FINITE) return REF_FP32_MAX_FINITE;
+  if (x < -REF_FP32_MAX_FINITE) return -REF_FP32_MAX_FINITE;
   return x;
 }
 
-static inline fp32_ref_t ref_fp16_sanitize_value(float x) {
-  return fp32_ref_t(ref_fp16_clamp_finite(x));
+static inline fp32_ref_t ref_fp32_sanitize_value(float x) {
+  return fp32_ref_t(ref_fp32_clamp_finite(x));
 }
 
-static inline fp32_ref_t ref_fp16_sanitize_value(const fp32_ref_t& x) {
+static inline fp32_ref_t ref_fp32_sanitize_value(const fp32_ref_t& x) {
   if (x.isfinite()) {
-    return fp32_ref_t(x.to_float());
+    return x;
   }
   if (x.isnan()) {
     return fp32_ref_t(0.0f);
   }
-  return x.signbit() ? fp32_ref_t(-65504.0f) : fp32_ref_t(65504.0f);
+  return x.signbit() ? fp32_ref_t(-REF_FP32_MAX_FINITE) : fp32_ref_t(REF_FP32_MAX_FINITE);
 }
 
 static inline uint32_t fp32_bits_from_double(double x) {
@@ -619,7 +621,7 @@ static inline fp32_ref_t apply_roundtrip_fp16_and_update_stats(
     xin_sat = 0.0f;
   } else {
     xin_inf = true;
-    xin_sat = x.signbit() ? -65504.0f : 65504.0f;
+    xin_sat = x.signbit() ? -REF_FP16_MAX_FINITE : REF_FP16_MAX_FINITE;
   }
   if (stats != nullptr) {
     stats->fp16.roundtrip_count++;
@@ -633,7 +635,7 @@ static inline fp32_ref_t apply_roundtrip_fp16_and_update_stats(
   }
 
   const ref_fp16_t h(xin_sat);
-  const fp32_ref_t y = ref_fp16_sanitize_value(fp32_ref_t(h.to_float()));
+  const fp32_ref_t y = ref_fp32_sanitize_value(fp32_ref_t(h.to_float()));
   if (stats != nullptr) {
     const float xin = x.to_float();
     const float yout = y.to_float();
@@ -1658,7 +1660,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
                             fp32_ref_t ctx[HEADS][TOKENS_T][D_HEAD],
                             fp32_ref_t post_concat[TOKENS_T][D_MODEL]) {
   const fp32_ref_t inv_sqrt_dh = fp32_ref_t(0.5f); // 1/sqrt(4)
-  const fp32_ref_t neg_inf = fp32_ref_t(-65504.0f); // finite fp16 sentinel
+  const fp32_ref_t neg_inf = fp32_ref_t(-std::numeric_limits<float>::infinity());
   // Ref-side bounded numeric experiment: exp leaf-kernel can vary; reciprocal/row-state/exact path stay fixed.
   const bool use_softmax_exact = (run_cfg.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
@@ -2235,7 +2237,7 @@ RefRunConfig make_fp16_experiment_run_config() {
 }
 
 RefModel::RefModel() {
-  run_cfg_ = make_fp16_experiment_run_config();
+  run_cfg_ = make_fp32_baseline_run_config();
   dump_cfg_.enabled = false;
   dump_cfg_.dump_dir = nullptr;
   dump_cfg_.pattern_index = -1;
@@ -2968,12 +2970,10 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t final_node_logits[TOKENS_T][1];
     static fp32_ref_t out_fc_in[1][TOKENS_T];
     for (int t = 0; t < TOKENS_T; ++t) {
-      float acc_f = ref_fp16_clamp_finite(static_cast<float>(w_oned_final_embed_0_bias[0]));
+      fp32_ref_t acc = fp32_ref_t(static_cast<float>(w_oned_final_embed_0_bias[0]));
       for (int i = 0; i < D_MODEL; ++i) {
-        const float prod_f = end_norm[t][i].to_float() * static_cast<float>(w_oned_final_embed_0_weight[i]);
-        acc_f = ref_fp16_clamp_finite(acc_f + prod_f);
+        acc += end_norm[t][i] * fp32_ref_t(static_cast<float>(w_oned_final_embed_0_weight[i]));
       }
-      fp32_ref_t acc = ref_fp16_sanitize_value(acc_f);
       fp32_ref_t s_t_embed_out = acc;
       if (use_island_s3(run_cfg_)) {
         if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
@@ -2994,7 +2994,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
           s_t_embed_out = roundtrip_through_generic_e4m3(s_t_embed_out);
         }
       }
-      final_node_logits[t][0] = ref_fp16_sanitize_value(s_t_embed_out);
+      final_node_logits[t][0] = s_t_embed_out;
 
       fp32_ref_t s_t_out_fc = s_t_embed_out;
       if (use_island_s0(run_cfg_)) {
@@ -3016,7 +3016,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
           s_t_out_fc = roundtrip_through_generic_e4m3(s_t_out_fc);
         }
       }
-      out_fc_in[0][t] = ref_fp16_sanitize_value(s_t_out_fc);
+      out_fc_in[0][t] = s_t_out_fc;
       if (io.out_finalhead_s_t != nullptr) {
         io.out_finalhead_s_t[b * TOKENS_T + t] = static_cast<double>(acc.to_float());
       }
@@ -3025,9 +3025,9 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static fp32_ref_t final_logits[1][VAR_N];
     static fp32_ref_t final_x_pred[VAR_N];
     for (int n = 0; n < VAR_N; ++n) {
-      float acc_f = ref_fp16_clamp_finite(static_cast<float>(w_out_fc_bias[n]));
+      fp32_ref_t acc = fp32_ref_t(static_cast<float>(w_out_fc_bias[n]));
       for (int t = 0; t < TOKENS_T; ++t) {
-        fp32_ref_t mul_in = ref_fp16_sanitize_value(out_fc_in[0][t]);
+        fp32_ref_t mul_in = out_fc_in[0][t];
         if (use_island_s1(run_cfg_)) {
           if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
             mul_in = stress_roundtrip_e4m3(
@@ -3043,15 +3043,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               RefFragGroup::NONE,
               &local_stats,
               "out_fc_pre_mac_s1_fp16");
-            mul_in = ref_fp16_sanitize_value(mul_in);
           } else {
             mul_in = roundtrip_through_generic_e4m3(mul_in);
           }
         }
-        const float prod_f = static_cast<float>(w_out_fc_weight[n * TOKENS_T + t]) * mul_in.to_float();
-        acc_f = ref_fp16_clamp_finite(acc_f + prod_f);
+        acc += fp32_ref_t(static_cast<float>(w_out_fc_weight[n * TOKENS_T + t])) * mul_in;
       }
-      fp32_ref_t acc = ref_fp16_sanitize_value(acc_f);
       if (use_full_e4m3_nonlinear_stress(run_cfg_) || use_fp16_replace_fp32_global(run_cfg_)) {
         acc = stress_roundtrip_e4m3(
           acc,

@@ -8,7 +8,7 @@
 
 namespace aecct_ref {
 
-typedef ref_fp16_t ref_softmax_fp32_t;
+typedef ref_fp32_t ref_softmax_fp32_t;
 
 static const int REF_SOFTMAX_NEG_T = 12;
 static const int REF_SOFTMAX_EXP_LUT_SIZE = 256;
