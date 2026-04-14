@@ -42,10 +42,10 @@ public:
   bool phase_a_valid() const;
   bool layer0_attn_writeback_valid() const;
 
-  const ref_fp32_t& x_work(int token, int dim) const;
-  const ref_fp32_t& scr_k(int token, int dim) const;
-  const ref_fp32_t& scr_v(int token, int dim) const;
-  const ref_fp32_t& final_scalar_buf(int token) const;
+  ac_ieee_float<binary32> x_work(int token, int dim) const;
+  ac_ieee_float<binary32> scr_k(int token, int dim) const;
+  ac_ieee_float<binary32> scr_v(int token, int dim) const;
+  ac_ieee_float<binary32> final_scalar_buf(int token) const;
 
 private:
   static const int TOKENS_T = 75;
@@ -56,24 +56,55 @@ private:
   static const int D_HEAD = 4;
   static const int FF_DIM = 128;
 
+  template<ac_ieee_float_format FloatFormat>
+  struct RefOptimizedStorageBank {
+    typedef ac_ieee_float<FloatFormat> float_t;
+
+    // Formal major storage for optimized step-0 path.
+    float_t x_work[TOKENS_T][D_MODEL];
+    float_t scr_k[TOKENS_T][D_MODEL];
+    float_t scr_v[TOKENS_T][D_MODEL];
+    float_t final_scalar_buf[TOKENS_T];
+
+    // Local-only tile/buffer state.
+    float_t q_vec[D_MODEL];
+    float_t head_ctx_buf[HEADS][D_HEAD];
+    float_t out_acc_tile[D_MODEL];
+    float_t softmax_acc_tile[D_HEAD];
+    float_t ffn1_tile_buf[FF_DIM];
+    float_t ln_token_buf[D_MODEL];
+  };
+
   void clear_formal_storage();
+  RefOptimizedFloatMode resolve_selected_float_mode() const;
+  template<ac_ieee_float_format FloatFormat>
+  void clear_storage_bank(RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
+  static ac_ieee_float<binary32> export_debug_scalar(
+    typename RefOptimizedStorageBank<FloatFormat>::float_t x);
+
   template<ac_ieee_float_format FloatFormat>
   bool stage_step0_phase_a_with_float(
     const RefModelIO& io,
-    int batch_index);
+    int batch_index,
+    RefOptimizedStorageBank<FloatFormat>& bank);
   template<ac_ieee_float_format FloatFormat>
-  void build_preproc_x_work_from_input(const double* input_y_fp32);
+  void build_preproc_x_work_from_input(
+    const double* input_y_fp32,
+    RefOptimizedStorageBank<FloatFormat>& bank);
   template<ac_ieee_float_format FloatFormat>
-  void materialize_layer0_kv_from_x_work();
+  void materialize_layer0_kv_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
   template<ac_ieee_float_format FloatFormat>
-  void materialize_layer0_attention_writeback_from_x_work();
+  void materialize_layer0_attention_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
   static bool is_layer0_attn_masked_token_pair(int head_idx, int q_token, int k_token);
 
-  static ref_fp32_t fp32_abs_local(ref_fp32_t x);
   template<ac_ieee_float_format FloatFormat>
   static ac_ieee_float<FloatFormat> float_abs_local(
     ac_ieee_float<FloatFormat> x);
-  static ac_int<8, true> quantize_int8_to_i8_local(ref_fp32_t x, float s_x);
+  template<typename FloatT>
+  static ac_int<8, true> quantize_int8_to_i8_local(FloatT x, float s_x);
   static ac_int<2, true> decode_ternary_weight_sign_i2_local(double w);
   static ac_int<16, true> accumulate_ternary_mac_i16_local(
     ac_int<16, true> acc_i16,
@@ -81,31 +112,22 @@ private:
     ac_int<2, true> ternary_sign_i2);
   template<ac_ieee_float_format FloatFormat>
   static void quant_linear_token_32_to32_native(
-    const ref_fp32_t x[D_MODEL],
+    const typename RefOptimizedStorageBank<FloatFormat>::float_t x[D_MODEL],
     const double w[D_MODEL * D_MODEL],
     const double b[D_MODEL],
     float s_x,
     float s_w,
-    ref_fp32_t y[D_MODEL]);
+    typename RefOptimizedStorageBank<FloatFormat>::float_t y[D_MODEL]);
 
 private:
   RefRunConfig run_cfg_;
   RefOptimizedNumericConfig numeric_cfg_;
   RefModel legacy_ref_;
+  RefOptimizedFloatMode active_storage_mode_;
 
-  // Formal major storage.
-  ref_fp32_t x_work_[TOKENS_T][D_MODEL];
-  ref_fp32_t scr_k_[TOKENS_T][D_MODEL];
-  ref_fp32_t scr_v_[TOKENS_T][D_MODEL];
-  ref_fp32_t final_scalar_buf_[TOKENS_T];
-
-  // Local / tile storage skeleton for later steps.
-  ref_fp32_t q_vec_[D_MODEL];
-  ref_fp32_t head_ctx_buf_[HEADS][D_HEAD];
-  ref_fp32_t out_acc_tile_[D_MODEL];
-  ref_fp32_t softmax_acc_tile_[D_HEAD];
-  ref_fp32_t ffn1_tile_buf_[FF_DIM];
-  ref_fp32_t ln_token_buf_[D_MODEL];
+  // Optimized storage banks. Runtime mode selects one bank as active.
+  RefOptimizedStorageBank<binary16> storage_fp16_;
+  RefOptimizedStorageBank<binary32> storage_fp32_;
 
   int last_staged_sample_index_;
   bool phase_a_valid_;
