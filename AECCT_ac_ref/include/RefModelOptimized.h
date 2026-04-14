@@ -123,9 +123,8 @@ private:
   RefRunConfig run_cfg_;
   RefOptimizedNumericConfig numeric_cfg_;
   RefModel legacy_ref_;
-  RefOptimizedFloatMode active_storage_mode_;
 
-  // Optimized storage banks. Runtime mode selects one bank as active.
+  // Optimized storage banks. Runtime mode dispatch derives from numeric_cfg_.
   RefOptimizedStorageBank<binary16> storage_fp16_;
   RefOptimizedStorageBank<binary32> storage_fp32_;
 

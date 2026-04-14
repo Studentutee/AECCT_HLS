@@ -9,8 +9,7 @@
 namespace aecct_ref {
 
 RefModelOptimized::RefModelOptimized()
-  : active_storage_mode_(REF_OPT_FLOAT32),
-    last_staged_sample_index_(-1),
+  : last_staged_sample_index_(-1),
     phase_a_valid_(false),
     layer0_attn_writeback_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
@@ -29,9 +28,6 @@ RefRunConfig RefModelOptimized::get_run_config() const {
 
 void RefModelOptimized::set_numeric_config(const RefOptimizedNumericConfig& cfg) {
   numeric_cfg_ = cfg;
-  if (!phase_a_valid_) {
-    active_storage_mode_ = resolve_selected_float_mode();
-  }
 }
 
 RefOptimizedNumericConfig RefModelOptimized::get_numeric_config() const {
@@ -63,9 +59,7 @@ bool RefModelOptimized::stage_step0_phase_a(const RefModelIO& io, int batch_inde
     return false;
   }
 
-  const RefOptimizedFloatMode selected_mode = resolve_selected_float_mode();
-  active_storage_mode_ = selected_mode;
-  if (selected_mode == REF_OPT_FLOAT16) {
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
     return stage_step0_phase_a_with_float<binary16>(io, batch_index, storage_fp16_);
   }
   return stage_step0_phase_a_with_float<binary32>(io, batch_index, storage_fp32_);
@@ -86,7 +80,7 @@ bool RefModelOptimized::layer0_attn_writeback_valid() const {
 ac_ieee_float<binary32> RefModelOptimized::x_work(int token, int dim) const {
   assert(token >= 0 && token < TOKENS_T);
   assert(dim >= 0 && dim < D_MODEL);
-  if (active_storage_mode_ == REF_OPT_FLOAT16) {
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
     return export_debug_scalar<binary16>(storage_fp16_.x_work[token][dim]);
   }
   return export_debug_scalar<binary32>(storage_fp32_.x_work[token][dim]);
@@ -95,7 +89,7 @@ ac_ieee_float<binary32> RefModelOptimized::x_work(int token, int dim) const {
 ac_ieee_float<binary32> RefModelOptimized::scr_k(int token, int dim) const {
   assert(token >= 0 && token < TOKENS_T);
   assert(dim >= 0 && dim < D_MODEL);
-  if (active_storage_mode_ == REF_OPT_FLOAT16) {
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
     return export_debug_scalar<binary16>(storage_fp16_.scr_k[token][dim]);
   }
   return export_debug_scalar<binary32>(storage_fp32_.scr_k[token][dim]);
@@ -104,7 +98,7 @@ ac_ieee_float<binary32> RefModelOptimized::scr_k(int token, int dim) const {
 ac_ieee_float<binary32> RefModelOptimized::scr_v(int token, int dim) const {
   assert(token >= 0 && token < TOKENS_T);
   assert(dim >= 0 && dim < D_MODEL);
-  if (active_storage_mode_ == REF_OPT_FLOAT16) {
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
     return export_debug_scalar<binary16>(storage_fp16_.scr_v[token][dim]);
   }
   return export_debug_scalar<binary32>(storage_fp32_.scr_v[token][dim]);
@@ -112,7 +106,7 @@ ac_ieee_float<binary32> RefModelOptimized::scr_v(int token, int dim) const {
 
 ac_ieee_float<binary32> RefModelOptimized::final_scalar_buf(int token) const {
   assert(token >= 0 && token < TOKENS_T);
-  if (active_storage_mode_ == REF_OPT_FLOAT16) {
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
     return export_debug_scalar<binary16>(storage_fp16_.final_scalar_buf[token]);
   }
   return export_debug_scalar<binary32>(storage_fp32_.final_scalar_buf[token]);
@@ -123,7 +117,7 @@ bool RefModelOptimized::run_step0_layer0_attention_writeback() {
     return false;
   }
 
-  if (active_storage_mode_ == REF_OPT_FLOAT16) {
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
     materialize_layer0_attention_writeback_from_x_work<binary16>(storage_fp16_);
   } else {
     materialize_layer0_attention_writeback_from_x_work<binary32>(storage_fp32_);
@@ -135,7 +129,6 @@ bool RefModelOptimized::run_step0_layer0_attention_writeback() {
 void RefModelOptimized::clear_formal_storage() {
   clear_storage_bank<binary16>(storage_fp16_);
   clear_storage_bank<binary32>(storage_fp32_);
-  active_storage_mode_ = resolve_selected_float_mode();
   last_staged_sample_index_ = -1;
   phase_a_valid_ = false;
   layer0_attn_writeback_valid_ = false;
