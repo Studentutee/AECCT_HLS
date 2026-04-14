@@ -103,8 +103,15 @@ enum class CliParseResult : unsigned char {
   ERROR = 2
 };
 
+enum class CliTruthSource : unsigned char {
+  TRACE = 0,
+  ZERO = 1,
+  BOTH = 2
+};
+
 struct CliOptions {
   CliRunMode run_mode;
+  CliTruthSource truth_source;
   int pattern_index;
   int pattern_begin;
   int pattern_count;
@@ -220,6 +227,25 @@ struct EvalAggregateStats {
   double ber;
   double fer;
   double x_pred_match_ratio;
+};
+
+struct TraceQualityPatternRow {
+  int pattern_index;
+  std::size_t evaluated_bits;
+  std::size_t trace_target_ones;
+  std::size_t trace_vs_zero_truth_bit_errors;
+  int trace_vs_zero_truth_frame_error;
+};
+
+struct TraceQualityAggregateStats {
+  int total_patterns;
+  std::size_t total_bits;
+  std::size_t total_trace_target_ones;
+  std::size_t total_trace_vs_zero_truth_bit_errors;
+  std::size_t trace_vs_zero_truth_frame_error_count;
+  double trace_vs_zero_truth_ber;
+  double trace_vs_zero_truth_fer;
+  double trace_vs_zero_truth_match_ratio;
 };
 
 static constexpr int STAGE_TOKENS = 75;
@@ -495,6 +521,7 @@ static void print_usage() {
   std::printf("Usage: ref_sim [pattern_index] [options]\n");
   std::printf("Options:\n");
   std::printf("  --mode compare|baseline|experiment|eval-baseline|eval-experiment|eval-compare|explore\n");
+  std::printf("  --truth-source trace|zero|both (evaluator host-side only; default: trace)\n");
   std::printf("  --pattern N\n");
   std::printf("  --pattern-begin N --pattern-count M\n");
   std::printf("  --topk K\n");
@@ -771,8 +798,34 @@ static bool parse_io16_output_mode(const char* text, aecct_ref::RefStep0OutputMo
   return false;
 }
 
+static bool parse_truth_source(const char* text, CliTruthSource& truth_source) {
+  if (std::strcmp(text, "trace") == 0) {
+    truth_source = CliTruthSource::TRACE;
+    return true;
+  }
+  if (std::strcmp(text, "zero") == 0) {
+    truth_source = CliTruthSource::ZERO;
+    return true;
+  }
+  if (std::strcmp(text, "both") == 0) {
+    truth_source = CliTruthSource::BOTH;
+    return true;
+  }
+  return false;
+}
+
+static const char* truth_source_to_string(CliTruthSource truth_source) {
+  switch (truth_source) {
+    case CliTruthSource::TRACE: return "trace";
+    case CliTruthSource::ZERO: return "zero";
+    case CliTruthSource::BOTH: return "both";
+    default: return "trace";
+  }
+}
+
 static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
   opts.run_mode = CliRunMode::EXPERIMENT_ONLY;
+  opts.truth_source = CliTruthSource::TRACE;
   opts.pattern_index = -1;
   opts.pattern_begin = -1;
   opts.pattern_count = -1;
@@ -809,6 +862,17 @@ static CliParseResult parse_cli(int argc, char** argv, CliOptions& opts) {
       }
       if (!parse_run_mode(argv[++i], opts.run_mode)) {
         std::printf("Unsupported mode: %s\n", argv[i]);
+        return CliParseResult::ERROR;
+      }
+      continue;
+    }
+    if (std::strcmp(arg, "--truth-source") == 0) {
+      if (i + 1 >= argc) {
+        std::printf("Missing value after --truth-source\n");
+        return CliParseResult::ERROR;
+      }
+      if (!parse_truth_source(argv[++i], opts.truth_source)) {
+        std::printf("Unsupported --truth-source value: %s\n", argv[i]);
         return CliParseResult::ERROR;
       }
       continue;
@@ -1461,6 +1525,7 @@ static EvalPatternRow build_eval_pattern_row(
   int pattern_index,
   int n_vars
 ) {
+  // trace alignment metric: compare predicted x_pred against output_x_pred_step0.h
   EvalPatternRow row{};
   row.pattern_index = pattern_index;
   row.evaluated_bits = static_cast<std::size_t>(n_vars);
@@ -1475,6 +1540,45 @@ static EvalPatternRow build_eval_pattern_row(
     }
   }
   row.frame_error_flag = (row.bit_errors > 0U) ? 1 : 0;
+  return row;
+}
+
+static EvalPatternRow build_eval_pattern_row_zero_truth(
+  const aecct_ref::bit1_t* pred_x,
+  int pattern_index,
+  int n_vars
+) {
+  // all-zero-codeword correction metric: target x_pred is fixed to zero.
+  EvalPatternRow row{};
+  row.pattern_index = pattern_index;
+  row.evaluated_bits = static_cast<std::size_t>(n_vars);
+  for (int i = 0; i < n_vars; ++i) {
+    const int pred = pred_x[i].to_int();
+    if (pred == 0) {
+      row.x_pred_match_count++;
+    } else {
+      row.bit_errors++;
+    }
+  }
+  row.frame_error_flag = (row.bit_errors > 0U) ? 1 : 0;
+  return row;
+}
+
+static TraceQualityPatternRow build_trace_quality_pattern_row(
+  int pattern_index,
+  int n_vars
+) {
+  TraceQualityPatternRow row{};
+  row.pattern_index = pattern_index;
+  row.evaluated_bits = static_cast<std::size_t>(n_vars);
+  const double* trace_target = &trace_output_x_pred_step0_tensor[pattern_index * n_vars];
+  for (int i = 0; i < n_vars; ++i) {
+    if (trace_target[i] != 0.0) {
+      row.trace_target_ones++;
+    }
+  }
+  row.trace_vs_zero_truth_bit_errors = row.trace_target_ones;
+  row.trace_vs_zero_truth_frame_error = (row.trace_vs_zero_truth_bit_errors > 0U) ? 1 : 0;
   return row;
 }
 
@@ -1506,6 +1610,41 @@ static void finalize_eval_aggregate(EvalAggregateStats& s) {
     : 0.0;
   s.x_pred_match_ratio = (s.total_bits > 0U)
     ? (static_cast<double>(s.x_pred_match_count) / static_cast<double>(s.total_bits))
+    : 0.0;
+}
+
+static void init_trace_quality_aggregate(TraceQualityAggregateStats& s) {
+  s.total_patterns = 0;
+  s.total_bits = 0;
+  s.total_trace_target_ones = 0;
+  s.total_trace_vs_zero_truth_bit_errors = 0;
+  s.trace_vs_zero_truth_frame_error_count = 0;
+  s.trace_vs_zero_truth_ber = 0.0;
+  s.trace_vs_zero_truth_fer = 0.0;
+  s.trace_vs_zero_truth_match_ratio = 0.0;
+}
+
+static void update_trace_quality_aggregate(
+  TraceQualityAggregateStats& s,
+  const TraceQualityPatternRow& row
+) {
+  s.total_patterns += 1;
+  s.total_bits += row.evaluated_bits;
+  s.total_trace_target_ones += row.trace_target_ones;
+  s.total_trace_vs_zero_truth_bit_errors += row.trace_vs_zero_truth_bit_errors;
+  s.trace_vs_zero_truth_frame_error_count += static_cast<std::size_t>(row.trace_vs_zero_truth_frame_error);
+}
+
+static void finalize_trace_quality_aggregate(TraceQualityAggregateStats& s) {
+  s.trace_vs_zero_truth_ber = (s.total_bits > 0U)
+    ? (static_cast<double>(s.total_trace_vs_zero_truth_bit_errors) / static_cast<double>(s.total_bits))
+    : 0.0;
+  s.trace_vs_zero_truth_fer = (s.total_patterns > 0)
+    ? (static_cast<double>(s.trace_vs_zero_truth_frame_error_count) / static_cast<double>(s.total_patterns))
+    : 0.0;
+  s.trace_vs_zero_truth_match_ratio = (s.total_bits > 0U)
+    ? (static_cast<double>(s.total_bits - s.total_trace_vs_zero_truth_bit_errors) /
+       static_cast<double>(s.total_bits))
     : 0.0;
 }
 
@@ -2927,6 +3066,44 @@ static bool write_eval_compare_csv(const std::string& path, const std::vector<Ev
   return ofs.good();
 }
 
+static bool write_trace_quality_csv(
+  const std::string& path,
+  const std::vector<TraceQualityPatternRow>& rows
+) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+
+  ofs << "pattern"
+      << ",evaluated_bits"
+      << ",trace_target_ones"
+      << ",trace_vs_zero_truth_bit_errors"
+      << ",trace_vs_zero_truth_ber"
+      << ",trace_vs_zero_truth_frame_error"
+      << "\n";
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const TraceQualityPatternRow& r = rows[i];
+    const double ber = (r.evaluated_bits > 0U)
+      ? (static_cast<double>(r.trace_vs_zero_truth_bit_errors) / static_cast<double>(r.evaluated_bits))
+      : 0.0;
+    ofs << r.pattern_index
+        << "," << r.evaluated_bits
+        << "," << r.trace_target_ones
+        << "," << r.trace_vs_zero_truth_bit_errors
+        << "," << ber
+        << "," << r.trace_vs_zero_truth_frame_error
+        << "\n";
+  }
+  return ofs.good();
+}
+
 static bool write_eval_single_summary_txt(
   const std::string& path,
   const char* tag,
@@ -3128,6 +3305,44 @@ static bool write_eval_compare_summary_txt(
   return ofs.good();
 }
 
+static bool write_trace_quality_summary_txt(
+  const std::string& path,
+  const TraceQualityAggregateStats& stats,
+  const std::vector<TraceQualityPatternRow>& rows
+) {
+  std::filesystem::path p(path);
+  if (p.has_parent_path()) {
+    std::filesystem::create_directories(p.parent_path());
+  }
+  std::ofstream ofs(path.c_str(), std::ios::out | std::ios::trunc);
+  if (!ofs.good()) {
+    return false;
+  }
+  ofs.setf(std::ios::scientific);
+  ofs << std::setprecision(9);
+  ofs << "=== Trace Self Quality Summary (trace_target vs all_zero_truth) ===\n";
+  ofs << "total patterns                     : " << stats.total_patterns << "\n";
+  ofs << "total evaluated bits               : " << stats.total_bits << "\n";
+  ofs << "total trace_target_ones            : " << stats.total_trace_target_ones << "\n";
+  ofs << "trace_vs_zero_truth_bit_errors     : " << stats.total_trace_vs_zero_truth_bit_errors << "\n";
+  ofs << "trace_vs_zero_truth_BER            : " << stats.trace_vs_zero_truth_ber << "\n";
+  ofs << "trace_vs_zero_truth_frame_errors   : " << stats.trace_vs_zero_truth_frame_error_count << "\n";
+  ofs << "trace_vs_zero_truth_FER            : " << stats.trace_vs_zero_truth_fer << "\n";
+  ofs << "trace_vs_zero_truth_match_ratio    : " << stats.trace_vs_zero_truth_match_ratio << "\n";
+  ofs << "\n";
+  ofs << "per-pattern trace quality:\n";
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const TraceQualityPatternRow& r = rows[i];
+    ofs << "  pattern=" << r.pattern_index
+        << " bits=" << r.evaluated_bits
+        << " trace_target_ones=" << r.trace_target_ones
+        << " trace_vs_zero_truth_bit_errors=" << r.trace_vs_zero_truth_bit_errors
+        << " trace_vs_zero_truth_frame_error=" << r.trace_vs_zero_truth_frame_error
+        << "\n";
+  }
+  return ofs.good();
+}
+
 static void init_batch_summary(BatchCompareSummary& s) {
   s.total_patterns_scanned = 0;
   s.patterns_with_xpred_flip = 0;
@@ -3289,6 +3504,16 @@ static std::string derive_summary_txt_path(const std::string& csv_path) {
     return csv_path.substr(0, csv_path.size() - 4U) + ".txt";
   }
   return csv_path + ".txt";
+}
+
+static std::string append_csv_suffix(const std::string& csv_path, const char* suffix) {
+  if (suffix == nullptr || suffix[0] == '\0') {
+    return csv_path;
+  }
+  if (csv_path.size() >= 4U && csv_path.substr(csv_path.size() - 4U) == ".csv") {
+    return csv_path.substr(0, csv_path.size() - 4U) + suffix + ".csv";
+  }
+  return csv_path + suffix;
 }
 
 static bool write_batch_summary_txt(
@@ -3472,6 +3697,18 @@ static void print_eval_compare_console_summary(
   std::printf("delta FER (exp-base)       : %.9e\n", delta_fer);
   std::printf("baseline x_pred match ratio: %.9e\n", baseline_stats.x_pred_match_ratio);
   std::printf("experiment x_pred match ratio: %.9e\n", experiment_stats.x_pred_match_ratio);
+}
+
+static void print_trace_quality_console_summary(const TraceQualityAggregateStats& stats) {
+  std::printf("=== Trace Self Quality Summary (trace_target vs all_zero_truth) ===\n");
+  std::printf("total patterns                     : %d\n", stats.total_patterns);
+  std::printf("total evaluated bits               : %zu\n", stats.total_bits);
+  std::printf("total trace_target_ones            : %zu\n", stats.total_trace_target_ones);
+  std::printf("trace_vs_zero_truth_bit_errors     : %zu\n", stats.total_trace_vs_zero_truth_bit_errors);
+  std::printf("trace_vs_zero_truth_BER            : %.9e\n", stats.trace_vs_zero_truth_ber);
+  std::printf("trace_vs_zero_truth_frame_errors   : %zu\n", stats.trace_vs_zero_truth_frame_error_count);
+  std::printf("trace_vs_zero_truth_FER            : %.9e\n", stats.trace_vs_zero_truth_fer);
+  std::printf("trace_vs_zero_truth_match_ratio    : %.9e\n", stats.trace_vs_zero_truth_match_ratio);
 }
 
 static void print_full_stress_console_summary(const aecct_ref::RefFullQuantStats& stats) {
@@ -4111,6 +4348,7 @@ int main(int argc, char** argv) {
   std::printf("  ln_mode(exp)   : %s\n", aecct_ref::to_string(opts.experiment_ln_mode));
   std::printf("  finalhead_stage: %s\n", aecct_ref::to_string(opts.finalhead_stage));
   std::printf("  frag_group     : %s\n", aecct_ref::to_string(opts.frag_group));
+  std::printf("  truth_source   : %s\n", truth_source_to_string(opts.truth_source));
   std::printf("  pattern_range  : begin=%d count=%d\n", range.begin, range.count);
   std::printf("  topk           : %d\n", opts.topk);
   std::printf("  summary_only   : %d\n", opts.summary_only ? 1 : 0);
@@ -4438,73 +4676,153 @@ int main(int argc, char** argv) {
       : ("build/ref_eval/" + default_eval_name + "_begin" + std::to_string(range.begin) +
          "_count" + std::to_string(range.count) + mode_suffix + ".csv");
 
+    const bool emit_trace_alignment =
+      (opts.truth_source == CliTruthSource::TRACE || opts.truth_source == CliTruthSource::BOTH);
+    const bool emit_zero_truth =
+      (opts.truth_source == CliTruthSource::ZERO || opts.truth_source == CliTruthSource::BOTH);
+    const bool emit_trace_quality = (opts.truth_source == CliTruthSource::BOTH);
+    const bool single_eval_mode =
+      (opts.run_mode == CliRunMode::EVAL_BASELINE || opts.run_mode == CliRunMode::EVAL_EXPERIMENT);
+    const char* run_tag =
+      (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment";
+
+    auto resolve_eval_csv_for_source = [&](const char* source_kind) -> std::string {
+      if (std::strcmp(source_kind, "trace_alignment") == 0) {
+        if (opts.truth_source == CliTruthSource::TRACE) {
+          return csv_path;
+        }
+        return append_csv_suffix(csv_path, "_trace");
+      }
+      if (std::strcmp(source_kind, "zero_truth_correction") == 0) {
+        return append_csv_suffix(csv_path, "_zero_truth");
+      }
+      return append_csv_suffix(csv_path, "_trace_quality");
+    };
+
+    std::vector<std::string> timing_targets;
+    timing_targets.reserve(3U);
     const auto t_eval_agg_start = now_tp();
-    if (opts.run_mode == CliRunMode::EVAL_BASELINE || opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
+
+    if (single_eval_mode) {
+      struct EvalSingleOutputPack {
+        std::string source_kind;
+        std::string csv_path;
+        std::vector<EvalPatternRow> rows;
+        EvalAggregateStats stats;
+      };
+
+      std::vector<EvalSingleOutputPack> packs;
+      if (emit_trace_alignment) {
+        packs.push_back(EvalSingleOutputPack{"trace_alignment", resolve_eval_csv_for_source("trace_alignment"), {}, {}});
+      }
+      if (emit_zero_truth) {
+        packs.push_back(EvalSingleOutputPack{"zero_truth_correction", resolve_eval_csv_for_source("zero_truth_correction"), {}, {}});
+      }
+
       const std::vector<aecct_ref::bit1_t>& pred_batch =
         (opts.run_mode == CliRunMode::EVAL_BASELINE) ? baseline_x_pred_batch : experiment_x_pred_batch;
-      std::vector<EvalPatternRow> rows;
-      rows.reserve(static_cast<std::size_t>(range.count));
-      EvalAggregateStats stats{};
-      init_eval_aggregate(stats);
-      for (int off = 0; off < range.count; ++off) {
-        const int pattern = range.begin + off;
-        const EvalPatternRow row = build_eval_pattern_row(
-          &pred_batch[static_cast<std::size_t>(off * N)],
-          pattern,
-          N
-        );
-        rows.push_back(row);
-        update_eval_aggregate(stats, row);
-        if (!opts.summary_only) {
-          const double ber = (row.evaluated_bits > 0U)
-            ? (static_cast<double>(row.bit_errors) / static_cast<double>(row.evaluated_bits))
-            : 0.0;
-          std::printf("[pattern %d][%s] bit_errors=%zu bits=%zu ber=%.9e frame_error=%d xmatch=%zu/%zu\n",
-            pattern,
-            (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
-            row.bit_errors,
-            row.evaluated_bits,
-            ber,
-            row.frame_error_flag,
-            row.x_pred_match_count,
-            row.evaluated_bits);
+      for (std::size_t p = 0; p < packs.size(); ++p) {
+        EvalSingleOutputPack& pack = packs[p];
+        pack.rows.reserve(static_cast<std::size_t>(range.count));
+        init_eval_aggregate(pack.stats);
+        const bool use_zero_truth = (pack.source_kind == "zero_truth_correction");
+        for (int off = 0; off < range.count; ++off) {
+          const int pattern = range.begin + off;
+          const aecct_ref::bit1_t* pred_ptr = &pred_batch[static_cast<std::size_t>(off * N)];
+          const EvalPatternRow row = use_zero_truth
+            ? build_eval_pattern_row_zero_truth(pred_ptr, pattern, N)
+            : build_eval_pattern_row(pred_ptr, pattern, N);
+          pack.rows.push_back(row);
+          update_eval_aggregate(pack.stats, row);
+          if (!opts.summary_only) {
+            const double ber = (row.evaluated_bits > 0U)
+              ? (static_cast<double>(row.bit_errors) / static_cast<double>(row.evaluated_bits))
+              : 0.0;
+            std::printf("[pattern %d][%s][%s] bit_errors=%zu bits=%zu ber=%.9e frame_error=%d xmatch=%zu/%zu\n",
+              pattern,
+              run_tag,
+              pack.source_kind.c_str(),
+              row.bit_errors,
+              row.evaluated_bits,
+              ber,
+              row.frame_error_flag,
+              row.x_pred_match_count,
+              row.evaluated_bits);
+          }
         }
+        finalize_eval_aggregate(pack.stats);
       }
-      finalize_eval_aggregate(stats);
       perf.compare_aggregation_s = elapsed_sec(t_eval_agg_start, now_tp());
 
       const auto t_fileio_start = now_tp();
-      if (write_eval_single_csv(csv_path, rows)) {
-        std::printf("Per-pattern eval csv    : %s\n", csv_path.c_str());
-      } else {
-        std::printf("[warn] Failed to write per-pattern eval csv: %s\n", csv_path.c_str());
-      }
-      const std::string txt_path = derive_summary_txt_path(csv_path);
-      const aecct_ref::RefFullQuantStats* single_eval_full_stats =
-        (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) ? &experiment_full_stats : nullptr;
-      if (write_eval_single_summary_txt(
-            txt_path,
-            (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
-            stats,
-            rows,
-            single_eval_full_stats)) {
-        std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
-      } else {
-        std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
-      }
-      const std::string timing_path = derive_timing_txt_path(csv_path);
-      perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
-      perf.total_s = elapsed_sec(t_program_start, now_tp());
-      if (write_timing_txt(timing_path, perf)) {
-        std::printf("Timing summary txt      : %s\n", timing_path.c_str());
-      } else {
-        std::printf("[warn] Failed to write timing summary txt: %s\n", timing_path.c_str());
+      for (std::size_t p = 0; p < packs.size(); ++p) {
+        const EvalSingleOutputPack& pack = packs[p];
+        if (write_eval_single_csv(pack.csv_path, pack.rows)) {
+          std::printf("Per-pattern eval csv    : %s\n", pack.csv_path.c_str());
+        } else {
+          std::printf("[warn] Failed to write per-pattern eval csv: %s\n", pack.csv_path.c_str());
+        }
+        const std::string txt_path = derive_summary_txt_path(pack.csv_path);
+        const std::string summary_tag = std::string(run_tag) + "|" + pack.source_kind;
+        const aecct_ref::RefFullQuantStats* single_eval_full_stats =
+          (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) ? &experiment_full_stats : nullptr;
+        if (write_eval_single_summary_txt(
+              txt_path,
+              summary_tag.c_str(),
+              pack.stats,
+              pack.rows,
+              single_eval_full_stats)) {
+          std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
+        } else {
+          std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
+        }
+        timing_targets.push_back(pack.csv_path);
       }
 
-      print_eval_single_console_summary(
-        (opts.run_mode == CliRunMode::EVAL_BASELINE) ? "baseline" : "experiment",
-        stats
-      );
+      if (emit_trace_quality) {
+        std::vector<TraceQualityPatternRow> trace_quality_rows;
+        TraceQualityAggregateStats trace_quality_stats{};
+        trace_quality_rows.reserve(static_cast<std::size_t>(range.count));
+        init_trace_quality_aggregate(trace_quality_stats);
+        for (int off = 0; off < range.count; ++off) {
+          const int pattern = range.begin + off;
+          const TraceQualityPatternRow row = build_trace_quality_pattern_row(pattern, N);
+          trace_quality_rows.push_back(row);
+          update_trace_quality_aggregate(trace_quality_stats, row);
+        }
+        finalize_trace_quality_aggregate(trace_quality_stats);
+        const std::string trace_quality_csv = resolve_eval_csv_for_source("trace_quality");
+        if (write_trace_quality_csv(trace_quality_csv, trace_quality_rows)) {
+          std::printf("Trace quality csv       : %s\n", trace_quality_csv.c_str());
+        } else {
+          std::printf("[warn] Failed to write trace quality csv: %s\n", trace_quality_csv.c_str());
+        }
+        const std::string trace_quality_txt = derive_summary_txt_path(trace_quality_csv);
+        if (write_trace_quality_summary_txt(trace_quality_txt, trace_quality_stats, trace_quality_rows)) {
+          std::printf("Trace quality txt       : %s\n", trace_quality_txt.c_str());
+        } else {
+          std::printf("[warn] Failed to write trace quality txt: %s\n", trace_quality_txt.c_str());
+        }
+        print_trace_quality_console_summary(trace_quality_stats);
+        timing_targets.push_back(trace_quality_csv);
+      }
+
+      perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
+      perf.total_s = elapsed_sec(t_program_start, now_tp());
+      for (std::size_t i = 0; i < timing_targets.size(); ++i) {
+        const std::string timing_path = derive_timing_txt_path(timing_targets[i]);
+        if (write_timing_txt(timing_path, perf)) {
+          std::printf("Timing summary txt      : %s\n", timing_path.c_str());
+        } else {
+          std::printf("[warn] Failed to write timing summary txt: %s\n", timing_path.c_str());
+        }
+      }
+
+      for (std::size_t p = 0; p < packs.size(); ++p) {
+        const EvalSingleOutputPack& pack = packs[p];
+        const std::string console_tag = std::string(run_tag) + "|" + pack.source_kind;
+        print_eval_single_console_summary(console_tag.c_str(), pack.stats);
+      }
       if (opts.run_mode == CliRunMode::EVAL_EXPERIMENT) {
         print_full_stress_console_summary(experiment_full_stats);
       }
@@ -4518,81 +4836,140 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    std::vector<EvalComparePatternRow> rows;
-    rows.reserve(static_cast<std::size_t>(range.count));
-    EvalAggregateStats baseline_stats{};
-    EvalAggregateStats experiment_stats{};
-    init_eval_aggregate(baseline_stats);
-    init_eval_aggregate(experiment_stats);
-    for (int off = 0; off < range.count; ++off) {
-      const int pattern = range.begin + off;
-      const EvalPatternRow b_row = build_eval_pattern_row(
-        &baseline_x_pred_batch[static_cast<std::size_t>(off * N)],
-        pattern,
-        N
-      );
-      const EvalPatternRow e_row = build_eval_pattern_row(
-        &experiment_x_pred_batch[static_cast<std::size_t>(off * N)],
-        pattern,
-        N
-      );
-      update_eval_aggregate(baseline_stats, b_row);
-      update_eval_aggregate(experiment_stats, e_row);
-
-      EvalComparePatternRow row{};
-      row.pattern_index = pattern;
-      row.evaluated_bits = b_row.evaluated_bits;
-      row.baseline_bit_errors = b_row.bit_errors;
-      row.experiment_bit_errors = e_row.bit_errors;
-      row.baseline_x_pred_match_count = b_row.x_pred_match_count;
-      row.experiment_x_pred_match_count = e_row.x_pred_match_count;
-      row.baseline_frame_error_flag = b_row.frame_error_flag;
-      row.experiment_frame_error_flag = e_row.frame_error_flag;
-      rows.push_back(row);
-
-      if (!opts.summary_only) {
-        const double b_ber = (b_row.evaluated_bits > 0U)
-          ? (static_cast<double>(b_row.bit_errors) / static_cast<double>(b_row.evaluated_bits))
-          : 0.0;
-        const double e_ber = (e_row.evaluated_bits > 0U)
-          ? (static_cast<double>(e_row.bit_errors) / static_cast<double>(e_row.evaluated_bits))
-          : 0.0;
-        std::printf("[pattern %d][eval-compare] b_err=%zu e_err=%zu b_ber=%.9e e_ber=%.9e b_fe=%d e_fe=%d\n",
-          pattern,
-          b_row.bit_errors,
-          e_row.bit_errors,
-          b_ber,
-          e_ber,
-          b_row.frame_error_flag,
-          e_row.frame_error_flag);
-      }
+    struct EvalCompareOutputPack {
+      std::string source_kind;
+      std::string csv_path;
+      std::vector<EvalComparePatternRow> rows;
+      EvalAggregateStats baseline_stats;
+      EvalAggregateStats experiment_stats;
+    };
+    std::vector<EvalCompareOutputPack> packs;
+    if (emit_trace_alignment) {
+      packs.push_back(EvalCompareOutputPack{"trace_alignment", resolve_eval_csv_for_source("trace_alignment"), {}, {}, {}});
     }
-    finalize_eval_aggregate(baseline_stats);
-    finalize_eval_aggregate(experiment_stats);
+    if (emit_zero_truth) {
+      packs.push_back(EvalCompareOutputPack{"zero_truth_correction", resolve_eval_csv_for_source("zero_truth_correction"), {}, {}, {}});
+    }
+
+    for (std::size_t p = 0; p < packs.size(); ++p) {
+      EvalCompareOutputPack& pack = packs[p];
+      pack.rows.reserve(static_cast<std::size_t>(range.count));
+      init_eval_aggregate(pack.baseline_stats);
+      init_eval_aggregate(pack.experiment_stats);
+      const bool use_zero_truth = (pack.source_kind == "zero_truth_correction");
+      for (int off = 0; off < range.count; ++off) {
+        const int pattern = range.begin + off;
+        const aecct_ref::bit1_t* b_ptr = &baseline_x_pred_batch[static_cast<std::size_t>(off * N)];
+        const aecct_ref::bit1_t* e_ptr = &experiment_x_pred_batch[static_cast<std::size_t>(off * N)];
+        const EvalPatternRow b_row = use_zero_truth
+          ? build_eval_pattern_row_zero_truth(b_ptr, pattern, N)
+          : build_eval_pattern_row(b_ptr, pattern, N);
+        const EvalPatternRow e_row = use_zero_truth
+          ? build_eval_pattern_row_zero_truth(e_ptr, pattern, N)
+          : build_eval_pattern_row(e_ptr, pattern, N);
+        update_eval_aggregate(pack.baseline_stats, b_row);
+        update_eval_aggregate(pack.experiment_stats, e_row);
+
+        EvalComparePatternRow row{};
+        row.pattern_index = pattern;
+        row.evaluated_bits = b_row.evaluated_bits;
+        row.baseline_bit_errors = b_row.bit_errors;
+        row.experiment_bit_errors = e_row.bit_errors;
+        row.baseline_x_pred_match_count = b_row.x_pred_match_count;
+        row.experiment_x_pred_match_count = e_row.x_pred_match_count;
+        row.baseline_frame_error_flag = b_row.frame_error_flag;
+        row.experiment_frame_error_flag = e_row.frame_error_flag;
+        pack.rows.push_back(row);
+
+        if (!opts.summary_only) {
+          const double b_ber = (b_row.evaluated_bits > 0U)
+            ? (static_cast<double>(b_row.bit_errors) / static_cast<double>(b_row.evaluated_bits))
+            : 0.0;
+          const double e_ber = (e_row.evaluated_bits > 0U)
+            ? (static_cast<double>(e_row.bit_errors) / static_cast<double>(e_row.evaluated_bits))
+            : 0.0;
+          std::printf("[pattern %d][eval-compare][%s] b_err=%zu e_err=%zu b_ber=%.9e e_ber=%.9e b_fe=%d e_fe=%d\n",
+            pattern,
+            pack.source_kind.c_str(),
+            b_row.bit_errors,
+            e_row.bit_errors,
+            b_ber,
+            e_ber,
+            b_row.frame_error_flag,
+            e_row.frame_error_flag);
+        }
+      }
+      finalize_eval_aggregate(pack.baseline_stats);
+      finalize_eval_aggregate(pack.experiment_stats);
+    }
     perf.compare_aggregation_s = elapsed_sec(t_eval_agg_start, now_tp());
 
     const auto t_fileio_start = now_tp();
-    if (write_eval_compare_csv(csv_path, rows)) {
-      std::printf("Per-pattern eval csv    : %s\n", csv_path.c_str());
-    } else {
-      std::printf("[warn] Failed to write per-pattern eval csv: %s\n", csv_path.c_str());
-    }
-    const std::string txt_path = derive_summary_txt_path(csv_path);
-    if (write_eval_compare_summary_txt(txt_path, baseline_stats, experiment_stats, rows, &experiment_full_stats)) {
-      std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
-    } else {
-      std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
-    }
-    const std::string timing_path = derive_timing_txt_path(csv_path);
-    perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
-    perf.total_s = elapsed_sec(t_program_start, now_tp());
-    if (write_timing_txt(timing_path, perf)) {
-      std::printf("Timing summary txt      : %s\n", timing_path.c_str());
-    } else {
-      std::printf("[warn] Failed to write timing summary txt: %s\n", timing_path.c_str());
+    for (std::size_t p = 0; p < packs.size(); ++p) {
+      const EvalCompareOutputPack& pack = packs[p];
+      if (write_eval_compare_csv(pack.csv_path, pack.rows)) {
+        std::printf("Per-pattern eval csv    : %s\n", pack.csv_path.c_str());
+      } else {
+        std::printf("[warn] Failed to write per-pattern eval csv: %s\n", pack.csv_path.c_str());
+      }
+      const std::string txt_path = derive_summary_txt_path(pack.csv_path);
+      if (write_eval_compare_summary_txt(
+            txt_path,
+            pack.baseline_stats,
+            pack.experiment_stats,
+            pack.rows,
+            &experiment_full_stats)) {
+        std::printf("Evaluator summary txt   : %s\n", txt_path.c_str());
+      } else {
+        std::printf("[warn] Failed to write evaluator summary txt: %s\n", txt_path.c_str());
+      }
+      timing_targets.push_back(pack.csv_path);
     }
 
-    print_eval_compare_console_summary(baseline_stats, experiment_stats);
+    if (emit_trace_quality) {
+      std::vector<TraceQualityPatternRow> trace_quality_rows;
+      TraceQualityAggregateStats trace_quality_stats{};
+      trace_quality_rows.reserve(static_cast<std::size_t>(range.count));
+      init_trace_quality_aggregate(trace_quality_stats);
+      for (int off = 0; off < range.count; ++off) {
+        const int pattern = range.begin + off;
+        const TraceQualityPatternRow row = build_trace_quality_pattern_row(pattern, N);
+        trace_quality_rows.push_back(row);
+        update_trace_quality_aggregate(trace_quality_stats, row);
+      }
+      finalize_trace_quality_aggregate(trace_quality_stats);
+      const std::string trace_quality_csv = resolve_eval_csv_for_source("trace_quality");
+      if (write_trace_quality_csv(trace_quality_csv, trace_quality_rows)) {
+        std::printf("Trace quality csv       : %s\n", trace_quality_csv.c_str());
+      } else {
+        std::printf("[warn] Failed to write trace quality csv: %s\n", trace_quality_csv.c_str());
+      }
+      const std::string trace_quality_txt = derive_summary_txt_path(trace_quality_csv);
+      if (write_trace_quality_summary_txt(trace_quality_txt, trace_quality_stats, trace_quality_rows)) {
+        std::printf("Trace quality txt       : %s\n", trace_quality_txt.c_str());
+      } else {
+        std::printf("[warn] Failed to write trace quality txt: %s\n", trace_quality_txt.c_str());
+      }
+      print_trace_quality_console_summary(trace_quality_stats);
+      timing_targets.push_back(trace_quality_csv);
+    }
+
+    perf.file_io_s = elapsed_sec(t_fileio_start, now_tp());
+    perf.total_s = elapsed_sec(t_program_start, now_tp());
+    for (std::size_t i = 0; i < timing_targets.size(); ++i) {
+      const std::string timing_path = derive_timing_txt_path(timing_targets[i]);
+      if (write_timing_txt(timing_path, perf)) {
+        std::printf("Timing summary txt      : %s\n", timing_path.c_str());
+      } else {
+        std::printf("[warn] Failed to write timing summary txt: %s\n", timing_path.c_str());
+      }
+    }
+
+    for (std::size_t p = 0; p < packs.size(); ++p) {
+      const EvalCompareOutputPack& pack = packs[p];
+      std::printf("--- eval source: %s ---\n", pack.source_kind.c_str());
+      print_eval_compare_console_summary(pack.baseline_stats, pack.experiment_stats);
+    }
     print_full_stress_console_summary(experiment_full_stats);
     std::printf("=== Timing Breakdown (sec) ===\n");
     std::printf("startup/init             : %.6f\n", perf.startup_init_s);
@@ -5002,7 +5379,7 @@ int main(int argc, char** argv) {
   std::printf("compare aggregation      : %.6f\n", perf.compare_aggregation_s);
   std::printf("file I/O                 : %.6f\n", perf.file_io_s);
   std::printf("total runtime            : %.6f\n", perf.total_s);
-  std::printf("BER/FER evaluator             : run with --mode eval-compare (target_x from output_x_pred_step0.h)\n");
+  std::printf("BER/FER evaluator             : run with --mode eval-compare --truth-source trace|zero|both (default trace)\n");
 
   return 0;
 }
