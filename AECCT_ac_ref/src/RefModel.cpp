@@ -796,10 +796,56 @@ static inline int16_t quantize_int8_to_i16(
   return static_cast<int16_t>(q);
 }
 
-static inline int16_t quantize_weight_to_i16(double w, float s_w) {
-  int32_t q = static_cast<int32_t>(std::lround(static_cast<float>(w) * s_w));
-  q = clamp_int32(q, -127, 127);
-  return static_cast<int16_t>(q);
+static inline int16_t decode_ternary_weight_sign_i16(double w) {
+  if (w == 1.0 || w == 1.0f) {
+    return static_cast<int16_t>(1);
+  }
+  if (w == -1.0 || w == -1.0f) {
+    return static_cast<int16_t>(-1);
+  }
+  if (w == 0.0 || w == -0.0 || w == 0.0f || w == -0.0f) {
+    return static_cast<int16_t>(0);
+  }
+
+  // Malformed payloads are forced back to the nearest ternary code;
+  // do not fall back to generic scaled-weight quantization here.
+  if (w >= 0.5) {
+    return static_cast<int16_t>(1);
+  }
+  if (w <= -0.5) {
+    return static_cast<int16_t>(-1);
+  }
+  return static_cast<int16_t>(0);
+}
+
+static inline int16_t accumulate_ternary_mac_i16(
+  int16_t acc_i16,
+  int16_t qx_i16,
+  int16_t ternary_sign_i16,
+  RefFullQuantStats* stats,
+  const char* block_name
+) {
+  const int32_t prod =
+    static_cast<int32_t>(qx_i16) * static_cast<int32_t>(ternary_sign_i16);
+  int32_t sum = static_cast<int32_t>(acc_i16) + prod;
+  if (sum > 32767) {
+    sum = 32767;
+    if (stats != nullptr) {
+      stats->int_linear.int16_overflow_count++;
+      if (stats->int_linear.first_int16_overflow_block.empty()) {
+        stats->int_linear.first_int16_overflow_block = block_name;
+      }
+    }
+  } else if (sum < -32768) {
+    sum = -32768;
+    if (stats != nullptr) {
+      stats->int_linear.int16_overflow_count++;
+      if (stats->int_linear.first_int16_overflow_block.empty()) {
+        stats->int_linear.first_int16_overflow_block = block_name;
+      }
+    }
+  }
+  return static_cast<int16_t>(sum);
 }
 
 static bool write_npy_f32(const std::string& path,
@@ -1319,32 +1365,13 @@ static void quant_linear_75x32_to32(const fp32_ref_t x[TOKENS_T][D_MODEL],
         qx_i16[i] = quantize_int8_to_i16(x[t][i], s_x, stats);
       }
       for (int o = 0; o < D_MODEL; ++o) {
-        int32_t acc_i32 = 0;
+        int16_t acc_i16 = 0;
         const int base = o * D_MODEL;
         for (int i = 0; i < D_MODEL; ++i) {
-          const int16_t qw_i16 = quantize_weight_to_i16(w[base + i], s_w);
-          const int32_t prod = static_cast<int32_t>(qx_i16[i]) * static_cast<int32_t>(qw_i16);
-          int32_t sum = acc_i32 + prod;
-          if (sum > 32767) {
-            sum = 32767;
-            if (stats != nullptr) {
-              stats->int_linear.int16_overflow_count++;
-              if (stats->int_linear.first_int16_overflow_block.empty()) {
-                stats->int_linear.first_int16_overflow_block = block_name;
-              }
-            }
-          } else if (sum < -32768) {
-            sum = -32768;
-            if (stats != nullptr) {
-              stats->int_linear.int16_overflow_count++;
-              if (stats->int_linear.first_int16_overflow_block.empty()) {
-                stats->int_linear.first_int16_overflow_block = block_name;
-              }
-            }
-          }
-          acc_i32 = sum;
+          const int16_t ternary_sign_i16 = decode_ternary_weight_sign_i16(w[base + i]);
+          acc_i16 = accumulate_ternary_mac_i16(
+            acc_i16, qx_i16[i], ternary_sign_i16, stats, block_name);
         }
-        const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
         const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
         y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
         if (stats != nullptr) {
@@ -1386,32 +1413,13 @@ static void quant_linear_75x32_to128(const fp32_ref_t x[TOKENS_T][D_MODEL],
         qx_i16[i] = quantize_int8_to_i16(x[t][i], s_x, stats);
       }
       for (int o = 0; o < FF_DIM; ++o) {
-        int32_t acc_i32 = 0;
+        int16_t acc_i16 = 0;
         const int base = o * D_MODEL;
         for (int i = 0; i < D_MODEL; ++i) {
-          const int16_t qw_i16 = quantize_weight_to_i16(w[base + i], s_w);
-          const int32_t prod = static_cast<int32_t>(qx_i16[i]) * static_cast<int32_t>(qw_i16);
-          int32_t sum = acc_i32 + prod;
-          if (sum > 32767) {
-            sum = 32767;
-            if (stats != nullptr) {
-              stats->int_linear.int16_overflow_count++;
-              if (stats->int_linear.first_int16_overflow_block.empty()) {
-                stats->int_linear.first_int16_overflow_block = block_name;
-              }
-            }
-          } else if (sum < -32768) {
-            sum = -32768;
-            if (stats != nullptr) {
-              stats->int_linear.int16_overflow_count++;
-              if (stats->int_linear.first_int16_overflow_block.empty()) {
-                stats->int_linear.first_int16_overflow_block = block_name;
-              }
-            }
-          }
-          acc_i32 = sum;
+          const int16_t ternary_sign_i16 = decode_ternary_weight_sign_i16(w[base + i]);
+          acc_i16 = accumulate_ternary_mac_i16(
+            acc_i16, qx_i16[i], ternary_sign_i16, stats, block_name);
         }
-        const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
         const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
         y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
         if (stats != nullptr) {
@@ -1453,32 +1461,13 @@ static void quant_linear_75x128_to32(const fp32_ref_t x[TOKENS_T][FF_DIM],
         qx_i16[i] = quantize_int8_to_i16(x[t][i], s_x, stats);
       }
       for (int o = 0; o < D_MODEL; ++o) {
-        int32_t acc_i32 = 0;
+        int16_t acc_i16 = 0;
         const int base = o * FF_DIM;
         for (int i = 0; i < FF_DIM; ++i) {
-          const int16_t qw_i16 = quantize_weight_to_i16(w[base + i], s_w);
-          const int32_t prod = static_cast<int32_t>(qx_i16[i]) * static_cast<int32_t>(qw_i16);
-          int32_t sum = acc_i32 + prod;
-          if (sum > 32767) {
-            sum = 32767;
-            if (stats != nullptr) {
-              stats->int_linear.int16_overflow_count++;
-              if (stats->int_linear.first_int16_overflow_block.empty()) {
-                stats->int_linear.first_int16_overflow_block = block_name;
-              }
-            }
-          } else if (sum < -32768) {
-            sum = -32768;
-            if (stats != nullptr) {
-              stats->int_linear.int16_overflow_count++;
-              if (stats->int_linear.first_int16_overflow_block.empty()) {
-                stats->int_linear.first_int16_overflow_block = block_name;
-              }
-            }
-          }
-          acc_i32 = sum;
+          const int16_t ternary_sign_i16 = decode_ternary_weight_sign_i16(w[base + i]);
+          acc_i16 = accumulate_ternary_mac_i16(
+            acc_i16, qx_i16[i], ternary_sign_i16, stats, block_name);
         }
-        const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
         const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
         y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
         if (stats != nullptr) {
