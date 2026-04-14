@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 
+#include "../include/InvSqrtApprox.h"
 #include "../include/SoftmaxApprox.h"
 #include "weights.h"
 
@@ -11,7 +12,8 @@ namespace aecct_ref {
 RefModelOptimized::RefModelOptimized()
   : last_staged_sample_index_(-1),
     phase_a_valid_(false),
-    layer0_attn_writeback_valid_(false) {
+    layer0_attn_writeback_valid_(false),
+    layer0_ln_writeback_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
   legacy_ref_.set_run_config(run_cfg_);
   clear_formal_storage();
@@ -39,12 +41,14 @@ void RefModelOptimized::infer_step0(const RefModelIO& io) {
     for (int b = 0; b < io.B; ++b) {
       if (stage_step0_phase_a(io, b)) {
         (void)run_step0_layer0_attention_writeback();
+        (void)run_step0_layer0_ln_writeback();
       }
     }
   }
 
-  // Layer0 attention writeback (Step 4) is ported in the optimized path.
-  // Remaining downstream phases still complete on the legacy path.
+  // Layer0 attention + sublayer0 LN writeback (Step 4/5A) are ported in the
+  // optimized path. Remaining downstream phases still complete on the legacy
+  // path.
   legacy_ref_.infer_step0(io);
 }
 
@@ -75,6 +79,10 @@ bool RefModelOptimized::phase_a_valid() const {
 
 bool RefModelOptimized::layer0_attn_writeback_valid() const {
   return layer0_attn_writeback_valid_;
+}
+
+bool RefModelOptimized::layer0_ln_writeback_valid() const {
+  return layer0_ln_writeback_valid_;
 }
 
 ac_ieee_float<binary32> RefModelOptimized::x_work(int token, int dim) const {
@@ -123,6 +131,21 @@ bool RefModelOptimized::run_step0_layer0_attention_writeback() {
     materialize_layer0_attention_writeback_from_x_work<binary32>(storage_fp32_);
   }
   layer0_attn_writeback_valid_ = true;
+  layer0_ln_writeback_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_layer0_ln_writeback() {
+  if (!phase_a_valid_ || !layer0_attn_writeback_valid_) {
+    return false;
+  }
+
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+    materialize_layer0_ln_writeback_from_x_work<binary16>(storage_fp16_);
+  } else {
+    materialize_layer0_ln_writeback_from_x_work<binary32>(storage_fp32_);
+  }
+  layer0_ln_writeback_valid_ = true;
   return true;
 }
 
@@ -132,6 +155,7 @@ void RefModelOptimized::clear_formal_storage() {
   last_staged_sample_index_ = -1;
   phase_a_valid_ = false;
   layer0_attn_writeback_valid_ = false;
+  layer0_ln_writeback_valid_ = false;
 }
 
 RefOptimizedFloatMode RefModelOptimized::resolve_selected_float_mode() const {
@@ -187,6 +211,7 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   last_staged_sample_index_ = batch_index;
   phase_a_valid_ = true;
   layer0_attn_writeback_valid_ = false;
+  layer0_ln_writeback_valid_ = false;
   return true;
 }
 
@@ -451,6 +476,157 @@ void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work(
 }
 
 template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_layer0_ln_writeback_from_x_work(
+  RefOptimizedStorageBank<FloatFormat>& bank) {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
+  const double* const ln0_w = w_decoder_layers_0_sublayer_0_norm_weight;
+  const double* const ln0_b = w_decoder_layers_0_sublayer_0_norm_bias;
+
+  // Step 5A boundary:
+  // - input boundary  : layer0 attention residual writeback in X_WORK
+  // - output boundary : layer0 LN writeback in X_WORK
+  for (int token = 0; token < TOKENS_T; ++token) {
+    for (int d = 0; d < D_MODEL; ++d) {
+      bank.ln_token_buf[d] = bank.x_work[token][d];
+    }
+    layernorm_token_32_local<FloatFormat>(
+      bank.ln_token_buf,
+      ln0_w,
+      ln0_b,
+      bank.out_acc_tile);
+    for (int d = 0; d < D_MODEL; ++d) {
+      bank.x_work[token][d] = float_t(bank.out_acc_tile[d].to_float());
+    }
+  }
+}
+
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::layernorm_token_32_local(
+  const typename RefOptimizedStorageBank<FloatFormat>::float_t x_token[D_MODEL],
+  const double w[D_MODEL],
+  const double b[D_MODEL],
+  typename RefOptimizedStorageBank<FloatFormat>::float_t y_token[D_MODEL]) const {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
+  const float eps = 1.0e-5f;
+  const float inv_d = 1.0f / static_cast<float>(D_MODEL);
+
+  auto sanitize_input = [](float v) -> float {
+    return std::isfinite(v) ? v : 0.0f;
+  };
+  auto sanitize_output = [](float v) -> float {
+    return std::isfinite(v) ? v : 0.0f;
+  };
+
+  if (run_cfg_.legacy.ln_mode == RefLayerNormMode::LN_EXACT_REFERENCE) {
+    double sum = 0.0;
+    for (int d = 0; d < D_MODEL; ++d) {
+      sum += static_cast<double>(x_token[d].to_float());
+    }
+    const double mean = sum / static_cast<double>(D_MODEL);
+
+    double var_acc = 0.0;
+    for (int d = 0; d < D_MODEL; ++d) {
+      const double dv = static_cast<double>(x_token[d].to_float()) - mean;
+      var_acc += (dv * dv);
+    }
+    const double var = var_acc / static_cast<double>(D_MODEL);
+    const double inv_std = 1.0 / std::sqrt(var + static_cast<double>(eps));
+
+    for (int d = 0; d < D_MODEL; ++d) {
+      const double xv = static_cast<double>(x_token[d].to_float());
+      const double xn = (xv - mean) * inv_std;
+      const double yi = (xn * w[d]) + b[d];
+      y_token[d] = float_t(static_cast<float>(yi));
+    }
+    return;
+  }
+
+  if (run_cfg_.legacy.ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
+    float sum = 0.0f;
+    float sumsq = 0.0f;
+    for (int d = 0; d < D_MODEL; ++d) {
+      const float xv = sanitize_input(x_token[d].to_float());
+      sum += xv;
+      sumsq += xv * xv;
+    }
+    const float mean = sum * inv_d;
+    const float ex2 = sumsq * inv_d;
+    const float mean_sq = mean * mean;
+    const float var_raw = ex2 - mean_sq;
+
+    float var_final = var_raw;
+    if (!std::isfinite(var_final) || var_final < 0.0f) {
+      var_final = 0.0f;
+    }
+    float var_eps = var_final + eps;
+    if (!std::isfinite(var_eps) || var_eps < eps) {
+      var_eps = eps;
+    }
+
+    float inv_std = ref_inv_sqrt_nr1_approx(ref_fp32_t(var_eps)).to_float();
+    if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
+      inv_std = ref_inv_sqrt_approx(ref_fp32_t(var_eps)).to_float();
+    }
+    inv_std = sanitize_output(inv_std);
+
+    for (int d = 0; d < D_MODEL; ++d) {
+      const float xv = sanitize_input(x_token[d].to_float());
+      const float xn = (xv - mean) * inv_std;
+      const float yi = (xn * static_cast<float>(w[d])) + static_cast<float>(b[d]);
+      y_token[d] = float_t(sanitize_output(yi));
+    }
+    return;
+  }
+
+  float sum = 0.0f;
+  for (int d = 0; d < D_MODEL; ++d) {
+    const float xv = sanitize_input(x_token[d].to_float());
+    sum += xv;
+  }
+
+  const float mean = sum * inv_d;
+  float var_acc = 0.0f;
+  for (int d = 0; d < D_MODEL; ++d) {
+    const float xv = sanitize_input(x_token[d].to_float());
+    const float delta = xv - mean;
+    var_acc += delta * delta;
+  }
+  const float var_raw = var_acc * inv_d;
+
+  float x_eps_safe = var_raw + eps;
+  if (!std::isfinite(x_eps_safe) || x_eps_safe <= 0.0f) {
+    x_eps_safe = eps;
+  }
+  if (!std::isfinite(x_eps_safe) || x_eps_safe <= 0.0f) {
+    x_eps_safe = 1.0f;
+  }
+
+  float inv_std = 1.0f / std::sqrt(x_eps_safe);
+  const float inv_std_nr1 =
+    inv_std * (1.5f - (0.5f * x_eps_safe * inv_std * inv_std));
+  if (std::isfinite(inv_std_nr1) && inv_std_nr1 > 0.0f) {
+    inv_std = inv_std_nr1;
+  }
+  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
+    inv_std = ref_inv_sqrt_nr1_approx(ref_fp32_t(x_eps_safe)).to_float();
+  }
+  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
+    inv_std = ref_inv_sqrt_approx(ref_fp32_t(x_eps_safe)).to_float();
+  }
+  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
+    inv_std = 1.0f;
+  }
+
+  for (int d = 0; d < D_MODEL; ++d) {
+    const float xv = sanitize_input(x_token[d].to_float());
+    const float xn = (xv - mean) * inv_std;
+    float yi = (xn * static_cast<float>(w[d])) + static_cast<float>(b[d]);
+    yi = sanitize_output(yi);
+    y_token[d] = float_t(yi);
+  }
+}
+
+template<ac_ieee_float_format FloatFormat>
 ac_ieee_float<FloatFormat> RefModelOptimized::float_abs_local(
   ac_ieee_float<FloatFormat> x) {
   return (x < ac_ieee_float<FloatFormat>(0.0f))
@@ -545,6 +721,10 @@ template void RefModelOptimized::materialize_layer0_kv_from_x_work<binary32>(
 template void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work<binary16>(
   RefOptimizedStorageBank<binary16>& bank);
 template void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work<binary32>(
+  RefOptimizedStorageBank<binary32>& bank);
+template void RefModelOptimized::materialize_layer0_ln_writeback_from_x_work<binary16>(
+  RefOptimizedStorageBank<binary16>& bank);
+template void RefModelOptimized::materialize_layer0_ln_writeback_from_x_work<binary32>(
   RefOptimizedStorageBank<binary32>& bank);
 
 template ac_ieee_float<binary16> RefModelOptimized::float_abs_local<binary16>(

@@ -28,19 +28,21 @@ public:
 
   // Partial optimized pipeline:
   // Step 2/3 materialize preproc into X_WORK and layer-0 K/V into SCR_K /
-  // SCR_V. Step 4 currently ports layer-0 attention mainline up to residual
-  // writeback into X_WORK, while downstream phases are still completed by the
-  // legacy RefModel path.
+  // SCR_V. Step 4/5A currently port layer-0 attention mainline and layer-0
+  // LN writeback into X_WORK, while downstream phases are still completed by
+  // the legacy RefModel path.
   void infer_step0(const RefModelIO& io);
 
   // Stage the optimized major storage for one sample without running the
   // remaining attention/FFN/finalhead phases.
   bool stage_step0_phase_a(const RefModelIO& io, int batch_index = 0);
   bool run_step0_layer0_attention_writeback();
+  bool run_step0_layer0_ln_writeback();
 
   int last_staged_sample_index() const;
   bool phase_a_valid() const;
   bool layer0_attn_writeback_valid() const;
+  bool layer0_ln_writeback_valid() const;
 
   ac_ieee_float<binary32> x_work(int token, int dim) const;
   ac_ieee_float<binary32> scr_k(int token, int dim) const;
@@ -98,6 +100,15 @@ private:
   template<ac_ieee_float_format FloatFormat>
   void materialize_layer0_attention_writeback_from_x_work(
     RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
+  void materialize_layer0_ln_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
+  void layernorm_token_32_local(
+    const typename RefOptimizedStorageBank<FloatFormat>::float_t x_token[D_MODEL],
+    const double w[D_MODEL],
+    const double b[D_MODEL],
+    typename RefOptimizedStorageBank<FloatFormat>::float_t y_token[D_MODEL]) const;
   static bool is_layer0_attn_masked_token_pair(int head_idx, int q_token, int k_token);
 
   template<ac_ieee_float_format FloatFormat>
@@ -131,6 +142,7 @@ private:
   int last_staged_sample_index_;
   bool phase_a_valid_;
   bool layer0_attn_writeback_valid_;
+  bool layer0_ln_writeback_valid_;
 };
 
 } // namespace aecct_ref
