@@ -1,7 +1,6 @@
 #include "../include/RefModel.h"
 
 #include <algorithm>
-#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -24,6 +23,7 @@
 namespace aecct_ref {
 namespace {
 
+typedef ref_fp16_t fp32_ref_t;
 
 constexpr uint32_t ref_align_up_u32(uint32_t x, uint32_t a) {
   return ((x + a - 1u) / a) * a;
@@ -60,12 +60,12 @@ static constexpr int D_MODEL = 32;
 static constexpr int HEADS = 8;
 static constexpr int D_HEAD = 4;
 static constexpr int FF_DIM = 128;
-static constexpr double LN_EPS_FP = 1.0e-5;
-static constexpr double LN_INV_D_FP = 0.03125; // 1/32
-static constexpr double LN_VAR_FLOOR_FP = 0.0;
+static constexpr float LN_EPS_F32 = 1.0e-5f;
+static constexpr float LN_INV_D_F32 = 0.03125f; // 1/32
+static constexpr float LN_VAR_FLOOR_F32 = 0.0f;
 static constexpr int LN_TILE_D = 8;
-static const ref_fp16_t kActQMin = ref_fp16_t(-127.0f);
-static const ref_fp16_t kActQMax = ref_fp16_t(127.0f);
+static const fp32_ref_t kActQMin = fp32_ref_t(-127.0f);
+static const fp32_ref_t kActQMax = fp32_ref_t(127.0f);
 
 enum class RefLnSiteTag : int {
   L0_SUB0 = 0,
@@ -169,11 +169,11 @@ struct DumpContext {
   std::string root;
 };
 
-static inline ref_fp16_t ref_model_abs(ref_fp16_t x) {
-  return (x < ref_fp16_t(0.0f)) ? (ref_fp16_t(0.0f) - x) : x;
+static inline fp32_ref_t fp32_abs(fp32_ref_t x) {
+  return (x < fp32_ref_t(0.0f)) ? (fp32_ref_t(0.0f) - x) : x;
 }
 
-static inline double ref_fp16_clamp_finite(double x) {
+static inline float ref_fp16_clamp_finite(float x) {
   if (std::isnan(x)) return 0.0f;
   if (std::isinf(x)) return std::signbit(x) ? -65504.0f : 65504.0f;
   if (x > 65504.0f) return 65504.0f;
@@ -181,36 +181,18 @@ static inline double ref_fp16_clamp_finite(double x) {
   return x;
 }
 
-static inline ref_fp16_t ref_fp16_sanitize_value(double x) {
-  return ref_fp16_t(ref_fp16_clamp_finite(x));
+static inline fp32_ref_t ref_fp16_sanitize_value(float x) {
+  return fp32_ref_t(ref_fp16_clamp_finite(x));
 }
 
-template <std::size_t N>
-static inline const std::array<ref_fp16_t, N>& ref_fp16_cache_from_double(const double (&src)[N]) {
-  static const std::array<ref_fp16_t, N> cache = [&src]() {
-    std::array<ref_fp16_t, N> tmp{};
-    for (std::size_t i = 0; i < N; ++i) {
-      tmp[i] = ref_fp16_t(src[i]);
-    }
-    return tmp;
-  }();
-  return cache;
-}
-
-template <std::size_t N>
-static inline const ref_fp16_t* ref_fp16_ptr_from_double(const double (&src)[N]) {
-  return ref_fp16_cache_from_double(src).data();
-}
-
-
-static inline ref_fp16_t ref_fp16_sanitize_value(const ref_fp16_t& x) {
+static inline fp32_ref_t ref_fp16_sanitize_value(const fp32_ref_t& x) {
   if (x.isfinite()) {
-    return ref_fp16_t(x.to_double());
+    return fp32_ref_t(x.to_float());
   }
   if (x.isnan()) {
-    return ref_fp16_t(0.0f);
+    return fp32_ref_t(0.0f);
   }
-  return x.signbit() ? ref_fp16_t(-65504.0f) : ref_fp16_t(65504.0f);
+  return x.signbit() ? fp32_ref_t(-65504.0f) : fp32_ref_t(65504.0f);
 }
 
 static inline uint32_t fp32_bits_from_double(double x) {
@@ -293,13 +275,13 @@ static inline bool unpack_xpred_words16_impl(const std::vector<uint16_t>& src,
   return true;
 }
 
-static inline ref_fp16_t sign_ref_model(ref_fp16_t x) {
-  if (x > ref_fp16_t(0.0f)) return ref_fp16_t(1.0f);
-  if (x < ref_fp16_t(0.0f)) return ref_fp16_t(-1.0f);
-  return ref_fp16_t(0.0f);
+static inline fp32_ref_t sign_fp32(fp32_ref_t x) {
+  if (x > fp32_ref_t(0.0f)) return fp32_ref_t(1.0f);
+  if (x < fp32_ref_t(0.0f)) return fp32_ref_t(-1.0f);
+  return fp32_ref_t(0.0f);
 }
 
-static inline ref_fp16_t fp32_round(ref_fp16_t x) {
+static inline fp32_ref_t fp32_round(fp32_ref_t x) {
   return x.round();
 }
 
@@ -531,8 +513,8 @@ static inline bool select_int8_fixedexp_zone(
   return false;
 }
 
-static inline ref_fp16_t apply_roundtrip_int8_fixedexp(
-  ref_fp16_t x,
+static inline fp32_ref_t apply_roundtrip_int8_fixedexp(
+  fp32_ref_t x,
   int zone_id,
   int shared_exp,
   RefFragGroup group,
@@ -557,12 +539,12 @@ static inline ref_fp16_t apply_roundtrip_int8_fixedexp(
     }
   }
 
-  const double xin = x.to_double();
+  const float xin = x.to_float();
   if (std::isnan(xin) || std::isinf(xin)) {
     return x;
   }
 
-  const double inv_step = std::ldexp(1.0, -shared_exp);
+  const float inv_step = std::ldexp(1.0f, -shared_exp);
   int32_t qi = static_cast<int32_t>(std::nearbyint(xin * inv_step));
   if (qi > 127) {
     qi = 127;
@@ -578,65 +560,201 @@ static inline ref_fp16_t apply_roundtrip_int8_fixedexp(
     }
   }
 
-  const double y = std::ldexp(static_cast<double>(qi), shared_exp);
-  return ref_fp16_t(y);
+  const float y = std::ldexp(static_cast<float>(qi), shared_exp);
+  return fp32_ref_t(y);
 }
 
-static inline ref_fp16_t apply_roundtrip_and_update_stats(
-  ref_fp16_t x,
-  RefFragGroup /*group*/,
-  RefFullQuantStats* /*stats*/,
-  const char* /*block_name*/
+static inline fp32_ref_t apply_roundtrip_and_update_stats(
+  fp32_ref_t x,
+  RefFragGroup group,
+  RefFullQuantStats* stats,
+  const char* block_name
 ) {
-  return x;
+  if (stats != nullptr) {
+    stats->e4m3.roundtrip_count++;
+    switch (group) {
+      case RefFragGroup::G1_LAYERNORM: stats->e4m3.roundtrip_g1_count++; break;
+      case RefFragGroup::G2_RESIDUAL: stats->e4m3.roundtrip_g2_count++; break;
+      case RefFragGroup::G3_ATTN_CONTEXT: stats->e4m3.roundtrip_g3_count++; break;
+      case RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD: stats->e4m3.roundtrip_g4_count++; break;
+      case RefFragGroup::G5_PREPROC_EMBED: stats->e4m3.roundtrip_g5_count++; break;
+      default: break;
+    }
+    const float xin = x.to_float();
+    if (std::isnan(xin)) {
+      stats->e4m3.nan_in_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    } else if (std::isinf(xin)) {
+      stats->e4m3.inf_in_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    }
+  }
+
+  const fp32_ref_t y = roundtrip_through_generic_e4m3(x);
+  if (stats != nullptr) {
+    const float yout = y.to_float();
+    if (std::isnan(yout)) {
+      stats->e4m3.nan_out_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    } else if (std::isinf(yout)) {
+      stats->e4m3.inf_out_count++;
+      bump_first_nonfinite_block(stats, block_name);
+    }
+  }
+  return y;
 }
 
-static inline ref_fp16_t apply_roundtrip_fp16_and_update_stats(
-  ref_fp16_t x,
-  RefFullQuantStats* /*stats*/,
-  const char* /*block_name*/
+static inline fp32_ref_t apply_roundtrip_fp16_and_update_stats(
+  fp32_ref_t x,
+  RefFullQuantStats* stats,
+  const char* block_name
 ) {
-  return x;
+  float xin_sat = 0.0f;
+  bool xin_nan = false;
+  bool xin_inf = false;
+  if (x.isfinite()) {
+    xin_sat = x.to_float();
+  } else if (x.isnan()) {
+    xin_nan = true;
+    xin_sat = 0.0f;
+  } else {
+    xin_inf = true;
+    xin_sat = x.signbit() ? -65504.0f : 65504.0f;
+  }
+  if (stats != nullptr) {
+    stats->fp16.roundtrip_count++;
+    if (xin_nan) {
+      stats->fp16.nan_in_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    } else if (xin_inf) {
+      stats->fp16.inf_in_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    }
+  }
+
+  const ref_fp16_t h(xin_sat);
+  const fp32_ref_t y = ref_fp16_sanitize_value(fp32_ref_t(h.to_float()));
+  if (stats != nullptr) {
+    const float xin = x.to_float();
+    const float yout = y.to_float();
+    if (std::isnan(yout)) {
+      stats->fp16.nan_out_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    } else if (std::isinf(yout)) {
+      stats->fp16.inf_out_count++;
+      bump_first_fp16_nonfinite_block(stats, block_name);
+    } else if ((xin != 0.0f) && (yout == 0.0f)) {
+      stats->fp16.underflow_to_zero_count++;
+    }
+  }
+  return y;
 }
 
-static inline ref_fp16_t stress_roundtrip_e4m3(
-  ref_fp16_t x,
-  const RefRunConfig& /*cfg*/,
-  RefFragGroup /*group*/,
-  RefFullQuantStats* /*stats*/,
-  const char* /*block_name*/
+static inline fp32_ref_t stress_roundtrip_e4m3(
+  fp32_ref_t x,
+  const RefRunConfig& cfg,
+  RefFragGroup group,
+  RefFullQuantStats* stats,
+  const char* block_name
 ) {
-  return x;
+  if (use_fp16_replace_fp32_global(cfg)) {
+    return apply_roundtrip_fp16_and_update_stats(x, stats, block_name);
+  }
+
+  int zone_id = 0;
+  int shared_exp = 0;
+  if (select_int8_fixedexp_zone(cfg, group, RefG5SubIsland::NONE, &zone_id, &shared_exp)) {
+    return apply_roundtrip_int8_fixedexp(
+      x,
+      zone_id,
+      shared_exp,
+      group,
+      RefG5SubIsland::NONE,
+      stats,
+      block_name
+    );
+  }
+  if (!should_apply_e4m3_group_roundtrip(cfg, group)) {
+    return x;
+  }
+  return apply_roundtrip_and_update_stats(x, group, stats, block_name);
 }
 
 static inline bool should_apply_g5_sub_roundtrip(
-  const RefRunConfig& /*cfg*/,
-  RefG5SubIsland /*site*/
+  const RefRunConfig& cfg,
+  RefG5SubIsland site
 ) {
-  return false;
+  if (use_generic_e4m3_g2_g5_submode(cfg)) {
+    return g2_g5_submode_target(cfg.precision_mode) == site;
+  }
+  return should_apply_e4m3_group_roundtrip(cfg, RefFragGroup::G5_PREPROC_EMBED);
 }
 
-static inline ref_fp16_t stress_roundtrip_e4m3_g5_sub(
-  ref_fp16_t x,
-  const RefRunConfig& /*cfg*/,
-  RefG5SubIsland /*site*/,
-  RefFullQuantStats* /*stats*/,
-  const char* /*block_name*/
+static inline fp32_ref_t stress_roundtrip_e4m3_g5_sub(
+  fp32_ref_t x,
+  const RefRunConfig& cfg,
+  RefG5SubIsland site,
+  RefFullQuantStats* stats,
+  const char* block_name
 ) {
-  return x;
+  if (use_fp16_replace_fp32_global(cfg)) {
+    return apply_roundtrip_fp16_and_update_stats(x, stats, block_name);
+  }
+
+  int zone_id = 0;
+  int shared_exp = 0;
+  if (select_int8_fixedexp_zone(cfg, RefFragGroup::G5_PREPROC_EMBED, site, &zone_id, &shared_exp)) {
+    return apply_roundtrip_int8_fixedexp(
+      x,
+      zone_id,
+      shared_exp,
+      RefFragGroup::G5_PREPROC_EMBED,
+      site,
+      stats,
+      block_name
+    );
+  }
+  if (!should_apply_g5_sub_roundtrip(cfg, site)) {
+    return x;
+  }
+  fp32_ref_t y = apply_roundtrip_and_update_stats(
+    x,
+    RefFragGroup::G5_PREPROC_EMBED,
+    stats,
+    block_name
+  );
+  if (stats != nullptr) {
+    switch (site) {
+      case RefG5SubIsland::EMBED_ONLY:
+        stats->e4m3.roundtrip_g5_embed_count++;
+        break;
+      case RefG5SubIsland::SPE_ONLY:
+        stats->e4m3.roundtrip_g5_spe_count++;
+        break;
+      case RefG5SubIsland::PREPROC_ASSEMBLY:
+        stats->e4m3.roundtrip_g5_preproc_assembly_count++;
+        break;
+      case RefG5SubIsland::PRELAYER_HANDOFF:
+        stats->e4m3.roundtrip_g5_prelayer_handoff_count++;
+        break;
+      default:
+        break;
+    }
+  }
+  return y;
 }
 
-static inline ref_fp16_t quantize_int8_symmetric(ref_fp16_t x, ref_fp16_t s_x) {
-  ref_fp16_t q = fp32_round(x * s_x);
+static inline fp32_ref_t quantize_int8_symmetric(fp32_ref_t x, fp32_ref_t s_x) {
+  fp32_ref_t q = fp32_round(x * s_x);
   if (q > kActQMax) q = kActQMax;
   if (q < kActQMin) q = kActQMin;
   return q;
 }
 
-static inline double quantize_int8_symmetric_host(double x, double s_x) {
-  double q = std::round(x * s_x);
-  if (q > 127.0) q = 127.0;
-  if (q < -127.0) q = -127.0;
+static inline float quantize_int8_symmetric_f32(float x, float s_x) {
+  float q = std::round(x * s_x);
+  if (q > 127.0f) q = 127.0f;
+  if (q < -127.0f) q = -127.0f;
   return q;
 }
 
@@ -660,11 +778,11 @@ static inline int32_t clamp_int32(int32_t x, int32_t lo, int32_t hi) {
 }
 
 static inline int16_t quantize_int8_to_i16(
-  ref_fp16_t x,
-  ref_fp16_t s_x,
+  fp32_ref_t x,
+  float s_x,
   RefFullQuantStats* stats
 ) {
-  const double scaled = (x * s_x).to_double();
+  const float scaled = x.to_float() * s_x;
   int32_t q = static_cast<int32_t>(std::lround(scaled));
   if (q > 127) {
     q = 127;
@@ -676,8 +794,8 @@ static inline int16_t quantize_int8_to_i16(
   return static_cast<int16_t>(q);
 }
 
-static inline int16_t quantize_weight_to_i16(ref_fp16_t w, ref_fp16_t s_w) {
-  int32_t q = static_cast<int32_t>(std::lround((w * s_w).to_double()));
+static inline int16_t quantize_weight_to_i16(double w, float s_w) {
+  int32_t q = static_cast<int32_t>(std::lround(static_cast<float>(w) * s_w));
   q = clamp_int32(q, -127, 127);
   return static_cast<int16_t>(q);
 }
@@ -794,7 +912,7 @@ static void capture_ln_upstream_boundary_75x32(
   int sample_index,
   int layer_idx,
   RefLnUpstreamBoundaryTag boundary,
-  const ref_fp16_t x[TOKENS_T][D_MODEL]
+  const fp32_ref_t x[TOKENS_T][D_MODEL]
 ) {
   if (!g_ref_ln_upstream_debug_enabled) {
     return;
@@ -824,175 +942,345 @@ static void capture_ln_upstream_boundary_75x32(
 }
 
 // LN_APPROX_BEGIN
-static inline bool ref_ln_mainfp_is_finite(const ref_fp16_t& x) {
-  return x.isfinite();
-}
-
-static inline ref_fp16_t ref_ln_mainfp_sanitize_input(
-  const ref_fp16_t& x,
-  int* sanitize_count
-) {
-  if (ref_ln_mainfp_is_finite(x)) {
+static inline float ln_sanitize_input(float x, int* sanitize_count) {
+  if (std::isfinite(x)) {
     return x;
   }
   if (sanitize_count != nullptr) {
     *sanitize_count += 1;
   }
-  return ref_fp16_t(0.0f);
+  return 0.0f;
 }
 
-static inline ref_fp16_t ref_ln_refstyle_inv_sqrt_mainfp_flow(const ref_fp16_t& x_eps_safe) {
-  const ref_fp16_t half = ref_fp16_t(0.5f);
-  const ref_fp16_t three_halves = ref_fp16_t(1.5f);
-  const ref_fp16_t one = ref_fp16_t(1.0f);
-  const ref_fp16_t y0 = one.template div<AC_RND_CONV, false>(
+static inline float ln_sanitize_input_no_count(float x) {
+  return std::isfinite(x) ? x : 0.0f;
+}
+
+static inline float ln_sanitize_output(float x) {
+  return std::isfinite(x) ? x : 0.0f;
+}
+
+static inline uint32_t ref_ln_fp32_to_bits(const fp32_ref_t& x) {
+  union RefLnFp32Bits {
+    float f;
+    uint32_t u;
+  };
+  RefLnFp32Bits cvt{};
+  cvt.f = x.to_float();
+  return cvt.u;
+}
+
+static inline bool ref_ln_fp32_is_finite(const fp32_ref_t& x) {
+  const uint32_t bits = ref_ln_fp32_to_bits(x);
+  return (bits & 0x7F800000u) != 0x7F800000u;
+}
+
+static inline fp32_ref_t ref_ln_fp32_sanitize_input(
+  const fp32_ref_t& x,
+  int* sanitize_count
+) {
+  if (ref_ln_fp32_is_finite(x)) {
+    return x;
+  }
+  if (sanitize_count != nullptr) {
+    *sanitize_count += 1;
+  }
+  return fp32_ref_t(0.0f);
+}
+
+static inline fp32_ref_t ref_ln_refstyle_inv_sqrt_fp32_flow(const fp32_ref_t& x_eps_safe) {
+  const fp32_ref_t half = fp32_ref_t(0.5f);
+  const fp32_ref_t three_halves = fp32_ref_t(1.5f);
+  const fp32_ref_t one = fp32_ref_t(1.0f);
+  const fp32_ref_t y0 = one.template div<AC_RND_CONV, false>(
     x_eps_safe.template sqrt<AC_RND_CONV, false>());
-  ref_fp16_t y1 = y0 * (three_halves - (half * x_eps_safe * y0 * y0));
-  if (!ref_ln_mainfp_is_finite(y1) || y1 <= ref_fp16_t(0.0f)) {
+  fp32_ref_t y1 = y0 * (three_halves - (half * x_eps_safe * y0 * y0));
+  if (!ref_ln_fp32_is_finite(y1) || y1 <= fp32_ref_t(0.0f)) {
     y1 = y0;
   }
-  if (!ref_ln_mainfp_is_finite(y1) || y1 <= ref_fp16_t(0.0f)) {
+  if (!ref_ln_fp32_is_finite(y1) || y1 <= fp32_ref_t(0.0f)) {
     return one;
   }
   return y1;
 }
 
-static inline void layernorm_32_pure_fp16(const ref_fp16_t x[D_MODEL],
-                                            const ref_fp16_t w[D_MODEL],
-                                            const ref_fp16_t b[D_MODEL],
-                                            int sample_index,
-                                            RefLnSiteTag site,
-                                            int site_call_index,
-                                            int token_index,
-                                            ref_fp16_t y[D_MODEL]) {
-  const ref_fp16_t fp_zero = ref_fp16_t(0.0);
-  const ref_fp16_t fp_one = ref_fp16_t(1.0);
-  const ref_fp16_t inv_n = ref_fp16_t(1.0 / static_cast<double>(D_MODEL));
-  const ref_fp16_t eps = ref_fp16_t(static_cast<double>(LN_EPS_FP));
-
-  ref_fp16_t sum = fp_zero;
-  ref_fp16_t sumsq = fp_zero;
+static inline void layernorm_32_baseline(const fp32_ref_t x[D_MODEL],
+                                         const double w[D_MODEL],
+                                         const double b[D_MODEL],
+                                         int sample_index,
+                                         RefLnSiteTag site,
+                                         int site_call_index,
+                                         int token_index,
+                                         fp32_ref_t y[D_MODEL]) {
+  const fp32_ref_t fp32_zero = fp32_ref_t(0.0f);
+  const fp32_ref_t fp32_one = fp32_ref_t(1.0f);
+  const fp32_ref_t inv_n_den = fp32_ref_t((float)D_MODEL);
+  const fp32_ref_t eps_fp = fp32_ref_t(LN_EPS_F32);
+  fp32_ref_t sum_fp = fp32_zero;
+  fp32_ref_t sumsq_fp = fp32_zero;
   int sanitize_input_count = 0;
   for (int i = 0; i < D_MODEL; ++i) {
-    const ref_fp16_t xv = ref_ln_mainfp_sanitize_input(x[i], &sanitize_input_count);
-    sum += xv;
-    sumsq += xv * xv;
+    const fp32_ref_t xv = ref_ln_fp32_sanitize_input(x[i], &sanitize_input_count);
+    sum_fp += xv;
+    sumsq_fp += (xv * xv);
   }
+  const fp32_ref_t mean_fp = sum_fp / inv_n_den;
+  const fp32_ref_t ex2_fp = sumsq_fp / inv_n_den;
+  const fp32_ref_t mean_sq_fp = mean_fp * mean_fp;
 
-  const ref_fp16_t mean = sum * inv_n;
-  ref_fp16_t var_acc = fp_zero;
+  fp32_ref_t var_acc_fp = fp32_zero;
   for (int i = 0; i < D_MODEL; ++i) {
-    const ref_fp16_t xv = ref_ln_mainfp_sanitize_input(x[i], &sanitize_input_count);
-    const ref_fp16_t d = xv - mean;
-    var_acc += d * d;
+    const fp32_ref_t xv = ref_ln_fp32_sanitize_input(x[i], &sanitize_input_count);
+    const fp32_ref_t d = xv - mean_fp;
+    var_acc_fp += (d * d);
   }
-  ref_fp16_t var = var_acc * inv_n;
-  if (!ref_ln_mainfp_is_finite(var) || var < fp_zero) {
-    var = fp_zero;
+  const fp32_ref_t var_raw_fp = var_acc_fp / inv_n_den;
+  const fp32_ref_t var_from_ex2_fp = ex2_fp - mean_sq_fp;
+
+  fp32_ref_t x_eps_safe_fp = var_raw_fp + eps_fp;
+  if (!ref_ln_fp32_is_finite(x_eps_safe_fp) || x_eps_safe_fp <= fp32_zero) {
+    x_eps_safe_fp = eps_fp;
   }
-  ref_fp16_t x_eps = var + eps;
-  if (!ref_ln_mainfp_is_finite(x_eps) || x_eps <= fp_zero) {
-    x_eps = eps;
+  if (!ref_ln_fp32_is_finite(x_eps_safe_fp) || x_eps_safe_fp <= fp32_zero) {
+    x_eps_safe_fp = fp32_one;
   }
 
-  ref_fp16_t inv_std = ref_inv_sqrt_nr1_approx(x_eps);
-  if (!ref_ln_mainfp_is_finite(inv_std) || inv_std <= fp_zero) {
-    inv_std = ref_inv_sqrt_approx(x_eps);
+  fp32_ref_t inv_std_fp = ref_ln_refstyle_inv_sqrt_fp32_flow(x_eps_safe_fp);
+  if (!ref_ln_fp32_is_finite(inv_std_fp) || inv_std_fp <= fp32_zero) {
+    inv_std_fp = ref_inv_sqrt_nr1_approx(x_eps_safe_fp);
   }
-  if (!ref_ln_mainfp_is_finite(inv_std) || inv_std <= fp_zero) {
-    inv_std = fp_one;
+  if (!ref_ln_fp32_is_finite(inv_std_fp) || inv_std_fp <= fp32_zero) {
+    inv_std_fp = ref_inv_sqrt_approx(x_eps_safe_fp);
+  }
+  if (!ref_ln_fp32_is_finite(inv_std_fp) || inv_std_fp <= fp32_zero) {
+    inv_std_fp = fp32_one;
   }
 
   for (int i = 0; i < D_MODEL; ++i) {
-    const ref_fp16_t xv = ref_ln_mainfp_sanitize_input(x[i], &sanitize_input_count);
-    const ref_fp16_t xn = (xv - mean) * inv_std;
-    ref_fp16_t yi = (xn * ref_fp16_t(w[i])) + ref_fp16_t(b[i]);
-    if (!ref_ln_mainfp_is_finite(yi)) {
-      yi = fp_zero;
+    const fp32_ref_t xv = ref_ln_fp32_sanitize_input(x[i], &sanitize_input_count);
+    const fp32_ref_t xn = (xv - mean_fp) * inv_std_fp;
+    const fp32_ref_t g = fp32_ref_t((float)w[i]);
+    const fp32_ref_t bb = fp32_ref_t((float)b[i]);
+    fp32_ref_t yi = (xn * g) + bb;
+    if (!ref_ln_fp32_is_finite(yi)) {
+      yi = fp32_zero;
     }
     y[i] = yi;
   }
 
+  float sum_tile = 0.0f;
+  float sumsq_tile = 0.0f;
+  for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
+    for (int lane = 0; lane < LN_TILE_D; ++lane) {
+      const int d = tile_base + lane;
+      const float xv = ref_ln_fp32_sanitize_input(x[d], nullptr).to_float();
+      sum_tile += xv;
+      sumsq_tile += xv * xv;
+    }
+  }
+
   if (g_ref_ln_debug_enabled) {
+    const float sum = sum_fp.to_float();
+    const float sumsq = sumsq_fp.to_float();
+    const float mean = mean_fp.to_float();
+    const float ex2 = ex2_fp.to_float();
+    const float mean_sq = mean_sq_fp.to_float();
+    const float var_raw = var_raw_fp.to_float();
+    const float var_from_ex2 = var_from_ex2_fp.to_float();
+    const float x_eps_safe = x_eps_safe_fp.to_float();
+    const float eps_applied = (x_eps_safe_fp - var_raw_fp).to_float();
+    const float inv_std_true = 1.0f / std::sqrt(x_eps_safe);
+    const float inv_std_seed = ref_inv_sqrt_approx(x_eps_safe_fp).to_float();
+    const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(x_eps_safe_fp).to_float();
+    const float inv_std = inv_std_fp.to_float();
     RefLnDebugEntry e{};
     e.entry_seq = g_ref_ln_debug_entry_seq++;
     e.site_call_index = site_call_index;
     e.sample_index = sample_index;
     e.site = static_cast<int>(site);
     e.token = token_index;
-    e.sum = sum.to_float();
-    e.sumsq = sumsq.to_float();
-    e.mean = mean.to_float();
-    e.ex2 = (sumsq * inv_n).to_float();
-    e.mean_sq = (mean * mean).to_float();
-    e.var_raw = var.to_float();
-    e.var_final = var.to_float();
-    e.var_from_residual = var.to_float();
-    e.var_from_ex2 = ((sumsq * inv_n) - (mean * mean)).to_float();
-    e.eps_applied = (x_eps - var).to_float();
-    e.inv_std_input = x_eps.to_float();
-    e.sum_seq = e.sum;
-    e.sumsq_seq = e.sumsq;
-    e.sum_tile = e.sum;
-    e.sumsq_tile = e.sumsq;
-    e.x_eps = x_eps.to_float();
-    e.inv_std_used = inv_std.to_float();
-    e.inv_std_true = inv_std.to_float();
-    e.inv_std_seed = ref_inv_sqrt_approx(x_eps).to_float();
-    e.inv_std_nr1 = ref_inv_sqrt_nr1_approx(x_eps).to_float();
-    e.var_negative_before_clamp = (var.to_float() < 0.0f) ? 1 : 0;
+    e.sum = sum;
+    e.sumsq = sumsq;
+    e.mean = mean;
+    e.ex2 = ex2;
+    e.mean_sq = mean_sq;
+    e.var_raw = var_raw;
+    e.var_final = var_raw;
+    e.var_from_residual = var_raw;
+    e.var_from_ex2 = var_from_ex2;
+    e.eps_applied = eps_applied;
+    e.inv_std_input = x_eps_safe;
+    e.sum_seq = sum;
+    e.sumsq_seq = sumsq;
+    e.sum_tile = sum_tile;
+    e.sumsq_tile = sumsq_tile;
+    e.x_eps = x_eps_safe;
+    e.inv_std_used = inv_std;
+    e.inv_std_true = inv_std_true;
+    e.inv_std_seed = inv_std_seed;
+    e.inv_std_nr1 = inv_std_nr1;
+    e.var_negative_before_clamp = (var_raw < 0.0f) ? 1 : 0;
     e.clamp_triggered = 0;
-    e.eps_dominates_var = (var <= eps) ? 1 : 0;
+    e.eps_dominates_var = (var_raw <= LN_EPS_F32) ? 1 : 0;
     e.sanitize_input_count = sanitize_input_count;
     for (int i = 0; i < D_MODEL; ++i) {
       e.x_in[i] = x[i].to_float();
+    }
+    for (int i = 0; i < D_MODEL; ++i) {
       e.y_out[i] = y[i].to_float();
     }
     g_ref_ln_debug_entries.push_back(e);
   }
 }
 
-static inline void layernorm_32_baseline(const ref_fp16_t x[D_MODEL],
-                                         const ref_fp16_t w[D_MODEL],
-                                         const ref_fp16_t b[D_MODEL],
-                                         int sample_index,
-                                         RefLnSiteTag site,
-                                         int site_call_index,
-                                         int token_index,
-                                         ref_fp16_t y[D_MODEL]) {
-  layernorm_32_pure_fp16(x, w, b, sample_index, site, site_call_index, token_index, y);
+static inline void layernorm_32_sum_sumsq_approx(const fp32_ref_t x[D_MODEL],
+                                                  const double w[D_MODEL],
+                                                  const double b[D_MODEL],
+                                                  int sample_index,
+                                                  RefLnSiteTag site,
+                                                  int site_call_index,
+                                                  int token_index,
+                                                  fp32_ref_t y[D_MODEL]) {
+  float sum = 0.0f;
+  float sumsq = 0.0f;
+  int sanitize_input_count = 0;
+
+  // LOOP LN_PASS1_TILE
+  for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
+    // LOOP LN_PASS1_ELEM
+    for (int lane = 0; lane < LN_TILE_D; ++lane) {
+      const int d = tile_base + lane;
+      const float xv = ln_sanitize_input(x[d].to_float(), &sanitize_input_count);
+      sum += xv;
+      sumsq += xv * xv;
+    }
+  }
+
+  const float mean = sum * LN_INV_D_F32;
+  const float ex2 = sumsq * LN_INV_D_F32;
+  const float mean_sq = mean * mean;
+  const float var_raw = ex2 - mean_sq;
+  float var_residual_acc = 0.0f;
+  float sum_seq = 0.0f;
+  float sumsq_seq = 0.0f;
+  for (int i = 0; i < D_MODEL; ++i) {
+    const float xv = ln_sanitize_input_no_count(x[i].to_float());
+    sum_seq += xv;
+    sumsq_seq += xv * xv;
+    const float d = xv - mean;
+    var_residual_acc += d * d;
+  }
+  const float var_from_residual = var_residual_acc * LN_INV_D_F32;
+  float var_final = var_raw;
+  if (!std::isfinite(var_final) || var_final < LN_VAR_FLOOR_F32) {
+    var_final = LN_VAR_FLOOR_F32;
+  }
+  float var_eps = var_final + LN_EPS_F32;
+  if (!std::isfinite(var_eps) || var_eps < LN_EPS_F32) {
+    var_eps = LN_EPS_F32;
+  }
+  const float eps_applied = var_eps - var_final;
+
+  float inv_std = ref_inv_sqrt_nr1_approx(fp32_ref_t(var_eps)).to_float();
+  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
+    inv_std = ref_inv_sqrt_approx(fp32_ref_t(var_eps)).to_float();
+  }
+  inv_std = ln_sanitize_output(inv_std);
+
+  // LOOP LN_PASS2_TILE
+  for (int tile_base = 0; tile_base < D_MODEL; tile_base += LN_TILE_D) {
+    // LOOP LN_PASS2_ELEM
+    for (int lane = 0; lane < LN_TILE_D; ++lane) {
+      const int d = tile_base + lane;
+      const float xv = ln_sanitize_input(x[d].to_float(), &sanitize_input_count);
+      const float xn = (xv - mean) * inv_std;
+      const float yi = (xn * static_cast<float>(w[d])) + static_cast<float>(b[d]);
+      y[d] = fp32_ref_t(ln_sanitize_output(yi));
+    }
+  }
+
+  if (g_ref_ln_debug_enabled) {
+    const float inv_std_true = 1.0f / std::sqrt(var_eps);
+    const float inv_std_seed = ref_inv_sqrt_approx(fp32_ref_t(var_eps)).to_float();
+    const float inv_std_nr1 = ref_inv_sqrt_nr1_approx(fp32_ref_t(var_eps)).to_float();
+    RefLnDebugEntry e{};
+    e.entry_seq = g_ref_ln_debug_entry_seq++;
+    e.site_call_index = site_call_index;
+    e.sample_index = sample_index;
+    e.site = static_cast<int>(site);
+    e.token = token_index;
+    e.sum = sum;
+    e.sumsq = sumsq;
+    e.mean = mean;
+    e.ex2 = ex2;
+    e.mean_sq = mean_sq;
+    e.var_raw = var_raw;
+    e.var_final = var_final;
+    e.var_from_residual = var_from_residual;
+    e.var_from_ex2 = var_raw;
+    e.eps_applied = eps_applied;
+    e.inv_std_input = var_eps;
+    e.sum_seq = sum_seq;
+    e.sumsq_seq = sumsq_seq;
+    e.sum_tile = sum;
+    e.sumsq_tile = sumsq;
+    e.x_eps = var_eps;
+    e.inv_std_used = inv_std;
+    e.inv_std_true = inv_std_true;
+    e.inv_std_seed = inv_std_seed;
+    e.inv_std_nr1 = inv_std_nr1;
+    e.var_negative_before_clamp = (var_raw < 0.0f) ? 1 : 0;
+    e.clamp_triggered = (!std::isfinite(var_raw) || var_raw < LN_VAR_FLOOR_F32) ? 1 : 0;
+    e.eps_dominates_var = (var_final <= LN_EPS_F32) ? 1 : 0;
+    e.sanitize_input_count = sanitize_input_count;
+    for (int i = 0; i < D_MODEL; ++i) {
+      e.x_in[i] = x[i].to_float();
+    }
+    for (int i = 0; i < D_MODEL; ++i) {
+      e.y_out[i] = y[i].to_float();
+    }
+    g_ref_ln_debug_entries.push_back(e);
+  }
 }
 
-static inline void layernorm_32_sum_sumsq_approx(const ref_fp16_t x[D_MODEL],
-                                                 const ref_fp16_t w[D_MODEL],
-                                                 const ref_fp16_t b[D_MODEL],
-                                                 int sample_index,
-                                                 RefLnSiteTag site,
-                                                 int site_call_index,
-                                                 int token_index,
-                                                 ref_fp16_t y[D_MODEL]) {
-  layernorm_32_pure_fp16(x, w, b, sample_index, site, site_call_index, token_index, y);
-}
+static inline void layernorm_32_exact_reference(const fp32_ref_t x[D_MODEL],
+                                                 const double w[D_MODEL],
+                                                 const double b[D_MODEL],
+                                                 int /*sample_index*/,
+                                                 RefLnSiteTag /*site*/,
+                                                 int /*site_call_index*/,
+                                                 int /*token_index*/,
+                                                 fp32_ref_t y[D_MODEL]) {
+  double sum = 0.0;
+  for (int i = 0; i < D_MODEL; ++i) {
+    sum += static_cast<double>(x[i].to_float());
+  }
+  const double mean = sum / static_cast<double>(D_MODEL);
 
-static inline void layernorm_32_exact_reference(const ref_fp16_t x[D_MODEL],
-                                                const ref_fp16_t w[D_MODEL],
-                                                const ref_fp16_t b[D_MODEL],
-                                                int sample_index,
-                                                RefLnSiteTag site,
-                                                int site_call_index,
-                                                int token_index,
-                                                ref_fp16_t y[D_MODEL]) {
-  layernorm_32_pure_fp16(x, w, b, sample_index, site, site_call_index, token_index, y);
+  double var_acc = 0.0;
+  for (int i = 0; i < D_MODEL; ++i) {
+    const double d = static_cast<double>(x[i].to_float()) - mean;
+    var_acc += d * d;
+  }
+  const double var = var_acc / static_cast<double>(D_MODEL);
+  const double inv_std = 1.0 / std::sqrt(var + static_cast<double>(LN_EPS_F32));
+
+  for (int i = 0; i < D_MODEL; ++i) {
+    const double xv = static_cast<double>(x[i].to_float());
+    const double xn = (xv - mean) * inv_std;
+    const double yi = (xn * w[i]) + b[i];
+    y[i] = fp32_ref_t(static_cast<float>(yi));
+  }
 }
 // LN_APPROX_END
 
-static void apply_layernorm_tokens(const ref_fp16_t x_in[TOKENS_T][D_MODEL],
-                                   const ref_fp16_t w[D_MODEL],
-                                   const ref_fp16_t b[D_MODEL],
+static void apply_layernorm_tokens(const fp32_ref_t x_in[TOKENS_T][D_MODEL],
+                                   const double w[D_MODEL],
+                                   const double b[D_MODEL],
                                    RefLayerNormMode ln_mode,
                                    int sample_index,
                                    RefLnSiteTag site,
-                                   ref_fp16_t x_out[TOKENS_T][D_MODEL]) {
+                                   fp32_ref_t x_out[TOKENS_T][D_MODEL]) {
   int site_call_index = 0;
   if (g_ref_ln_debug_enabled) {
     const int site_id = static_cast<int>(site);
@@ -1012,16 +1300,16 @@ static void apply_layernorm_tokens(const ref_fp16_t x_in[TOKENS_T][D_MODEL],
   }
 }
 
-static void quant_linear_75x32_to32(const ref_fp16_t x[TOKENS_T][D_MODEL],
-                                    const ref_fp16_t w[D_MODEL * D_MODEL],
-                                    const ref_fp16_t b[D_MODEL],
-                                    ref_fp16_t s_x,
-                                    ref_fp16_t s_w,
-                                    ref_fp16_t y[TOKENS_T][D_MODEL],
+static void quant_linear_75x32_to32(const fp32_ref_t x[TOKENS_T][D_MODEL],
+                                    const double w[D_MODEL * D_MODEL],
+                                    const double b[D_MODEL],
+                                    float s_x,
+                                    float s_w,
+                                    fp32_ref_t y[TOKENS_T][D_MODEL],
                                     bool strict_int16_acc,
                                     RefFullQuantStats* stats,
                                     const char* block_name) {
-  ref_fp16_t inv = ref_fp16_t(1.0f) / (s_x * s_w);
+  fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   for (int t = 0; t < TOKENS_T; ++t) {
     if (strict_int16_acc) {
       int16_t qx_i16[D_MODEL];
@@ -1055,23 +1343,23 @@ static void quant_linear_75x32_to32(const ref_fp16_t x[TOKENS_T][D_MODEL],
           acc_i32 = sum;
         }
         const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
-        const ref_fp16_t deq = ref_fp16_t(acc_i16) * inv;
-        y[t][o] = ref_fp16_t(b[o]) + deq;
+        const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
+        y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
         if (stats != nullptr) {
           stats->int_linear.dequant_restore_count++;
         }
       }
     } else {
-      ref_fp16_t qx[D_MODEL];
+      fp32_ref_t qx[D_MODEL];
       for (int i = 0; i < D_MODEL; ++i) {
-        qx[i] = quantize_int8_symmetric(x[t][i], s_x);
+        qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
       }
 
       for (int o = 0; o < D_MODEL; ++o) {
-        ref_fp16_t acc = ref_fp16_t(b[o]);
+        fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
         const int base = o * D_MODEL;
         for (int i = 0; i < D_MODEL; ++i) {
-          acc += qx[i] * (ref_fp16_t(w[base + i]) * inv);
+          acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
         }
         y[t][o] = acc;
       }
@@ -1079,16 +1367,16 @@ static void quant_linear_75x32_to32(const ref_fp16_t x[TOKENS_T][D_MODEL],
   }
 }
 
-static void quant_linear_75x32_to128(const ref_fp16_t x[TOKENS_T][D_MODEL],
-                                     const ref_fp16_t w[FF_DIM * D_MODEL],
-                                     const ref_fp16_t b[FF_DIM],
-                                     ref_fp16_t s_x,
-                                     ref_fp16_t s_w,
-                                     ref_fp16_t y[TOKENS_T][FF_DIM],
+static void quant_linear_75x32_to128(const fp32_ref_t x[TOKENS_T][D_MODEL],
+                                     const double w[FF_DIM * D_MODEL],
+                                     const double b[FF_DIM],
+                                     float s_x,
+                                     float s_w,
+                                     fp32_ref_t y[TOKENS_T][FF_DIM],
                                      bool strict_int16_acc,
                                      RefFullQuantStats* stats,
                                      const char* block_name) {
-  ref_fp16_t inv = ref_fp16_t(1.0f) / (s_x * s_w);
+  fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   for (int t = 0; t < TOKENS_T; ++t) {
     if (strict_int16_acc) {
       int16_t qx_i16[D_MODEL];
@@ -1122,23 +1410,23 @@ static void quant_linear_75x32_to128(const ref_fp16_t x[TOKENS_T][D_MODEL],
           acc_i32 = sum;
         }
         const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
-        const ref_fp16_t deq = ref_fp16_t(acc_i16) * inv;
-        y[t][o] = ref_fp16_t(b[o]) + deq;
+        const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
+        y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
         if (stats != nullptr) {
           stats->int_linear.dequant_restore_count++;
         }
       }
     } else {
-      ref_fp16_t qx[D_MODEL];
+      fp32_ref_t qx[D_MODEL];
       for (int i = 0; i < D_MODEL; ++i) {
-        qx[i] = quantize_int8_symmetric(x[t][i], s_x);
+        qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
       }
 
       for (int o = 0; o < FF_DIM; ++o) {
-        ref_fp16_t acc = ref_fp16_t(b[o]);
+        fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
         const int base = o * D_MODEL;
         for (int i = 0; i < D_MODEL; ++i) {
-          acc += qx[i] * (ref_fp16_t(w[base + i]) * inv);
+          acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
         }
         y[t][o] = acc;
       }
@@ -1146,16 +1434,16 @@ static void quant_linear_75x32_to128(const ref_fp16_t x[TOKENS_T][D_MODEL],
   }
 }
 
-static void quant_linear_75x128_to32(const ref_fp16_t x[TOKENS_T][FF_DIM],
-                                     const ref_fp16_t w[D_MODEL * FF_DIM],
-                                     const ref_fp16_t b[D_MODEL],
-                                     ref_fp16_t s_x,
-                                     ref_fp16_t s_w,
-                                     ref_fp16_t y[TOKENS_T][D_MODEL],
+static void quant_linear_75x128_to32(const fp32_ref_t x[TOKENS_T][FF_DIM],
+                                     const double w[D_MODEL * FF_DIM],
+                                     const double b[D_MODEL],
+                                     float s_x,
+                                     float s_w,
+                                     fp32_ref_t y[TOKENS_T][D_MODEL],
                                      bool strict_int16_acc,
                                      RefFullQuantStats* stats,
                                      const char* block_name) {
-  ref_fp16_t inv = ref_fp16_t(1.0f) / (s_x * s_w);
+  fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   for (int t = 0; t < TOKENS_T; ++t) {
     if (strict_int16_acc) {
       int16_t qx_i16[FF_DIM];
@@ -1189,23 +1477,23 @@ static void quant_linear_75x128_to32(const ref_fp16_t x[TOKENS_T][FF_DIM],
           acc_i32 = sum;
         }
         const int16_t acc_i16 = static_cast<int16_t>(acc_i32);
-        const ref_fp16_t deq = ref_fp16_t(acc_i16) * inv;
-        y[t][o] = ref_fp16_t(b[o]) + deq;
+        const fp32_ref_t deq = fp32_ref_t(static_cast<float>(acc_i16)) * inv;
+        y[t][o] = fp32_ref_t(static_cast<float>(b[o])) + deq;
         if (stats != nullptr) {
           stats->int_linear.dequant_restore_count++;
         }
       }
     } else {
-      ref_fp16_t qx[FF_DIM];
+      fp32_ref_t qx[FF_DIM];
       for (int i = 0; i < FF_DIM; ++i) {
-        qx[i] = quantize_int8_symmetric(x[t][i], s_x);
+        qx[i] = quantize_int8_symmetric(x[t][i], fp32_ref_t(s_x));
       }
 
       for (int o = 0; o < D_MODEL; ++o) {
-        ref_fp16_t acc = ref_fp16_t(b[o]);
+        fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
         const int base = o * FF_DIM;
         for (int i = 0; i < FF_DIM; ++i) {
-          acc += qx[i] * (ref_fp16_t(w[base + i]) * inv);
+          acc += qx[i] * (fp32_ref_t(static_cast<float>(w[base + i])) * inv);
         }
         y[t][o] = acc;
       }
@@ -1213,12 +1501,12 @@ static void quant_linear_75x128_to32(const ref_fp16_t x[TOKENS_T][FF_DIM],
   }
 }
 
-static void quant_linear_75x128_to32_dut_aligned_raw(const ref_fp16_t x[TOKENS_T][FF_DIM],
-                                                     const ref_fp16_t w[D_MODEL * FF_DIM],
-                                                     const ref_fp16_t b[D_MODEL],
-                                                     ref_fp16_t s_x,
-                                                     ref_fp16_t s_w,
-                                                     ref_fp16_t y[TOKENS_T][D_MODEL],
+static void quant_linear_75x128_to32_dut_aligned_raw(const fp32_ref_t x[TOKENS_T][FF_DIM],
+                                                     const double w[D_MODEL * FF_DIM],
+                                                     const double b[D_MODEL],
+                                                     float s_x,
+                                                     float s_w,
+                                                     fp32_ref_t y[TOKENS_T][D_MODEL],
                                                      float (*qx_trace_out)[FF_DIM] = nullptr,
                                                      float (*weight_scaled_trace_out)[FF_DIM] = nullptr,
                                                      float* bias_domain_trace_out = nullptr,
@@ -1232,14 +1520,14 @@ static void quant_linear_75x128_to32_dut_aligned_raw(const ref_fp16_t x[TOKENS_T
                                                      uint32_t (*weight_bits_trace_out)[FF_DIM] = nullptr,
                                                      uint32_t (*weight_scaled_bits_trace_out)[FF_DIM] = nullptr) {
   static_assert(kW2RawTraceFocusDims <= D_MODEL, "kW2RawTraceFocusDims must be <= D_MODEL");
-  ref_fp16_t sx_q = s_x;
-  ref_fp16_t inv = ref_fp16_t(1.0f) / (s_x * s_w);
+  fp32_ref_t sx_q = fp32_ref_t(s_x);
+  fp32_ref_t inv = fp32_ref_t(1.0f) / (fp32_ref_t(s_x) * fp32_ref_t(s_w));
   if (scale_bits_override_valid) {
-    sx_q = ref_fp16_t(ref_bits_to_f32(sx_bits_override));
-    inv = ref_fp16_t(ref_bits_to_f32(inv_bits_override));
+    sx_q = fp32_ref_t(ref_bits_to_f32(sx_bits_override));
+    inv = fp32_ref_t(ref_bits_to_f32(inv_bits_override));
   }
   const uint32_t sx_bits_used = ref_f32_to_bits(sx_q.to_float());
-  const uint32_t sw_bits_used = ref_f32_to_bits(s_w.to_float());
+  const uint32_t sw_bits_used = ref_f32_to_bits(s_w);
   const uint32_t inv_bits_used = ref_f32_to_bits(inv.to_float());
   if (sx_bits_trace_out != nullptr) {
     *sx_bits_trace_out = sx_bits_used;
@@ -1251,16 +1539,16 @@ static void quant_linear_75x128_to32_dut_aligned_raw(const ref_fp16_t x[TOKENS_T
     *inv_bits_trace_out = inv_bits_used;
   }
   for (int t = 0; t < TOKENS_T; ++t) {
-    ref_fp16_t qx_cache[FF_DIM];
+    fp32_ref_t qx_cache[FF_DIM];
     for (int i = 0; i < FF_DIM; ++i) {
-      const ref_fp16_t qx_fp = quantize_int8_symmetric(x[t][i], sx_q);
+      const fp32_ref_t qx_fp = quantize_int8_symmetric(x[t][i], sx_q);
       qx_cache[i] = qx_fp;
       if (qx_trace_out != nullptr) {
         qx_trace_out[t][i] = qx_fp.to_float();
       }
     }
     for (int o = 0; o < D_MODEL; ++o) {
-      ref_fp16_t acc = ref_fp16_t(b[o]);
+      fp32_ref_t acc = fp32_ref_t(static_cast<float>(b[o]));
       if (bias_domain_trace_out != nullptr) {
         bias_domain_trace_out[o] = acc.to_float();
       }
@@ -1269,8 +1557,8 @@ static void quant_linear_75x128_to32_dut_aligned_raw(const ref_fp16_t x[TOKENS_T
       }
       const int base = o * FF_DIM;
       for (int i = 0; i < FF_DIM; ++i) {
-        const ref_fp16_t w_fp = ref_fp16_t(w[base + i]);
-        const ref_fp16_t weight_scaled_fp = w_fp * inv;
+        const fp32_ref_t w_fp = fp32_ref_t(static_cast<float>(w[base + i]));
+        const fp32_ref_t weight_scaled_fp = w_fp * inv;
         if (weight_bits_trace_out != nullptr) {
           weight_bits_trace_out[o][i] = ref_f32_to_bits(w_fp.to_float());
         }
@@ -1324,16 +1612,16 @@ static void build_masks(bool one_ring[TOKENS_T][TOKENS_T],
 // SOFTMAX_APPROX_BEGIN
 static inline void online_softmax_update(
   bool &is_init,
-  ref_fp16_t score,
-  const ref_fp16_t v_head[D_HEAD],
-  ref_fp16_t &max_score,
-  ref_fp16_t &sumexp,
-  ref_fp16_t acc_vec[D_HEAD],
+  fp32_ref_t score,
+  const fp32_ref_t v_head[D_HEAD],
+  fp32_ref_t &max_score,
+  fp32_ref_t &sumexp,
+  fp32_ref_t acc_vec[D_HEAD],
   RefSoftmaxExpMode exp_mode
 ) {
   if (!is_init) {
     max_score = score;
-    sumexp = ref_fp16_t(1.0f);
+    sumexp = fp32_ref_t(1.0f);
     for (int dh = 0; dh < D_HEAD; ++dh) {
       acc_vec[dh] = v_head[dh];
     }
@@ -1342,8 +1630,8 @@ static inline void online_softmax_update(
   }
 
   if (score > max_score) {
-    const ref_fp16_t rescale = ref_softmax_exp_dispatch(max_score - score, exp_mode);
-    sumexp = (sumexp * rescale) + ref_fp16_t(1.0f);
+    const fp32_ref_t rescale = ref_softmax_exp_dispatch(max_score - score, exp_mode);
+    sumexp = (sumexp * rescale) + fp32_ref_t(1.0f);
     for (int dh = 0; dh < D_HEAD; ++dh) {
       acc_vec[dh] = (acc_vec[dh] * rescale) + v_head[dh];
     }
@@ -1351,26 +1639,26 @@ static inline void online_softmax_update(
     return;
   }
 
-  const ref_fp16_t w = ref_softmax_exp_dispatch(score - max_score, exp_mode);
+  const fp32_ref_t w = ref_softmax_exp_dispatch(score - max_score, exp_mode);
   sumexp += w;
   for (int dh = 0; dh < D_HEAD; ++dh) {
     acc_vec[dh] += w * v_head[dh];
   }
 }
 
-static void attention_block(const ref_fp16_t q[TOKENS_T][D_MODEL],
-                            const ref_fp16_t k[TOKENS_T][D_MODEL],
-                            const ref_fp16_t v[TOKENS_T][D_MODEL],
+static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
+                            const fp32_ref_t k[TOKENS_T][D_MODEL],
+                            const fp32_ref_t v[TOKENS_T][D_MODEL],
                             const bool one_ring[TOKENS_T][TOKENS_T],
                             const bool second_ring[TOKENS_T][TOKENS_T],
                             const RefRunConfig& run_cfg,
                             RefFullQuantStats* stats,
-                            ref_fp16_t scores[HEADS][TOKENS_T][TOKENS_T],
-                            ref_fp16_t probs[HEADS][TOKENS_T][TOKENS_T],
-                            ref_fp16_t ctx[HEADS][TOKENS_T][D_HEAD],
-                            ref_fp16_t post_concat[TOKENS_T][D_MODEL]) {
-  const ref_fp16_t inv_sqrt_dh = ref_fp16_t(0.5f); // 1/sqrt(4)
-  const ref_fp16_t neg_inf = ref_fp16_t(-65504.0f); // finite fp16 sentinel
+                            fp32_ref_t scores[HEADS][TOKENS_T][TOKENS_T],
+                            fp32_ref_t probs[HEADS][TOKENS_T][TOKENS_T],
+                            fp32_ref_t ctx[HEADS][TOKENS_T][D_HEAD],
+                            fp32_ref_t post_concat[TOKENS_T][D_MODEL]) {
+  const fp32_ref_t inv_sqrt_dh = fp32_ref_t(0.5f); // 1/sqrt(4)
+  const fp32_ref_t neg_inf = fp32_ref_t(-65504.0f); // finite fp16 sentinel
   // Ref-side bounded numeric experiment: exp leaf-kernel can vary; reciprocal/row-state/exact path stay fixed.
   const bool use_softmax_exact = (run_cfg.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
@@ -1380,26 +1668,26 @@ static void attention_block(const ref_fp16_t q[TOKENS_T][D_MODEL],
       const int base = h * D_HEAD;
       bool has_valid = false;
       bool online_init = false;
-      ref_fp16_t online_max = neg_inf;
-      ref_fp16_t online_sumexp = ref_fp16_t(0.0f);
-      ref_fp16_t acc_vec[D_HEAD];
+      fp32_ref_t online_max = neg_inf;
+      fp32_ref_t online_sumexp = fp32_ref_t(0.0f);
+      fp32_ref_t acc_vec[D_HEAD];
       for (int dh = 0; dh < D_HEAD; ++dh) {
-        acc_vec[dh] = ref_fp16_t(0.0f);
+        acc_vec[dh] = fp32_ref_t(0.0f);
       }
 
       for (int j = 0; j < TOKENS_T; ++j) {
         if (mask[i][j]) {
           scores[h][i][j] = neg_inf;
-          probs[h][i][j] = ref_fp16_t(0.0f);
+          probs[h][i][j] = fp32_ref_t(0.0f);
           continue;
         }
 
         has_valid = true;
-        ref_fp16_t dot = ref_fp16_t(0.0f);
+        fp32_ref_t dot = fp32_ref_t(0.0f);
         for (int dh = 0; dh < D_HEAD; ++dh) {
           dot += q[i][base + dh] * k[j][base + dh];
         }
-        const ref_fp16_t score = stress_roundtrip_e4m3(
+        const fp32_ref_t score = stress_roundtrip_e4m3(
           dot * inv_sqrt_dh,
           run_cfg,
           RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
@@ -1421,28 +1709,28 @@ static void attention_block(const ref_fp16_t q[TOKENS_T][D_MODEL],
 
       if (!has_valid) {
         for (int dh = 0; dh < D_HEAD; ++dh) {
-          ctx[h][i][dh] = ref_fp16_t(0.0f);
+          ctx[h][i][dh] = fp32_ref_t(0.0f);
         }
         continue;
       }
 
       if (use_softmax_exact) {
-        ref_fp16_t max_score = neg_inf;
+        fp32_ref_t max_score = neg_inf;
         for (int j = 0; j < TOKENS_T; ++j) {
           if (!mask[i][j] && scores[h][i][j] > max_score) {
             max_score = scores[h][i][j];
           }
         }
 
-        ref_fp16_t w_unorm[TOKENS_T];
-        ref_fp16_t sumexp = ref_fp16_t(0.0f);
+        fp32_ref_t w_unorm[TOKENS_T];
+        fp32_ref_t sumexp = fp32_ref_t(0.0f);
         for (int j = 0; j < TOKENS_T; ++j) {
           if (mask[i][j]) {
-            w_unorm[j] = ref_fp16_t(0.0f);
+            w_unorm[j] = fp32_ref_t(0.0f);
             continue;
           }
-          const ref_fp16_t w_exact = ref_softmax_exp_dispatch(scores[h][i][j] - max_score, run_cfg.softmax_exp_mode);
-          const ref_fp16_t w = stress_roundtrip_e4m3(
+          const fp32_ref_t w_exact = fp32_ref_t(std::exp((scores[h][i][j] - max_score).to_float()));
+          const fp32_ref_t w = stress_roundtrip_e4m3(
             w_exact,
             run_cfg,
             RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
@@ -1452,21 +1740,21 @@ static void attention_block(const ref_fp16_t q[TOKENS_T][D_MODEL],
           sumexp += w;
         }
 
-        ref_fp16_t inv_sumexp = ref_fp16_t(0.0f);
-        if (sumexp > ref_fp16_t(0.0f)) {
-          inv_sumexp = ref_fp16_t(1.0f) / sumexp;
+        fp32_ref_t inv_sumexp = fp32_ref_t(0.0f);
+        if (sumexp > fp32_ref_t(0.0f)) {
+          inv_sumexp = fp32_ref_t(1.0f) / sumexp;
         }
 
-        ref_fp16_t ctx_acc[D_HEAD];
+        fp32_ref_t ctx_acc[D_HEAD];
         for (int dh = 0; dh < D_HEAD; ++dh) {
-          ctx_acc[dh] = ref_fp16_t(0.0f);
+          ctx_acc[dh] = fp32_ref_t(0.0f);
         }
         for (int j = 0; j < TOKENS_T; ++j) {
           if (mask[i][j]) {
-            probs[h][i][j] = ref_fp16_t(0.0f);
+            probs[h][i][j] = fp32_ref_t(0.0f);
             continue;
           }
-          const ref_fp16_t p = stress_roundtrip_e4m3(
+          const fp32_ref_t p = stress_roundtrip_e4m3(
             w_unorm[j] * inv_sumexp,
             run_cfg,
             RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
@@ -1486,15 +1774,15 @@ static void attention_block(const ref_fp16_t q[TOKENS_T][D_MODEL],
             "attention_ctx");
         }
       } else {
-        const ref_fp16_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+        const fp32_ref_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
 
         // Trace-only probability materialization from final online state.
         for (int j = 0; j < TOKENS_T; ++j) {
           if (mask[i][j]) {
-            probs[h][i][j] = ref_fp16_t(0.0f);
+            probs[h][i][j] = fp32_ref_t(0.0f);
             continue;
           }
-          const ref_fp16_t w = stress_roundtrip_e4m3(
+          const fp32_ref_t w = stress_roundtrip_e4m3(
             ref_softmax_exp_dispatch(scores[h][i][j] - online_max, run_cfg.softmax_exp_mode),
             run_cfg,
             RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
@@ -1542,26 +1830,26 @@ static void run_layer(const int layer_idx,
                       const int sample_index,
                       const RefRunConfig& run_cfg,
                       RefFullQuantStats* stats,
-                      const ref_fp16_t x_in[TOKENS_T][D_MODEL],
+                      const fp32_ref_t x_in[TOKENS_T][D_MODEL],
                       const bool one_ring[TOKENS_T][TOKENS_T],
                       const bool second_ring[TOKENS_T][TOKENS_T],
-                      ref_fp16_t q_out[TOKENS_T][D_MODEL],
-                      ref_fp16_t k_out[TOKENS_T][D_MODEL],
-                      ref_fp16_t v_out[TOKENS_T][D_MODEL],
-                      ref_fp16_t attn_scores[HEADS][TOKENS_T][TOKENS_T],
-                      ref_fp16_t attn_probs[HEADS][TOKENS_T][TOKENS_T],
-                      ref_fp16_t ctx[HEADS][TOKENS_T][D_HEAD],
-                      ref_fp16_t (*post_concat_out)[D_MODEL],
-                      ref_fp16_t attn_out[TOKENS_T][D_MODEL],
-                      ref_fp16_t ln_in[TOKENS_T][D_MODEL],
-                      ref_fp16_t ln_out[TOKENS_T][D_MODEL],
-                      ref_fp16_t ffn1_out[TOKENS_T][FF_DIM],
-                      ref_fp16_t act_out[TOKENS_T][FF_DIM],
-                      ref_fp16_t ffn2_out[TOKENS_T][D_MODEL],
-                      ref_fp16_t ffn_ln_out[TOKENS_T][D_MODEL],
-                      ref_fp16_t (*ffn_ln_sum_out)[D_MODEL] = nullptr,
-                      ref_fp16_t (*ffn_ln_in_out)[D_MODEL] = nullptr,
-                      ref_fp16_t (*ffn_w2_quant_raw_out)[D_MODEL] = nullptr,
+                      fp32_ref_t q_out[TOKENS_T][D_MODEL],
+                      fp32_ref_t k_out[TOKENS_T][D_MODEL],
+                      fp32_ref_t v_out[TOKENS_T][D_MODEL],
+                      fp32_ref_t attn_scores[HEADS][TOKENS_T][TOKENS_T],
+                      fp32_ref_t attn_probs[HEADS][TOKENS_T][TOKENS_T],
+                      fp32_ref_t ctx[HEADS][TOKENS_T][D_HEAD],
+                      fp32_ref_t (*post_concat_out)[D_MODEL],
+                      fp32_ref_t attn_out[TOKENS_T][D_MODEL],
+                      fp32_ref_t ln_in[TOKENS_T][D_MODEL],
+                      fp32_ref_t ln_out[TOKENS_T][D_MODEL],
+                      fp32_ref_t ffn1_out[TOKENS_T][FF_DIM],
+                      fp32_ref_t act_out[TOKENS_T][FF_DIM],
+                      fp32_ref_t ffn2_out[TOKENS_T][D_MODEL],
+                      fp32_ref_t ffn_ln_out[TOKENS_T][D_MODEL],
+                      fp32_ref_t (*ffn_ln_sum_out)[D_MODEL] = nullptr,
+                      fp32_ref_t (*ffn_ln_in_out)[D_MODEL] = nullptr,
+                      fp32_ref_t (*ffn_w2_quant_raw_out)[D_MODEL] = nullptr,
                       float (*ffn_w2_quant_raw_qx_out)[FF_DIM] = nullptr,
                       float (*ffn_w2_quant_raw_weight_scaled_out)[FF_DIM] = nullptr,
                       float* ffn_w2_quant_raw_bias_domain_out = nullptr,
@@ -1574,102 +1862,102 @@ static void run_layer(const int layer_idx,
                       uint32_t* ffn_w2_raw_inv_bits_out = nullptr,
                       uint32_t (*ffn_w2_raw_weight_bits_out)[FF_DIM] = nullptr,
                       uint32_t (*ffn_w2_raw_weight_scaled_bits_out)[FF_DIM] = nullptr,
-                      ref_fp16_t (*ffn_ln_sum_dut_aligned_out)[D_MODEL] = nullptr,
-                      ref_fp16_t (*ffn_ln_in_dut_aligned_out)[D_MODEL] = nullptr,
-                      ref_fp16_t (*ffn_ln_out_dut_aligned_out)[D_MODEL] = nullptr) {
+                      fp32_ref_t (*ffn_ln_sum_dut_aligned_out)[D_MODEL] = nullptr,
+                      fp32_ref_t (*ffn_ln_in_dut_aligned_out)[D_MODEL] = nullptr,
+                      fp32_ref_t (*ffn_ln_out_dut_aligned_out)[D_MODEL] = nullptr) {
   const bool strict_int16 = use_full_e4m3_nonlinear_stress(run_cfg);
-  const ref_fp16_t* w_q = nullptr;
-  const ref_fp16_t* b_q = nullptr;
-  const ref_fp16_t* sw_q = nullptr;
-  const ref_fp16_t* w_k = nullptr;
-  const ref_fp16_t* b_k = nullptr;
-  const ref_fp16_t* sw_k = nullptr;
-  const ref_fp16_t* w_v = nullptr;
-  const ref_fp16_t* b_v = nullptr;
-  const ref_fp16_t* sw_v = nullptr;
-  const ref_fp16_t* w_o = nullptr;
-  const ref_fp16_t* b_o = nullptr;
-  const ref_fp16_t* sw_o = nullptr;
-  const ref_fp16_t* w_ff1 = nullptr;
-  const ref_fp16_t* b_ff1 = nullptr;
-  const ref_fp16_t* sw_ff1 = nullptr;
-  const ref_fp16_t* w_ff2 = nullptr;
-  const ref_fp16_t* b_ff2 = nullptr;
-  const ref_fp16_t* sw_ff2 = nullptr;
-  const ref_fp16_t* ln0_w = nullptr;
-  const ref_fp16_t* ln0_b = nullptr;
-  const ref_fp16_t* ln1_w = nullptr;
-  const ref_fp16_t* ln1_b = nullptr;
+  const double* w_q = nullptr;
+  const double* b_q = nullptr;
+  const double* sw_q = nullptr;
+  const double* w_k = nullptr;
+  const double* b_k = nullptr;
+  const double* sw_k = nullptr;
+  const double* w_v = nullptr;
+  const double* b_v = nullptr;
+  const double* sw_v = nullptr;
+  const double* w_o = nullptr;
+  const double* b_o = nullptr;
+  const double* sw_o = nullptr;
+  const double* w_ff1 = nullptr;
+  const double* b_ff1 = nullptr;
+  const double* sw_ff1 = nullptr;
+  const double* w_ff2 = nullptr;
+  const double* b_ff2 = nullptr;
+  const double* sw_ff2 = nullptr;
+  const double* ln0_w = nullptr;
+  const double* ln0_b = nullptr;
+  const double* ln1_w = nullptr;
+  const double* ln1_b = nullptr;
 
-  ref_fp16_t s_x_in = ref_fp16_t(0.0f);
-  ref_fp16_t s_x_o = ref_fp16_t(0.0f);
-  ref_fp16_t s_x_ff1 = ref_fp16_t(0.0f);
-  ref_fp16_t s_x_ff2 = ref_fp16_t(0.0f);
+  float s_x_in = 0.0f;
+  float s_x_o = 0.0f;
+  float s_x_ff1 = 0.0f;
+  float s_x_ff2 = 0.0f;
 
   if (layer_idx == 0) {
-    w_q = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_0_weight);
-    b_q = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_0_bias);
-    sw_q = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_0_s_w);
-    w_k = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_1_weight);
-    b_k = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_1_bias);
-    sw_k = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_1_s_w);
-    w_v = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_2_weight);
-    b_v = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_2_bias);
-    sw_v = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_2_s_w);
-    w_o = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_3_weight);
-    b_o = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_3_bias);
-    sw_o = ref_fp16_ptr_from_double(w_decoder_layers_0_self_attn_linears_3_s_w);
-    w_ff1 = ref_fp16_ptr_from_double(w_decoder_layers_0_feed_forward_w_1_weight);
-    b_ff1 = ref_fp16_ptr_from_double(w_decoder_layers_0_feed_forward_w_1_bias);
-    sw_ff1 = ref_fp16_ptr_from_double(w_decoder_layers_0_feed_forward_w_1_s_w);
-    w_ff2 = ref_fp16_ptr_from_double(w_decoder_layers_0_feed_forward_w_2_weight);
-    b_ff2 = ref_fp16_ptr_from_double(w_decoder_layers_0_feed_forward_w_2_bias);
-    sw_ff2 = ref_fp16_ptr_from_double(w_decoder_layers_0_feed_forward_w_2_s_w);
-    ln0_w = ref_fp16_ptr_from_double(w_decoder_layers_0_sublayer_0_norm_weight);
-    ln0_b = ref_fp16_ptr_from_double(w_decoder_layers_0_sublayer_0_norm_bias);
-    ln1_w = ref_fp16_ptr_from_double(w_decoder_layers_0_sublayer_1_norm_weight);
-    ln1_b = ref_fp16_ptr_from_double(w_decoder_layers_0_sublayer_1_norm_bias);
+    w_q = w_decoder_layers_0_self_attn_linears_0_weight;
+    b_q = w_decoder_layers_0_self_attn_linears_0_bias;
+    sw_q = w_decoder_layers_0_self_attn_linears_0_s_w;
+    w_k = w_decoder_layers_0_self_attn_linears_1_weight;
+    b_k = w_decoder_layers_0_self_attn_linears_1_bias;
+    sw_k = w_decoder_layers_0_self_attn_linears_1_s_w;
+    w_v = w_decoder_layers_0_self_attn_linears_2_weight;
+    b_v = w_decoder_layers_0_self_attn_linears_2_bias;
+    sw_v = w_decoder_layers_0_self_attn_linears_2_s_w;
+    w_o = w_decoder_layers_0_self_attn_linears_3_weight;
+    b_o = w_decoder_layers_0_self_attn_linears_3_bias;
+    sw_o = w_decoder_layers_0_self_attn_linears_3_s_w;
+    w_ff1 = w_decoder_layers_0_feed_forward_w_1_weight;
+    b_ff1 = w_decoder_layers_0_feed_forward_w_1_bias;
+    sw_ff1 = w_decoder_layers_0_feed_forward_w_1_s_w;
+    w_ff2 = w_decoder_layers_0_feed_forward_w_2_weight;
+    b_ff2 = w_decoder_layers_0_feed_forward_w_2_bias;
+    sw_ff2 = w_decoder_layers_0_feed_forward_w_2_s_w;
+    ln0_w = w_decoder_layers_0_sublayer_0_norm_weight;
+    ln0_b = w_decoder_layers_0_sublayer_0_norm_bias;
+    ln1_w = w_decoder_layers_0_sublayer_1_norm_weight;
+    ln1_b = w_decoder_layers_0_sublayer_1_norm_bias;
 
-    s_x_in = ref_fp16_t(l0_in_s_x);
-    s_x_o = ref_fp16_t(l0_o_s_x);
-    s_x_ff1 = ref_fp16_t(l0_ff1_s_x);
-    s_x_ff2 = ref_fp16_t(l0_ff2_s_x);
+    s_x_in = static_cast<float>(l0_in_s_x);
+    s_x_o = static_cast<float>(l0_o_s_x);
+    s_x_ff1 = static_cast<float>(l0_ff1_s_x);
+    s_x_ff2 = static_cast<float>(l0_ff2_s_x);
   } else {
-    w_q = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_0_weight);
-    b_q = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_0_bias);
-    sw_q = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_0_s_w);
-    w_k = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_1_weight);
-    b_k = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_1_bias);
-    sw_k = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_1_s_w);
-    w_v = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_2_weight);
-    b_v = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_2_bias);
-    sw_v = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_2_s_w);
-    w_o = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_3_weight);
-    b_o = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_3_bias);
-    sw_o = ref_fp16_ptr_from_double(w_decoder_layers_1_self_attn_linears_3_s_w);
-    w_ff1 = ref_fp16_ptr_from_double(w_decoder_layers_1_feed_forward_w_1_weight);
-    b_ff1 = ref_fp16_ptr_from_double(w_decoder_layers_1_feed_forward_w_1_bias);
-    sw_ff1 = ref_fp16_ptr_from_double(w_decoder_layers_1_feed_forward_w_1_s_w);
-    w_ff2 = ref_fp16_ptr_from_double(w_decoder_layers_1_feed_forward_w_2_weight);
-    b_ff2 = ref_fp16_ptr_from_double(w_decoder_layers_1_feed_forward_w_2_bias);
-    sw_ff2 = ref_fp16_ptr_from_double(w_decoder_layers_1_feed_forward_w_2_s_w);
-    ln0_w = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_0_norm_weight);
-    ln0_b = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_0_norm_bias);
-    ln1_w = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_1_norm_weight);
-    ln1_b = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_1_norm_bias);
+    w_q = w_decoder_layers_1_self_attn_linears_0_weight;
+    b_q = w_decoder_layers_1_self_attn_linears_0_bias;
+    sw_q = w_decoder_layers_1_self_attn_linears_0_s_w;
+    w_k = w_decoder_layers_1_self_attn_linears_1_weight;
+    b_k = w_decoder_layers_1_self_attn_linears_1_bias;
+    sw_k = w_decoder_layers_1_self_attn_linears_1_s_w;
+    w_v = w_decoder_layers_1_self_attn_linears_2_weight;
+    b_v = w_decoder_layers_1_self_attn_linears_2_bias;
+    sw_v = w_decoder_layers_1_self_attn_linears_2_s_w;
+    w_o = w_decoder_layers_1_self_attn_linears_3_weight;
+    b_o = w_decoder_layers_1_self_attn_linears_3_bias;
+    sw_o = w_decoder_layers_1_self_attn_linears_3_s_w;
+    w_ff1 = w_decoder_layers_1_feed_forward_w_1_weight;
+    b_ff1 = w_decoder_layers_1_feed_forward_w_1_bias;
+    sw_ff1 = w_decoder_layers_1_feed_forward_w_1_s_w;
+    w_ff2 = w_decoder_layers_1_feed_forward_w_2_weight;
+    b_ff2 = w_decoder_layers_1_feed_forward_w_2_bias;
+    sw_ff2 = w_decoder_layers_1_feed_forward_w_2_s_w;
+    ln0_w = w_decoder_layers_1_sublayer_0_norm_weight;
+    ln0_b = w_decoder_layers_1_sublayer_0_norm_bias;
+    ln1_w = w_decoder_layers_1_sublayer_1_norm_weight;
+    ln1_b = w_decoder_layers_1_sublayer_1_norm_bias;
 
-    s_x_in = ref_fp16_t(l1_in_s_x);
-    s_x_o = ref_fp16_t(l1_o_s_x);
-    s_x_ff1 = ref_fp16_t(l1_ff1_s_x);
-    s_x_ff2 = ref_fp16_t(l1_ff2_s_x);
+    s_x_in = static_cast<float>(l1_in_s_x);
+    s_x_o = static_cast<float>(l1_o_s_x);
+    s_x_ff1 = static_cast<float>(l1_ff1_s_x);
+    s_x_ff2 = static_cast<float>(l1_ff2_s_x);
   }
 
   quant_linear_75x32_to32(
-    x_in, w_q, b_q, s_x_in, sw_q[0], q_out, strict_int16, stats, "Wq");
+    x_in, w_q, b_q, s_x_in, static_cast<float>(sw_q[0]), q_out, strict_int16, stats, "Wq");
   quant_linear_75x32_to32(
-    x_in, w_k, b_k, s_x_in, sw_k[0], k_out, strict_int16, stats, "Wk");
+    x_in, w_k, b_k, s_x_in, static_cast<float>(sw_k[0]), k_out, strict_int16, stats, "Wk");
   quant_linear_75x32_to32(
-    x_in, w_v, b_v, s_x_in, sw_v[0], v_out, strict_int16, stats, "Wv");
+    x_in, w_v, b_v, s_x_in, static_cast<float>(sw_v[0]), v_out, strict_int16, stats, "Wv");
 
   if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -1684,7 +1972,7 @@ static void run_layer(const int layer_idx,
     }
   }
 
-  ref_fp16_t post_concat[TOKENS_T][D_MODEL];
+  fp32_ref_t post_concat[TOKENS_T][D_MODEL];
   attention_block(q_out,
                   k_out,
                   v_out,
@@ -1708,7 +1996,7 @@ static void run_layer(const int layer_idx,
                           w_o,
                           b_o,
                           s_x_o,
-                          sw_o[0],
+                          static_cast<float>(sw_o[0]),
                           attn_out,
                           strict_int16,
                           stats,
@@ -1752,7 +2040,7 @@ static void run_layer(const int layer_idx,
                            w_ff1,
                            b_ff1,
                            s_x_ff1,
-                           sw_ff1[0],
+                           static_cast<float>(sw_ff1[0]),
                            ffn1_out,
                            strict_int16,
                            stats,
@@ -1769,9 +2057,9 @@ static void run_layer(const int layer_idx,
 
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int i = 0; i < FF_DIM; ++i) {
-      ref_fp16_t vff = ffn1_out[t][i];
+      fp32_ref_t vff = ffn1_out[t][i];
       act_out[t][i] = stress_roundtrip_e4m3(
-        (vff > ref_fp16_t(0.0f)) ? vff : ref_fp16_t(0.0f),
+        (vff > fp32_ref_t(0.0f)) ? vff : fp32_ref_t(0.0f),
         run_cfg,
         RefFragGroup::NONE,
         stats,
@@ -1784,7 +2072,7 @@ static void run_layer(const int layer_idx,
                            w_ff2,
                            b_ff2,
                            s_x_ff2,
-                           sw_ff2[0],
+                           static_cast<float>(sw_ff2[0]),
                            ffn2_out,
                            strict_int16,
                            stats,
@@ -1795,7 +2083,7 @@ static void run_layer(const int layer_idx,
       w_ff2,
       b_ff2,
       s_x_ff2,
-      sw_ff2[0],
+      static_cast<float>(sw_ff2[0]),
       ffn_w2_quant_raw_out,
       ffn_w2_quant_raw_qx_out,
       ffn_w2_quant_raw_weight_scaled_out,
@@ -1822,8 +2110,8 @@ static void run_layer(const int layer_idx,
   capture_ln_upstream_boundary_75x32(
     sample_index, layer_idx, RefLnUpstreamBoundaryTag::L0_FFN2_OUT, ffn2_out);
 
-  ref_fp16_t ffn_ln_assembly_sum[TOKENS_T][D_MODEL];
-  ref_fp16_t ffn_ln_in[TOKENS_T][D_MODEL];
+  fp32_ref_t ffn_ln_assembly_sum[TOKENS_T][D_MODEL];
+  fp32_ref_t ffn_ln_in[TOKENS_T][D_MODEL];
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int d = 0; d < D_MODEL; ++d) {
       ffn_ln_assembly_sum[t][d] = ffn2_out[t][d] + ln_out[t][d];
@@ -1871,9 +2159,9 @@ static void run_layer(const int layer_idx,
       (ffn_ln_sum_dut_aligned_out != nullptr ||
        ffn_ln_in_dut_aligned_out != nullptr ||
        ffn_ln_out_dut_aligned_out != nullptr)) {
-    ref_fp16_t ffn_ln_assembly_sum_dut_aligned[TOKENS_T][D_MODEL];
-    ref_fp16_t ffn_ln_in_dut_aligned[TOKENS_T][D_MODEL];
-    ref_fp16_t ffn_ln_out_dut_aligned[TOKENS_T][D_MODEL];
+    fp32_ref_t ffn_ln_assembly_sum_dut_aligned[TOKENS_T][D_MODEL];
+    fp32_ref_t ffn_ln_in_dut_aligned[TOKENS_T][D_MODEL];
+    fp32_ref_t ffn_ln_out_dut_aligned[TOKENS_T][D_MODEL];
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
         ffn_ln_assembly_sum_dut_aligned[t][d] = ffn_w2_quant_raw_out[t][d] + ln_out[t][d];
@@ -1955,8 +2243,6 @@ RefModel::RefModel() {
 
 void RefModel::set_run_config(const RefRunConfig& cfg) {
   run_cfg_ = cfg;
-  // Pure-fp16 ref path: keep only algo / LN selectors from caller.
-  run_cfg_.precision_mode = RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
 }
 
 RefRunConfig RefModel::get_run_config() const {
@@ -1998,17 +2284,17 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       dump.root = dump_cfg_.dump_dir;
     }
 
-    ref_fp16_t y_var[VAR_N];
+    fp32_ref_t y_var[VAR_N];
     int y_hard[VAR_N];
     for (int i = 0; i < VAR_N; ++i) {
-      ref_fp16_t y = ref_fp16_t(io.input_y_fp32[b * N + i]);
+      fp32_ref_t y = fp32_ref_t(static_cast<float>(io.input_y_fp32[b * N + i]));
       y_var[i] = y;
-      y_hard[i] = (y < ref_fp16_t(0.0f)) ? 1 : 0;
+      y_hard[i] = (y < fp32_ref_t(0.0f)) ? 1 : 0;
     }
 
-    ref_fp16_t node_feature[TOKENS_T];
+    fp32_ref_t node_feature[TOKENS_T];
     for (int i = 0; i < VAR_N; ++i) {
-      node_feature[i] = ref_model_abs(y_var[i]);
+      node_feature[i] = fp32_abs(y_var[i]);
     }
     for (int c = 0; c < CHECK_N; ++c) {
       int parity = 0;
@@ -2018,20 +2304,15 @@ void RefModel::infer_step0(const RefModelIO& io) const {
           parity ^= y_hard[v];
         }
       }
-      node_feature[VAR_N + c] = (parity == 0) ? ref_fp16_t(1.0f) : ref_fp16_t(-1.0f);
+      node_feature[VAR_N + c] = (parity == 0) ? fp32_ref_t(1.0f) : fp32_ref_t(-1.0f);
     }
 
-    const ref_fp16_t* src_embed_fp16 = ref_fp16_ptr_from_double(w_src_embed);
-    const ref_fp16_t* lpe_token_fp16 = ref_fp16_ptr_from_double(w_lpe_token);
-    const ref_fp16_t* out_fc_weight_fp16 = ref_fp16_ptr_from_double(w_out_fc_weight);
-    const ref_fp16_t* out_fc_bias_fp16 = ref_fp16_ptr_from_double(w_out_fc_bias);
-
-    static ref_fp16_t preproc_x[TOKENS_T][D_MODEL];
-    static ref_fp16_t prelayer_x[TOKENS_T][D_MODEL];
+    static fp32_ref_t preproc_x[TOKENS_T][D_MODEL];
+    static fp32_ref_t prelayer_x[TOKENS_T][D_MODEL];
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int k = 0; k < 24; ++k) {
         preproc_x[t][k] = stress_roundtrip_e4m3_g5_sub(
-          node_feature[t] * src_embed_fp16[t * 24 + k],
+          node_feature[t] * fp32_ref_t(static_cast<float>(w_src_embed[t * 24 + k])),
           run_cfg_,
           RefG5SubIsland::EMBED_ONLY,
           &local_stats,
@@ -2040,7 +2321,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
       for (int k = 0; k < 8; ++k) {
         preproc_x[t][24 + k] = stress_roundtrip_e4m3_g5_sub(
-          lpe_token_fp16[t * 8 + k],
+          fp32_ref_t(static_cast<float>(w_lpe_token[t * 8 + k])),
           run_cfg_,
           RefG5SubIsland::SPE_ONLY,
           &local_stats,
@@ -2068,20 +2349,20 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, D_MODEL>(dump, "preproc_x", preproc_x);
     dump_2d<TOKENS_T, D_MODEL>(dump, "prelayer_x", prelayer_x);
 
-    static ref_fp16_t layer0_q[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_k[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_v[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_scores[HEADS][TOKENS_T][TOKENS_T];
-    static ref_fp16_t layer0_probs[HEADS][TOKENS_T][TOKENS_T];
-    static ref_fp16_t layer0_ctx[HEADS][TOKENS_T][D_HEAD];
-    static ref_fp16_t layer0_post_concat[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_attn_out[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ln_in[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ln_out[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ffn1[TOKENS_T][FF_DIM];
-    static ref_fp16_t layer0_act[TOKENS_T][FF_DIM];
-    static ref_fp16_t layer0_ffn2[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ffn_w2_quant_raw[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_q[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_k[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_v[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_scores[HEADS][TOKENS_T][TOKENS_T];
+    static fp32_ref_t layer0_probs[HEADS][TOKENS_T][TOKENS_T];
+    static fp32_ref_t layer0_ctx[HEADS][TOKENS_T][D_HEAD];
+    static fp32_ref_t layer0_post_concat[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_attn_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ln_in[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ln_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn1[TOKENS_T][FF_DIM];
+    static fp32_ref_t layer0_act[TOKENS_T][FF_DIM];
+    static fp32_ref_t layer0_ffn2[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_w2_quant_raw[TOKENS_T][D_MODEL];
     static float layer0_ffn_w2_quant_raw_qx[TOKENS_T][FF_DIM];
     static float layer0_ffn_w2_quant_raw_weight_scaled[D_MODEL][FF_DIM];
     static uint32_t layer0_ffn_w2_quant_raw_weight_bits[D_MODEL][FF_DIM];
@@ -2091,12 +2372,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     static uint32_t layer0_ffn_w2_quant_raw_sx_bits = 0u;
     static uint32_t layer0_ffn_w2_quant_raw_sw_bits = 0u;
     static uint32_t layer0_ffn_w2_quant_raw_inv_bits = 0u;
-    static ref_fp16_t layer0_ffn_residual_sum[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ffn_ln_in[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ffn_residual_sum_dut_aligned[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ffn_ln_in_dut_aligned[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer0_ffn_ln_out_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_residual_sum[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_ln_in[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_ln_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_residual_sum_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_ln_in_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer0_ffn_ln_out_dut_aligned[TOKENS_T][D_MODEL];
 
     run_layer(0,
               b,
@@ -2340,21 +2621,12 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
     }
 
-    const ref_fp16_t* mid_norm_w = ref_fp16_ptr_from_double(w_decoder_norm2_weight);
-    const ref_fp16_t* mid_norm_b = ref_fp16_ptr_from_double(w_decoder_norm2_bias);
-    const ref_fp16_t* layer1_ln0_w_fp16 = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_0_norm_weight);
-    const ref_fp16_t* layer1_ln0_b_fp16 = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_0_norm_bias);
-    const ref_fp16_t* layer1_ln1_w_fp16 = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_1_norm_weight);
-    const ref_fp16_t* layer1_ln1_b_fp16 = ref_fp16_ptr_from_double(w_decoder_layers_1_sublayer_1_norm_bias);
-    const ref_fp16_t* end_norm_w_fp16 = ref_fp16_ptr_from_double(w_decoder_norm_weight);
-    const ref_fp16_t* end_norm_b_fp16 = ref_fp16_ptr_from_double(w_decoder_norm_bias);
-
-    static ref_fp16_t mid_norm[TOKENS_T][D_MODEL];
-    static ref_fp16_t mid_norm_dut_aligned[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_attn_input_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t mid_norm[TOKENS_T][D_MODEL];
+    static fp32_ref_t mid_norm_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_attn_input_dut_aligned[TOKENS_T][D_MODEL];
     apply_layernorm_tokens(layer0_ffn_ln_out,
-                           mid_norm_w,
-                           mid_norm_b,
+                           w_decoder_norm2_weight,
+                           w_decoder_norm2_bias,
                            run_cfg_.ln_mode,
                            b,
                            RefLnSiteTag::MID_NORM,
@@ -2373,8 +2645,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
     }
     apply_layernorm_tokens(layer0_ffn_ln_out_dut_aligned,
-                           mid_norm_w,
-                           mid_norm_b,
+                           w_decoder_norm2_weight,
+                           w_decoder_norm2_bias,
                            run_cfg_.ln_mode,
                            b,
                            RefLnSiteTag::MID_NORM,
@@ -2398,25 +2670,25 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
     }
 
-    static ref_fp16_t layer1_q[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_k[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_v[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_scores[HEADS][TOKENS_T][TOKENS_T];
-    static ref_fp16_t layer1_probs[HEADS][TOKENS_T][TOKENS_T];
-    static ref_fp16_t layer1_ctx[HEADS][TOKENS_T][D_HEAD];
-    static ref_fp16_t layer1_post_concat[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_attn_out[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_ln_in[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_ln_out[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_pre_ln_input_dut_aligned[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_ln0_out_dut_aligned[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_ffn1[TOKENS_T][FF_DIM];
-    static ref_fp16_t layer1_act[TOKENS_T][FF_DIM];
-    static ref_fp16_t layer1_ffn2[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_ffn_ln_out[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_sublayer1_ln_in_dut_aligned[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_sublayer1_ln_affine_out_dut_aligned[TOKENS_T][D_MODEL];
-    static ref_fp16_t layer1_sublayer1_ln_out_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_q[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_k[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_v[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_scores[HEADS][TOKENS_T][TOKENS_T];
+    static fp32_ref_t layer1_probs[HEADS][TOKENS_T][TOKENS_T];
+    static fp32_ref_t layer1_ctx[HEADS][TOKENS_T][D_HEAD];
+    static fp32_ref_t layer1_post_concat[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_attn_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_ln_in[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_ln_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_pre_ln_input_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_ln0_out_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_ffn1[TOKENS_T][FF_DIM];
+    static fp32_ref_t layer1_act[TOKENS_T][FF_DIM];
+    static fp32_ref_t layer1_ffn2[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_ffn_ln_out[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_sublayer1_ln_in_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_sublayer1_ln_affine_out_dut_aligned[TOKENS_T][D_MODEL];
+    static fp32_ref_t layer1_sublayer1_ln_out_dut_aligned[TOKENS_T][D_MODEL];
 
     run_layer(1,
               b,
@@ -2450,8 +2722,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
     }
     apply_layernorm_tokens(layer1_pre_ln_input_dut_aligned,
-                           layer1_ln0_w_fp16,
-                           layer1_ln0_b_fp16,
+                           w_decoder_layers_1_sublayer_0_norm_weight,
+                           w_decoder_layers_1_sublayer_0_norm_bias,
                            run_cfg_.ln_mode,
                            b,
                            RefLnSiteTag::L1_SUB0,
@@ -2471,14 +2743,14 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     }
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
-        const ref_fp16_t residual_sum = layer1_ffn2[t][d] + layer1_ln0_out_dut_aligned[t][d];
+        const fp32_ref_t residual_sum = layer1_ffn2[t][d] + layer1_ln0_out_dut_aligned[t][d];
         // Keep sublayer1 LN input carrier aligned to DUT residual writeback semantics.
         layer1_sublayer1_ln_in_dut_aligned[t][d] = residual_sum;
       }
     }
     apply_layernorm_tokens(layer1_sublayer1_ln_in_dut_aligned,
-                           layer1_ln1_w_fp16,
-                           layer1_ln1_b_fp16,
+                           w_decoder_layers_1_sublayer_1_norm_weight,
+                           w_decoder_layers_1_sublayer_1_norm_bias,
                            run_cfg_.ln_mode,
                            b,
                            RefLnSiteTag::L1_SUB1,
@@ -2662,10 +2934,10 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     }
 
     // Logical name: endLN_out, kept in end_norm for trace compatibility.
-    static ref_fp16_t end_norm[TOKENS_T][D_MODEL];
+    static fp32_ref_t end_norm[TOKENS_T][D_MODEL];
     apply_layernorm_tokens(layer1_ffn_ln_out,
-                           end_norm_w_fp16,
-                           end_norm_b_fp16,
+                           w_decoder_norm_weight,
+                           w_decoder_norm_bias,
                            run_cfg_.ln_mode,
                            b,
                            RefLnSiteTag::END_NORM,
@@ -2693,15 +2965,16 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     }
 
     // Logical name: s_t (token-wise FinalEmbedding scalar), trace tensor name kept stable.
-    static ref_fp16_t final_node_logits[TOKENS_T][1];
-    static ref_fp16_t out_fc_in[1][TOKENS_T];
+    static fp32_ref_t final_node_logits[TOKENS_T][1];
+    static fp32_ref_t out_fc_in[1][TOKENS_T];
     for (int t = 0; t < TOKENS_T; ++t) {
-      ref_fp16_t acc = ref_fp16_sanitize_value(w_oned_final_embed_0_bias[0]);
+      float acc_f = ref_fp16_clamp_finite(static_cast<float>(w_oned_final_embed_0_bias[0]));
       for (int i = 0; i < D_MODEL; ++i) {
-        const ref_fp16_t prod = end_norm[t][i] * ref_fp16_t(w_oned_final_embed_0_weight[i]);
-        acc = ref_fp16_sanitize_value(acc + prod);
+        const float prod_f = end_norm[t][i].to_float() * static_cast<float>(w_oned_final_embed_0_weight[i]);
+        acc_f = ref_fp16_clamp_finite(acc_f + prod_f);
       }
-      ref_fp16_t s_t_embed_out = acc;
+      fp32_ref_t acc = ref_fp16_sanitize_value(acc_f);
+      fp32_ref_t s_t_embed_out = acc;
       if (use_island_s3(run_cfg_)) {
         if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
           s_t_embed_out = stress_roundtrip_e4m3(
@@ -2723,7 +2996,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
       final_node_logits[t][0] = ref_fp16_sanitize_value(s_t_embed_out);
 
-      ref_fp16_t s_t_out_fc = s_t_embed_out;
+      fp32_ref_t s_t_out_fc = s_t_embed_out;
       if (use_island_s0(run_cfg_)) {
         if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
           s_t_out_fc = stress_roundtrip_e4m3(
@@ -2745,16 +3018,16 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
       out_fc_in[0][t] = ref_fp16_sanitize_value(s_t_out_fc);
       if (io.out_finalhead_s_t != nullptr) {
-        io.out_finalhead_s_t[b * TOKENS_T + t] = acc.to_double();
+        io.out_finalhead_s_t[b * TOKENS_T + t] = static_cast<double>(acc.to_float());
       }
     }
 
-    static ref_fp16_t final_logits[1][VAR_N];
-    static ref_fp16_t final_x_pred[VAR_N];
+    static fp32_ref_t final_logits[1][VAR_N];
+    static fp32_ref_t final_x_pred[VAR_N];
     for (int n = 0; n < VAR_N; ++n) {
-      ref_fp16_t acc = ref_fp16_sanitize_value(out_fc_bias_fp16[n]);
+      float acc_f = ref_fp16_clamp_finite(static_cast<float>(w_out_fc_bias[n]));
       for (int t = 0; t < TOKENS_T; ++t) {
-        ref_fp16_t mul_in = ref_fp16_sanitize_value(out_fc_in[0][t]);
+        fp32_ref_t mul_in = ref_fp16_sanitize_value(out_fc_in[0][t]);
         if (use_island_s1(run_cfg_)) {
           if (use_full_e4m3_nonlinear_stress(run_cfg_)) {
             mul_in = stress_roundtrip_e4m3(
@@ -2775,9 +3048,10 @@ void RefModel::infer_step0(const RefModelIO& io) const {
             mul_in = roundtrip_through_generic_e4m3(mul_in);
           }
         }
-        const ref_fp16_t prod = out_fc_weight_fp16[n * TOKENS_T + t] * mul_in;
-        acc = ref_fp16_sanitize_value(acc + prod);
+        const float prod_f = static_cast<float>(w_out_fc_weight[n * TOKENS_T + t]) * mul_in.to_float();
+        acc_f = ref_fp16_clamp_finite(acc_f + prod_f);
       }
+      fp32_ref_t acc = ref_fp16_sanitize_value(acc_f);
       if (use_full_e4m3_nonlinear_stress(run_cfg_) || use_fp16_replace_fp32_global(run_cfg_)) {
         acc = stress_roundtrip_e4m3(
           acc,
@@ -2788,14 +3062,14 @@ void RefModel::infer_step0(const RefModelIO& io) const {
       }
       final_logits[0][n] = acc;
 
-      const bool y_is_zero = y_var[n] == ref_fp16_t(0.0f);
+      const bool y_is_zero = y_var[n] == fp32_ref_t(0.0f);
       const bool y_is_negative = (!y_is_zero) && y_var[n].signbit();
       const bool acc_is_negative = acc.signbit();
       const bool pred_bit = y_is_zero ? false : (acc_is_negative ^ y_is_negative);
-      final_x_pred[n] = pred_bit ? ref_fp16_t(1.0f) : ref_fp16_t(0.0f);
+      final_x_pred[n] = pred_bit ? fp32_ref_t(1.0f) : fp32_ref_t(0.0f);
 
       if (n < N_out) {
-        io.out_logits[b * N + n] = acc.to_double();
+        io.out_logits[b * N + n] = static_cast<double>(acc.to_float());
         io.out_x_pred[b * N + n] = bit1_t(pred_bit ? 1 : 0);
       }
     }
@@ -2812,7 +3086,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     std::vector<float> xp_buf;
     xp_buf.resize(VAR_N);
     for (int i = 0; i < VAR_N; ++i) {
-      xp_buf[i] = final_x_pred[i].to_double();
+      xp_buf[i] = final_x_pred[i].to_float();
     }
     std::vector<int> xp_shape;
     xp_shape.push_back(VAR_N);
