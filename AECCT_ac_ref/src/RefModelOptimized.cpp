@@ -9,6 +9,110 @@
 
 namespace aecct_ref {
 
+namespace {
+
+enum class RefNormSiteInternal {
+  kLayer0PostAttn = 0,
+  kMidNorm = 1,
+  kLayer1PostAttn = 2
+};
+
+enum class RefLayerIdInternal {
+  kLayer0 = 0,
+  kLayer1 = 1
+};
+
+template<typename BankT, typename LayerNormFn>
+void run_norm_site_shared(
+  BankT& bank,
+  const double* norm_w,
+  const double* norm_b,
+  RefNormSiteInternal norm_site,
+  LayerNormFn layernorm_fn) {
+  typedef typename BankT::float_t float_t;
+  const int tokens_t = static_cast<int>(sizeof(bank.x_work) / sizeof(bank.x_work[0]));
+  const int d_model = static_cast<int>(sizeof(bank.x_work[0]) / sizeof(bank.x_work[0][0]));
+
+  switch (norm_site) {
+    case RefNormSiteInternal::kLayer0PostAttn:
+    case RefNormSiteInternal::kMidNorm:
+    case RefNormSiteInternal::kLayer1PostAttn:
+      break;
+    default:
+      assert(false);
+      return;
+  }
+
+  for (int token = 0; token < tokens_t; ++token) {
+    for (int d = 0; d < d_model; ++d) {
+      bank.ln_token_buf[d] = bank.x_work[token][d];
+    }
+    layernorm_fn(bank.ln_token_buf, norm_w, norm_b, bank.out_acc_tile);
+    for (int d = 0; d < d_model; ++d) {
+      bank.x_work[token][d] = float_t(bank.out_acc_tile[d].to_float());
+    }
+  }
+}
+
+template<typename BankT, typename Linear0Fn>
+void run_ffn_linear0_relu_layer_token_shared(
+  BankT& bank,
+  int token,
+  RefLayerIdInternal layer_id,
+  Linear0Fn linear0_fn) {
+  typedef typename BankT::float_t float_t;
+  const float_t zero(0.0f);
+  const int d_model = static_cast<int>(sizeof(bank.ln_token_buf) / sizeof(bank.ln_token_buf[0]));
+  const int ff_dim = static_cast<int>(sizeof(bank.ffn1_token_buf) / sizeof(bank.ffn1_token_buf[0]));
+
+  switch (layer_id) {
+    case RefLayerIdInternal::kLayer0:
+    case RefLayerIdInternal::kLayer1:
+      break;
+    default:
+      assert(false);
+      return;
+  }
+
+  for (int d = 0; d < d_model; ++d) {
+    bank.ln_token_buf[d] = bank.x_work[token][d];
+  }
+
+  linear0_fn(bank.ln_token_buf, bank.ffn1_token_buf, layer_id);
+
+  for (int i = 0; i < ff_dim; ++i) {
+    if (bank.ffn1_token_buf[i] < zero) {
+      bank.ffn1_token_buf[i] = zero;
+    }
+  }
+}
+
+template<typename BankT, typename Linear1Fn>
+void run_ffn_linear1_residual_layer_token_shared(
+  BankT& bank,
+  int token,
+  RefLayerIdInternal layer_id,
+  Linear1Fn linear1_fn) {
+  const int d_model = static_cast<int>(sizeof(bank.ln_token_buf) / sizeof(bank.ln_token_buf[0]));
+
+  switch (layer_id) {
+    case RefLayerIdInternal::kLayer0:
+    case RefLayerIdInternal::kLayer1:
+      break;
+    default:
+      assert(false);
+      return;
+  }
+
+  linear1_fn(bank.ffn1_token_buf, bank.out_acc_tile, layer_id);
+
+  for (int d = 0; d < d_model; ++d) {
+    bank.x_work[token][d] = bank.out_acc_tile[d] + bank.ln_token_buf[d];
+  }
+}
+
+} // namespace
+
 RefModelOptimized::RefModelOptimized()
   : last_staged_sample_index_(-1),
     phase_a_valid_(false),
@@ -553,80 +657,107 @@ void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work(
 template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::materialize_layer0_ln_writeback_from_x_work(
   RefOptimizedStorageBank<FloatFormat>& bank) {
-  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
   const double* const ln0_w = w_decoder_layers_0_sublayer_0_norm_weight;
   const double* const ln0_b = w_decoder_layers_0_sublayer_0_norm_bias;
 
   // Step 5A boundary:
   // - input boundary  : layer0 attention residual writeback in X_WORK
   // - output boundary : layer0 LN writeback in X_WORK
-  for (int token = 0; token < TOKENS_T; ++token) {
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.ln_token_buf[d] = bank.x_work[token][d];
-    }
-    layernorm_token_32_local<FloatFormat>(
-      bank.ln_token_buf,
-      ln0_w,
-      ln0_b,
-      bank.out_acc_tile);
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.x_work[token][d] = float_t(bank.out_acc_tile[d].to_float());
-    }
-  }
+  run_norm_site_shared(
+    bank,
+    ln0_w,
+    ln0_b,
+    RefNormSiteInternal::kLayer0PostAttn,
+    [this](const auto* x_token, const double* w, const double* b, auto* y_token) {
+      layernorm_token_32_local<FloatFormat>(x_token, w, b, y_token);
+    });
 }
 
 template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::materialize_layer0_ffn_writeback_from_x_work(
   RefOptimizedStorageBank<FloatFormat>& bank) {
-  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
-  const float_t zero(0.0f);
-
-  const float s_x_ff1 = static_cast<float>(l0_ff1_s_x);
-  const float s_x_ff2 = static_cast<float>(l0_ff2_s_x);
-  const float s_w_ff1 = static_cast<float>(w_decoder_layers_0_feed_forward_w_1_s_w[0]);
-  const float s_w_ff2 = static_cast<float>(w_decoder_layers_0_feed_forward_w_2_s_w[0]);
-
   // Step 5B boundary:
   // - input boundary  : layer0 LN writeback in X_WORK
   // - output boundary : layer0 FFN residual writeback in X_WORK
   // FFN local storage rule for this step: single-token FF_DIM buffer only.
-  for (int token = 0; token < TOKENS_T; ++token) {
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.ln_token_buf[d] = bank.x_work[token][d];
+  auto linear0_fn = [this](
+    const auto* x_token,
+    auto* y_token,
+    RefLayerIdInternal layer_id) {
+    const double* w_ff1 = nullptr;
+    const double* b_ff1 = nullptr;
+    float s_x_ff1 = 1.0f;
+    float s_w_ff1 = 1.0f;
+    switch (layer_id) {
+      case RefLayerIdInternal::kLayer0:
+        w_ff1 = w_decoder_layers_0_feed_forward_w_1_weight;
+        b_ff1 = w_decoder_layers_0_feed_forward_w_1_bias;
+        s_x_ff1 = static_cast<float>(l0_ff1_s_x);
+        s_w_ff1 = static_cast<float>(w_decoder_layers_0_feed_forward_w_1_s_w[0]);
+        break;
+      case RefLayerIdInternal::kLayer1:
+        assert(false && "Layer1 FFN linear0 shared body is not wired in this patch.");
+        return;
+      default:
+        assert(false);
+        return;
     }
-
     quant_linear_token_32_to128_native<FloatFormat>(
-      bank.ln_token_buf,
-      w_decoder_layers_0_feed_forward_w_1_weight,
-      w_decoder_layers_0_feed_forward_w_1_bias,
+      x_token,
+      w_ff1,
+      b_ff1,
       s_x_ff1,
       s_w_ff1,
-      bank.ffn1_token_buf);
-
-    for (int i = 0; i < FF_DIM; ++i) {
-      if (bank.ffn1_token_buf[i] < zero) {
-        bank.ffn1_token_buf[i] = zero;
-      }
+      y_token);
+  };
+  auto linear1_fn = [this](
+    const auto* x_token,
+    auto* y_token,
+    RefLayerIdInternal layer_id) {
+    const double* w_ff2 = nullptr;
+    const double* b_ff2 = nullptr;
+    float s_x_ff2 = 1.0f;
+    float s_w_ff2 = 1.0f;
+    switch (layer_id) {
+      case RefLayerIdInternal::kLayer0:
+        w_ff2 = w_decoder_layers_0_feed_forward_w_2_weight;
+        b_ff2 = w_decoder_layers_0_feed_forward_w_2_bias;
+        s_x_ff2 = static_cast<float>(l0_ff2_s_x);
+        s_w_ff2 = static_cast<float>(w_decoder_layers_0_feed_forward_w_2_s_w[0]);
+        break;
+      case RefLayerIdInternal::kLayer1:
+        assert(false && "Layer1 FFN linear1 shared body is not wired in this patch.");
+        return;
+      default:
+        assert(false);
+        return;
     }
-
     quant_linear_token_128_to32_native<FloatFormat>(
-      bank.ffn1_token_buf,
-      w_decoder_layers_0_feed_forward_w_2_weight,
-      w_decoder_layers_0_feed_forward_w_2_bias,
+      x_token,
+      w_ff2,
+      b_ff2,
       s_x_ff2,
       s_w_ff2,
-      bank.out_acc_tile);
+      y_token);
+  };
 
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.x_work[token][d] = bank.out_acc_tile[d] + bank.ln_token_buf[d];
-    }
+  for (int token = 0; token < TOKENS_T; ++token) {
+    run_ffn_linear0_relu_layer_token_shared(
+      bank,
+      token,
+      RefLayerIdInternal::kLayer0,
+      linear0_fn);
+    run_ffn_linear1_residual_layer_token_shared(
+      bank,
+      token,
+      RefLayerIdInternal::kLayer0,
+      linear1_fn);
   }
 }
 
 template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::materialize_layer0_mid_norm_writeback_from_x_work(
   RefOptimizedStorageBank<FloatFormat>& bank) {
-  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
   const double* const mid_norm_w = w_decoder_norm2_weight;
   const double* const mid_norm_b = w_decoder_norm2_bias;
 
@@ -634,19 +765,14 @@ void RefModelOptimized::materialize_layer0_mid_norm_writeback_from_x_work(
   // - input boundary  : layer0 FFN residual writeback in X_WORK
   // - output boundary : mid_norm output writeback in X_WORK
   // Storage rule for this step: token-local LN buffer only.
-  for (int token = 0; token < TOKENS_T; ++token) {
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.ln_token_buf[d] = bank.x_work[token][d];
-    }
-    layernorm_token_32_local<FloatFormat>(
-      bank.ln_token_buf,
-      mid_norm_w,
-      mid_norm_b,
-      bank.out_acc_tile);
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.x_work[token][d] = float_t(bank.out_acc_tile[d].to_float());
-    }
-  }
+  run_norm_site_shared(
+    bank,
+    mid_norm_w,
+    mid_norm_b,
+    RefNormSiteInternal::kMidNorm,
+    [this](const auto* x_token, const double* w, const double* b, auto* y_token) {
+      layernorm_token_32_local<FloatFormat>(x_token, w, b, y_token);
+    });
 }
 
 template<ac_ieee_float_format FloatFormat>
