@@ -3,116 +3,20 @@
 #include <cstdint>
 #include <vector>
 
-#include "RefAlgoVariant.h"
-#include "RefFragGroupConfig.h"
-#include "RefLayerNormMode.h"
+#include "RefModelDebugTaps.h"
+#include "RefModelLegacyModes.h"
 #include "RefPrecisionMode.h"
-#include "RefSoftmaxExpMode.h"
 #include "RefStep0RunReport.h"
-#include "RefStageConfig.h"
 #include "RefTypes.h"
 
 namespace aecct_ref {
 
 struct RefModelIO {
-  // Flattened pointers (row-major):
-  // input_y: [B, N] (quantized path)
   const act_t* input_y = nullptr;
-  // input_y_fp32: [B, N] optional exact FP32/F64 bring-up path
   const double* input_y_fp32 = nullptr;
-  // output logits: [B, N] as double for convenient comparison
   double* out_logits = nullptr;
-  // output x_pred: [B, N] (0/1)
   bit1_t* out_x_pred = nullptr;
-  // optional FinalHead scalar s_t dump: [B, 75], row-major
-  double* out_finalhead_s_t = nullptr;
-  // optional end_norm dump: [B, 75, 32], row-major
-  double* out_end_norm = nullptr;
-  // optional layer1_ffn_ln_out dump: [B, 75, 32], row-major
-  double* out_layer1_ffn_ln_out = nullptr;
-  // optional layer0_ffn_ln_out dump: [B, 75, 32], row-major
-  double* out_layer0_ffn_ln_out = nullptr;
-  // optional layer0_ffn1_out dump: [B, 75, 128], row-major
-  double* out_layer0_ffn1_out = nullptr;
-  // optional layer0_relu_out dump: [B, 75, 128], row-major
-  double* out_layer0_relu_out = nullptr;
-  // optional layer0_ffn2_out dump: [B, 75, 32], row-major
-  double* out_layer0_ffn2_out = nullptr;
-  // optional layer0 W2 quant-contract raw out dump (pre-residual): [B, 75, 32], row-major
-  double* out_layer0_ffn_w2_quant_raw_out = nullptr;
-  // optional layer0 W2 raw-quant qx trace: [B, 75, 128], row-major
-  double* out_layer0_ffn_w2_quant_raw_qx = nullptr;
-  // optional layer0 W2 raw-quant weight*inv_scale trace: [B, 32, 128], row-major
-  double* out_layer0_ffn_w2_quant_raw_weight_scaled = nullptr;
-  // optional layer0 W2 raw-quant weight bits trace: [B, 32, 128], row-major
-  double* out_layer0_ffn_w2_quant_raw_weight_bits = nullptr;
-  // optional layer0 W2 raw-quant weight*inv_scale bits trace: [B, 32, 128], row-major
-  double* out_layer0_ffn_w2_quant_raw_weight_scaled_bits = nullptr;
-  // optional layer0 W2 raw-quant bias-domain trace: [B, 32], row-major
-  double* out_layer0_ffn_w2_quant_raw_bias_domain = nullptr;
-  // optional layer0 W2 raw-quant partial-acc trace (focus dims 0..2): [B, 75, 3, 129], row-major
-  double* out_layer0_ffn_w2_quant_raw_partial_acc_focus = nullptr;
-  // optional layer0 W2 raw-quant scale bits trace: [B]
-  double* out_layer0_ffn_w2_quant_raw_sx_bits = nullptr;
-  double* out_layer0_ffn_w2_quant_raw_sw_bits = nullptr;
-  double* out_layer0_ffn_w2_quant_raw_inv_bits = nullptr;
-  // optional authoritative override for layer0 W2 raw helper scale bits
-  bool layer0_w2_raw_scale_bits_override_valid = false;
-  uint32_t layer0_w2_raw_sx_bits_override = 0u;
-  uint32_t layer0_w2_raw_inv_bits_override = 0u;
-  // optional layer0_sublayer0_attn_input dump: [B, 75, 32], row-major
-  double* out_layer0_attn_input = nullptr;
-  // optional layer0_attention_post_concat dump: [B, 75, 32], row-major
-  double* out_layer0_post_concat = nullptr;
-  // optional layer0_sublayer0_attn_out dump: [B, 75, 32], row-major
-  double* out_layer0_attn_out = nullptr;
-  // optional layer0_sublayer0_pre_ln_input dump: [B, 75, 32], row-major
-  double* out_layer0_pre_ln_input = nullptr;
-  // optional layer0_ln_out dump: [B, 75, 32], row-major
-  double* out_layer0_ln_out = nullptr;
-  // optional layer0 residual add sum dump: [B, 75, 32], row-major
-  double* out_layer0_residual_add_out = nullptr;
-  // optional layer0 residual add sum dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer0_residual_add_dut_aligned_out = nullptr;
-  // optional layer0 sublayer1 LN input dump: [B, 75, 32], row-major
-  double* out_layer0_sublayer1_ln_in = nullptr;
-  // optional layer0 sublayer1 LN input dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer0_sublayer1_ln_in_dut_aligned = nullptr;
-  // optional layer0 sublayer1 LN output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer0_sublayer1_ln_out_dut_aligned = nullptr;
-  // optional layer0 mid_norm output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer0_mid_norm_dut_aligned = nullptr;
-  // optional layer1_ffn2_out dump: [B, 75, 32], row-major
-  double* out_layer1_ffn2_out = nullptr;
-  // optional layer1_sublayer0_attn_out dump: [B, 75, 32], row-major
-  double* out_layer1_attn_out = nullptr;
-  // optional layer1_attention_post_concat dump: [B, 75, 32], row-major
-  double* out_layer1_post_concat = nullptr;
-  // optional layer1_q dump: [B, 75, 32], row-major
-  double* out_layer1_q = nullptr;
-  // optional layer1_attn_input(mid_norm) dump: [B, 75, 32], row-major
-  double* out_layer1_attn_input = nullptr;
-  // optional layer1_attn_input dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer1_attn_input_dut_aligned = nullptr;
-  // optional layer1_sublayer0_pre_ln_input dump: [B, 75, 32], row-major
-  double* out_layer1_pre_ln_input = nullptr;
-  // optional layer1_sublayer0_pre_ln_input dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer1_pre_ln_input_dut_aligned = nullptr;
-  // optional layer1_sublayer0_ln_out dump (FFN input): [B, 75, 32], row-major
-  double* out_layer1_ln_out = nullptr;
-  // optional layer1_sublayer0_ln_out dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer1_ln0_out_dut_aligned = nullptr;
-  // optional layer1_ffn1_out dump: [B, 75, 128], row-major
-  double* out_layer1_ffn1_out = nullptr;
-  // optional layer1_relu_out dump: [B, 75, 128], row-major
-  double* out_layer1_relu_out = nullptr;
-  // optional layer1 sublayer1 LN input dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer1_sublayer1_ln_in_dut_aligned = nullptr;
-  // optional layer1 sublayer1 LN affine output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer1_sublayer1_ln_affine_out_dut_aligned = nullptr;
-  // optional layer1 sublayer1 LN writeback output dump (debug-only DUT-aligned same-semantic): [B, 75, 32], row-major
-  double* out_layer1_sublayer1_ln_out_dut_aligned = nullptr;
-
+  RefModelDebugTaps debug{};
   int B = 0;
   int N = 0;
 };
@@ -136,13 +40,10 @@ struct RefStep0Io16Image {
 };
 
 struct RefRunConfig {
+  // Mainline control surface.
   RefPrecisionMode precision_mode = RefPrecisionMode::BASELINE_FP32;
-  RefAlgoVariant algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
-  // Leaf-kernel selector for softmax exp only. Reciprocal/row-state/exact-path stay unchanged.
-  RefSoftmaxExpMode softmax_exp_mode = RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
-  RefLayerNormMode ln_mode = RefLayerNormMode::LN_BASELINE;
-  RefFinalHeadExploreStage finalhead_stage = RefFinalHeadExploreStage::S0;
-  RefFragGroup frag_group = RefFragGroup::NONE;
+  // Non-mainline tuning/experiment knobs are grouped away from the core path.
+  RefLegacyRunConfig legacy{};
 };
 
 bool is_fp32_baseline_mode(RefPrecisionMode mode);

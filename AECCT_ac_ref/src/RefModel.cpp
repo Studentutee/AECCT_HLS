@@ -287,6 +287,26 @@ static inline fp32_ref_t fp32_round(fp32_ref_t x) {
   return x.round();
 }
 
+enum class RefMainlinePrecisionKind : unsigned char {
+  FP32_BASELINE = 0,
+  FP16_EXPERIMENT = 1
+};
+
+struct RefMainlinePrecisionPlan {
+  RefMainlinePrecisionKind kind = RefMainlinePrecisionKind::FP32_BASELINE;
+  bool use_fp16_roundtrip = false;
+  bool use_native_ternary_linear = true;
+};
+
+static inline RefMainlinePrecisionPlan build_mainline_precision_plan(const RefRunConfig& cfg) {
+  RefMainlinePrecisionPlan plan{};
+  if (cfg.precision_mode == RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL) {
+    plan.kind = RefMainlinePrecisionKind::FP16_EXPERIMENT;
+    plan.use_fp16_roundtrip = true;
+  }
+  return plan;
+}
+
 static inline bool use_generic_e4m3_finalhead(const RefRunConfig& cfg) {
   return cfg.precision_mode == RefPrecisionMode::GENERIC_E4M3_FINALHEAD;
 }
@@ -296,7 +316,7 @@ static inline bool use_full_e4m3_nonlinear_stress(const RefRunConfig& cfg) {
 }
 
 static inline bool use_fp16_replace_fp32_global(const RefRunConfig& cfg) {
-  return cfg.precision_mode == RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL;
+  return build_mainline_precision_plan(cfg).use_fp16_roundtrip;
 }
 
 static inline bool use_frag_group_bisect(const RefRunConfig& cfg) {
@@ -441,7 +461,7 @@ static inline bool should_apply_e4m3_group_roundtrip(
   if (!use_frag_group_bisect(cfg)) {
     return false;
   }
-  return frag_group_includes(cfg.frag_group, g);
+  return frag_group_includes(cfg.legacy.frag_group, g);
 }
 
 static inline bool use_island_s0(const RefRunConfig& cfg) {
@@ -452,19 +472,19 @@ static inline bool use_island_s0(const RefRunConfig& cfg) {
          use_generic_e4m3_g2_g5_submode(cfg) ||
          use_int8_fixedexp_embed_g2_mode(cfg) ||
          use_frag_group_bisect(cfg) ||
-         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.finalhead_stage));
+         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s0(cfg.legacy.finalhead_stage));
 }
 
 static inline bool use_island_s1(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
          use_fp16_replace_fp32_global(cfg) ||
-         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s1(cfg.finalhead_stage));
+         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s1(cfg.legacy.finalhead_stage));
 }
 
 static inline bool use_island_s3(const RefRunConfig& cfg) {
   return use_full_e4m3_nonlinear_stress(cfg) ||
          use_fp16_replace_fp32_global(cfg) ||
-         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s3(cfg.finalhead_stage));
+         (use_generic_e4m3_finalhead(cfg) && stage_uses_island_s3(cfg.legacy.finalhead_stage));
 }
 
 static inline void bump_first_nonfinite_block(RefFullQuantStats* stats, const char* block_name) {
@@ -1648,10 +1668,11 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
                             fp32_ref_t probs[HEADS][TOKENS_T][TOKENS_T],
                             fp32_ref_t ctx[HEADS][TOKENS_T][D_HEAD],
                             fp32_ref_t post_concat[TOKENS_T][D_MODEL]) {
+  const RefLegacyRunConfig& legacy_cfg = run_cfg.legacy;
   const fp32_ref_t inv_sqrt_dh = fp32_ref_t(0.5f); // 1/sqrt(4)
   const fp32_ref_t neg_inf = fp32_ref_t(-std::numeric_limits<float>::infinity());
   // Ref-side bounded numeric experiment: exp leaf-kernel can vary; reciprocal/row-state/exact path stay fixed.
-  const bool use_softmax_exact = (run_cfg.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
+  const bool use_softmax_exact = (legacy_cfg.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
   for (int h = 0; h < HEADS; ++h) {
     for (int i = 0; i < TOKENS_T; ++i) {
@@ -1693,7 +1714,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
             online_max,
             online_sumexp,
             acc_vec,
-            run_cfg.softmax_exp_mode
+            legacy_cfg.softmax_exp_mode
           );
         }
       }
@@ -1774,7 +1795,7 @@ static void attention_block(const fp32_ref_t q[TOKENS_T][D_MODEL],
             continue;
           }
           const fp32_ref_t w = stress_roundtrip_e4m3(
-            ref_softmax_exp_dispatch(scores[h][i][j] - online_max, run_cfg.softmax_exp_mode),
+            ref_softmax_exp_dispatch(scores[h][i][j] - online_max, legacy_cfg.softmax_exp_mode),
             run_cfg,
             RefFragGroup::G4_SOFTMAX_NEIGHBORHOOD,
             stats,
@@ -1856,7 +1877,11 @@ static void run_layer(const int layer_idx,
                       fp32_ref_t (*ffn_ln_sum_dut_aligned_out)[D_MODEL] = nullptr,
                       fp32_ref_t (*ffn_ln_in_dut_aligned_out)[D_MODEL] = nullptr,
                       fp32_ref_t (*ffn_ln_out_dut_aligned_out)[D_MODEL] = nullptr) {
-  const bool strict_int16 = use_full_e4m3_nonlinear_stress(run_cfg);
+  // Mainline numeric policy is selected once per layer entry.
+  const RefMainlinePrecisionPlan precision_plan = build_mainline_precision_plan(run_cfg);
+  const RefLegacyRunConfig& legacy_cfg = run_cfg.legacy;
+  const bool strict_int16 =
+    precision_plan.use_native_ternary_linear && use_full_e4m3_nonlinear_stress(run_cfg);
   const double* w_q = nullptr;
   const double* b_q = nullptr;
   const double* sw_q = nullptr;
@@ -1950,7 +1975,7 @@ static void run_layer(const int layer_idx,
   quant_linear_75x32_to32(
     x_in, w_v, b_v, s_x_in, static_cast<float>(sw_v[0]), v_out, strict_int16, stats, "Wv");
 
-  if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) || precision_plan.use_fp16_roundtrip) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
         q_out[t][d] = stress_roundtrip_e4m3(
@@ -2014,7 +2039,7 @@ static void run_layer(const int layer_idx,
     }
   }
   const RefLnSiteTag ln0_site = (layer_idx == 0) ? RefLnSiteTag::L0_SUB0 : RefLnSiteTag::L1_SUB0;
-  apply_layernorm_tokens(ln_in, ln0_w, ln0_b, run_cfg.ln_mode, sample_index, ln0_site, ln_out);
+  apply_layernorm_tokens(ln_in, ln0_w, ln0_b, legacy_cfg.ln_mode, sample_index, ln0_site, ln_out);
   if (use_full_e4m3_nonlinear_stress(run_cfg) ||
       should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -2037,7 +2062,7 @@ static void run_layer(const int layer_idx,
                            stats,
                            "Wff1");
 
-  if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) || precision_plan.use_fp16_roundtrip) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int i = 0; i < FF_DIM; ++i) {
         ffn1_out[t][i] = stress_roundtrip_e4m3(
@@ -2090,7 +2115,7 @@ static void run_layer(const int layer_idx,
       ffn_w2_raw_weight_scaled_bits_out);
   }
 
-  if (use_full_e4m3_nonlinear_stress(run_cfg) || use_fp16_replace_fp32_global(run_cfg)) {
+  if (use_full_e4m3_nonlinear_stress(run_cfg) || precision_plan.use_fp16_roundtrip) {
     for (int t = 0; t < TOKENS_T; ++t) {
       for (int d = 0; d < D_MODEL; ++d) {
         ffn2_out[t][d] = stress_roundtrip_e4m3(
@@ -2133,7 +2158,7 @@ static void run_layer(const int layer_idx,
     }
   }
   const RefLnSiteTag ln1_site = (layer_idx == 0) ? RefLnSiteTag::L0_SUB1 : RefLnSiteTag::L1_SUB1;
-  apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, run_cfg.ln_mode, sample_index, ln1_site, ffn_ln_out);
+  apply_layernorm_tokens(ffn_ln_in, ln1_w, ln1_b, legacy_cfg.ln_mode, sample_index, ln1_site, ffn_ln_out);
   if (use_full_e4m3_nonlinear_stress(run_cfg) ||
       should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
     for (int t = 0; t < TOKENS_T; ++t) {
@@ -2161,7 +2186,7 @@ static void run_layer(const int layer_idx,
       }
     }
     apply_layernorm_tokens(
-      ffn_ln_in_dut_aligned, ln1_w, ln1_b, run_cfg.ln_mode, sample_index, ln1_site, ffn_ln_out_dut_aligned);
+      ffn_ln_in_dut_aligned, ln1_w, ln1_b, legacy_cfg.ln_mode, sample_index, ln1_site, ffn_ln_out_dut_aligned);
     if (use_full_e4m3_nonlinear_stress(run_cfg) ||
         should_apply_e4m3_group_roundtrip(run_cfg, RefFragGroup::G1_LAYERNORM)) {
       for (int t = 0; t < TOKENS_T; ++t) {
@@ -2212,10 +2237,7 @@ bool is_fp16_experiment_mode(RefPrecisionMode mode) {
 RefRunConfig make_fp32_baseline_run_config() {
   RefRunConfig cfg{};
   cfg.precision_mode = RefPrecisionMode::BASELINE_FP32;
-  cfg.algo_variant = RefAlgoVariant::BASELINE_SPEC_FLOW;
-  cfg.ln_mode = RefLayerNormMode::LN_BASELINE;
-  cfg.finalhead_stage = RefFinalHeadExploreStage::S0;
-  cfg.frag_group = RefFragGroup::NONE;
+  cfg.legacy = RefLegacyRunConfig{};
   return cfg;
 }
 
@@ -2251,15 +2273,19 @@ void RefModel::clear_dump_config() {
 }
 
 void RefModel::infer_step0(const RefModelIO& io) const {
+  // RefModel mainline consumes a pre-decided precision plan plus sidecar legacy/debug state.
+  const RefMainlinePrecisionPlan precision_plan = build_mainline_precision_plan(run_cfg_);
+  const RefLegacyRunConfig& legacy_cfg = run_cfg_.legacy;
+  const RefModelDebugTaps& debug = io.debug;
   const int B = io.B;
   const int N = io.N;
   const int N_out = (N < VAR_N) ? N : VAR_N;
 
   assert(io.input_y_fp32 != nullptr && "input_y_fp32 must be provided for alignment mode");
-  if (run_cfg_.algo_variant != RefAlgoVariant::BASELINE_SPEC_FLOW &&
-      run_cfg_.algo_variant != RefAlgoVariant::RESERVED_SOFTMAX_ALT) {
+  if (legacy_cfg.algo_variant != RefAlgoVariant::BASELINE_SPEC_FLOW &&
+      legacy_cfg.algo_variant != RefAlgoVariant::RESERVED_SOFTMAX_ALT) {
     std::printf("[warn] Unsupported algo variant %s. Behavior is only validated for BASELINE_SPEC_FLOW and RESERVED_SOFTMAX_ALT.\n",
-      to_string(run_cfg_.algo_variant));
+      to_string(legacy_cfg.algo_variant));
   }
 
   bool one_ring[TOKENS_T][TOKENS_T];
@@ -2398,9 +2424,9 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               layer0_ffn_w2_quant_raw_weight_scaled,
               layer0_ffn_w2_quant_raw_bias_domain,
               layer0_ffn_w2_quant_raw_partial_acc_focus,
-              io.layer0_w2_raw_scale_bits_override_valid,
-              io.layer0_w2_raw_sx_bits_override,
-              io.layer0_w2_raw_inv_bits_override,
+              debug.layer0_w2_raw_scale_bits_override_valid,
+              debug.layer0_w2_raw_sx_bits_override,
+              debug.layer0_w2_raw_inv_bits_override,
               &layer0_ffn_w2_quant_raw_sx_bits,
               &layer0_ffn_w2_quant_raw_sw_bits,
               &layer0_ffn_w2_quant_raw_inv_bits,
@@ -2419,42 +2445,42 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_attn_out", layer0_attn_out);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ln_in", layer0_ln_in);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ln_out", layer0_ln_out);
-    if (io.out_layer0_attn_input != nullptr) {
+    if (debug.out_layer0_attn_input != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_attn_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_attn_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(prelayer_x[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_post_concat != nullptr) {
+    if (debug.out_layer0_post_concat != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_post_concat[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_post_concat[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_post_concat[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_attn_out != nullptr) {
+    if (debug.out_layer0_attn_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_attn_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_attn_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_attn_out[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_pre_ln_input != nullptr) {
+    if (debug.out_layer0_pre_ln_input != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_pre_ln_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_pre_ln_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ln_in[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_ln_out != nullptr) {
+    if (debug.out_layer0_ln_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ln_out[t][d].to_float());
         }
       }
@@ -2469,77 +2495,77 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_residual_sum_dut_aligned", layer0_ffn_residual_sum_dut_aligned);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_in_dut_aligned", layer0_ffn_ln_in_dut_aligned);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer0_ffn_ln_out_dut_aligned", layer0_ffn_ln_out_dut_aligned);
-    if (io.out_layer0_ffn1_out != nullptr) {
+    if (debug.out_layer0_ffn1_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < FF_DIM; ++d) {
-          io.out_layer0_ffn1_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
+          debug.out_layer0_ffn1_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
             static_cast<double>(layer0_ffn1[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_relu_out != nullptr) {
+    if (debug.out_layer0_relu_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < FF_DIM; ++d) {
-          io.out_layer0_relu_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
+          debug.out_layer0_relu_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
             static_cast<double>(layer0_act[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_ffn2_out != nullptr) {
+    if (debug.out_layer0_ffn2_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_ffn2_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_ffn2_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn2[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_out != nullptr) {
+    if (debug.out_layer0_ffn_w2_quant_raw_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_ffn_w2_quant_raw_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_ffn_w2_quant_raw_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_w2_quant_raw[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_qx != nullptr) {
+    if (debug.out_layer0_ffn_w2_quant_raw_qx != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int i = 0; i < FF_DIM; ++i) {
-          io.out_layer0_ffn_w2_quant_raw_qx[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + i] =
+          debug.out_layer0_ffn_w2_quant_raw_qx[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + i] =
             static_cast<double>(layer0_ffn_w2_quant_raw_qx[t][i]);
         }
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_weight_scaled != nullptr) {
+    if (debug.out_layer0_ffn_w2_quant_raw_weight_scaled != nullptr) {
       for (int d = 0; d < D_MODEL; ++d) {
         for (int i = 0; i < FF_DIM; ++i) {
-          io.out_layer0_ffn_w2_quant_raw_weight_scaled[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
+          debug.out_layer0_ffn_w2_quant_raw_weight_scaled[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
             static_cast<double>(layer0_ffn_w2_quant_raw_weight_scaled[d][i]);
         }
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_weight_bits != nullptr) {
+    if (debug.out_layer0_ffn_w2_quant_raw_weight_bits != nullptr) {
       for (int d = 0; d < D_MODEL; ++d) {
         for (int i = 0; i < FF_DIM; ++i) {
-          io.out_layer0_ffn_w2_quant_raw_weight_bits[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
+          debug.out_layer0_ffn_w2_quant_raw_weight_bits[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
             static_cast<double>(layer0_ffn_w2_quant_raw_weight_bits[d][i]);
         }
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_weight_scaled_bits != nullptr) {
+    if (debug.out_layer0_ffn_w2_quant_raw_weight_scaled_bits != nullptr) {
       for (int d = 0; d < D_MODEL; ++d) {
         for (int i = 0; i < FF_DIM; ++i) {
-          io.out_layer0_ffn_w2_quant_raw_weight_scaled_bits[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
+          debug.out_layer0_ffn_w2_quant_raw_weight_scaled_bits[(b * D_MODEL * FF_DIM) + (d * FF_DIM) + i] =
             static_cast<double>(layer0_ffn_w2_quant_raw_weight_scaled_bits[d][i]);
         }
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_bias_domain != nullptr) {
+    if (debug.out_layer0_ffn_w2_quant_raw_bias_domain != nullptr) {
       for (int d = 0; d < D_MODEL; ++d) {
-        io.out_layer0_ffn_w2_quant_raw_bias_domain[(b * D_MODEL) + d] =
+        debug.out_layer0_ffn_w2_quant_raw_bias_domain[(b * D_MODEL) + d] =
           static_cast<double>(layer0_ffn_w2_quant_raw_bias_domain[d]);
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_partial_acc_focus != nullptr) {
+    if (debug.out_layer0_ffn_w2_quant_raw_partial_acc_focus != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int fd = 0; fd < kW2RawTraceFocusDims; ++fd) {
           for (int step = 0; step < kW2RawTraceAccSteps; ++step) {
@@ -2548,65 +2574,65 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               (t * kW2RawTraceFocusDims * kW2RawTraceAccSteps) +
               (fd * kW2RawTraceAccSteps) +
               step;
-            io.out_layer0_ffn_w2_quant_raw_partial_acc_focus[flat] =
+            debug.out_layer0_ffn_w2_quant_raw_partial_acc_focus[flat] =
               static_cast<double>(layer0_ffn_w2_quant_raw_partial_acc_focus[t][fd][step]);
           }
         }
       }
     }
-    if (io.out_layer0_ffn_w2_quant_raw_sx_bits != nullptr) {
-      io.out_layer0_ffn_w2_quant_raw_sx_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_sx_bits);
+    if (debug.out_layer0_ffn_w2_quant_raw_sx_bits != nullptr) {
+      debug.out_layer0_ffn_w2_quant_raw_sx_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_sx_bits);
     }
-    if (io.out_layer0_ffn_w2_quant_raw_sw_bits != nullptr) {
-      io.out_layer0_ffn_w2_quant_raw_sw_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_sw_bits);
+    if (debug.out_layer0_ffn_w2_quant_raw_sw_bits != nullptr) {
+      debug.out_layer0_ffn_w2_quant_raw_sw_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_sw_bits);
     }
-    if (io.out_layer0_ffn_w2_quant_raw_inv_bits != nullptr) {
-      io.out_layer0_ffn_w2_quant_raw_inv_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_inv_bits);
+    if (debug.out_layer0_ffn_w2_quant_raw_inv_bits != nullptr) {
+      debug.out_layer0_ffn_w2_quant_raw_inv_bits[b] = static_cast<double>(layer0_ffn_w2_quant_raw_inv_bits);
     }
-    if (io.out_layer0_residual_add_out != nullptr) {
+    if (debug.out_layer0_residual_add_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_residual_add_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_residual_add_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_residual_sum[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_residual_add_dut_aligned_out != nullptr) {
+    if (debug.out_layer0_residual_add_dut_aligned_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_residual_add_dut_aligned_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_residual_add_dut_aligned_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_residual_sum_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_sublayer1_ln_in != nullptr) {
+    if (debug.out_layer0_sublayer1_ln_in != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_sublayer1_ln_in[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_sublayer1_ln_in[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_ln_in[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_sublayer1_ln_in_dut_aligned != nullptr) {
+    if (debug.out_layer0_sublayer1_ln_in_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_sublayer1_ln_in_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_sublayer1_ln_in_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_ln_in_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_ffn_ln_out != nullptr) {
+    if (debug.out_layer0_ffn_ln_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_ffn_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_ffn_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_ln_out[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_sublayer1_ln_out_dut_aligned != nullptr) {
+    if (debug.out_layer0_sublayer1_ln_out_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_sublayer1_ln_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_sublayer1_ln_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer0_ffn_ln_out_dut_aligned[t][d].to_float());
         }
       }
@@ -2618,7 +2644,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     apply_layernorm_tokens(layer0_ffn_ln_out,
                            w_decoder_norm2_weight,
                            w_decoder_norm2_bias,
-                           run_cfg_.ln_mode,
+                           run_cfg_.legacy.ln_mode,
                            b,
                            RefLnSiteTag::MID_NORM,
                            mid_norm);
@@ -2638,7 +2664,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     apply_layernorm_tokens(layer0_ffn_ln_out_dut_aligned,
                            w_decoder_norm2_weight,
                            w_decoder_norm2_bias,
-                           run_cfg_.ln_mode,
+                           run_cfg_.legacy.ln_mode,
                            b,
                            RefLnSiteTag::MID_NORM,
                            mid_norm_dut_aligned);
@@ -2715,7 +2741,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     apply_layernorm_tokens(layer1_pre_ln_input_dut_aligned,
                            w_decoder_layers_1_sublayer_0_norm_weight,
                            w_decoder_layers_1_sublayer_0_norm_bias,
-                           run_cfg_.ln_mode,
+                           run_cfg_.legacy.ln_mode,
                            b,
                            RefLnSiteTag::L1_SUB0,
                            layer1_ln0_out_dut_aligned);
@@ -2742,7 +2768,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     apply_layernorm_tokens(layer1_sublayer1_ln_in_dut_aligned,
                            w_decoder_layers_1_sublayer_1_norm_weight,
                            w_decoder_layers_1_sublayer_1_norm_bias,
-                           run_cfg_.ln_mode,
+                           run_cfg_.legacy.ln_mode,
                            b,
                            RefLnSiteTag::L1_SUB1,
                            layer1_sublayer1_ln_affine_out_dut_aligned);
@@ -2772,66 +2798,66 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_sublayer1_ln_affine_out_dut_aligned", layer1_sublayer1_ln_affine_out_dut_aligned);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_sublayer1_ln_out_dut_aligned", layer1_sublayer1_ln_out_dut_aligned);
 
-    if (io.out_layer1_attn_input != nullptr) {
+    if (debug.out_layer1_attn_input != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_attn_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_attn_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(mid_norm[t][d].to_float());
         }
       }
     }
-    if (io.out_layer0_mid_norm_dut_aligned != nullptr) {
+    if (debug.out_layer0_mid_norm_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer0_mid_norm_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer0_mid_norm_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(mid_norm_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer1_attn_input_dut_aligned != nullptr) {
+    if (debug.out_layer1_attn_input_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_attn_input_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_attn_input_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_attn_input_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer1_pre_ln_input_dut_aligned != nullptr) {
+    if (debug.out_layer1_pre_ln_input_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_pre_ln_input_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_pre_ln_input_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_pre_ln_input_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer1_ln0_out_dut_aligned != nullptr) {
+    if (debug.out_layer1_ln0_out_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_ln0_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_ln0_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_ln0_out_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer1_sublayer1_ln_in_dut_aligned != nullptr) {
+    if (debug.out_layer1_sublayer1_ln_in_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_sublayer1_ln_in_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_sublayer1_ln_in_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_sublayer1_ln_in_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer1_sublayer1_ln_affine_out_dut_aligned != nullptr) {
+    if (debug.out_layer1_sublayer1_ln_affine_out_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_sublayer1_ln_affine_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_sublayer1_ln_affine_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_sublayer1_ln_affine_out_dut_aligned[t][d].to_float());
         }
       }
     }
-    if (io.out_layer1_sublayer1_ln_out_dut_aligned != nullptr) {
+    if (debug.out_layer1_sublayer1_ln_out_dut_aligned != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_sublayer1_ln_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_sublayer1_ln_out_dut_aligned[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_sublayer1_ln_out_dut_aligned[t][d].to_float());
         }
       }
@@ -2844,81 +2870,81 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     dump_3d<HEADS, TOKENS_T, TOKENS_T>(dump, "layer1_attn_probs", layer1_probs);
     dump_3d<HEADS, TOKENS_T, D_HEAD>(dump, "layer1_ctx", layer1_ctx);
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_post_concat", layer1_post_concat);
-    if (io.out_layer1_post_concat != nullptr) {
+    if (debug.out_layer1_post_concat != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_post_concat[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_post_concat[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_post_concat[t][d].to_float());
         }
       }
     }
-    if (io.out_layer1_q != nullptr) {
+    if (debug.out_layer1_q != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_q[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_q[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_q[t][d].to_float());
         }
       }
     }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_attn_out", layer1_attn_out);
-    if (io.out_layer1_attn_out != nullptr) {
+    if (debug.out_layer1_attn_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_attn_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_attn_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_attn_out[t][d].to_float());
         }
       }
     }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ln_in", layer1_ln_in);
-    if (io.out_layer1_pre_ln_input != nullptr) {
+    if (debug.out_layer1_pre_ln_input != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_pre_ln_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_pre_ln_input[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_ln_in[t][d].to_float());
         }
       }
     }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ln_out", layer1_ln_out);
-    if (io.out_layer1_ln_out != nullptr) {
+    if (debug.out_layer1_ln_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_ln_out[t][d].to_float());
         }
       }
     }
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer1_ffn1_out", layer1_ffn1);
-    if (io.out_layer1_ffn1_out != nullptr) {
+    if (debug.out_layer1_ffn1_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < FF_DIM; ++d) {
-          io.out_layer1_ffn1_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
+          debug.out_layer1_ffn1_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
             static_cast<double>(layer1_ffn1[t][d].to_float());
         }
       }
     }
     dump_2d<TOKENS_T, FF_DIM>(dump, "layer1_act_out", layer1_act);
-    if (io.out_layer1_relu_out != nullptr) {
+    if (debug.out_layer1_relu_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < FF_DIM; ++d) {
-          io.out_layer1_relu_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
+          debug.out_layer1_relu_out[(b * TOKENS_T * FF_DIM) + (t * FF_DIM) + d] =
             static_cast<double>(layer1_act[t][d].to_float());
         }
       }
     }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ffn2_out", layer1_ffn2);
-    if (io.out_layer1_ffn2_out != nullptr) {
+    if (debug.out_layer1_ffn2_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_ffn2_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_ffn2_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_ffn2[t][d].to_float());
         }
       }
     }
     dump_2d<TOKENS_T, D_MODEL>(dump, "layer1_ffn_ln_out", layer1_ffn_ln_out);
-    if (io.out_layer1_ffn_ln_out != nullptr) {
+    if (debug.out_layer1_ffn_ln_out != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_layer1_ffn_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_layer1_ffn_ln_out[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(layer1_ffn_ln_out[t][d].to_float());
         }
       }
@@ -2929,7 +2955,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
     apply_layernorm_tokens(layer1_ffn_ln_out,
                            w_decoder_norm_weight,
                            w_decoder_norm_bias,
-                           run_cfg_.ln_mode,
+                           run_cfg_.legacy.ln_mode,
                            b,
                            RefLnSiteTag::END_NORM,
                            end_norm);
@@ -2946,10 +2972,10 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
       }
     }
-    if (io.out_end_norm != nullptr) {
+    if (debug.out_end_norm != nullptr) {
       for (int t = 0; t < TOKENS_T; ++t) {
         for (int d = 0; d < D_MODEL; ++d) {
-          io.out_end_norm[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
+          debug.out_end_norm[(b * TOKENS_T * D_MODEL) + (t * D_MODEL) + d] =
             static_cast<double>(end_norm[t][d].to_float());
         }
       }
@@ -2972,7 +2998,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
             RefFragGroup::NONE,
             &local_stats,
             "final_embedding_s3");
-        } else if (use_fp16_replace_fp32_global(run_cfg_)) {
+        } else if (precision_plan.use_fp16_roundtrip) {
           s_t_embed_out = stress_roundtrip_e4m3(
             s_t_embed_out,
             run_cfg_,
@@ -2994,7 +3020,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
             RefFragGroup::NONE,
             &local_stats,
             "final_readout_s0");
-        } else if (use_fp16_replace_fp32_global(run_cfg_)) {
+        } else if (precision_plan.use_fp16_roundtrip) {
           s_t_out_fc = stress_roundtrip_e4m3(
             s_t_out_fc,
             run_cfg_,
@@ -3006,8 +3032,8 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
       }
       out_fc_in[0][t] = s_t_out_fc;
-      if (io.out_finalhead_s_t != nullptr) {
-        io.out_finalhead_s_t[b * TOKENS_T + t] = static_cast<double>(acc.to_float());
+      if (debug.out_finalhead_s_t != nullptr) {
+        debug.out_finalhead_s_t[b * TOKENS_T + t] = static_cast<double>(acc.to_float());
       }
     }
 
@@ -3025,7 +3051,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
               RefFragGroup::NONE,
               &local_stats,
               "out_fc_pre_mac_s1");
-          } else if (use_fp16_replace_fp32_global(run_cfg_)) {
+          } else if (precision_plan.use_fp16_roundtrip) {
             mul_in = stress_roundtrip_e4m3(
               mul_in,
               run_cfg_,
@@ -3038,7 +3064,7 @@ void RefModel::infer_step0(const RefModelIO& io) const {
         }
         acc += fp32_ref_t(static_cast<float>(w_out_fc_weight[n * TOKENS_T + t])) * mul_in;
       }
-      if (use_full_e4m3_nonlinear_stress(run_cfg_) || use_fp16_replace_fp32_global(run_cfg_)) {
+      if (use_full_e4m3_nonlinear_stress(run_cfg_) || precision_plan.use_fp16_roundtrip) {
         acc = stress_roundtrip_e4m3(
           acc,
           run_cfg_,
@@ -3099,7 +3125,7 @@ bool RefModel::build_step0_io16_image(const RefModelIO& io,
   RefModelIO exec_io = io;
   exec_io.out_logits = tmp_logits.data();
   exec_io.out_x_pred = tmp_xpred.data();
-  exec_io.out_finalhead_s_t = tmp_final_s.data();
+  exec_io.debug.out_finalhead_s_t = tmp_final_s.data();
 
   infer_step0(exec_io);
 
@@ -3113,9 +3139,9 @@ bool RefModel::build_step0_io16_image(const RefModelIO& io,
       io.out_x_pred[i] = tmp_xpred[i];
     }
   }
-  if (io.out_finalhead_s_t != nullptr) {
+  if (io.debug.out_finalhead_s_t != nullptr) {
     for (std::size_t i = 0; i < tmp_final_s.size(); ++i) {
-      io.out_finalhead_s_t[i] = tmp_final_s[i];
+      io.debug.out_finalhead_s_t[i] = tmp_final_s[i];
     }
   }
 

@@ -1082,7 +1082,7 @@ static void run_ref_single_pattern(
   io.input_y_fp32 = input_ptr;
   io.out_logits = out.logits.data();
   io.out_x_pred = out.x_pred.data();
-  io.out_finalhead_s_t = nullptr;
+  io.debug.out_finalhead_s_t = nullptr;
   io.B = 1;
   io.N = n_vars;
   model.infer_step0(io);
@@ -1112,9 +1112,9 @@ static void run_ref_batch(
   io.input_y_fp32 = &trace_input_y_step0_tensor[range.begin * n_vars];
   io.out_logits = logits.data();
   io.out_x_pred = x_pred.data();
-  io.out_finalhead_s_t = out_finalhead_s_t;
-  io.out_layer1_attn_input = out_layer1_attn_input;
-  io.out_end_norm = out_end_norm;
+  io.debug.out_finalhead_s_t = out_finalhead_s_t;
+  io.debug.out_layer1_attn_input = out_layer1_attn_input;
+  io.debug.out_end_norm = out_end_norm;
   io.B = run_b;
   io.N = n_vars;
   model.infer_step0(io);
@@ -3526,9 +3526,9 @@ static bool run_stage_compare_eval_snapshot(
 
   aecct_ref::RefModel baseline_model;
   aecct_ref::RefRunConfig baseline_cfg = aecct_ref::make_fp32_baseline_run_config();
-  baseline_cfg.algo_variant = opts.algo_variant;
-  baseline_cfg.ln_mode = opts.ln_mode;
-  baseline_cfg.finalhead_stage = stage;
+  baseline_cfg.legacy.algo_variant = opts.algo_variant;
+  baseline_cfg.legacy.ln_mode = opts.ln_mode;
+  baseline_cfg.legacy.finalhead_stage = stage;
   baseline_model.set_run_config(baseline_cfg);
 
   std::vector<double> baseline_logits_batch;
@@ -3738,7 +3738,7 @@ static bool run_io16_single_pattern_selfcheck(
   io.input_y_fp32 = input_ptr;
   io.out_logits = image_logits.data();
   io.out_x_pred = image_xpred.data();
-  io.out_finalhead_s_t = image_final_s.data();
+  io.debug.out_finalhead_s_t = image_final_s.data();
   io.B = 1;
   io.N = n_vars;
 
@@ -3907,11 +3907,11 @@ static int run_single_mode(
   aecct_ref::RefModel model;
   aecct_ref::RefRunConfig cfg = aecct_ref::make_fp32_baseline_run_config();
   cfg.precision_mode = precision_mode;
-  cfg.algo_variant = opts.algo_variant;
-  cfg.ln_mode = ln_mode;
-  cfg.finalhead_stage = opts.finalhead_stage;
-  cfg.frag_group = opts.frag_group;
-  cfg.softmax_exp_mode = opts.softmax_exp_mode;
+  cfg.legacy.algo_variant = opts.algo_variant;
+  cfg.legacy.ln_mode = ln_mode;
+  cfg.legacy.finalhead_stage = opts.finalhead_stage;
+  cfg.legacy.frag_group = opts.frag_group;
+  cfg.legacy.softmax_exp_mode = opts.softmax_exp_mode;
   model.set_run_config(cfg);
 
   GoldenAggregateMetrics agg{};
@@ -4283,13 +4283,13 @@ int main(int argc, char** argv) {
     baseline_cfg_eval.precision_mode = anchor_finalhead_s0
       ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
       : aecct_ref::RefPrecisionMode::BASELINE_FP32;
-    baseline_cfg_eval.algo_variant = opts.algo_variant;
-    baseline_cfg_eval.ln_mode = opts.ln_mode;
-    baseline_cfg_eval.finalhead_stage = anchor_finalhead_s0
+    baseline_cfg_eval.legacy.algo_variant = opts.algo_variant;
+    baseline_cfg_eval.legacy.ln_mode = opts.ln_mode;
+    baseline_cfg_eval.legacy.finalhead_stage = anchor_finalhead_s0
       ? aecct_ref::RefFinalHeadExploreStage::S0
       : opts.finalhead_stage;
-    baseline_cfg_eval.frag_group = aecct_ref::RefFragGroup::NONE;
-    baseline_cfg_eval.softmax_exp_mode =
+    baseline_cfg_eval.legacy.frag_group = aecct_ref::RefFragGroup::NONE;
+    baseline_cfg_eval.legacy.softmax_exp_mode =
       need_experiment_outputs ? aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT : opts.softmax_exp_mode;
     baseline_model_eval.set_run_config(baseline_cfg_eval);
 
@@ -4341,15 +4341,15 @@ int main(int argc, char** argv) {
             ? aecct_ref::make_fp16_experiment_run_config()
             : aecct_ref::make_fp32_baseline_run_config();
         experiment_cfg_eval.precision_mode = opts.experiment_precision_mode;
-        experiment_cfg_eval.algo_variant = opts.algo_variant;
-        experiment_cfg_eval.ln_mode = opts.experiment_ln_mode;
-        experiment_cfg_eval.finalhead_stage = anchor_finalhead_s0
+        experiment_cfg_eval.legacy.algo_variant = opts.algo_variant;
+        experiment_cfg_eval.legacy.ln_mode = opts.experiment_ln_mode;
+        experiment_cfg_eval.legacy.finalhead_stage = anchor_finalhead_s0
           ? aecct_ref::RefFinalHeadExploreStage::S0
           : opts.finalhead_stage;
-        experiment_cfg_eval.frag_group = use_frag_group_for_experiment
+        experiment_cfg_eval.legacy.frag_group = use_frag_group_for_experiment
           ? opts.frag_group
           : aecct_ref::RefFragGroup::NONE;
-        experiment_cfg_eval.softmax_exp_mode = opts.softmax_exp_mode;
+        experiment_cfg_eval.legacy.softmax_exp_mode = opts.softmax_exp_mode;
         experiment_model_eval.set_run_config(experiment_cfg_eval);
         run_ref_batch(
           experiment_model_eval,
@@ -4558,13 +4558,13 @@ int main(int argc, char** argv) {
   baseline_cfg.precision_mode = anchor_finalhead_s0
     ? aecct_ref::RefPrecisionMode::GENERIC_E4M3_FINALHEAD
     : aecct_ref::RefPrecisionMode::BASELINE_FP32;
-  baseline_cfg.algo_variant = opts.algo_variant;
-  baseline_cfg.ln_mode = opts.ln_mode;
-  baseline_cfg.finalhead_stage = anchor_finalhead_s0
+  baseline_cfg.legacy.algo_variant = opts.algo_variant;
+  baseline_cfg.legacy.ln_mode = opts.ln_mode;
+  baseline_cfg.legacy.finalhead_stage = anchor_finalhead_s0
     ? aecct_ref::RefFinalHeadExploreStage::S0
     : opts.finalhead_stage;
-  baseline_cfg.frag_group = aecct_ref::RefFragGroup::NONE;
-  baseline_cfg.softmax_exp_mode = aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
+  baseline_cfg.legacy.frag_group = aecct_ref::RefFragGroup::NONE;
+  baseline_cfg.legacy.softmax_exp_mode = aecct_ref::RefSoftmaxExpMode::BASELINE_NEAREST_LUT;
   baseline_model.set_run_config(baseline_cfg);
 
   BatchCompareSummary batch{};
@@ -4661,15 +4661,15 @@ int main(int argc, char** argv) {
         ? aecct_ref::make_fp16_experiment_run_config()
         : aecct_ref::make_fp32_baseline_run_config();
     experiment_cfg.precision_mode = opts.experiment_precision_mode;
-    experiment_cfg.algo_variant = opts.algo_variant;
-    experiment_cfg.ln_mode = opts.experiment_ln_mode;
-    experiment_cfg.finalhead_stage = anchor_finalhead_s0
+    experiment_cfg.legacy.algo_variant = opts.algo_variant;
+    experiment_cfg.legacy.ln_mode = opts.experiment_ln_mode;
+    experiment_cfg.legacy.finalhead_stage = anchor_finalhead_s0
       ? aecct_ref::RefFinalHeadExploreStage::S0
       : opts.finalhead_stage;
-    experiment_cfg.frag_group = use_frag_group_for_experiment
+    experiment_cfg.legacy.frag_group = use_frag_group_for_experiment
       ? opts.frag_group
       : aecct_ref::RefFragGroup::NONE;
-    experiment_cfg.softmax_exp_mode = opts.softmax_exp_mode;
+    experiment_cfg.legacy.softmax_exp_mode = opts.softmax_exp_mode;
     experiment_model.set_run_config(experiment_cfg);
     run_ref_batch(
       experiment_model,
