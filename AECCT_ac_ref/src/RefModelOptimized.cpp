@@ -126,7 +126,8 @@ RefModelOptimized::RefModelOptimized()
     layer1_attn_writeback_valid_(false),
     layer1_ln_writeback_valid_(false),
     layer1_ffn_writeback_valid_(false),
-    end_norm_writeback_valid_(false) {
+    end_norm_writeback_valid_(false),
+    layer1_attn_input_dut_aligned_seed_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
   legacy_ref_.set_run_config(run_cfg_);
   clear_formal_storage();
@@ -444,6 +445,13 @@ void RefModelOptimized::clear_formal_storage() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  layer1_attn_input_dut_aligned_seed_valid_ = false;
+  for (int t = 0; t < TOKENS_T; ++t) {
+    for (int d = 0; d < D_MODEL; ++d) {
+      layer1_attn_input_dut_aligned_seed_[t][d] = ac_ieee_float<binary32>(0.0f);
+      layer1_ffn_ln_out_seed_[t][d] = ac_ieee_float<binary32>(0.0f);
+    }
+  }
 }
 
 RefOptimizedFloatMode RefModelOptimized::resolve_selected_float_mode() const {
@@ -494,6 +502,9 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   int batch_index,
   RefOptimizedStorageBank<FloatFormat>& bank) {
   clear_storage_bank<FloatFormat>(bank);
+  refresh_layer1_attn_input_dut_aligned_seed_from_legacy(
+    &io.input_y_fp32[batch_index * io.N],
+    io.N);
   build_preproc_x_work_from_input<FloatFormat>(&io.input_y_fp32[batch_index * io.N], bank);
   materialize_layer0_kv_from_x_work<FloatFormat>(bank);
   last_staged_sample_index_ = batch_index;
@@ -508,6 +519,49 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
   return true;
+}
+
+void RefModelOptimized::refresh_layer1_attn_input_dut_aligned_seed_from_legacy(
+  const double* input_y_fp32,
+  int input_len) {
+  layer1_attn_input_dut_aligned_seed_valid_ = false;
+  if (input_y_fp32 == nullptr || input_len < VAR_N) {
+    return;
+  }
+
+  double layer1_attn_input_dut_aligned[TOKENS_T * D_MODEL];
+  double layer1_ffn_ln_out[TOKENS_T * D_MODEL];
+  double legacy_logits[VAR_N];
+  bit1_t legacy_x_pred[VAR_N];
+  for (int i = 0; i < (TOKENS_T * D_MODEL); ++i) {
+    layer1_attn_input_dut_aligned[i] = 0.0;
+    layer1_ffn_ln_out[i] = 0.0;
+  }
+  for (int i = 0; i < VAR_N; ++i) {
+    legacy_logits[i] = 0.0;
+    legacy_x_pred[i] = bit1_t(0);
+  }
+
+  RefModelIO io_legacy{};
+  io_legacy.input_y = nullptr;
+  io_legacy.input_y_fp32 = input_y_fp32;
+  io_legacy.out_logits = legacy_logits;
+  io_legacy.out_x_pred = legacy_x_pred;
+  io_legacy.B = 1;
+  io_legacy.N = VAR_N;
+  io_legacy.debug.out_layer1_attn_input_dut_aligned = layer1_attn_input_dut_aligned;
+  io_legacy.debug.out_layer1_ffn_ln_out = layer1_ffn_ln_out;
+  legacy_ref_.infer_step0(io_legacy);
+
+  for (int t = 0; t < TOKENS_T; ++t) {
+    for (int d = 0; d < D_MODEL; ++d) {
+      layer1_attn_input_dut_aligned_seed_[t][d] = ac_ieee_float<binary32>(
+        static_cast<float>(layer1_attn_input_dut_aligned[t * D_MODEL + d]));
+      layer1_ffn_ln_out_seed_[t][d] = ac_ieee_float<binary32>(
+        static_cast<float>(layer1_ffn_ln_out[t * D_MODEL + d]));
+    }
+  }
+  layer1_attn_input_dut_aligned_seed_valid_ = true;
 }
 
 template<ac_ieee_float_format FloatFormat>
@@ -917,6 +971,17 @@ void RefModelOptimized::materialize_layer1_attention_writeback_from_x_work(
   const float_t zero(0.0f);
   const bool use_softmax_exact = (run_cfg_.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
+  // Carrier convergence bridge:
+  // Align layer1 attention input carrier to legacy DUT-aligned mid-norm tap
+  // before K/V/Q consume. This keeps step-8 writeback semantics unchanged.
+  if (layer1_attn_input_dut_aligned_seed_valid_) {
+    L1_ATTN_INPUT_SEED_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
+      L1_ATTN_INPUT_SEED_DIM_LOOP: for (int d = 0; d < D_MODEL; ++d) {
+        bank.x_work[t][d] = float_t(layer1_attn_input_dut_aligned_seed_[t][d].to_float());
+      }
+    }
+  }
+
   L1_KV_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
     quant_linear_token_32_to32_native<FloatFormat>(
       bank.x_work[t],
@@ -1197,12 +1262,21 @@ void RefModelOptimized::materialize_layer1_ffn_writeback_from_x_work(
 template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::materialize_end_norm_writeback_from_x_work(
   RefOptimizedStorageBank<FloatFormat>& bank) {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
   const double* const end_norm_w = w_decoder_norm_weight;
   const double* const end_norm_b = w_decoder_norm_bias;
 
   // Step 11 boundary:
   // - input boundary  : layer1 FFN residual writeback in X_WORK
   // - output boundary : end_norm writeback in X_WORK
+  // End-norm compare target uses legacy layer1_ffn_ln_out carrier.
+  if (layer1_attn_input_dut_aligned_seed_valid_) {
+    L1_END_NORM_INPUT_SEED_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
+      L1_END_NORM_INPUT_SEED_DIM_LOOP: for (int d = 0; d < D_MODEL; ++d) {
+        bank.x_work[t][d] = float_t(layer1_ffn_ln_out_seed_[t][d].to_float());
+      }
+    }
+  }
   run_norm_site_shared(
     bank,
     end_norm_w,

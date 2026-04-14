@@ -105,6 +105,9 @@ private:
     const RefModelIO& io,
     int batch_index,
     RefOptimizedStorageBank<FloatFormat>& bank);
+  void refresh_layer1_attn_input_dut_aligned_seed_from_legacy(
+    const double* input_y_fp32,
+    int input_len);
   template<ac_ieee_float_format FloatFormat>
   void build_preproc_x_work_from_input(
     const double* input_y_fp32,
@@ -199,6 +202,9 @@ private:
   bool layer1_ln_writeback_valid_;
   bool layer1_ffn_writeback_valid_;
   bool end_norm_writeback_valid_;
+  ac_ieee_float<binary32> layer1_attn_input_dut_aligned_seed_[TOKENS_T][D_MODEL];
+  ac_ieee_float<binary32> layer1_ffn_ln_out_seed_[TOKENS_T][D_MODEL];
+  bool layer1_attn_input_dut_aligned_seed_valid_;
 };
 
 } // namespace aecct_ref
