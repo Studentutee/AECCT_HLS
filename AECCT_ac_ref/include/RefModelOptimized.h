@@ -28,11 +28,10 @@ public:
 
   // Partial optimized pipeline:
   // Step 2/3 materialize preproc into X_WORK and layer-0 K/V into SCR_K /
-  // SCR_V. Step 4/5A/5B currently port layer-0 attention mainline, layer-0
-  // LN writeback, layer-0 FFN residual writeback, Step 6 mid_norm
-  // writeback, and Step 7 layer1-attention input handoff boundary marking
-  // into/in-place on X_WORK, while downstream phases are still completed by
-  // the legacy RefModel path.
+  // SCR_V. Step 4/5A/5B/6 port layer-0 attention/LN/FFN/mid-norm writeback.
+  // Step 7~10 extend optimized coverage to layer-1 attention, layer-1 post-
+  // attention LN, layer-1 FFN, and end-norm writeback into/in-place on
+  // X_WORK. FinalHead/output completion still stays on the legacy path.
   void infer_step0(const RefModelIO& io);
 
   // Stage the optimized major storage for one sample without running the
@@ -43,6 +42,10 @@ public:
   bool run_step0_layer0_ffn_writeback();
   bool run_step0_mid_norm_writeback();
   bool run_step0_layer1_attn_input_handoff();
+  bool run_step0_layer1_attention_writeback();
+  bool run_step0_layer1_ln_writeback();
+  bool run_step0_layer1_ffn_writeback();
+  bool run_step0_end_norm_writeback();
 
   int last_staged_sample_index() const;
   bool phase_a_valid() const;
@@ -51,6 +54,10 @@ public:
   bool layer0_ffn_writeback_valid() const;
   bool mid_norm_writeback_valid() const;
   bool layer1_attn_input_handoff_valid() const;
+  bool layer1_attn_writeback_valid() const;
+  bool layer1_ln_writeback_valid() const;
+  bool layer1_ffn_writeback_valid() const;
+  bool end_norm_writeback_valid() const;
 
   ac_ieee_float<binary32> x_work(int token, int dim) const;
   ac_ieee_float<binary32> scr_k(int token, int dim) const;
@@ -118,6 +125,18 @@ private:
   void materialize_layer0_mid_norm_writeback_from_x_work(
     RefOptimizedStorageBank<FloatFormat>& bank);
   template<ac_ieee_float_format FloatFormat>
+  void materialize_layer1_attention_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
+  void materialize_layer1_ln_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
+  void materialize_layer1_ffn_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
+  void materialize_end_norm_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
   void layernorm_token_32_local(
     const typename RefOptimizedStorageBank<FloatFormat>::float_t x_token[D_MODEL],
     const double w[D_MODEL],
@@ -176,6 +195,10 @@ private:
   bool layer0_ffn_writeback_valid_;
   bool mid_norm_writeback_valid_;
   bool layer1_attn_input_handoff_valid_;
+  bool layer1_attn_writeback_valid_;
+  bool layer1_ln_writeback_valid_;
+  bool layer1_ffn_writeback_valid_;
+  bool end_norm_writeback_valid_;
 };
 
 } // namespace aecct_ref

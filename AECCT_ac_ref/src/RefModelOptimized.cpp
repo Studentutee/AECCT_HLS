@@ -14,7 +14,8 @@ namespace {
 enum class RefNormSiteInternal {
   kLayer0PostAttn = 0,
   kMidNorm = 1,
-  kLayer1PostAttn = 2
+  kLayer1PostAttn = 2,
+  kEndNorm = 3
 };
 
 enum class RefLayerIdInternal {
@@ -37,6 +38,7 @@ void run_norm_site_shared(
     case RefNormSiteInternal::kLayer0PostAttn:
     case RefNormSiteInternal::kMidNorm:
     case RefNormSiteInternal::kLayer1PostAttn:
+    case RefNormSiteInternal::kEndNorm:
       break;
     default:
       assert(false);
@@ -120,7 +122,11 @@ RefModelOptimized::RefModelOptimized()
     layer0_ln_writeback_valid_(false),
     layer0_ffn_writeback_valid_(false),
     mid_norm_writeback_valid_(false),
-    layer1_attn_input_handoff_valid_(false) {
+    layer1_attn_input_handoff_valid_(false),
+    layer1_attn_writeback_valid_(false),
+    layer1_ln_writeback_valid_(false),
+    layer1_ffn_writeback_valid_(false),
+    end_norm_writeback_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
   legacy_ref_.set_run_config(run_cfg_);
   clear_formal_storage();
@@ -152,14 +158,18 @@ void RefModelOptimized::infer_step0(const RefModelIO& io) {
         (void)run_step0_layer0_ffn_writeback();
         (void)run_step0_mid_norm_writeback();
         (void)run_step0_layer1_attn_input_handoff();
+        (void)run_step0_layer1_attention_writeback();
+        (void)run_step0_layer1_ln_writeback();
+        (void)run_step0_layer1_ffn_writeback();
+        (void)run_step0_end_norm_writeback();
       }
     }
   }
 
-  // Layer0 attention + sublayer0 LN + layer0 FFN residual writeback +
-  // mid_norm writeback + layer1-attention input handoff boundary marking
-  // (Step 4/5A/5B/6/7) are ported in the optimized path. Remaining
-  // downstream phases still complete on the legacy path.
+  // Step-0 optimized coverage in this path:
+  // phaseA -> layer0 attention -> layer0 LN -> layer0 FFN -> mid_norm ->
+  // layer1 attention -> layer1 post-attn LN -> layer1 FFN -> end_norm.
+  // FinalHead/output completion still stays on the legacy path.
   legacy_ref_.infer_step0(io);
 }
 
@@ -206,6 +216,22 @@ bool RefModelOptimized::mid_norm_writeback_valid() const {
 
 bool RefModelOptimized::layer1_attn_input_handoff_valid() const {
   return layer1_attn_input_handoff_valid_;
+}
+
+bool RefModelOptimized::layer1_attn_writeback_valid() const {
+  return layer1_attn_writeback_valid_;
+}
+
+bool RefModelOptimized::layer1_ln_writeback_valid() const {
+  return layer1_ln_writeback_valid_;
+}
+
+bool RefModelOptimized::layer1_ffn_writeback_valid() const {
+  return layer1_ffn_writeback_valid_;
+}
+
+bool RefModelOptimized::end_norm_writeback_valid() const {
+  return end_norm_writeback_valid_;
 }
 
 ac_ieee_float<binary32> RefModelOptimized::x_work(int token, int dim) const {
@@ -258,6 +284,10 @@ bool RefModelOptimized::run_step0_layer0_attention_writeback() {
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
   layer1_attn_input_handoff_valid_ = false;
+  layer1_attn_writeback_valid_ = false;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
   return true;
 }
 
@@ -275,6 +305,10 @@ bool RefModelOptimized::run_step0_layer0_ln_writeback() {
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
   layer1_attn_input_handoff_valid_ = false;
+  layer1_attn_writeback_valid_ = false;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
   return true;
 }
 
@@ -291,6 +325,10 @@ bool RefModelOptimized::run_step0_layer0_ffn_writeback() {
   layer0_ffn_writeback_valid_ = true;
   mid_norm_writeback_valid_ = false;
   layer1_attn_input_handoff_valid_ = false;
+  layer1_attn_writeback_valid_ = false;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
   return true;
 }
 
@@ -306,6 +344,10 @@ bool RefModelOptimized::run_step0_mid_norm_writeback() {
   }
   mid_norm_writeback_valid_ = true;
   layer1_attn_input_handoff_valid_ = false;
+  layer1_attn_writeback_valid_ = false;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
   return true;
 }
 
@@ -319,6 +361,72 @@ bool RefModelOptimized::run_step0_layer1_attn_input_handoff() {
   // - output boundary : layer1 attention input handoff (same X_WORK storage)
   // No extra [T][D] matrix is allocated or copied in this handoff step.
   layer1_attn_input_handoff_valid_ = true;
+  layer1_attn_writeback_valid_ = false;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_layer1_attention_writeback() {
+  if (!phase_a_valid_ || !layer1_attn_input_handoff_valid_) {
+    return false;
+  }
+
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+    materialize_layer1_attention_writeback_from_x_work<binary16>(storage_fp16_);
+  } else {
+    materialize_layer1_attention_writeback_from_x_work<binary32>(storage_fp32_);
+  }
+  layer1_attn_writeback_valid_ = true;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_layer1_ln_writeback() {
+  if (!phase_a_valid_ || !layer1_attn_writeback_valid_) {
+    return false;
+  }
+
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+    materialize_layer1_ln_writeback_from_x_work<binary16>(storage_fp16_);
+  } else {
+    materialize_layer1_ln_writeback_from_x_work<binary32>(storage_fp32_);
+  }
+  layer1_ln_writeback_valid_ = true;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_layer1_ffn_writeback() {
+  if (!phase_a_valid_ || !layer1_ln_writeback_valid_) {
+    return false;
+  }
+
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+    materialize_layer1_ffn_writeback_from_x_work<binary16>(storage_fp16_);
+  } else {
+    materialize_layer1_ffn_writeback_from_x_work<binary32>(storage_fp32_);
+  }
+  layer1_ffn_writeback_valid_ = true;
+  end_norm_writeback_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_end_norm_writeback() {
+  if (!phase_a_valid_ || !layer1_ffn_writeback_valid_) {
+    return false;
+  }
+
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+    materialize_end_norm_writeback_from_x_work<binary16>(storage_fp16_);
+  } else {
+    materialize_end_norm_writeback_from_x_work<binary32>(storage_fp32_);
+  }
+  end_norm_writeback_valid_ = true;
   return true;
 }
 
@@ -332,6 +440,10 @@ void RefModelOptimized::clear_formal_storage() {
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
   layer1_attn_input_handoff_valid_ = false;
+  layer1_attn_writeback_valid_ = false;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
 }
 
 RefOptimizedFloatMode RefModelOptimized::resolve_selected_float_mode() const {
@@ -391,6 +503,10 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
   layer1_attn_input_handoff_valid_ = false;
+  layer1_attn_writeback_valid_ = false;
+  layer1_ln_writeback_valid_ = false;
+  layer1_ffn_writeback_valid_ = false;
+  end_norm_writeback_valid_ = false;
   return true;
 }
 
@@ -696,8 +812,11 @@ void RefModelOptimized::materialize_layer0_ffn_writeback_from_x_work(
         s_w_ff1 = static_cast<float>(w_decoder_layers_0_feed_forward_w_1_s_w[0]);
         break;
       case RefLayerIdInternal::kLayer1:
-        assert(false && "Layer1 FFN linear0 shared body is not wired in this patch.");
-        return;
+        w_ff1 = w_decoder_layers_1_feed_forward_w_1_weight;
+        b_ff1 = w_decoder_layers_1_feed_forward_w_1_bias;
+        s_x_ff1 = static_cast<float>(l1_ff1_s_x);
+        s_w_ff1 = static_cast<float>(w_decoder_layers_1_feed_forward_w_1_s_w[0]);
+        break;
       default:
         assert(false);
         return;
@@ -726,8 +845,11 @@ void RefModelOptimized::materialize_layer0_ffn_writeback_from_x_work(
         s_w_ff2 = static_cast<float>(w_decoder_layers_0_feed_forward_w_2_s_w[0]);
         break;
       case RefLayerIdInternal::kLayer1:
-        assert(false && "Layer1 FFN linear1 shared body is not wired in this patch.");
-        return;
+        w_ff2 = w_decoder_layers_1_feed_forward_w_2_weight;
+        b_ff2 = w_decoder_layers_1_feed_forward_w_2_bias;
+        s_x_ff2 = static_cast<float>(l1_ff2_s_x);
+        s_w_ff2 = static_cast<float>(w_decoder_layers_1_feed_forward_w_2_s_w[0]);
+        break;
       default:
         assert(false);
         return;
@@ -770,6 +892,322 @@ void RefModelOptimized::materialize_layer0_mid_norm_writeback_from_x_work(
     mid_norm_w,
     mid_norm_b,
     RefNormSiteInternal::kMidNorm,
+    [this](const auto* x_token, const double* w, const double* b, auto* y_token) {
+      layernorm_token_32_local<FloatFormat>(x_token, w, b, y_token);
+    });
+}
+
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_layer1_attention_writeback_from_x_work(
+  RefOptimizedStorageBank<FloatFormat>& bank) {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
+
+  // Step 8 boundary:
+  // - input boundary  : layer1 attention input handoff in X_WORK
+  // - output boundary : layer1 attention Wo + residual writeback in X_WORK
+  // Storage rule for this step: SCR_K/SCR_V are reused for layer1 K/V
+  // materialization; no extra full score/prob/context/post-concat tensors.
+  const float s_x_in = static_cast<float>(l1_in_s_x);
+  const float s_x_o = static_cast<float>(l1_o_s_x);
+  const float s_w_q = static_cast<float>(w_decoder_layers_1_self_attn_linears_0_s_w[0]);
+  const float s_w_k = static_cast<float>(w_decoder_layers_1_self_attn_linears_1_s_w[0]);
+  const float s_w_v = static_cast<float>(w_decoder_layers_1_self_attn_linears_2_s_w[0]);
+  const float s_w_o = static_cast<float>(w_decoder_layers_1_self_attn_linears_3_s_w[0]);
+  const float_t inv_sqrt_dh(0.5f); // 1 / sqrt(4)
+  const float_t zero(0.0f);
+  const bool use_softmax_exact = (run_cfg_.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
+
+  L1_KV_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
+    quant_linear_token_32_to32_native<FloatFormat>(
+      bank.x_work[t],
+      w_decoder_layers_1_self_attn_linears_1_weight,
+      w_decoder_layers_1_self_attn_linears_1_bias,
+      s_x_in,
+      s_w_k,
+      bank.scr_k[t]);
+    quant_linear_token_32_to32_native<FloatFormat>(
+      bank.x_work[t],
+      w_decoder_layers_1_self_attn_linears_2_weight,
+      w_decoder_layers_1_self_attn_linears_2_bias,
+      s_x_in,
+      s_w_v,
+      bank.scr_v[t]);
+  }
+
+  L1_ATTN_QTOKEN_LOOP: for (int q_token = 0; q_token < TOKENS_T; ++q_token) {
+    for (int d = 0; d < D_MODEL; ++d) {
+      bank.ln_token_buf[d] = bank.x_work[q_token][d];
+      bank.out_acc_tile[d] = zero;
+    }
+
+    quant_linear_token_32_to32_native<FloatFormat>(
+      bank.x_work[q_token],
+      w_decoder_layers_1_self_attn_linears_0_weight,
+      w_decoder_layers_1_self_attn_linears_0_bias,
+      s_x_in,
+      s_w_q,
+      bank.q_vec);
+
+    L1_ATTN_HEAD_LOOP: for (int h = 0; h < HEADS; ++h) {
+      const int base = h * D_HEAD;
+      if (use_softmax_exact) {
+        bool has_valid = false;
+        float_t max_score = zero;
+        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
+          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          float_t dot = zero;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
+          }
+          const float_t score = dot * inv_sqrt_dh;
+          if (!has_valid || score > max_score) {
+            max_score = score;
+          }
+          has_valid = true;
+        }
+
+        if (!has_valid) {
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            bank.head_ctx_buf[h][dh] = zero;
+          }
+          continue;
+        }
+
+        float_t sumexp = zero;
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          bank.softmax_acc_tile[dh] = zero;
+        }
+        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
+          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          float_t dot = zero;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
+          }
+          const float_t score = dot * inv_sqrt_dh;
+          const float_t w(static_cast<float>(std::exp((score - max_score).to_float())));
+          sumexp += w;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
+          }
+        }
+
+        float_t inv_sumexp = zero;
+        if (sumexp > zero) {
+          inv_sumexp = float_t(1.0f) / sumexp;
+        }
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
+        }
+      } else {
+        bool online_init = false;
+        float_t online_max = zero;
+        float_t online_sumexp = zero;
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          bank.softmax_acc_tile[dh] = zero;
+        }
+
+        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
+          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          float_t dot = zero;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
+          }
+          const float_t score = dot * inv_sqrt_dh;
+
+          if (!online_init) {
+            online_max = score;
+            online_sumexp = float_t(1.0f);
+            for (int dh = 0; dh < D_HEAD; ++dh) {
+              bank.softmax_acc_tile[dh] = bank.scr_v[k_token][base + dh];
+            }
+            online_init = true;
+            continue;
+          }
+
+          if (score > online_max) {
+            const float_t rescale = ref_softmax_exp_dispatch(
+              online_max - score,
+              run_cfg_.legacy.softmax_exp_mode);
+            online_sumexp = (online_sumexp * rescale) + float_t(1.0f);
+            for (int dh = 0; dh < D_HEAD; ++dh) {
+              bank.softmax_acc_tile[dh] =
+                (bank.softmax_acc_tile[dh] * rescale) + bank.scr_v[k_token][base + dh];
+            }
+            online_max = score;
+            continue;
+          }
+
+          const float_t w = ref_softmax_exp_dispatch(
+            score - online_max,
+            run_cfg_.legacy.softmax_exp_mode);
+          online_sumexp += w;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
+          }
+        }
+
+        if (!online_init) {
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            bank.head_ctx_buf[h][dh] = zero;
+          }
+          continue;
+        }
+
+        const float_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
+        }
+      }
+    }
+
+    for (int h = 0; h < HEADS; ++h) {
+      const int base = h * D_HEAD;
+      for (int dh = 0; dh < D_HEAD; ++dh) {
+        bank.q_vec[base + dh] = bank.head_ctx_buf[h][dh];
+      }
+    }
+
+    quant_linear_token_32_to32_native<FloatFormat>(
+      bank.q_vec,
+      w_decoder_layers_1_self_attn_linears_3_weight,
+      w_decoder_layers_1_self_attn_linears_3_bias,
+      s_x_o,
+      s_w_o,
+      bank.out_acc_tile);
+
+    for (int d = 0; d < D_MODEL; ++d) {
+      bank.x_work[q_token][d] = bank.out_acc_tile[d] + bank.ln_token_buf[d];
+    }
+  }
+}
+
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_layer1_ln_writeback_from_x_work(
+  RefOptimizedStorageBank<FloatFormat>& bank) {
+  const double* const ln1_w = w_decoder_layers_1_sublayer_0_norm_weight;
+  const double* const ln1_b = w_decoder_layers_1_sublayer_0_norm_bias;
+
+  // Step 9 boundary:
+  // - input boundary  : layer1 attention residual writeback in X_WORK
+  // - output boundary : layer1 post-attention LN writeback in X_WORK
+  run_norm_site_shared(
+    bank,
+    ln1_w,
+    ln1_b,
+    RefNormSiteInternal::kLayer1PostAttn,
+    [this](const auto* x_token, const double* w, const double* b, auto* y_token) {
+      layernorm_token_32_local<FloatFormat>(x_token, w, b, y_token);
+    });
+}
+
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_layer1_ffn_writeback_from_x_work(
+  RefOptimizedStorageBank<FloatFormat>& bank) {
+  // Step 10 boundary:
+  // - input boundary  : layer1 post-attention LN writeback in X_WORK
+  // - output boundary : layer1 FFN residual writeback in X_WORK
+  // FFN local storage rule for this step: single-token FF_DIM buffer only.
+  auto linear0_fn = [this](
+    const auto* x_token,
+    auto* y_token,
+    RefLayerIdInternal layer_id) {
+    const double* w_ff1 = nullptr;
+    const double* b_ff1 = nullptr;
+    float s_x_ff1 = 1.0f;
+    float s_w_ff1 = 1.0f;
+    switch (layer_id) {
+      case RefLayerIdInternal::kLayer0:
+        w_ff1 = w_decoder_layers_0_feed_forward_w_1_weight;
+        b_ff1 = w_decoder_layers_0_feed_forward_w_1_bias;
+        s_x_ff1 = static_cast<float>(l0_ff1_s_x);
+        s_w_ff1 = static_cast<float>(w_decoder_layers_0_feed_forward_w_1_s_w[0]);
+        break;
+      case RefLayerIdInternal::kLayer1:
+        w_ff1 = w_decoder_layers_1_feed_forward_w_1_weight;
+        b_ff1 = w_decoder_layers_1_feed_forward_w_1_bias;
+        s_x_ff1 = static_cast<float>(l1_ff1_s_x);
+        s_w_ff1 = static_cast<float>(w_decoder_layers_1_feed_forward_w_1_s_w[0]);
+        break;
+      default:
+        assert(false);
+        return;
+    }
+    quant_linear_token_32_to128_native<FloatFormat>(
+      x_token,
+      w_ff1,
+      b_ff1,
+      s_x_ff1,
+      s_w_ff1,
+      y_token);
+  };
+  auto linear1_fn = [this](
+    const auto* x_token,
+    auto* y_token,
+    RefLayerIdInternal layer_id) {
+    const double* w_ff2 = nullptr;
+    const double* b_ff2 = nullptr;
+    float s_x_ff2 = 1.0f;
+    float s_w_ff2 = 1.0f;
+    switch (layer_id) {
+      case RefLayerIdInternal::kLayer0:
+        w_ff2 = w_decoder_layers_0_feed_forward_w_2_weight;
+        b_ff2 = w_decoder_layers_0_feed_forward_w_2_bias;
+        s_x_ff2 = static_cast<float>(l0_ff2_s_x);
+        s_w_ff2 = static_cast<float>(w_decoder_layers_0_feed_forward_w_2_s_w[0]);
+        break;
+      case RefLayerIdInternal::kLayer1:
+        w_ff2 = w_decoder_layers_1_feed_forward_w_2_weight;
+        b_ff2 = w_decoder_layers_1_feed_forward_w_2_bias;
+        s_x_ff2 = static_cast<float>(l1_ff2_s_x);
+        s_w_ff2 = static_cast<float>(w_decoder_layers_1_feed_forward_w_2_s_w[0]);
+        break;
+      default:
+        assert(false);
+        return;
+    }
+    quant_linear_token_128_to32_native<FloatFormat>(
+      x_token,
+      w_ff2,
+      b_ff2,
+      s_x_ff2,
+      s_w_ff2,
+      y_token);
+  };
+
+  L1_FFN_TOKEN_LOOP: for (int token = 0; token < TOKENS_T; ++token) {
+    run_ffn_linear0_relu_layer_token_shared(
+      bank,
+      token,
+      RefLayerIdInternal::kLayer1,
+      linear0_fn);
+    run_ffn_linear1_residual_layer_token_shared(
+      bank,
+      token,
+      RefLayerIdInternal::kLayer1,
+      linear1_fn);
+  }
+}
+
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_end_norm_writeback_from_x_work(
+  RefOptimizedStorageBank<FloatFormat>& bank) {
+  const double* const end_norm_w = w_decoder_norm_weight;
+  const double* const end_norm_b = w_decoder_norm_bias;
+
+  // Step 11 boundary:
+  // - input boundary  : layer1 FFN residual writeback in X_WORK
+  // - output boundary : end_norm writeback in X_WORK
+  run_norm_site_shared(
+    bank,
+    end_norm_w,
+    end_norm_b,
+    RefNormSiteInternal::kEndNorm,
     [this](const auto* x_token, const double* w, const double* b, auto* y_token) {
       layernorm_token_32_local<FloatFormat>(x_token, w, b, y_token);
     });
@@ -1076,6 +1514,22 @@ template void RefModelOptimized::materialize_layer0_ffn_writeback_from_x_work<bi
 template void RefModelOptimized::materialize_layer0_mid_norm_writeback_from_x_work<binary16>(
   RefOptimizedStorageBank<binary16>& bank);
 template void RefModelOptimized::materialize_layer0_mid_norm_writeback_from_x_work<binary32>(
+  RefOptimizedStorageBank<binary32>& bank);
+template void RefModelOptimized::materialize_layer1_attention_writeback_from_x_work<binary16>(
+  RefOptimizedStorageBank<binary16>& bank);
+template void RefModelOptimized::materialize_layer1_attention_writeback_from_x_work<binary32>(
+  RefOptimizedStorageBank<binary32>& bank);
+template void RefModelOptimized::materialize_layer1_ln_writeback_from_x_work<binary16>(
+  RefOptimizedStorageBank<binary16>& bank);
+template void RefModelOptimized::materialize_layer1_ln_writeback_from_x_work<binary32>(
+  RefOptimizedStorageBank<binary32>& bank);
+template void RefModelOptimized::materialize_layer1_ffn_writeback_from_x_work<binary16>(
+  RefOptimizedStorageBank<binary16>& bank);
+template void RefModelOptimized::materialize_layer1_ffn_writeback_from_x_work<binary32>(
+  RefOptimizedStorageBank<binary32>& bank);
+template void RefModelOptimized::materialize_end_norm_writeback_from_x_work<binary16>(
+  RefOptimizedStorageBank<binary16>& bank);
+template void RefModelOptimized::materialize_end_norm_writeback_from_x_work<binary32>(
   RefOptimizedStorageBank<binary32>& bank);
 
 template ac_ieee_float<binary16> RefModelOptimized::float_abs_local<binary16>(
