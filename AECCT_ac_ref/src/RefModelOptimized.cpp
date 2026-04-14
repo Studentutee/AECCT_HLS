@@ -15,7 +15,8 @@ RefModelOptimized::RefModelOptimized()
     layer0_attn_writeback_valid_(false),
     layer0_ln_writeback_valid_(false),
     layer0_ffn_writeback_valid_(false),
-    mid_norm_writeback_valid_(false) {
+    mid_norm_writeback_valid_(false),
+    layer1_attn_input_handoff_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
   legacy_ref_.set_run_config(run_cfg_);
   clear_formal_storage();
@@ -46,14 +47,15 @@ void RefModelOptimized::infer_step0(const RefModelIO& io) {
         (void)run_step0_layer0_ln_writeback();
         (void)run_step0_layer0_ffn_writeback();
         (void)run_step0_mid_norm_writeback();
+        (void)run_step0_layer1_attn_input_handoff();
       }
     }
   }
 
   // Layer0 attention + sublayer0 LN + layer0 FFN residual writeback +
-  // mid_norm writeback (Step 4/5A/5B/6) are ported in the optimized path.
-  // Remaining downstream
-  // phases still complete on the legacy path.
+  // mid_norm writeback + layer1-attention input handoff boundary marking
+  // (Step 4/5A/5B/6/7) are ported in the optimized path. Remaining
+  // downstream phases still complete on the legacy path.
   legacy_ref_.infer_step0(io);
 }
 
@@ -96,6 +98,10 @@ bool RefModelOptimized::layer0_ffn_writeback_valid() const {
 
 bool RefModelOptimized::mid_norm_writeback_valid() const {
   return mid_norm_writeback_valid_;
+}
+
+bool RefModelOptimized::layer1_attn_input_handoff_valid() const {
+  return layer1_attn_input_handoff_valid_;
 }
 
 ac_ieee_float<binary32> RefModelOptimized::x_work(int token, int dim) const {
@@ -147,6 +153,7 @@ bool RefModelOptimized::run_step0_layer0_attention_writeback() {
   layer0_ln_writeback_valid_ = false;
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
+  layer1_attn_input_handoff_valid_ = false;
   return true;
 }
 
@@ -163,6 +170,7 @@ bool RefModelOptimized::run_step0_layer0_ln_writeback() {
   layer0_ln_writeback_valid_ = true;
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
+  layer1_attn_input_handoff_valid_ = false;
   return true;
 }
 
@@ -178,6 +186,7 @@ bool RefModelOptimized::run_step0_layer0_ffn_writeback() {
   }
   layer0_ffn_writeback_valid_ = true;
   mid_norm_writeback_valid_ = false;
+  layer1_attn_input_handoff_valid_ = false;
   return true;
 }
 
@@ -192,6 +201,20 @@ bool RefModelOptimized::run_step0_mid_norm_writeback() {
     materialize_layer0_mid_norm_writeback_from_x_work<binary32>(storage_fp32_);
   }
   mid_norm_writeback_valid_ = true;
+  layer1_attn_input_handoff_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_layer1_attn_input_handoff() {
+  if (!phase_a_valid_ || !mid_norm_writeback_valid_) {
+    return false;
+  }
+
+  // Step 7 boundary:
+  // - input boundary  : mid_norm output writeback in X_WORK
+  // - output boundary : layer1 attention input handoff (same X_WORK storage)
+  // No extra [T][D] matrix is allocated or copied in this handoff step.
+  layer1_attn_input_handoff_valid_ = true;
   return true;
 }
 
@@ -204,6 +227,7 @@ void RefModelOptimized::clear_formal_storage() {
   layer0_ln_writeback_valid_ = false;
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
+  layer1_attn_input_handoff_valid_ = false;
 }
 
 RefOptimizedFloatMode RefModelOptimized::resolve_selected_float_mode() const {
@@ -262,6 +286,7 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   layer0_ln_writeback_valid_ = false;
   layer0_ffn_writeback_valid_ = false;
   mid_norm_writeback_valid_ = false;
+  layer1_attn_input_handoff_valid_ = false;
   return true;
 }
 

@@ -29,8 +29,9 @@ public:
   // Partial optimized pipeline:
   // Step 2/3 materialize preproc into X_WORK and layer-0 K/V into SCR_K /
   // SCR_V. Step 4/5A/5B currently port layer-0 attention mainline, layer-0
-  // LN writeback, layer-0 FFN residual writeback, and Step 6 mid_norm
-  // writeback into X_WORK, while downstream phases are still completed by
+  // LN writeback, layer-0 FFN residual writeback, Step 6 mid_norm
+  // writeback, and Step 7 layer1-attention input handoff boundary marking
+  // into/in-place on X_WORK, while downstream phases are still completed by
   // the legacy RefModel path.
   void infer_step0(const RefModelIO& io);
 
@@ -41,6 +42,7 @@ public:
   bool run_step0_layer0_ln_writeback();
   bool run_step0_layer0_ffn_writeback();
   bool run_step0_mid_norm_writeback();
+  bool run_step0_layer1_attn_input_handoff();
 
   int last_staged_sample_index() const;
   bool phase_a_valid() const;
@@ -48,6 +50,7 @@ public:
   bool layer0_ln_writeback_valid() const;
   bool layer0_ffn_writeback_valid() const;
   bool mid_norm_writeback_valid() const;
+  bool layer1_attn_input_handoff_valid() const;
 
   ac_ieee_float<binary32> x_work(int token, int dim) const;
   ac_ieee_float<binary32> scr_k(int token, int dim) const;
@@ -172,6 +175,7 @@ private:
   bool layer0_ln_writeback_valid_;
   bool layer0_ffn_writeback_valid_;
   bool mid_norm_writeback_valid_;
+  bool layer1_attn_input_handoff_valid_;
 };
 
 } // namespace aecct_ref
