@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cmath>
 
+#include "../include/SoftmaxApprox.h"
 #include "weights.h"
 
 namespace aecct_ref {
@@ -21,7 +22,8 @@ static inline ref_fp32_t make_ref_fp32_from_island(ac_ieee_float<FloatFormat> x)
 
 RefModelOptimized::RefModelOptimized()
   : last_staged_sample_index_(-1),
-    phase_a_valid_(false) {
+    phase_a_valid_(false),
+    layer0_attn_writeback_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
   legacy_ref_.set_run_config(run_cfg_);
   clear_formal_storage();
@@ -47,12 +49,14 @@ RefOptimizedNumericConfig RefModelOptimized::get_numeric_config() const {
 void RefModelOptimized::infer_step0(const RefModelIO& io) {
   if (io.input_y_fp32 != nullptr && io.B > 0 && io.N >= VAR_N) {
     for (int b = 0; b < io.B; ++b) {
-      (void)stage_step0_phase_a(io, b);
+      if (stage_step0_phase_a(io, b)) {
+        (void)run_step0_layer0_attention_writeback();
+      }
     }
   }
 
-  // Step 4+ are not ported yet. Keep functional completion on the legacy path
-  // while the optimized storage pipeline is being built up incrementally.
+  // Layer0 attention writeback (Step 4) is ported in the optimized path.
+  // Remaining downstream phases still complete on the legacy path.
   legacy_ref_.infer_step0(io);
 }
 
@@ -81,6 +85,10 @@ bool RefModelOptimized::phase_a_valid() const {
   return phase_a_valid_;
 }
 
+bool RefModelOptimized::layer0_attn_writeback_valid() const {
+  return layer0_attn_writeback_valid_;
+}
+
 const ref_fp32_t& RefModelOptimized::x_work(int token, int dim) const {
   assert(token >= 0 && token < TOKENS_T);
   assert(dim >= 0 && dim < D_MODEL);
@@ -102,6 +110,20 @@ const ref_fp32_t& RefModelOptimized::scr_v(int token, int dim) const {
 const ref_fp32_t& RefModelOptimized::final_scalar_buf(int token) const {
   assert(token >= 0 && token < TOKENS_T);
   return final_scalar_buf_[token];
+}
+
+bool RefModelOptimized::run_step0_layer0_attention_writeback() {
+  if (!phase_a_valid_) {
+    return false;
+  }
+
+  if (numeric_cfg_.float_mode == REF_OPT_FLOAT16) {
+    materialize_layer0_attention_writeback_from_x_work<binary16>();
+  } else {
+    materialize_layer0_attention_writeback_from_x_work<binary32>();
+  }
+  layer0_attn_writeback_valid_ = true;
+  return true;
 }
 
 void RefModelOptimized::clear_formal_storage() {
@@ -127,6 +149,7 @@ void RefModelOptimized::clear_formal_storage() {
   }
   last_staged_sample_index_ = -1;
   phase_a_valid_ = false;
+  layer0_attn_writeback_valid_ = false;
 }
 
 template<ac_ieee_float_format FloatFormat>
@@ -138,6 +161,7 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   materialize_layer0_kv_from_x_work<FloatFormat>();
   last_staged_sample_index_ = batch_index;
   phase_a_valid_ = true;
+  layer0_attn_writeback_valid_ = false;
   return true;
 }
 
@@ -200,6 +224,196 @@ void RefModelOptimized::materialize_layer0_kv_from_x_work() {
       s_x_in,
       s_w_v,
       scr_v_[t]);
+  }
+}
+
+bool RefModelOptimized::is_layer0_attn_masked_token_pair(
+  int head_idx,
+  int q_token,
+  int k_token) {
+  assert(head_idx >= 0 && head_idx < HEADS);
+  assert(q_token >= 0 && q_token < TOKENS_T);
+  assert(k_token >= 0 && k_token < TOKENS_T);
+  const bool src_masked = (w_src_mask[q_token * TOKENS_T + k_token].to_int() != 0);
+  const bool q_is_var = (q_token < VAR_N);
+  const bool k_is_var = (k_token < VAR_N);
+
+  bool one_ring_masked = true;
+  bool second_ring_masked = true;
+  if (q_is_var && k_is_var) {
+    one_ring_masked = true;
+    second_ring_masked = src_masked;
+  } else if (q_is_var != k_is_var) {
+    one_ring_masked = src_masked;
+    second_ring_masked = true;
+  } else {
+    one_ring_masked = true;
+    second_ring_masked = src_masked;
+  }
+  return (head_idx < 4) ? one_ring_masked : second_ring_masked;
+}
+
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work() {
+  // Free-point rule:
+  // SCR_K/SCR_V remain the K/V source of truth for the whole layer-0 attention
+  // traversal. X_WORK writeback is committed only after Wo + residual per token.
+  const float s_x_in = static_cast<float>(l0_in_s_x);
+  const float s_x_o = static_cast<float>(l0_o_s_x);
+  const float s_w_q = static_cast<float>(w_decoder_layers_0_self_attn_linears_0_s_w[0]);
+  const float s_w_o = static_cast<float>(w_decoder_layers_0_self_attn_linears_3_s_w[0]);
+  const ref_fp32_t inv_sqrt_dh = make_ref_fp32(0.5f); // 1 / sqrt(4)
+  const bool use_softmax_exact = (run_cfg_.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
+
+  for (int q_token = 0; q_token < TOKENS_T; ++q_token) {
+    for (int d = 0; d < D_MODEL; ++d) {
+      ln_token_buf_[d] = x_work_[q_token][d];
+      out_acc_tile_[d] = make_ref_fp32(0.0f);
+    }
+
+    quant_linear_token_32_to32_native<FloatFormat>(
+      x_work_[q_token],
+      w_decoder_layers_0_self_attn_linears_0_weight,
+      w_decoder_layers_0_self_attn_linears_0_bias,
+      s_x_in,
+      s_w_q,
+      q_vec_);
+
+    for (int h = 0; h < HEADS; ++h) {
+      const int base = h * D_HEAD;
+      if (use_softmax_exact) {
+        bool has_valid = false;
+        ref_fp32_t max_score = make_ref_fp32(0.0f);
+        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
+          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          ref_fp32_t dot = make_ref_fp32(0.0f);
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            dot += q_vec_[base + dh] * scr_k_[k_token][base + dh];
+          }
+          const ref_fp32_t score = dot * inv_sqrt_dh;
+          if (!has_valid || score > max_score) {
+            max_score = score;
+          }
+          has_valid = true;
+        }
+
+        if (!has_valid) {
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            head_ctx_buf_[h][dh] = make_ref_fp32(0.0f);
+          }
+          continue;
+        }
+
+        ref_fp32_t sumexp = make_ref_fp32(0.0f);
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          softmax_acc_tile_[dh] = make_ref_fp32(0.0f);
+        }
+        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
+          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          ref_fp32_t dot = make_ref_fp32(0.0f);
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            dot += q_vec_[base + dh] * scr_k_[k_token][base + dh];
+          }
+          const ref_fp32_t score = dot * inv_sqrt_dh;
+          const ref_fp32_t w = make_ref_fp32(std::exp((score - max_score).to_float()));
+          sumexp += w;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            softmax_acc_tile_[dh] += w * scr_v_[k_token][base + dh];
+          }
+        }
+
+        ref_fp32_t inv_sumexp = make_ref_fp32(0.0f);
+        if (sumexp > make_ref_fp32(0.0f)) {
+          inv_sumexp = make_ref_fp32(1.0f) / sumexp;
+        }
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          head_ctx_buf_[h][dh] = softmax_acc_tile_[dh] * inv_sumexp;
+        }
+      } else {
+        bool online_init = false;
+        ref_fp32_t online_max = make_ref_fp32(0.0f);
+        ref_fp32_t online_sumexp = make_ref_fp32(0.0f);
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          softmax_acc_tile_[dh] = make_ref_fp32(0.0f);
+        }
+
+        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
+          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          ref_fp32_t dot = make_ref_fp32(0.0f);
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            dot += q_vec_[base + dh] * scr_k_[k_token][base + dh];
+          }
+          const ref_fp32_t score = dot * inv_sqrt_dh;
+
+          if (!online_init) {
+            online_max = score;
+            online_sumexp = make_ref_fp32(1.0f);
+            for (int dh = 0; dh < D_HEAD; ++dh) {
+              softmax_acc_tile_[dh] = scr_v_[k_token][base + dh];
+            }
+            online_init = true;
+            continue;
+          }
+
+          if (score > online_max) {
+            const ref_fp32_t rescale = ref_softmax_exp_dispatch(
+              online_max - score,
+              run_cfg_.legacy.softmax_exp_mode);
+            online_sumexp = (online_sumexp * rescale) + make_ref_fp32(1.0f);
+            for (int dh = 0; dh < D_HEAD; ++dh) {
+              softmax_acc_tile_[dh] = (softmax_acc_tile_[dh] * rescale) + scr_v_[k_token][base + dh];
+            }
+            online_max = score;
+            continue;
+          }
+
+          const ref_fp32_t w = ref_softmax_exp_dispatch(
+            score - online_max,
+            run_cfg_.legacy.softmax_exp_mode);
+          online_sumexp += w;
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            softmax_acc_tile_[dh] += w * scr_v_[k_token][base + dh];
+          }
+        }
+
+        if (!online_init) {
+          for (int dh = 0; dh < D_HEAD; ++dh) {
+            head_ctx_buf_[h][dh] = make_ref_fp32(0.0f);
+          }
+          continue;
+        }
+
+        const ref_fp32_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+        for (int dh = 0; dh < D_HEAD; ++dh) {
+          head_ctx_buf_[h][dh] = softmax_acc_tile_[dh] * inv_sumexp;
+        }
+      }
+    }
+
+    for (int h = 0; h < HEADS; ++h) {
+      const int base = h * D_HEAD;
+      for (int dh = 0; dh < D_HEAD; ++dh) {
+        q_vec_[base + dh] = head_ctx_buf_[h][dh];
+      }
+    }
+
+    quant_linear_token_32_to32_native<FloatFormat>(
+      q_vec_,
+      w_decoder_layers_0_self_attn_linears_3_weight,
+      w_decoder_layers_0_self_attn_linears_3_bias,
+      s_x_o,
+      s_w_o,
+      out_acc_tile_);
+
+    for (int d = 0; d < D_MODEL; ++d) {
+      x_work_[q_token][d] = out_acc_tile_[d] + ln_token_buf_[d];
+    }
   }
 }
 
@@ -289,6 +503,8 @@ template void RefModelOptimized::build_preproc_x_work_from_input<binary32>(
 
 template void RefModelOptimized::materialize_layer0_kv_from_x_work<binary16>();
 template void RefModelOptimized::materialize_layer0_kv_from_x_work<binary32>();
+template void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work<binary16>();
+template void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work<binary32>();
 
 template ac_ieee_float<binary16> RefModelOptimized::float_abs_local<binary16>(
   ac_ieee_float<binary16> x);

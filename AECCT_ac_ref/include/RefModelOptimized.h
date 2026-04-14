@@ -27,17 +27,20 @@ public:
   RefOptimizedNumericConfig get_numeric_config() const;
 
   // Partial optimized pipeline:
-  // Step 2/3 currently materialize preproc into X_WORK and layer-0 K/V into
-  // SCR_K / SCR_V. Downstream phases are still completed by the legacy
-  // RefModel path until later steps are ported.
+  // Step 2/3 materialize preproc into X_WORK and layer-0 K/V into SCR_K /
+  // SCR_V. Step 4 currently ports layer-0 attention mainline up to residual
+  // writeback into X_WORK, while downstream phases are still completed by the
+  // legacy RefModel path.
   void infer_step0(const RefModelIO& io);
 
   // Stage the optimized major storage for one sample without running the
   // remaining attention/FFN/finalhead phases.
   bool stage_step0_phase_a(const RefModelIO& io, int batch_index = 0);
+  bool run_step0_layer0_attention_writeback();
 
   int last_staged_sample_index() const;
   bool phase_a_valid() const;
+  bool layer0_attn_writeback_valid() const;
 
   const ref_fp32_t& x_work(int token, int dim) const;
   const ref_fp32_t& scr_k(int token, int dim) const;
@@ -62,6 +65,9 @@ private:
   void build_preproc_x_work_from_input(const double* input_y_fp32);
   template<ac_ieee_float_format FloatFormat>
   void materialize_layer0_kv_from_x_work();
+  template<ac_ieee_float_format FloatFormat>
+  void materialize_layer0_attention_writeback_from_x_work();
+  static bool is_layer0_attn_masked_token_pair(int head_idx, int q_token, int k_token);
 
   static ref_fp32_t fp32_abs_local(ref_fp32_t x);
   template<ac_ieee_float_format FloatFormat>
@@ -103,6 +109,7 @@ private:
 
   int last_staged_sample_index_;
   bool phase_a_valid_;
+  bool layer0_attn_writeback_valid_;
 };
 
 } // namespace aecct_ref
