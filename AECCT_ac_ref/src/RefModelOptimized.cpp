@@ -13,7 +13,8 @@ RefModelOptimized::RefModelOptimized()
   : last_staged_sample_index_(-1),
     phase_a_valid_(false),
     layer0_attn_writeback_valid_(false),
-    layer0_ln_writeback_valid_(false) {
+    layer0_ln_writeback_valid_(false),
+    layer0_ffn_writeback_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
   legacy_ref_.set_run_config(run_cfg_);
   clear_formal_storage();
@@ -42,13 +43,14 @@ void RefModelOptimized::infer_step0(const RefModelIO& io) {
       if (stage_step0_phase_a(io, b)) {
         (void)run_step0_layer0_attention_writeback();
         (void)run_step0_layer0_ln_writeback();
+        (void)run_step0_layer0_ffn_writeback();
       }
     }
   }
 
-  // Layer0 attention + sublayer0 LN writeback (Step 4/5A) are ported in the
-  // optimized path. Remaining downstream phases still complete on the legacy
-  // path.
+  // Layer0 attention + sublayer0 LN + layer0 FFN residual writeback
+  // (Step 4/5A/5B) are ported in the optimized path. Remaining downstream
+  // phases still complete on the legacy path.
   legacy_ref_.infer_step0(io);
 }
 
@@ -83,6 +85,10 @@ bool RefModelOptimized::layer0_attn_writeback_valid() const {
 
 bool RefModelOptimized::layer0_ln_writeback_valid() const {
   return layer0_ln_writeback_valid_;
+}
+
+bool RefModelOptimized::layer0_ffn_writeback_valid() const {
+  return layer0_ffn_writeback_valid_;
 }
 
 ac_ieee_float<binary32> RefModelOptimized::x_work(int token, int dim) const {
@@ -132,6 +138,7 @@ bool RefModelOptimized::run_step0_layer0_attention_writeback() {
   }
   layer0_attn_writeback_valid_ = true;
   layer0_ln_writeback_valid_ = false;
+  layer0_ffn_writeback_valid_ = false;
   return true;
 }
 
@@ -146,6 +153,21 @@ bool RefModelOptimized::run_step0_layer0_ln_writeback() {
     materialize_layer0_ln_writeback_from_x_work<binary32>(storage_fp32_);
   }
   layer0_ln_writeback_valid_ = true;
+  layer0_ffn_writeback_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_layer0_ffn_writeback() {
+  if (!phase_a_valid_ || !layer0_ln_writeback_valid_) {
+    return false;
+  }
+
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+    materialize_layer0_ffn_writeback_from_x_work<binary16>(storage_fp16_);
+  } else {
+    materialize_layer0_ffn_writeback_from_x_work<binary32>(storage_fp32_);
+  }
+  layer0_ffn_writeback_valid_ = true;
   return true;
 }
 
@@ -156,6 +178,7 @@ void RefModelOptimized::clear_formal_storage() {
   phase_a_valid_ = false;
   layer0_attn_writeback_valid_ = false;
   layer0_ln_writeback_valid_ = false;
+  layer0_ffn_writeback_valid_ = false;
 }
 
 RefOptimizedFloatMode RefModelOptimized::resolve_selected_float_mode() const {
@@ -190,7 +213,7 @@ void RefModelOptimized::clear_storage_bank(RefOptimizedStorageBank<FloatFormat>&
     }
   }
   for (int i = 0; i < FF_DIM; ++i) {
-    bank.ffn1_tile_buf[i] = zero;
+    bank.ffn1_token_buf[i] = zero;
   }
 }
 
@@ -212,6 +235,7 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   phase_a_valid_ = true;
   layer0_attn_writeback_valid_ = false;
   layer0_ln_writeback_valid_ = false;
+  layer0_ffn_writeback_valid_ = false;
   return true;
 }
 
@@ -501,6 +525,54 @@ void RefModelOptimized::materialize_layer0_ln_writeback_from_x_work(
 }
 
 template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_layer0_ffn_writeback_from_x_work(
+  RefOptimizedStorageBank<FloatFormat>& bank) {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
+  const float_t zero(0.0f);
+
+  const float s_x_ff1 = static_cast<float>(l0_ff1_s_x);
+  const float s_x_ff2 = static_cast<float>(l0_ff2_s_x);
+  const float s_w_ff1 = static_cast<float>(w_decoder_layers_0_feed_forward_w_1_s_w[0]);
+  const float s_w_ff2 = static_cast<float>(w_decoder_layers_0_feed_forward_w_2_s_w[0]);
+
+  // Step 5B boundary:
+  // - input boundary  : layer0 LN writeback in X_WORK
+  // - output boundary : layer0 FFN residual writeback in X_WORK
+  // FFN local storage rule for this step: single-token FF_DIM buffer only.
+  for (int token = 0; token < TOKENS_T; ++token) {
+    for (int d = 0; d < D_MODEL; ++d) {
+      bank.ln_token_buf[d] = bank.x_work[token][d];
+    }
+
+    quant_linear_token_32_to128_native<FloatFormat>(
+      bank.ln_token_buf,
+      w_decoder_layers_0_feed_forward_w_1_weight,
+      w_decoder_layers_0_feed_forward_w_1_bias,
+      s_x_ff1,
+      s_w_ff1,
+      bank.ffn1_token_buf);
+
+    for (int i = 0; i < FF_DIM; ++i) {
+      if (bank.ffn1_token_buf[i] < zero) {
+        bank.ffn1_token_buf[i] = zero;
+      }
+    }
+
+    quant_linear_token_128_to32_native<FloatFormat>(
+      bank.ffn1_token_buf,
+      w_decoder_layers_0_feed_forward_w_2_weight,
+      w_decoder_layers_0_feed_forward_w_2_bias,
+      s_x_ff2,
+      s_w_ff2,
+      bank.out_acc_tile);
+
+    for (int d = 0; d < D_MODEL; ++d) {
+      bank.x_work[token][d] = bank.out_acc_tile[d] + bank.ln_token_buf[d];
+    }
+  }
+}
+
+template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::layernorm_token_32_local(
   const typename RefOptimizedStorageBank<FloatFormat>::float_t x_token[D_MODEL],
   const double w[D_MODEL],
@@ -698,6 +770,74 @@ void RefModelOptimized::quant_linear_token_32_to32_native(
   }
 }
 
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::quant_linear_token_32_to128_native(
+  const typename RefOptimizedStorageBank<FloatFormat>::float_t x[D_MODEL],
+  const double w[FF_DIM * D_MODEL],
+  const double b[FF_DIM],
+  float s_x,
+  float s_w,
+  typename RefOptimizedStorageBank<FloatFormat>::float_t y[FF_DIM]) {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
+
+  // Integer-domain native linear contract is fixed to:
+  // activation int8, ternary sign, and accumulate int16.
+  const ac_ieee_float<FloatFormat> inv =
+    ac_ieee_float<FloatFormat>(1.0f) /
+    (ac_ieee_float<FloatFormat>(s_x) * ac_ieee_float<FloatFormat>(s_w));
+  ac_int<8, true> qx_i8[D_MODEL];
+  for (int i = 0; i < D_MODEL; ++i) {
+    qx_i8[i] = quantize_int8_to_i8_local(x[i], s_x);
+  }
+  for (int o = 0; o < FF_DIM; ++o) {
+    ac_int<16, true> acc_i16 = 0;
+    const int base = o * D_MODEL;
+    for (int i = 0; i < D_MODEL; ++i) {
+      acc_i16 = accumulate_ternary_mac_i16_local(
+        acc_i16,
+        qx_i8[i],
+        decode_ternary_weight_sign_i2_local(w[base + i]));
+    }
+    const float_t bias_island(static_cast<float>(b[o]));
+    const float_t acc_island(acc_i16.to_int());
+    y[o] = bias_island + (acc_island * inv);
+  }
+}
+
+template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::quant_linear_token_128_to32_native(
+  const typename RefOptimizedStorageBank<FloatFormat>::float_t x[FF_DIM],
+  const double w[D_MODEL * FF_DIM],
+  const double b[D_MODEL],
+  float s_x,
+  float s_w,
+  typename RefOptimizedStorageBank<FloatFormat>::float_t y[D_MODEL]) {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
+
+  // Integer-domain native linear contract is fixed to:
+  // activation int8, ternary sign, and accumulate int16.
+  const ac_ieee_float<FloatFormat> inv =
+    ac_ieee_float<FloatFormat>(1.0f) /
+    (ac_ieee_float<FloatFormat>(s_x) * ac_ieee_float<FloatFormat>(s_w));
+  ac_int<8, true> qx_i8[FF_DIM];
+  for (int i = 0; i < FF_DIM; ++i) {
+    qx_i8[i] = quantize_int8_to_i8_local(x[i], s_x);
+  }
+  for (int o = 0; o < D_MODEL; ++o) {
+    ac_int<16, true> acc_i16 = 0;
+    const int base = o * FF_DIM;
+    for (int i = 0; i < FF_DIM; ++i) {
+      acc_i16 = accumulate_ternary_mac_i16_local(
+        acc_i16,
+        qx_i8[i],
+        decode_ternary_weight_sign_i2_local(w[base + i]));
+    }
+    const float_t bias_island(static_cast<float>(b[o]));
+    const float_t acc_island(acc_i16.to_int());
+    y[o] = bias_island + (acc_island * inv);
+  }
+}
+
 template bool RefModelOptimized::stage_step0_phase_a_with_float<binary16>(
   const RefModelIO& io,
   int batch_index,
@@ -726,6 +866,10 @@ template void RefModelOptimized::materialize_layer0_ln_writeback_from_x_work<bin
   RefOptimizedStorageBank<binary16>& bank);
 template void RefModelOptimized::materialize_layer0_ln_writeback_from_x_work<binary32>(
   RefOptimizedStorageBank<binary32>& bank);
+template void RefModelOptimized::materialize_layer0_ffn_writeback_from_x_work<binary16>(
+  RefOptimizedStorageBank<binary16>& bank);
+template void RefModelOptimized::materialize_layer0_ffn_writeback_from_x_work<binary32>(
+  RefOptimizedStorageBank<binary32>& bank);
 
 template ac_ieee_float<binary16> RefModelOptimized::float_abs_local<binary16>(
   ac_ieee_float<binary16> x);
@@ -742,6 +886,34 @@ template void RefModelOptimized::quant_linear_token_32_to32_native<binary16>(
 template void RefModelOptimized::quant_linear_token_32_to32_native<binary32>(
   const ac_ieee_float<binary32> x[D_MODEL],
   const double w[D_MODEL * D_MODEL],
+  const double b[D_MODEL],
+  float s_x,
+  float s_w,
+  ac_ieee_float<binary32> y[D_MODEL]);
+template void RefModelOptimized::quant_linear_token_32_to128_native<binary16>(
+  const ac_ieee_float<binary16> x[D_MODEL],
+  const double w[FF_DIM * D_MODEL],
+  const double b[FF_DIM],
+  float s_x,
+  float s_w,
+  ac_ieee_float<binary16> y[FF_DIM]);
+template void RefModelOptimized::quant_linear_token_32_to128_native<binary32>(
+  const ac_ieee_float<binary32> x[D_MODEL],
+  const double w[FF_DIM * D_MODEL],
+  const double b[FF_DIM],
+  float s_x,
+  float s_w,
+  ac_ieee_float<binary32> y[FF_DIM]);
+template void RefModelOptimized::quant_linear_token_128_to32_native<binary16>(
+  const ac_ieee_float<binary16> x[FF_DIM],
+  const double w[D_MODEL * FF_DIM],
+  const double b[D_MODEL],
+  float s_x,
+  float s_w,
+  ac_ieee_float<binary16> y[D_MODEL]);
+template void RefModelOptimized::quant_linear_token_128_to32_native<binary32>(
+  const ac_ieee_float<binary32> x[FF_DIM],
+  const double w[D_MODEL * FF_DIM],
   const double b[D_MODEL],
   float s_x,
   float s_w,
