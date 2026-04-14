@@ -29,8 +29,8 @@ public:
   // Partial optimized pipeline:
   // Step 2/3 materialize preproc into X_WORK and layer-0 K/V into SCR_K /
   // SCR_V. Step 4/5A/5B currently port layer-0 attention mainline, layer-0
-  // LN writeback, and layer-0 FFN residual writeback into X_WORK, while
-  // downstream phases are still completed by
+  // LN writeback, layer-0 FFN residual writeback, and Step 6 mid_norm
+  // writeback into X_WORK, while downstream phases are still completed by
   // the legacy RefModel path.
   void infer_step0(const RefModelIO& io);
 
@@ -40,12 +40,14 @@ public:
   bool run_step0_layer0_attention_writeback();
   bool run_step0_layer0_ln_writeback();
   bool run_step0_layer0_ffn_writeback();
+  bool run_step0_mid_norm_writeback();
 
   int last_staged_sample_index() const;
   bool phase_a_valid() const;
   bool layer0_attn_writeback_valid() const;
   bool layer0_ln_writeback_valid() const;
   bool layer0_ffn_writeback_valid() const;
+  bool mid_norm_writeback_valid() const;
 
   ac_ieee_float<binary32> x_work(int token, int dim) const;
   ac_ieee_float<binary32> scr_k(int token, int dim) const;
@@ -110,6 +112,9 @@ private:
   void materialize_layer0_ffn_writeback_from_x_work(
     RefOptimizedStorageBank<FloatFormat>& bank);
   template<ac_ieee_float_format FloatFormat>
+  void materialize_layer0_mid_norm_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
+  template<ac_ieee_float_format FloatFormat>
   void layernorm_token_32_local(
     const typename RefOptimizedStorageBank<FloatFormat>::float_t x_token[D_MODEL],
     const double w[D_MODEL],
@@ -166,6 +171,7 @@ private:
   bool layer0_attn_writeback_valid_;
   bool layer0_ln_writeback_valid_;
   bool layer0_ffn_writeback_valid_;
+  bool mid_norm_writeback_valid_;
 };
 
 } // namespace aecct_ref
