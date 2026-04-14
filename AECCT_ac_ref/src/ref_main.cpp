@@ -500,7 +500,7 @@ static void print_usage() {
   std::printf("  --topk K\n");
   std::printf("  --stage S0|S1|S2|S3|S4\n");
   std::printf("  --precision-exp MODE\n");
-  std::printf("      baseline_fp32 = baseline (default)\n");
+  std::printf("      baseline_fp32 = native-linear-quant baseline with FP32 islands (default)\n");
   std::printf("      generic_e4m3_* / strict_ternary_linear_stress / int8_fixedexp_* / fp16_replace_fp32_global = experiment-only\n");
   std::printf("      values: baseline_fp32|generic_e4m3_finalhead|strict_ternary_linear_stress|generic_e4m3_frag_bisect|generic_e4m3_except_g5|generic_e4m3_g5_g4|generic_e4m3_g5_g1|generic_e4m3_g5_g3|generic_e4m3_g5_g2|generic_e4m3_g2_embed_only|generic_e4m3_g2_spe_only|generic_e4m3_g2_preproc_assembly|generic_e4m3_g2_prelayer_handoff|int8_fixedexp_zone3_embed_g2|int8_fixedexp_zone4_embed_g2|fp16_replace_fp32_global\n");
   std::printf("      deprecated alias: full_e4m3_nonlinear_stress -> strict_ternary_linear_stress\n");
@@ -4099,6 +4099,7 @@ int main(int argc, char** argv) {
   std::printf("  precision_mode : %s%s\n",
               precision_mode_cli_token(banner_precision_mode),
               (use_experiment_banner_cfg && !opts.experiment_precision_explicit) ? " (default)" : "");
+  std::printf("  baseline_semantics: native_linear_quant_mainline + fp32_islands\n");
   std::printf("  algo_variant   : %s\n", aecct_ref::to_string(opts.algo_variant));
   std::printf("  softmax_exp_mode: %s\n", aecct_ref::to_string(banner_softmax_mode));
   std::printf("  ln_mode        : %s\n", aecct_ref::to_string(banner_ln_mode));

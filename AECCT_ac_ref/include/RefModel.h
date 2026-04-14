@@ -40,7 +40,8 @@ struct RefStep0Io16Image {
 };
 
 struct RefRunConfig {
-  // Mainline control surface.
+  // Mainline control surface. The baseline_fp32 token keeps FP32 islands in FP32
+  // while native linear kernels use the AECCT ternary/int8/int16 contract.
   RefPrecisionMode precision_mode = RefPrecisionMode::BASELINE_FP32;
   // Non-mainline tuning/experiment knobs are grouped away from the core path.
   RefLegacyRunConfig legacy{};

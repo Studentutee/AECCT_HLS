@@ -295,11 +295,18 @@ enum class RefMainlinePrecisionKind : unsigned char {
 struct RefMainlinePrecisionPlan {
   RefMainlinePrecisionKind kind = RefMainlinePrecisionKind::FP32_BASELINE;
   bool use_fp16_roundtrip = false;
-  bool use_native_ternary_linear = true;
+  bool use_native_ternary_linear = false;
 };
 
 static inline RefMainlinePrecisionPlan build_mainline_precision_plan(const RefRunConfig& cfg) {
   RefMainlinePrecisionPlan plan{};
+  // Baseline mainline keeps FP32 islands in FP32 but always uses the native
+  // ternary/int8/int16 linear contract for AECCT linear kernels.
+  if (cfg.precision_mode == RefPrecisionMode::BASELINE_FP32 ||
+      cfg.precision_mode == RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL ||
+      cfg.precision_mode == RefPrecisionMode::FULL_E4M3_NONLINEAR_STRESS) {
+    plan.use_native_ternary_linear = true;
+  }
   if (cfg.precision_mode == RefPrecisionMode::FP16_REPLACE_FP32_GLOBAL) {
     plan.kind = RefMainlinePrecisionKind::FP16_EXPERIMENT;
     plan.use_fp16_roundtrip = true;
@@ -1880,8 +1887,7 @@ static void run_layer(const int layer_idx,
   // Mainline numeric policy is selected once per layer entry.
   const RefMainlinePrecisionPlan precision_plan = build_mainline_precision_plan(run_cfg);
   const RefLegacyRunConfig& legacy_cfg = run_cfg.legacy;
-  const bool strict_int16 =
-    precision_plan.use_native_ternary_linear && use_full_e4m3_nonlinear_stress(run_cfg);
+  const bool strict_int16 = precision_plan.use_native_ternary_linear;
   const double* w_q = nullptr;
   const double* b_q = nullptr;
   const double* sw_q = nullptr;
