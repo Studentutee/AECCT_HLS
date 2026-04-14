@@ -16,7 +16,7 @@ int main() {
   io.out_logits = logits.data();
   io.out_x_pred = xpred.data();
   model.infer_step0(io);
-  std::printf("[refmodel_purefp16_smoke] logits0=%.6f logits1=%.6f xpred0=%d xpred1=%d\n",
+  std::printf("[refmodel_baseline_fp32_smoke] logits0=%.6f logits1=%.6f xpred0=%d xpred1=%d\n",
               logits[0], logits[1], (int)xpred[0].to_int(), (int)xpred[1].to_int());
   return 0;
 }

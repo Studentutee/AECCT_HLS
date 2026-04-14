@@ -39,7 +39,7 @@ int main() {
       }
     }
   }
-  std::printf("[refmodel_purefp16_trace_compare_batch] B=%d total_xpred_mismatch=%d first=(%d,%d) max_logit_abs=%.9f max_logit=(%d,%d)\n",
+  std::printf("[refmodel_baseline_fp32_trace_compare_batch] B=%d total_xpred_mismatch=%d first=(%d,%d) max_logit_abs=%.9f max_logit=(%d,%d)\n",
               B, total_xpred_mismatch, first_b, first_i, max_logit_abs, max_logit_b, max_logit_i);
   return 0;
 }

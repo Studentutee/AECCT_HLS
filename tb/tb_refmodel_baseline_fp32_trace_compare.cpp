@@ -37,7 +37,7 @@ int main() {
       max_logit_idx = i;
     }
   }
-  std::printf("[refmodel_purefp16_trace_compare] xpred_mismatch=%d first_xpred=%d max_logit_abs=%.9f max_logit_idx=%d\n",
+  std::printf("[refmodel_baseline_fp32_trace_compare] xpred_mismatch=%d first_xpred=%d max_logit_abs=%.9f max_logit_idx=%d\n",
               xpred_mismatch, first_xpred, max_logit_abs, max_logit_idx);
   return 0;
 }
