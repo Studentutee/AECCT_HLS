@@ -1,5 +1,5 @@
 Catapult / CCS (C++ Base) C++ Code 生成指引（給 Codex 當參考）
-Version: v3.1 (2026-03-15)  // includes v1+v2 full content + addendum integrated + bring-up pitfalls integrated
+Version: v3.2 (2026-04-15)  // includes v1+v2 full content + addendum integrated + bring-up pitfalls integrated + ac_channel method-level rules
 
 本文件目的
 - 讓自動產碼工具（例如 Codex）在產生 Catapult 可合成的 C++（HLS C++）時，有一致的「可合成子集合（synthesizable subset）」與「程式骨架（templates）」可依循。
@@ -240,6 +240,111 @@ CCS_MAIN(int argc, char **argv) {
 4.1 Streaming：使用 ac_channel
 - 適用：block-to-block 串接、需要 ready/valid 概念、資料流。
 - 範例：lab2/mult_add_pipeline.h（a/b/c/result 都是 ac_channel）
+
+4.1.1 ac_channel 用法與限制（Synthesizable Usage Rules）
+
+（目的）
+- 讓 Codex 在產生 block-to-block / streaming / hierarchical Catapult C++ 時，
+  對 ac_channel 的使用有一致且可合成的寫法。
+- 本節是 method-level rule，不是只說何時使用 streaming interface。
+
+（核心定位）
+- ac_channel 是 point-to-point、single-direction 的 streaming channel。
+- 適合 block-to-block 資料流，不適合拿來抽象 shared bus / shared owner。
+- 若是 shared object / shared SRAM ownership，優先考慮 fixed-size array + top 管理，
+  或 ac_shared + ac_sync（進階）。
+
+（Hierarchy / ownership 規則）
+- channel 必須以 reference 傳遞：`ac_channel<T> &ch`
+- 一個 channel 最多只能有一個 writer、最多只能有一個 reader。
+- class-based hierarchy：local/intermediate channel 應作為 class data member。
+- function-based hierarchy：top-level 內的 local/intermediate channel 必須宣告成 static。
+- hierarchical top 應只包含：sub-block instances、ac_channels、常數；不要在 top 內混雜主計算邏輯。
+
+（Design-side 可用的 method）
+- blocking:
+  - `read()`
+  - `write(val)`
+- non-blocking / guarded:
+  - `available(num)`
+  - `nb_read(val)`
+  - `nb_write(val)`
+  - `size()`   // 僅限讀端，且有使用限制
+  - `nb_read_join(...)` // 多輸入原子式 non-blocking read（C++11+）
+
+（Design-side 禁止 / TB-only）
+- 下列 member functions 只允許用在 testbench 或不會被合成的區域：
+  - `empty()`
+  - `operator==`
+  - `operator!=`
+  - `operator[]`
+  - `reset()`
+
+（`val` 是什麼）
+- `val` 不是固定名字，只是文件裡的佔位符（placeholder）。
+- `nb_read(T &val)`：`val` 是「接收讀出資料的變數」。
+- `write(val)` / `nb_write(val)`：`val` 是「要寫進 channel 的值」。
+- 例如：
+  - `ac_int<8,false> x; if (in.nb_read(x)) { ... }`
+  - `ac_int<8,false> y = 13; out.write(y);`
+
+（Codex 預設寫法優先順序）
+1. 單純 streaming/blocking datapath：
+   - 直接 `read()` / `write()`
+   - 若可能空讀，於 function 入口使用 `available(k)` guard 主體
+2. 需要「沒資料時做別的事」：
+   - 優先使用 `nb_read(val)`
+3. 需要「沒空間時先不寫」：
+   - 使用 `nb_write(val)`
+4. 多路輸入需要 all-or-none：
+   - 使用 `nb_read_join(...)`
+5. `size()` 不作為 Codex 預設首選；只有在明確需要 FIFO occupancy 判斷時才使用
+
+（available(num) 的正確定位）
+- `available(num)` 的主要目的，是避免 C/C++ 模型在空 channel 上 read 時觸發 assert。
+- 對 synthesis 而言，`if (ch.available(k))` 會被當成 blocking read 的 guard；
+  官方建議它只用來決定「函式主體是否可執行」。
+- 不要把 `available()` 的結果拿去做複雜內部控制樹。
+
+（read/write 的 coding rules）
+- 不要在同一個 statement 對同一個 channel 呼叫多次 `read()`。
+- bad:
+  - `out.write(in.read() * 5 + in.read() * 7);`
+- good:
+  - `a = in.read();`
+  - `b = in.read();`
+  - `out.write(a * 5 + b * 7);`
+
+（nb_read / nb_write 的注意事項）
+- `nb_read(val)`：有資料才讀，成功回傳 true。
+- `nb_write(val)`：可寫才寫，成功回傳 true。
+- non-blocking 行為在 C++ 與 RTL 的 execution order 可能不完全一樣；
+  若使用 non-blocking channel style，驗證策略要跟 pure blocking style 區分開來。
+- 因此：除非設計真的需要 variable-rate / arbiter / feedback / bus-like behavior，
+  否則 Codex 預設仍以 blocking datapath 為主。
+
+（size() 的限制）
+- `size()` 只支援讀端，不支援寫端。
+- 不要用 `==` 去判斷 `size()`，避免 deadlock 風險；請用 `>`, `>=`, `!=`。
+- `size()` 不應作為一般資料通路的預設風格；需要 occupancy-based control 時再使用。
+
+（TB 常見寫法）
+- flush output channel:
+  - `while (out.available(1)) { (void)out.read(); }`
+- `empty()` 可用於 TB，不可作為 design-side synthesizable rule。
+
+（效能 / pipeline 注意事項）
+- 若 loop 目標是 II=1，避免同一個 input channel 在單一 iteration 內出現多次 read，
+  否則常會形成 bandwidth limit。
+- 需要 II=1 時，優先改寫成「每 iteration 只 read 一次」的形式，再用 state/accumulator 收斂。
+
+（Codex 硬性規格）
+- 設計端不得使用 `empty()` 判斷 channel 是否為空。
+- 設計端若要判斷可讀：
+  - 優先 `available(1)` 或 `nb_read(val)`
+- 設計端若要判斷可寫：
+  - 使用 `nb_write(val)`
+- 除非明確要求 occupancy-based control，否則不要讓 Codex 預設產生 `size()` 風格。
 
 4.2 Memory-like：使用固定大小 array
 - 適用：一次性搬運、向量/矩陣、權重/特徵圖。
