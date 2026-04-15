@@ -1,5 +1,6 @@
 #include "../include/RefModelOptimized.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -114,6 +115,148 @@ void run_ffn_linear1_residual_layer_token_shared(
   }
 }
 
+template<typename BankT>
+void run_final_head_pass_b_output_from_final_scalar_buf_shared(
+  const BankT& bank,
+  const double* input_y_fp32,
+  int output_n,
+  double* out_logits_row,
+  bit1_t* out_x_pred_row,
+  double opt_logits_out[],
+  bit1_t opt_x_pred_out[]) {
+  typedef typename BankT::float_t float_t;
+
+  const int tokens_t =
+    static_cast<int>(sizeof(bank.final_scalar_buf) / sizeof(bank.final_scalar_buf[0]));
+  const int var_n = static_cast<int>(sizeof(w_out_fc_bias) / sizeof(w_out_fc_bias[0]));
+  const int n_out = (output_n > 0) ? output_n : 0;
+  const float_t zero(0.0f);
+
+  // FinalHead Pass B boundary:
+  // - input boundary  : FINAL_SCALAR_BUF (token-wise scalar carrier)
+  // - output boundary : logits / x_pred final output vectors
+  // FINAL_SCALAR_BUF is the only readout staging source in this step.
+  FINAL_HEAD_PASS_B_LOGITS_LOOP: for (int n = 0; n < var_n; ++n) {
+    float_t acc(static_cast<float>(w_out_fc_bias[n]));
+    FINAL_HEAD_PASS_B_TOKEN_REDUCE_LOOP: for (int t = 0; t < tokens_t; ++t) {
+      const float_t s_t = bank.final_scalar_buf[t];
+      const float_t w_nt(static_cast<float>(w_out_fc_weight[n * tokens_t + t]));
+      acc += (w_nt * s_t);
+    }
+
+    const double logit_n = static_cast<double>(acc.to_float());
+    opt_logits_out[n] = logit_n;
+
+    const double y_n = (input_y_fp32 != nullptr) ? input_y_fp32[n] : 0.0;
+    const bool y_is_zero = (y_n == 0.0);
+    const bool y_is_negative = (!y_is_zero) && std::signbit(y_n);
+    const bool acc_is_negative = (acc < zero);
+    const bool pred_bit = y_is_zero ? false : (acc_is_negative ^ y_is_negative);
+    opt_x_pred_out[n] = bit1_t(pred_bit ? 1 : 0);
+  }
+
+  const int copy_n = std::min(var_n, n_out);
+  PASS_B_OUTPUT_COPY_LOOP: for (int n = 0; n < copy_n; ++n) {
+    if (out_logits_row != nullptr) {
+      out_logits_row[n] = opt_logits_out[n];
+    }
+    if (out_x_pred_row != nullptr) {
+      out_x_pred_row[n] = opt_x_pred_out[n];
+    }
+  }
+  PASS_B_OUTPUT_PAD_LOOP: for (int n = copy_n; n < n_out; ++n) {
+    if (out_logits_row != nullptr) {
+      out_logits_row[n] = 0.0;
+    }
+    if (out_x_pred_row != nullptr) {
+      out_x_pred_row[n] = bit1_t(0);
+    }
+  }
+}
+
+void report_final_head_pass_b_output_compare_from_legacy_shared(
+  int sample_index,
+  RefOptimizedFloatMode mode,
+  const double opt_logits[],
+  const bit1_t opt_x_pred[],
+  const double legacy_logits[],
+  const bit1_t legacy_x_pred[],
+  int var_n) {
+  const double tol = (mode == REF_OPT_FLOAT16) ? 1.0e-3 : 1.0e-6;
+
+  double max_abs_diff = 0.0;
+  int mismatch_gt_tol = 0;
+  int first_logits_idx = -1;
+  double first_logits_opt = 0.0;
+  double first_logits_ref = 0.0;
+  double first_logits_abs_diff = 0.0;
+
+  FINAL_HEAD_PASS_B_COMPARE_LOGITS_LOOP: for (int n = 0; n < var_n; ++n) {
+    const double abs_diff = std::fabs(opt_logits[n] - legacy_logits[n]);
+    if (abs_diff > max_abs_diff) {
+      max_abs_diff = abs_diff;
+    }
+    if (abs_diff > tol) {
+      ++mismatch_gt_tol;
+      if (first_logits_idx < 0) {
+        first_logits_idx = n;
+        first_logits_opt = opt_logits[n];
+        first_logits_ref = legacy_logits[n];
+        first_logits_abs_diff = abs_diff;
+      }
+    }
+  }
+
+  int xpred_mismatch = 0;
+  int first_xpred_idx = -1;
+  int first_xpred_opt = 0;
+  int first_xpred_ref = 0;
+  FINAL_HEAD_PASS_B_COMPARE_XPRED_LOOP: for (int n = 0; n < var_n; ++n) {
+    const int opt_bit = opt_x_pred[n].to_int();
+    const int ref_bit = legacy_x_pred[n].to_int();
+    if (opt_bit != ref_bit) {
+      ++xpred_mismatch;
+      if (first_xpred_idx < 0) {
+        first_xpred_idx = n;
+        first_xpred_opt = opt_bit;
+        first_xpred_ref = ref_bit;
+      }
+    }
+  }
+
+  std::printf(
+    "[finalhead-passB-logits-compare] sample=%d source=legacy.completion.out_logits tol=%.3e max_abs_diff=%.9e mismatch_gt_tol=%d",
+    sample_index,
+    tol,
+    max_abs_diff,
+    mismatch_gt_tol);
+  if (first_logits_idx >= 0) {
+    std::printf(
+      " first_mismatch={index=%d,opt=%.9e,ref=%.9e,abs_diff=%.9e}\n",
+      first_logits_idx,
+      first_logits_opt,
+      first_logits_ref,
+      first_logits_abs_diff);
+  } else {
+    std::printf(" first_mismatch={none}\n");
+  }
+
+  std::printf(
+    "[finalhead-passB-xpred-compare] sample=%d source=legacy.completion.out_x_pred mismatch_gt_tol=%d total=%d",
+    sample_index,
+    xpred_mismatch,
+    var_n);
+  if (first_xpred_idx >= 0) {
+    std::printf(
+      " first_mismatch={index=%d,opt=%d,ref=%d}\n",
+      first_xpred_idx,
+      first_xpred_opt,
+      first_xpred_ref);
+  } else {
+    std::printf(" first_mismatch={none}\n");
+  }
+}
+
 } // namespace
 
 RefModelOptimized::RefModelOptimized()
@@ -153,6 +296,8 @@ RefOptimizedNumericConfig RefModelOptimized::get_numeric_config() const {
 }
 
 void RefModelOptimized::infer_step0(const RefModelIO& io) {
+  bool optimized_final_output_ready = false;
+
   if (io.input_y_fp32 != nullptr && io.B > 0 && io.N >= VAR_N) {
     for (int b = 0; b < io.B; ++b) {
       if (stage_step0_phase_a(io, b)) {
@@ -165,8 +310,69 @@ void RefModelOptimized::infer_step0(const RefModelIO& io) {
         (void)run_step0_layer1_ln_writeback();
         (void)run_step0_layer1_ffn_writeback();
         (void)run_step0_end_norm_writeback();
-        (void)run_step0_final_head_pass_a_writeback();
-        report_final_head_pass_a_compare_from_legacy(io, b);
+        if (run_step0_final_head_pass_a_writeback()) {
+          if (io.debug.out_finalhead_s_t != nullptr) {
+            FINAL_HEAD_PASS_A_DEBUG_EXPORT_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
+              io.debug.out_finalhead_s_t[(b * TOKENS_T) + t] =
+                static_cast<double>(final_scalar_buf(t).to_float());
+            }
+          }
+
+          double opt_logits[VAR_N];
+          bit1_t opt_x_pred[VAR_N];
+          for (int n = 0; n < VAR_N; ++n) {
+            opt_logits[n] = 0.0;
+            opt_x_pred[n] = bit1_t(0);
+          }
+
+          if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+            run_final_head_pass_b_output_from_final_scalar_buf_shared(
+              storage_fp16_,
+              &io.input_y_fp32[b * io.N],
+              io.N,
+              (io.out_logits != nullptr) ? (&io.out_logits[b * io.N]) : nullptr,
+              (io.out_x_pred != nullptr) ? (&io.out_x_pred[b * io.N]) : nullptr,
+              opt_logits,
+              opt_x_pred);
+          } else {
+            run_final_head_pass_b_output_from_final_scalar_buf_shared(
+              storage_fp32_,
+              &io.input_y_fp32[b * io.N],
+              io.N,
+              (io.out_logits != nullptr) ? (&io.out_logits[b * io.N]) : nullptr,
+              (io.out_x_pred != nullptr) ? (&io.out_x_pred[b * io.N]) : nullptr,
+              opt_logits,
+              opt_x_pred);
+          }
+          optimized_final_output_ready = true;
+
+          report_final_head_pass_a_compare_from_legacy(io, b);
+
+          double legacy_logits[VAR_N];
+          bit1_t legacy_x_pred[VAR_N];
+          for (int n = 0; n < VAR_N; ++n) {
+            legacy_logits[n] = 0.0;
+            legacy_x_pred[n] = bit1_t(0);
+          }
+
+          RefModelIO io_legacy{};
+          io_legacy.input_y = nullptr;
+          io_legacy.input_y_fp32 = &io.input_y_fp32[b * io.N];
+          io_legacy.out_logits = legacy_logits;
+          io_legacy.out_x_pred = legacy_x_pred;
+          io_legacy.B = 1;
+          io_legacy.N = VAR_N;
+          legacy_ref_.infer_step0(io_legacy);
+
+          report_final_head_pass_b_output_compare_from_legacy_shared(
+            b,
+            resolve_selected_float_mode(),
+            opt_logits,
+            opt_x_pred,
+            legacy_logits,
+            legacy_x_pred,
+            VAR_N);
+        }
       }
     }
   }
@@ -174,9 +380,11 @@ void RefModelOptimized::infer_step0(const RefModelIO& io) {
   // Step-0 optimized coverage in this path:
   // phaseA -> layer0 attention -> layer0 LN -> layer0 FFN -> mid_norm ->
   // layer1 attention -> layer1 post-attn LN -> layer1 FFN -> end_norm ->
-  // FinalHead Pass A writeback to FINAL_SCALAR_BUF.
-  // FinalHead Pass B/output completion still stays on the legacy path.
-  legacy_ref_.infer_step0(io);
+  // FinalHead Pass A writeback to FINAL_SCALAR_BUF -> FinalHead Pass B ->
+  // final logits / x_pred output vectors.
+  if (!optimized_final_output_ready) {
+    legacy_ref_.infer_step0(io);
+  }
 }
 
 bool RefModelOptimized::stage_step0_phase_a(const RefModelIO& io, int batch_index) {
