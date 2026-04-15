@@ -5,8 +5,10 @@
 #include "ac_channel.h"
 #include "ref_v2/RefV2AttenKvBlock.h"
 #include "ref_v2/RefV2AttenQSoftResBlock.h"
+#include "ref_v2/RefV2FfnBlock.h"
 #include "ref_v2/RefV2FinalPassABlock.h"
 #include "ref_v2/RefV2FinalPassBBlock.h"
+#include "ref_v2/RefV2LayerNormBlock.h"
 #include "ref_v2/RefV2PreprocBlock.h"
 
 namespace aecct_ref {
@@ -27,6 +29,10 @@ struct RefV2CompareStats {
   RefV2ComparePoint scr_k;
   RefV2ComparePoint scr_v;
   RefV2ComparePoint x_work_writeback;
+  RefV2ComparePoint layer0_ln_output;
+  RefV2ComparePoint x_work_after_layer0_ln;
+  RefV2ComparePoint layer0_ffn_output;
+  RefV2ComparePoint x_work_after_layer0_ffn;
   RefV2ComparePoint next_stage_handoff;
   RefV2ComparePoint final_passA_output;
   RefV2ComparePoint final_logits;
@@ -51,6 +57,8 @@ public:
 
   bool stage_step0_phase_a_from_authoritative(const RefModelIO& io, int batch_index = 0);
   bool run_layer0_attention_channel_transport();
+  bool run_layer0_ln_channel_transport();
+  bool run_layer0_ffn_channel_transport();
   bool run_step0_layer0_attention_compare(const RefModelIO& io, int batch_index = 0);
 
   bool phase_a_valid() const;
@@ -76,6 +84,12 @@ private:
                                      const RefV2AttentionVPayload& v_payload);
   bool writeback_attention_output_stream_to_x_work(
     ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch);
+  bool stream_x_work_to_layer0_ln_channel(ac_channel<RefV2AttentionTokenVectorPayload>& ln_in_token_ch);
+  bool writeback_layer0_ln_output_stream_to_x_work(
+    ac_channel<RefV2AttentionTokenVectorPayload>& ln_out_token_ch);
+  bool stream_x_work_to_layer0_ffn_channel(ac_channel<RefV2AttentionTokenVectorPayload>& ffn_in_token_ch);
+  bool writeback_layer0_ffn_output_stream_to_x_work(
+    ac_channel<RefV2AttentionTokenVectorPayload>& ffn_out_token_ch);
   bool stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
   bool consume_and_check_next_stage_stream(
     ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
@@ -98,6 +112,8 @@ private:
   RefV2PreprocBlock preproc_block_;
   RefV2AttenKvBlock kv_block_;
   RefV2AttenQSoftResBlock qsoftres_block_;
+  RefV2LayerNormBlock layer0_ln_block_;
+  RefV2FfnBlock layer0_ffn_block_;
   RefV2FinalPassABlock final_pass_a_block_;
   RefV2FinalPassBBlock final_pass_b_block_;
 
@@ -105,6 +121,11 @@ private:
   ref_fp32_t preproc_x_work_[REFV2_TOKENS_T][REFV2_D_MODEL];
   ref_fp32_t scr_k_[REFV2_TOKENS_T][REFV2_D_MODEL];
   ref_fp32_t scr_v_[REFV2_TOKENS_T][REFV2_D_MODEL];
+  ref_fp32_t x_work_after_attention_[REFV2_TOKENS_T][REFV2_D_MODEL];
+  ref_fp32_t layer0_ln_out_[REFV2_TOKENS_T][REFV2_D_MODEL];
+  ref_fp32_t x_work_after_layer0_ln_[REFV2_TOKENS_T][REFV2_D_MODEL];
+  ref_fp32_t layer0_ffn_out_[REFV2_TOKENS_T][REFV2_D_MODEL];
+  ref_fp32_t x_work_after_layer0_ffn_[REFV2_TOKENS_T][REFV2_D_MODEL];
   ref_fp32_t final_scalar_buf_[REFV2_TOKENS_T];
   ref_fp32_t final_logits_[REFV2_VAR_N];
   bit1_t final_x_pred_[REFV2_VAR_N];

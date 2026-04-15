@@ -49,6 +49,22 @@ int main() {
     stats.x_work_writeback.mismatch_count,
     stats.x_work_writeback.max_abs_diff);
   std::printf(
+    "[tb_ref_v2] layer0_ln_output mismatch=%d max_abs_diff=%.9e\n",
+    stats.layer0_ln_output.mismatch_count,
+    stats.layer0_ln_output.max_abs_diff);
+  std::printf(
+    "[tb_ref_v2] x_work_after_layer0_ln mismatch=%d max_abs_diff=%.9e\n",
+    stats.x_work_after_layer0_ln.mismatch_count,
+    stats.x_work_after_layer0_ln.max_abs_diff);
+  std::printf(
+    "[tb_ref_v2] layer0_ffn_output mismatch=%d max_abs_diff=%.9e\n",
+    stats.layer0_ffn_output.mismatch_count,
+    stats.layer0_ffn_output.max_abs_diff);
+  std::printf(
+    "[tb_ref_v2] x_work_after_layer0_ffn mismatch=%d max_abs_diff=%.9e\n",
+    stats.x_work_after_layer0_ffn.mismatch_count,
+    stats.x_work_after_layer0_ffn.max_abs_diff);
+  std::printf(
     "[tb_ref_v2] next_stage_handoff mismatch=%d max_abs_diff=%.9e token_count=%d out_of_order=%d duplicate=%d missing=%d header_error=%d invalid_token=%d pass=%d\n",
     stats.next_stage_handoff.mismatch_count,
     stats.next_stage_handoff.max_abs_diff,
