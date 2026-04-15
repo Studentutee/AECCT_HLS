@@ -44,6 +44,17 @@ int main() {
     "[tb_ref_v2] X_WORK writeback mismatch=%d max_abs_diff=%.9e\n",
     stats.x_work_writeback.mismatch_count,
     stats.x_work_writeback.max_abs_diff);
+  std::printf(
+    "[tb_ref_v2] next_stage_handoff mismatch=%d max_abs_diff=%.9e token_count=%d out_of_order=%d duplicate=%d missing=%d header_error=%d invalid_token=%d pass=%d\n",
+    stats.next_stage_handoff.mismatch_count,
+    stats.next_stage_handoff.max_abs_diff,
+    stats.next_stage_token_count,
+    stats.next_stage_out_of_order_count,
+    stats.next_stage_duplicate_count,
+    stats.next_stage_missing_count,
+    stats.next_stage_header_error_count,
+    stats.next_stage_invalid_token_count,
+    stats.next_stage_handoff_pass ? 1 : 0);
 
   if (!stats.all_match) {
     std::printf("FAIL: RefModel_v2 compare mismatch detected\n");

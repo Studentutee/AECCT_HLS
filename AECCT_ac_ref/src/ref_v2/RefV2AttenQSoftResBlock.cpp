@@ -105,12 +105,8 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
   query_payload.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
   query_payload.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
 
-  if (!in_k_payload_ch.nb_read(in_k_payload)) {
-    return false;
-  }
-  if (!in_v_payload_ch.nb_read(in_v_payload)) {
-    return false;
-  }
+  in_k_payload = in_k_payload_ch.read();
+  in_v_payload = in_v_payload_ch.read();
   if (!refv2_payload_header_matches_shape(in_k_payload.header) ||
       !refv2_payload_header_matches_shape(in_v_payload.header)) {
     return false;
@@ -126,10 +122,7 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
   }
 
   REFV2_QSOFTRES_QUERY_TOKEN_READ_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
-    RefV2AttentionTokenVectorPayload query_token_payload;
-    if (!query_token_ch.nb_read(query_token_payload)) {
-      return false;
-    }
+    const RefV2AttentionTokenVectorPayload query_token_payload = query_token_ch.read();
     if (!refv2_payload_header_matches_shape(query_token_payload.header)) {
       return false;
     }
@@ -345,9 +338,7 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
       const int idx = refv2_flatten_row_major_index(token, dim);
       out_token_payload.token_vec[dim] = out_payload.out_flat[idx];
     }
-    if (!out_token_ch.nb_write(out_token_payload)) {
-      return false;
-    }
+    out_token_ch.write(out_token_payload);
   }
 
   return true;

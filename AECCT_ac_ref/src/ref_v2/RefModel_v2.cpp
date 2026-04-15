@@ -36,6 +36,34 @@ static void print_compare_point(const char* name, const RefV2ComparePoint& p, do
   }
 }
 
+static void print_next_stage_handoff(const RefV2CompareStats& stats, double tol) {
+  const RefV2ComparePoint& p = stats.next_stage_handoff;
+  std::printf(
+    "[ref_v2_compare] point=next_stage_handoff mismatch_count=%d max_abs_diff=%.9e tol=%.3e "
+    "token_count=%d out_of_order=%d duplicate=%d missing=%d header_error=%d invalid_token=%d pass=%d",
+    p.mismatch_count,
+    p.max_abs_diff,
+    tol,
+    stats.next_stage_token_count,
+    stats.next_stage_out_of_order_count,
+    stats.next_stage_duplicate_count,
+    stats.next_stage_missing_count,
+    stats.next_stage_header_error_count,
+    stats.next_stage_invalid_token_count,
+    stats.next_stage_handoff_pass ? 1 : 0);
+  if (p.first_mismatch_token >= 0) {
+    std::printf(
+      " first_mismatch={token=%d,dim=%d,v2=%.9e,ref=%.9e,abs_diff=%.9e}\n",
+      p.first_mismatch_token,
+      p.first_mismatch_dim,
+      p.first_v2_value,
+      p.first_ref_value,
+      std::fabs(p.first_v2_value - p.first_ref_value));
+  } else {
+    std::printf(" first_mismatch={none}\n");
+  }
+}
+
 } // namespace
 
 RefModel_v2::RefModel_v2()
@@ -99,19 +127,14 @@ bool RefModel_v2::run_layer0_attention_channel_transport() {
     layer0_attention_valid_ = false;
     return false;
   }
-  if (!kv_out_k_payload_ch.nb_read(last_k_payload_) || !kv_out_v_payload_ch.nb_read(last_v_payload_)) {
-    layer0_attention_valid_ = false;
-    return false;
-  }
+  last_k_payload_ = kv_out_k_payload_ch.read();
+  last_v_payload_ = kv_out_v_payload_ch.read();
   if (!collect_kv_payload_to_scratch(last_k_payload_, last_v_payload_)) {
     layer0_attention_valid_ = false;
     return false;
   }
-  if (!qsoftres_in_k_payload_ch.nb_write(last_k_payload_) ||
-      !qsoftres_in_v_payload_ch.nb_write(last_v_payload_)) {
-    layer0_attention_valid_ = false;
-    return false;
-  }
+  qsoftres_in_k_payload_ch.write(last_k_payload_);
+  qsoftres_in_v_payload_ch.write(last_v_payload_);
   if (!qsoftres_block_.run(
         run_cfg_,
         query_token_ch,
@@ -126,6 +149,10 @@ bool RefModel_v2::run_layer0_attention_channel_transport() {
     return false;
   }
   if (!stream_x_work_to_next_stage(next_stage_token_ch)) {
+    layer0_attention_valid_ = false;
+    return false;
+  }
+  if (!consume_and_check_next_stage_stream(next_stage_token_ch)) {
     layer0_attention_valid_ = false;
     return false;
   }
@@ -215,6 +242,14 @@ void RefModel_v2::reset_compare_stats() {
   reset_compare_point(&last_compare_stats_.scr_k);
   reset_compare_point(&last_compare_stats_.scr_v);
   reset_compare_point(&last_compare_stats_.x_work_writeback);
+  reset_compare_point(&last_compare_stats_.next_stage_handoff);
+  last_compare_stats_.next_stage_token_count = 0;
+  last_compare_stats_.next_stage_out_of_order_count = 0;
+  last_compare_stats_.next_stage_duplicate_count = 0;
+  last_compare_stats_.next_stage_missing_count = 0;
+  last_compare_stats_.next_stage_header_error_count = 0;
+  last_compare_stats_.next_stage_invalid_token_count = 0;
+  last_compare_stats_.next_stage_handoff_pass = false;
   last_compare_stats_.tol = 1.0e-6;
   last_compare_stats_.all_match = false;
 }
@@ -237,12 +272,8 @@ bool RefModel_v2::stream_x_work_to_attention_channels(
       token_payload.token_vec[dim] = x_work_[token][dim];
       last_attention_input_payload_.x_flat[idx] = x_work_[token][dim];
     }
-    if (!kv_in_token_ch.nb_write(token_payload)) {
-      return false;
-    }
-    if (!query_token_ch.nb_write(token_payload)) {
-      return false;
-    }
+    kv_in_token_ch.write(token_payload);
+    query_token_ch.write(token_payload);
   }
   return true;
 }
@@ -277,10 +308,7 @@ bool RefModel_v2::writeback_attention_output_stream_to_x_work(
 
   // Top receives token-vector stream and performs the only X_WORK write-back ownership action.
   REFV2_WRITEBACK_TOKEN_STREAM_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
-    RefV2AttentionTokenVectorPayload token_payload;
-    if (!out_token_ch.nb_read(token_payload)) {
-      return false;
-    }
+    const RefV2AttentionTokenVectorPayload token_payload = out_token_ch.read();
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
@@ -319,15 +347,81 @@ bool RefModel_v2::stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVect
     REFV2_NEXT_STAGE_STREAM_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
       token_payload.token_vec[dim] = x_work_[token][dim];
     }
-    if (!next_stage_token_ch.nb_write(token_payload)) {
-      return false;
-    }
+    next_stage_token_ch.write(token_payload);
   }
   return true;
 }
 
+bool RefModel_v2::consume_and_check_next_stage_stream(
+  ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch) {
+  const double tol = last_compare_stats_.tol;
+
+  bool token_seen[REFV2_TOKENS_T];
+  REFV2_NEXT_STAGE_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+    token_seen[token] = false;
+  }
+
+  REFV2_NEXT_STAGE_CHECK_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
+    const RefV2AttentionTokenVectorPayload token_payload = next_stage_token_ch.read();
+    ++last_compare_stats_.next_stage_token_count;
+
+    if (!refv2_payload_header_matches_shape(token_payload.header) ||
+        token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+      ++last_compare_stats_.next_stage_header_error_count;
+    }
+
+    const int token = token_payload.token_row.to_int();
+    if (token < 0 || token >= REFV2_TOKENS_T) {
+      ++last_compare_stats_.next_stage_invalid_token_count;
+      continue;
+    }
+    if (token != token_rx) {
+      ++last_compare_stats_.next_stage_out_of_order_count;
+    }
+    if (token_seen[token]) {
+      ++last_compare_stats_.next_stage_duplicate_count;
+    } else {
+      token_seen[token] = true;
+    }
+
+    REFV2_NEXT_STAGE_CHECK_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
+      const double stream_v = static_cast<double>(token_payload.token_vec[dim].to_float());
+      const double x_work_v = static_cast<double>(x_work_[token][dim].to_float());
+      const double abs_diff = std::fabs(stream_v - x_work_v);
+      if (abs_diff > last_compare_stats_.next_stage_handoff.max_abs_diff) {
+        last_compare_stats_.next_stage_handoff.max_abs_diff = abs_diff;
+      }
+      if (abs_diff > tol) {
+        ++last_compare_stats_.next_stage_handoff.mismatch_count;
+        if (last_compare_stats_.next_stage_handoff.first_mismatch_token < 0) {
+          last_compare_stats_.next_stage_handoff.first_mismatch_token = token;
+          last_compare_stats_.next_stage_handoff.first_mismatch_dim = dim;
+          last_compare_stats_.next_stage_handoff.first_v2_value = stream_v;
+          last_compare_stats_.next_stage_handoff.first_ref_value = x_work_v;
+        }
+      }
+    }
+  }
+
+  REFV2_NEXT_STAGE_MISSING_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+    if (!token_seen[token]) {
+      ++last_compare_stats_.next_stage_missing_count;
+    }
+  }
+
+  last_compare_stats_.next_stage_handoff_pass =
+    (last_compare_stats_.next_stage_token_count == REFV2_TOKENS_T) &&
+    (last_compare_stats_.next_stage_out_of_order_count == 0) &&
+    (last_compare_stats_.next_stage_duplicate_count == 0) &&
+    (last_compare_stats_.next_stage_missing_count == 0) &&
+    (last_compare_stats_.next_stage_header_error_count == 0) &&
+    (last_compare_stats_.next_stage_invalid_token_count == 0) &&
+    (last_compare_stats_.next_stage_handoff.mismatch_count == 0);
+
+  return true;
+}
+
 bool RefModel_v2::compare_against_authoritative_layer0() {
-  reset_compare_stats();
   const double tol = last_compare_stats_.tol;
 
   REFV2_COMPARE_ATTN_INPUT_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
@@ -421,12 +515,14 @@ bool RefModel_v2::compare_against_authoritative_layer0() {
     (last_compare_stats_.attention_input.mismatch_count == 0) &&
     (last_compare_stats_.scr_k.mismatch_count == 0) &&
     (last_compare_stats_.scr_v.mismatch_count == 0) &&
-    (last_compare_stats_.x_work_writeback.mismatch_count == 0);
+    (last_compare_stats_.x_work_writeback.mismatch_count == 0) &&
+    last_compare_stats_.next_stage_handoff_pass;
 
   print_compare_point("attention_input", last_compare_stats_.attention_input, tol);
   print_compare_point("SCR_K", last_compare_stats_.scr_k, tol);
   print_compare_point("SCR_V", last_compare_stats_.scr_v, tol);
   print_compare_point("x_work_writeback", last_compare_stats_.x_work_writeback, tol);
+  print_next_stage_handoff(last_compare_stats_, tol);
 
   return true;
 }

@@ -23,6 +23,14 @@ struct RefV2CompareStats {
   RefV2ComparePoint scr_k;
   RefV2ComparePoint scr_v;
   RefV2ComparePoint x_work_writeback;
+  RefV2ComparePoint next_stage_handoff;
+  int next_stage_token_count;
+  int next_stage_out_of_order_count;
+  int next_stage_duplicate_count;
+  int next_stage_missing_count;
+  int next_stage_header_error_count;
+  int next_stage_invalid_token_count;
+  bool next_stage_handoff_pass;
   double tol;
   bool all_match;
 };
@@ -58,6 +66,8 @@ private:
   bool writeback_attention_output_stream_to_x_work(
     ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch);
   bool stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
+  bool consume_and_check_next_stage_stream(
+    ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
   bool compare_against_authoritative_layer0();
 
 private:

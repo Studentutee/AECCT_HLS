@@ -88,10 +88,7 @@ bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_t
 
   int token_received = 0;
   REFV2_KV_TOKEN_READ_LOOP: for (; token_received < REFV2_TOKENS_T; ++token_received) {
-    RefV2AttentionTokenVectorPayload token_payload;
-    if (!in_x_token_ch.nb_read(token_payload)) {
-      return false;
-    }
+    const RefV2AttentionTokenVectorPayload token_payload = in_x_token_ch.read();
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
@@ -139,12 +136,8 @@ bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_t
       &out_v_payload.v_flat[base]);
   }
 
-  if (!out_k_payload_ch.nb_write(out_k_payload)) {
-    return false;
-  }
-  if (!out_v_payload_ch.nb_write(out_v_payload)) {
-    return false;
-  }
+  out_k_payload_ch.write(out_k_payload);
+  out_v_payload_ch.write(out_v_payload);
 
   return true;
 }
