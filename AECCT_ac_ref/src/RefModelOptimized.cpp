@@ -115,6 +115,241 @@ void run_ffn_linear1_residual_layer_token_shared(
   }
 }
 
+template<typename BankT, typename QuantLinear32Fn>
+void run_atten_kv_block_layer_shared(
+  BankT& bank,
+  RefLayerIdInternal layer_id,
+  float s_x_in,
+  const double* w_k,
+  const double* b_k,
+  float s_w_k,
+  const double* w_v,
+  const double* b_v,
+  float s_w_v,
+  QuantLinear32Fn quant_linear_32_to32_fn) {
+  // AttenKvBlock role:
+  // - input boundary  : X_WORK token matrix
+  // - output boundary : SCR_K / SCR_V full materialization
+  switch (layer_id) {
+    case RefLayerIdInternal::kLayer0:
+    case RefLayerIdInternal::kLayer1:
+      break;
+    default:
+      assert(false);
+      return;
+  }
+
+  const int tokens_t = static_cast<int>(sizeof(bank.x_work) / sizeof(bank.x_work[0]));
+  ATTN_KV_BLOCK_TOKEN_LOOP: for (int t = 0; t < tokens_t; ++t) {
+    quant_linear_32_to32_fn(
+      bank.x_work[t],
+      w_k,
+      b_k,
+      s_x_in,
+      s_w_k,
+      bank.scr_k[t]);
+    quant_linear_32_to32_fn(
+      bank.x_work[t],
+      w_v,
+      b_v,
+      s_x_in,
+      s_w_v,
+      bank.scr_v[t]);
+  }
+}
+
+template<typename BankT, typename MaskFn, typename QuantLinear32Fn>
+void run_atten_qsoftres_block_layer_shared(
+  BankT& bank,
+  RefLayerIdInternal layer_id,
+  float s_x_q,
+  const double* w_q,
+  const double* b_q,
+  float s_w_q,
+  float s_x_o,
+  const double* w_o,
+  const double* b_o,
+  float s_w_o,
+  bool use_softmax_exact,
+  RefSoftmaxExpMode softmax_exp_mode,
+  MaskFn is_masked_token_pair,
+  QuantLinear32Fn quant_linear_32_to32_fn) {
+  typedef typename BankT::float_t float_t;
+  const int tokens_t = static_cast<int>(sizeof(bank.x_work) / sizeof(bank.x_work[0]));
+  const int d_model = static_cast<int>(sizeof(bank.x_work[0]) / sizeof(bank.x_work[0][0]));
+  const int heads = static_cast<int>(sizeof(bank.head_ctx_buf) / sizeof(bank.head_ctx_buf[0]));
+  const int d_head = static_cast<int>(sizeof(bank.head_ctx_buf[0]) / sizeof(bank.head_ctx_buf[0][0]));
+  assert(d_model == (heads * d_head));
+  assert(d_head == 4);
+
+  // AttenQSoftResBlock role:
+  // - input boundary  : X_WORK query source + SCR_K/SCR_V
+  // - output boundary : Wo + residual writeback to X_WORK
+  switch (layer_id) {
+    case RefLayerIdInternal::kLayer0:
+    case RefLayerIdInternal::kLayer1:
+      break;
+    default:
+      assert(false);
+      return;
+  }
+
+  const float_t inv_sqrt_dh(0.5f); // 1 / sqrt(4)
+  const float_t zero(0.0f);
+
+  ATTN_QSOFTRES_QTOKEN_LOOP: for (int q_token = 0; q_token < tokens_t; ++q_token) {
+    for (int d = 0; d < d_model; ++d) {
+      bank.ln_token_buf[d] = bank.x_work[q_token][d];
+      bank.out_acc_tile[d] = zero;
+    }
+
+    quant_linear_32_to32_fn(
+      bank.x_work[q_token],
+      w_q,
+      b_q,
+      s_x_q,
+      s_w_q,
+      bank.q_vec);
+
+    ATTN_QSOFTRES_HEAD_LOOP: for (int h = 0; h < heads; ++h) {
+      const int base = h * d_head;
+      if (use_softmax_exact) {
+        bool has_valid = false;
+        float_t max_score = zero;
+        for (int k_token = 0; k_token < tokens_t; ++k_token) {
+          if (is_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          float_t dot = zero;
+          for (int dh = 0; dh < d_head; ++dh) {
+            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
+          }
+          const float_t score = dot * inv_sqrt_dh;
+          if (!has_valid || score > max_score) {
+            max_score = score;
+          }
+          has_valid = true;
+        }
+
+        if (!has_valid) {
+          for (int dh = 0; dh < d_head; ++dh) {
+            bank.head_ctx_buf[h][dh] = zero;
+          }
+          continue;
+        }
+
+        float_t sumexp = zero;
+        for (int dh = 0; dh < d_head; ++dh) {
+          bank.softmax_acc_tile[dh] = zero;
+        }
+        for (int k_token = 0; k_token < tokens_t; ++k_token) {
+          if (is_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          float_t dot = zero;
+          for (int dh = 0; dh < d_head; ++dh) {
+            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
+          }
+          const float_t score = dot * inv_sqrt_dh;
+          const float_t w(static_cast<float>(std::exp((score - max_score).to_float())));
+          sumexp += w;
+          for (int dh = 0; dh < d_head; ++dh) {
+            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
+          }
+        }
+
+        float_t inv_sumexp = zero;
+        if (sumexp > zero) {
+          inv_sumexp = float_t(1.0f) / sumexp;
+        }
+        for (int dh = 0; dh < d_head; ++dh) {
+          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
+        }
+      } else {
+        bool online_init = false;
+        float_t online_max = zero;
+        float_t online_sumexp = zero;
+        for (int dh = 0; dh < d_head; ++dh) {
+          bank.softmax_acc_tile[dh] = zero;
+        }
+
+        for (int k_token = 0; k_token < tokens_t; ++k_token) {
+          if (is_masked_token_pair(h, q_token, k_token)) {
+            continue;
+          }
+          float_t dot = zero;
+          for (int dh = 0; dh < d_head; ++dh) {
+            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
+          }
+          const float_t score = dot * inv_sqrt_dh;
+
+          if (!online_init) {
+            online_max = score;
+            online_sumexp = float_t(1.0f);
+            for (int dh = 0; dh < d_head; ++dh) {
+              bank.softmax_acc_tile[dh] = bank.scr_v[k_token][base + dh];
+            }
+            online_init = true;
+            continue;
+          }
+
+          if (score > online_max) {
+            const float_t rescale = ref_softmax_exp_dispatch(
+              online_max - score,
+              softmax_exp_mode);
+            online_sumexp = (online_sumexp * rescale) + float_t(1.0f);
+            for (int dh = 0; dh < d_head; ++dh) {
+              bank.softmax_acc_tile[dh] =
+                (bank.softmax_acc_tile[dh] * rescale) + bank.scr_v[k_token][base + dh];
+            }
+            online_max = score;
+            continue;
+          }
+
+          const float_t w = ref_softmax_exp_dispatch(
+            score - online_max,
+            softmax_exp_mode);
+          online_sumexp += w;
+          for (int dh = 0; dh < d_head; ++dh) {
+            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
+          }
+        }
+
+        if (!online_init) {
+          for (int dh = 0; dh < d_head; ++dh) {
+            bank.head_ctx_buf[h][dh] = zero;
+          }
+          continue;
+        }
+
+        const float_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+        for (int dh = 0; dh < d_head; ++dh) {
+          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
+        }
+      }
+    }
+
+    for (int h = 0; h < heads; ++h) {
+      const int base = h * d_head;
+      for (int dh = 0; dh < d_head; ++dh) {
+        bank.q_vec[base + dh] = bank.head_ctx_buf[h][dh];
+      }
+    }
+
+    quant_linear_32_to32_fn(
+      bank.q_vec,
+      w_o,
+      b_o,
+      s_x_o,
+      s_w_o,
+      bank.out_acc_tile);
+
+    for (int d = 0; d < d_model; ++d) {
+      bank.x_work[q_token][d] = bank.out_acc_tile[d] + bank.ln_token_buf[d];
+    }
+  }
+}
+
 template<typename BankT>
 void run_final_head_pass_b_output_from_final_scalar_buf_shared(
   const BankT& bank,
@@ -931,22 +1166,19 @@ void RefModelOptimized::materialize_layer0_kv_from_x_work(
   const float s_w_k = static_cast<float>(w_decoder_layers_0_self_attn_linears_1_s_w[0]);
   const float s_w_v = static_cast<float>(w_decoder_layers_0_self_attn_linears_2_s_w[0]);
 
-  for (int t = 0; t < TOKENS_T; ++t) {
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.x_work[t],
-      w_decoder_layers_0_self_attn_linears_1_weight,
-      w_decoder_layers_0_self_attn_linears_1_bias,
-      s_x_in,
-      s_w_k,
-      bank.scr_k[t]);
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.x_work[t],
-      w_decoder_layers_0_self_attn_linears_2_weight,
-      w_decoder_layers_0_self_attn_linears_2_bias,
-      s_x_in,
-      s_w_v,
-      bank.scr_v[t]);
-  }
+  run_atten_kv_block_layer_shared(
+    bank,
+    RefLayerIdInternal::kLayer0,
+    s_x_in,
+    w_decoder_layers_0_self_attn_linears_1_weight,
+    w_decoder_layers_0_self_attn_linears_1_bias,
+    s_w_k,
+    w_decoder_layers_0_self_attn_linears_2_weight,
+    w_decoder_layers_0_self_attn_linears_2_bias,
+    s_w_v,
+    [this](const auto* x_token, const double* w, const double* b, float s_x, float s_w, auto* y_token) {
+      quant_linear_token_32_to32_native<FloatFormat>(x_token, w, b, s_x, s_w, y_token);
+    });
 }
 
 bool RefModelOptimized::is_layer0_attn_masked_token_pair(
@@ -978,8 +1210,6 @@ bool RefModelOptimized::is_layer0_attn_masked_token_pair(
 template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work(
   RefOptimizedStorageBank<FloatFormat>& bank) {
-  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
-
   // Free-point rule:
   // SCR_K/SCR_V remain the K/V source of truth for the whole layer-0 attention
   // traversal. X_WORK writeback is committed only after Wo + residual per token.
@@ -987,161 +1217,27 @@ void RefModelOptimized::materialize_layer0_attention_writeback_from_x_work(
   const float s_x_o = static_cast<float>(l0_o_s_x);
   const float s_w_q = static_cast<float>(w_decoder_layers_0_self_attn_linears_0_s_w[0]);
   const float s_w_o = static_cast<float>(w_decoder_layers_0_self_attn_linears_3_s_w[0]);
-  const float_t inv_sqrt_dh(0.5f); // 1 / sqrt(4)
-  const float_t zero(0.0f);
   const bool use_softmax_exact = (run_cfg_.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
-  for (int q_token = 0; q_token < TOKENS_T; ++q_token) {
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.ln_token_buf[d] = bank.x_work[q_token][d];
-      bank.out_acc_tile[d] = zero;
-    }
-
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.x_work[q_token],
-      w_decoder_layers_0_self_attn_linears_0_weight,
-      w_decoder_layers_0_self_attn_linears_0_bias,
-      s_x_in,
-      s_w_q,
-      bank.q_vec);
-
-    for (int h = 0; h < HEADS; ++h) {
-      const int base = h * D_HEAD;
-      if (use_softmax_exact) {
-        bool has_valid = false;
-        float_t max_score = zero;
-        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
-          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
-            continue;
-          }
-          float_t dot = zero;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
-          }
-          const float_t score = dot * inv_sqrt_dh;
-          if (!has_valid || score > max_score) {
-            max_score = score;
-          }
-          has_valid = true;
-        }
-
-        if (!has_valid) {
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.head_ctx_buf[h][dh] = zero;
-          }
-          continue;
-        }
-
-        float_t sumexp = zero;
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.softmax_acc_tile[dh] = zero;
-        }
-        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
-          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
-            continue;
-          }
-          float_t dot = zero;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
-          }
-          const float_t score = dot * inv_sqrt_dh;
-          const float_t w(static_cast<float>(std::exp((score - max_score).to_float())));
-          sumexp += w;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
-          }
-        }
-
-        float_t inv_sumexp = zero;
-        if (sumexp > zero) {
-          inv_sumexp = float_t(1.0f) / sumexp;
-        }
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
-        }
-      } else {
-        bool online_init = false;
-        float_t online_max = zero;
-        float_t online_sumexp = zero;
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.softmax_acc_tile[dh] = zero;
-        }
-
-        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
-          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
-            continue;
-          }
-          float_t dot = zero;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
-          }
-          const float_t score = dot * inv_sqrt_dh;
-
-          if (!online_init) {
-            online_max = score;
-            online_sumexp = float_t(1.0f);
-            for (int dh = 0; dh < D_HEAD; ++dh) {
-              bank.softmax_acc_tile[dh] = bank.scr_v[k_token][base + dh];
-            }
-            online_init = true;
-            continue;
-          }
-
-          if (score > online_max) {
-            const float_t rescale = ref_softmax_exp_dispatch(
-              online_max - score,
-              run_cfg_.legacy.softmax_exp_mode);
-            online_sumexp = (online_sumexp * rescale) + float_t(1.0f);
-            for (int dh = 0; dh < D_HEAD; ++dh) {
-              bank.softmax_acc_tile[dh] =
-                (bank.softmax_acc_tile[dh] * rescale) + bank.scr_v[k_token][base + dh];
-            }
-            online_max = score;
-            continue;
-          }
-
-          const float_t w = ref_softmax_exp_dispatch(
-            score - online_max,
-            run_cfg_.legacy.softmax_exp_mode);
-          online_sumexp += w;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
-          }
-        }
-
-        if (!online_init) {
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.head_ctx_buf[h][dh] = zero;
-          }
-          continue;
-        }
-
-        const float_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
-        }
-      }
-    }
-
-    for (int h = 0; h < HEADS; ++h) {
-      const int base = h * D_HEAD;
-      for (int dh = 0; dh < D_HEAD; ++dh) {
-        bank.q_vec[base + dh] = bank.head_ctx_buf[h][dh];
-      }
-    }
-
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.q_vec,
-      w_decoder_layers_0_self_attn_linears_3_weight,
-      w_decoder_layers_0_self_attn_linears_3_bias,
-      s_x_o,
-      s_w_o,
-      bank.out_acc_tile);
-
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.x_work[q_token][d] = bank.out_acc_tile[d] + bank.ln_token_buf[d];
-    }
-  }
+  run_atten_qsoftres_block_layer_shared(
+    bank,
+    RefLayerIdInternal::kLayer0,
+    s_x_in,
+    w_decoder_layers_0_self_attn_linears_0_weight,
+    w_decoder_layers_0_self_attn_linears_0_bias,
+    s_w_q,
+    s_x_o,
+    w_decoder_layers_0_self_attn_linears_3_weight,
+    w_decoder_layers_0_self_attn_linears_3_bias,
+    s_w_o,
+    use_softmax_exact,
+    run_cfg_.legacy.softmax_exp_mode,
+    [this](int h, int q_token, int k_token) {
+      return is_layer0_attn_masked_token_pair(h, q_token, k_token);
+    },
+    [this](const auto* x_token, const double* w, const double* b, float s_x, float s_w, auto* y_token) {
+      quant_linear_token_32_to32_native<FloatFormat>(x_token, w, b, s_x, s_w, y_token);
+    });
 }
 
 template<ac_ieee_float_format FloatFormat>
@@ -1274,8 +1370,6 @@ void RefModelOptimized::materialize_layer0_mid_norm_writeback_from_x_work(
 template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::materialize_layer1_attention_writeback_from_x_work(
   RefOptimizedStorageBank<FloatFormat>& bank) {
-  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
-
   // Step 8 boundary:
   // - input boundary  : layer1 attention input handoff in X_WORK
   // - output boundary : layer1 attention Wo + residual writeback in X_WORK
@@ -1287,8 +1381,6 @@ void RefModelOptimized::materialize_layer1_attention_writeback_from_x_work(
   const float s_w_k = static_cast<float>(w_decoder_layers_1_self_attn_linears_1_s_w[0]);
   const float s_w_v = static_cast<float>(w_decoder_layers_1_self_attn_linears_2_s_w[0]);
   const float s_w_o = static_cast<float>(w_decoder_layers_1_self_attn_linears_3_s_w[0]);
-  const float_t inv_sqrt_dh(0.5f); // 1 / sqrt(4)
-  const float_t zero(0.0f);
   const bool use_softmax_exact = (run_cfg_.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
   // Carrier convergence bridge:
@@ -1297,179 +1389,45 @@ void RefModelOptimized::materialize_layer1_attention_writeback_from_x_work(
   if (layer1_attn_input_dut_aligned_seed_valid_) {
     L1_ATTN_INPUT_SEED_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
       L1_ATTN_INPUT_SEED_DIM_LOOP: for (int d = 0; d < D_MODEL; ++d) {
-        bank.x_work[t][d] = float_t(layer1_attn_input_dut_aligned_seed_[t][d].to_float());
+        bank.x_work[t][d] = typename RefOptimizedStorageBank<FloatFormat>::float_t(
+          layer1_attn_input_dut_aligned_seed_[t][d].to_float());
       }
     }
   }
 
-  L1_KV_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.x_work[t],
-      w_decoder_layers_1_self_attn_linears_1_weight,
-      w_decoder_layers_1_self_attn_linears_1_bias,
-      s_x_in,
-      s_w_k,
-      bank.scr_k[t]);
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.x_work[t],
-      w_decoder_layers_1_self_attn_linears_2_weight,
-      w_decoder_layers_1_self_attn_linears_2_bias,
-      s_x_in,
-      s_w_v,
-      bank.scr_v[t]);
-  }
+  run_atten_kv_block_layer_shared(
+    bank,
+    RefLayerIdInternal::kLayer1,
+    s_x_in,
+    w_decoder_layers_1_self_attn_linears_1_weight,
+    w_decoder_layers_1_self_attn_linears_1_bias,
+    s_w_k,
+    w_decoder_layers_1_self_attn_linears_2_weight,
+    w_decoder_layers_1_self_attn_linears_2_bias,
+    s_w_v,
+    [this](const auto* x_token, const double* w, const double* b, float s_x, float s_w, auto* y_token) {
+      quant_linear_token_32_to32_native<FloatFormat>(x_token, w, b, s_x, s_w, y_token);
+    });
 
-  L1_ATTN_QTOKEN_LOOP: for (int q_token = 0; q_token < TOKENS_T; ++q_token) {
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.ln_token_buf[d] = bank.x_work[q_token][d];
-      bank.out_acc_tile[d] = zero;
-    }
-
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.x_work[q_token],
-      w_decoder_layers_1_self_attn_linears_0_weight,
-      w_decoder_layers_1_self_attn_linears_0_bias,
-      s_x_in,
-      s_w_q,
-      bank.q_vec);
-
-    L1_ATTN_HEAD_LOOP: for (int h = 0; h < HEADS; ++h) {
-      const int base = h * D_HEAD;
-      if (use_softmax_exact) {
-        bool has_valid = false;
-        float_t max_score = zero;
-        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
-          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
-            continue;
-          }
-          float_t dot = zero;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
-          }
-          const float_t score = dot * inv_sqrt_dh;
-          if (!has_valid || score > max_score) {
-            max_score = score;
-          }
-          has_valid = true;
-        }
-
-        if (!has_valid) {
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.head_ctx_buf[h][dh] = zero;
-          }
-          continue;
-        }
-
-        float_t sumexp = zero;
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.softmax_acc_tile[dh] = zero;
-        }
-        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
-          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
-            continue;
-          }
-          float_t dot = zero;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
-          }
-          const float_t score = dot * inv_sqrt_dh;
-          const float_t w(static_cast<float>(std::exp((score - max_score).to_float())));
-          sumexp += w;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
-          }
-        }
-
-        float_t inv_sumexp = zero;
-        if (sumexp > zero) {
-          inv_sumexp = float_t(1.0f) / sumexp;
-        }
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
-        }
-      } else {
-        bool online_init = false;
-        float_t online_max = zero;
-        float_t online_sumexp = zero;
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.softmax_acc_tile[dh] = zero;
-        }
-
-        for (int k_token = 0; k_token < TOKENS_T; ++k_token) {
-          if (is_layer0_attn_masked_token_pair(h, q_token, k_token)) {
-            continue;
-          }
-          float_t dot = zero;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            dot += bank.q_vec[base + dh] * bank.scr_k[k_token][base + dh];
-          }
-          const float_t score = dot * inv_sqrt_dh;
-
-          if (!online_init) {
-            online_max = score;
-            online_sumexp = float_t(1.0f);
-            for (int dh = 0; dh < D_HEAD; ++dh) {
-              bank.softmax_acc_tile[dh] = bank.scr_v[k_token][base + dh];
-            }
-            online_init = true;
-            continue;
-          }
-
-          if (score > online_max) {
-            const float_t rescale = ref_softmax_exp_dispatch(
-              online_max - score,
-              run_cfg_.legacy.softmax_exp_mode);
-            online_sumexp = (online_sumexp * rescale) + float_t(1.0f);
-            for (int dh = 0; dh < D_HEAD; ++dh) {
-              bank.softmax_acc_tile[dh] =
-                (bank.softmax_acc_tile[dh] * rescale) + bank.scr_v[k_token][base + dh];
-            }
-            online_max = score;
-            continue;
-          }
-
-          const float_t w = ref_softmax_exp_dispatch(
-            score - online_max,
-            run_cfg_.legacy.softmax_exp_mode);
-          online_sumexp += w;
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.softmax_acc_tile[dh] += w * bank.scr_v[k_token][base + dh];
-          }
-        }
-
-        if (!online_init) {
-          for (int dh = 0; dh < D_HEAD; ++dh) {
-            bank.head_ctx_buf[h][dh] = zero;
-          }
-          continue;
-        }
-
-        const float_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
-        for (int dh = 0; dh < D_HEAD; ++dh) {
-          bank.head_ctx_buf[h][dh] = bank.softmax_acc_tile[dh] * inv_sumexp;
-        }
-      }
-    }
-
-    for (int h = 0; h < HEADS; ++h) {
-      const int base = h * D_HEAD;
-      for (int dh = 0; dh < D_HEAD; ++dh) {
-        bank.q_vec[base + dh] = bank.head_ctx_buf[h][dh];
-      }
-    }
-
-    quant_linear_token_32_to32_native<FloatFormat>(
-      bank.q_vec,
-      w_decoder_layers_1_self_attn_linears_3_weight,
-      w_decoder_layers_1_self_attn_linears_3_bias,
-      s_x_o,
-      s_w_o,
-      bank.out_acc_tile);
-
-    for (int d = 0; d < D_MODEL; ++d) {
-      bank.x_work[q_token][d] = bank.out_acc_tile[d] + bank.ln_token_buf[d];
-    }
-  }
+  run_atten_qsoftres_block_layer_shared(
+    bank,
+    RefLayerIdInternal::kLayer1,
+    s_x_in,
+    w_decoder_layers_1_self_attn_linears_0_weight,
+    w_decoder_layers_1_self_attn_linears_0_bias,
+    s_w_q,
+    s_x_o,
+    w_decoder_layers_1_self_attn_linears_3_weight,
+    w_decoder_layers_1_self_attn_linears_3_bias,
+    s_w_o,
+    use_softmax_exact,
+    run_cfg_.legacy.softmax_exp_mode,
+    [this](int h, int q_token, int k_token) {
+      return is_layer0_attn_masked_token_pair(h, q_token, k_token);
+    },
+    [this](const auto* x_token, const double* w, const double* b, float s_x, float s_w, auto* y_token) {
+      quant_linear_token_32_to32_native<FloatFormat>(x_token, w, b, s_x, s_w, y_token);
+    });
 }
 
 template<ac_ieee_float_format FloatFormat>
