@@ -29,9 +29,10 @@ public:
   // Partial optimized pipeline:
   // Step 2/3 materialize preproc into X_WORK and layer-0 K/V into SCR_K /
   // SCR_V. Step 4/5A/5B/6 port layer-0 attention/LN/FFN/mid-norm writeback.
-  // Step 7~10 extend optimized coverage to layer-1 attention, layer-1 post-
-  // attention LN, layer-1 FFN, and end-norm writeback into/in-place on
-  // X_WORK. FinalHead/output completion still stays on the legacy path.
+  // Step 7~11 extend optimized coverage to layer-1 attention, layer-1 post-
+  // attention LN, layer-1 FFN, end-norm writeback in X_WORK, and FinalHead
+  // Pass A writeback to FINAL_SCALAR_BUF. FinalHead Pass B/output completion
+  // still stays on the legacy path.
   void infer_step0(const RefModelIO& io);
 
   // Stage the optimized major storage for one sample without running the
@@ -46,6 +47,7 @@ public:
   bool run_step0_layer1_ln_writeback();
   bool run_step0_layer1_ffn_writeback();
   bool run_step0_end_norm_writeback();
+  bool run_step0_final_head_pass_a_writeback();
 
   int last_staged_sample_index() const;
   bool phase_a_valid() const;
@@ -58,6 +60,7 @@ public:
   bool layer1_ln_writeback_valid() const;
   bool layer1_ffn_writeback_valid() const;
   bool end_norm_writeback_valid() const;
+  bool final_head_pass_a_writeback_valid() const;
 
   ac_ieee_float<binary32> x_work(int token, int dim) const;
   ac_ieee_float<binary32> scr_k(int token, int dim) const;
@@ -140,6 +143,12 @@ private:
   void materialize_end_norm_writeback_from_x_work(
     RefOptimizedStorageBank<FloatFormat>& bank);
   template<ac_ieee_float_format FloatFormat>
+  void materialize_final_head_pass_a_writeback_from_x_work(
+    RefOptimizedStorageBank<FloatFormat>& bank);
+  void report_final_head_pass_a_compare_from_legacy(
+    const RefModelIO& io,
+    int batch_index);
+  template<ac_ieee_float_format FloatFormat>
   void layernorm_token_32_local(
     const typename RefOptimizedStorageBank<FloatFormat>::float_t x_token[D_MODEL],
     const double w[D_MODEL],
@@ -202,6 +211,7 @@ private:
   bool layer1_ln_writeback_valid_;
   bool layer1_ffn_writeback_valid_;
   bool end_norm_writeback_valid_;
+  bool final_head_pass_a_writeback_valid_;
   ac_ieee_float<binary32> layer1_attn_input_dut_aligned_seed_[TOKENS_T][D_MODEL];
   ac_ieee_float<binary32> layer1_ffn_ln_out_seed_[TOKENS_T][D_MODEL];
   bool layer1_attn_input_dut_aligned_seed_valid_;

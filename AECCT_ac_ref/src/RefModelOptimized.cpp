@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 
 #include "../include/InvSqrtApprox.h"
 #include "../include/SoftmaxApprox.h"
@@ -127,6 +128,7 @@ RefModelOptimized::RefModelOptimized()
     layer1_ln_writeback_valid_(false),
     layer1_ffn_writeback_valid_(false),
     end_norm_writeback_valid_(false),
+    final_head_pass_a_writeback_valid_(false),
     layer1_attn_input_dut_aligned_seed_valid_(false) {
   run_cfg_ = make_fp32_baseline_run_config();
   legacy_ref_.set_run_config(run_cfg_);
@@ -163,14 +165,17 @@ void RefModelOptimized::infer_step0(const RefModelIO& io) {
         (void)run_step0_layer1_ln_writeback();
         (void)run_step0_layer1_ffn_writeback();
         (void)run_step0_end_norm_writeback();
+        (void)run_step0_final_head_pass_a_writeback();
+        report_final_head_pass_a_compare_from_legacy(io, b);
       }
     }
   }
 
   // Step-0 optimized coverage in this path:
   // phaseA -> layer0 attention -> layer0 LN -> layer0 FFN -> mid_norm ->
-  // layer1 attention -> layer1 post-attn LN -> layer1 FFN -> end_norm.
-  // FinalHead/output completion still stays on the legacy path.
+  // layer1 attention -> layer1 post-attn LN -> layer1 FFN -> end_norm ->
+  // FinalHead Pass A writeback to FINAL_SCALAR_BUF.
+  // FinalHead Pass B/output completion still stays on the legacy path.
   legacy_ref_.infer_step0(io);
 }
 
@@ -235,6 +240,10 @@ bool RefModelOptimized::end_norm_writeback_valid() const {
   return end_norm_writeback_valid_;
 }
 
+bool RefModelOptimized::final_head_pass_a_writeback_valid() const {
+  return final_head_pass_a_writeback_valid_;
+}
+
 ac_ieee_float<binary32> RefModelOptimized::x_work(int token, int dim) const {
   assert(token >= 0 && token < TOKENS_T);
   assert(dim >= 0 && dim < D_MODEL);
@@ -289,6 +298,7 @@ bool RefModelOptimized::run_step0_layer0_attention_writeback() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -310,6 +320,7 @@ bool RefModelOptimized::run_step0_layer0_ln_writeback() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -330,6 +341,7 @@ bool RefModelOptimized::run_step0_layer0_ffn_writeback() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -349,6 +361,7 @@ bool RefModelOptimized::run_step0_mid_norm_writeback() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -366,6 +379,7 @@ bool RefModelOptimized::run_step0_layer1_attn_input_handoff() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -383,6 +397,7 @@ bool RefModelOptimized::run_step0_layer1_attention_writeback() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -399,6 +414,7 @@ bool RefModelOptimized::run_step0_layer1_ln_writeback() {
   layer1_ln_writeback_valid_ = true;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -414,6 +430,7 @@ bool RefModelOptimized::run_step0_layer1_ffn_writeback() {
   }
   layer1_ffn_writeback_valid_ = true;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
 }
 
@@ -428,6 +445,21 @@ bool RefModelOptimized::run_step0_end_norm_writeback() {
     materialize_end_norm_writeback_from_x_work<binary32>(storage_fp32_);
   }
   end_norm_writeback_valid_ = true;
+  final_head_pass_a_writeback_valid_ = false;
+  return true;
+}
+
+bool RefModelOptimized::run_step0_final_head_pass_a_writeback() {
+  if (!phase_a_valid_ || !end_norm_writeback_valid_) {
+    return false;
+  }
+
+  if (resolve_selected_float_mode() == REF_OPT_FLOAT16) {
+    materialize_final_head_pass_a_writeback_from_x_work<binary16>(storage_fp16_);
+  } else {
+    materialize_final_head_pass_a_writeback_from_x_work<binary32>(storage_fp32_);
+  }
+  final_head_pass_a_writeback_valid_ = true;
   return true;
 }
 
@@ -445,6 +477,7 @@ void RefModelOptimized::clear_formal_storage() {
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   layer1_attn_input_dut_aligned_seed_valid_ = false;
   for (int t = 0; t < TOKENS_T; ++t) {
     for (int d = 0; d < D_MODEL; ++d) {
@@ -518,7 +551,86 @@ bool RefModelOptimized::stage_step0_phase_a_with_float(
   layer1_ln_writeback_valid_ = false;
   layer1_ffn_writeback_valid_ = false;
   end_norm_writeback_valid_ = false;
+  final_head_pass_a_writeback_valid_ = false;
   return true;
+}
+
+void RefModelOptimized::report_final_head_pass_a_compare_from_legacy(
+  const RefModelIO& io,
+  int batch_index) {
+  if (!final_head_pass_a_writeback_valid_) {
+    return;
+  }
+  if (io.input_y_fp32 == nullptr || io.B <= 0 || io.N < VAR_N) {
+    return;
+  }
+  if (batch_index < 0 || batch_index >= io.B) {
+    return;
+  }
+
+  double legacy_final_s[TOKENS_T];
+  double legacy_logits[VAR_N];
+  bit1_t legacy_x_pred[VAR_N];
+  for (int t = 0; t < TOKENS_T; ++t) {
+    legacy_final_s[t] = 0.0;
+  }
+  for (int i = 0; i < VAR_N; ++i) {
+    legacy_logits[i] = 0.0;
+    legacy_x_pred[i] = bit1_t(0);
+  }
+
+  RefModelIO io_legacy{};
+  io_legacy.input_y = nullptr;
+  io_legacy.input_y_fp32 = &io.input_y_fp32[batch_index * io.N];
+  io_legacy.out_logits = legacy_logits;
+  io_legacy.out_x_pred = legacy_x_pred;
+  io_legacy.B = 1;
+  io_legacy.N = io.N;
+  io_legacy.debug.out_finalhead_s_t = legacy_final_s;
+  legacy_ref_.infer_step0(io_legacy);
+
+  const double tol = (resolve_selected_float_mode() == REF_OPT_FLOAT16) ? 1.0e-3 : 1.0e-6;
+  double max_abs_diff = 0.0;
+  int mismatch_gt_tol = 0;
+  int first_mismatch_token = -1;
+  double first_opt = 0.0;
+  double first_ref = 0.0;
+  double first_diff = 0.0;
+
+  FINAL_HEAD_PASS_A_COMPARE_TOKEN_LOOP: for (int t = 0; t < TOKENS_T; ++t) {
+    const double opt_s = static_cast<double>(final_scalar_buf(t).to_float());
+    const double ref_s = legacy_final_s[t];
+    const double abs_diff = std::fabs(opt_s - ref_s);
+    if (abs_diff > max_abs_diff) {
+      max_abs_diff = abs_diff;
+    }
+    if (abs_diff > tol) {
+      ++mismatch_gt_tol;
+      if (first_mismatch_token < 0) {
+        first_mismatch_token = t;
+        first_opt = opt_s;
+        first_ref = ref_s;
+        first_diff = abs_diff;
+      }
+    }
+  }
+
+  std::printf(
+    "[finalhead-passA-compare] sample=%d source=legacy.debug.out_finalhead_s_t tol=%.3e max_abs_diff=%.9e mismatch_gt_tol=%d",
+    batch_index,
+    tol,
+    max_abs_diff,
+    mismatch_gt_tol);
+  if (first_mismatch_token >= 0) {
+    std::printf(
+      " first_mismatch={token=%d,opt=%.9e,ref=%.9e,abs_diff=%.9e}\n",
+      first_mismatch_token,
+      first_opt,
+      first_ref,
+      first_diff);
+  } else {
+    std::printf(" first_mismatch={none}\n");
+  }
 }
 
 void RefModelOptimized::refresh_layer1_attn_input_dut_aligned_seed_from_legacy(
@@ -1288,6 +1400,26 @@ void RefModelOptimized::materialize_end_norm_writeback_from_x_work(
 }
 
 template<ac_ieee_float_format FloatFormat>
+void RefModelOptimized::materialize_final_head_pass_a_writeback_from_x_work(
+  RefOptimizedStorageBank<FloatFormat>& bank) {
+  typedef typename RefOptimizedStorageBank<FloatFormat>::float_t float_t;
+  const float_t bias(static_cast<float>(w_oned_final_embed_0_bias[0]));
+
+  // FinalHead Pass A boundary:
+  // - input boundary  : end-norm token representation in X_WORK
+  // - output boundary : token-wise scalar writeback in FINAL_SCALAR_BUF
+  // X_WORK is read-only in this step. FINAL_SCALAR_BUF is the formal bridge.
+  FINAL_HEAD_PASS_A_TOKEN_LOOP: for (int token = 0; token < TOKENS_T; ++token) {
+    float_t s_t = bias;
+    FINAL_HEAD_PASS_A_DIM_LOOP: for (int d = 0; d < D_MODEL; ++d) {
+      const float_t w_d(static_cast<float>(w_oned_final_embed_0_weight[d]));
+      s_t += bank.x_work[token][d] * w_d;
+    }
+    bank.final_scalar_buf[token] = s_t;
+  }
+}
+
+template<ac_ieee_float_format FloatFormat>
 void RefModelOptimized::layernorm_token_32_local(
   const typename RefOptimizedStorageBank<FloatFormat>::float_t x_token[D_MODEL],
   const double w[D_MODEL],
@@ -1604,6 +1736,10 @@ template void RefModelOptimized::materialize_layer1_ffn_writeback_from_x_work<bi
 template void RefModelOptimized::materialize_end_norm_writeback_from_x_work<binary16>(
   RefOptimizedStorageBank<binary16>& bank);
 template void RefModelOptimized::materialize_end_norm_writeback_from_x_work<binary32>(
+  RefOptimizedStorageBank<binary32>& bank);
+template void RefModelOptimized::materialize_final_head_pass_a_writeback_from_x_work<binary16>(
+  RefOptimizedStorageBank<binary16>& bank);
+template void RefModelOptimized::materialize_final_head_pass_a_writeback_from_x_work<binary32>(
   RefOptimizedStorageBank<binary32>& bank);
 
 template ac_ieee_float<binary16> RefModelOptimized::float_abs_local<binary16>(
