@@ -70,21 +70,52 @@ static void quant_linear_token_32_to32_native(
 
 RefV2AttenKvBlock::RefV2AttenKvBlock() {}
 
-bool RefV2AttenKvBlock::run(const RefV2AttentionInputPayload& in_payload,
-                            RefV2AttentionKPayload* out_k_payload,
-                            RefV2AttentionVPayload* out_v_payload) const {
-  if (out_k_payload == 0 || out_v_payload == 0) {
-    return false;
-  }
-  if (!refv2_payload_header_matches_shape(in_payload.header)) {
-    return false;
-  }
-  if (in_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
-    return false;
+bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_token_ch,
+                            ac_channel<RefV2AttentionKPayload>& out_k_payload_ch,
+                            ac_channel<RefV2AttentionVPayload>& out_v_payload_ch) const {
+  RefV2AttentionInputPayload in_payload;
+  RefV2AttentionKPayload out_k_payload;
+  RefV2AttentionVPayload out_v_payload;
+
+  in_payload.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
+  in_payload.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
+  in_payload.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
+
+  bool token_seen[REFV2_TOKENS_T];
+  REFV2_KV_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+    token_seen[token] = false;
   }
 
-  out_k_payload->header = in_payload.header;
-  out_v_payload->header = in_payload.header;
+  int token_received = 0;
+  REFV2_KV_TOKEN_READ_LOOP: for (; token_received < REFV2_TOKENS_T; ++token_received) {
+    RefV2AttentionTokenVectorPayload token_payload;
+    if (!in_x_token_ch.nb_read(token_payload)) {
+      return false;
+    }
+    if (!refv2_payload_header_matches_shape(token_payload.header)) {
+      return false;
+    }
+    if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+      return false;
+    }
+
+    const int token_row = token_payload.token_row.to_int();
+    if (token_row < 0 || token_row >= REFV2_TOKENS_T) {
+      return false;
+    }
+    if (token_seen[token_row]) {
+      return false;
+    }
+    token_seen[token_row] = true;
+
+    REFV2_KV_TOKEN_PACK_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
+      const int idx = refv2_flatten_row_major_index(token_row, dim);
+      in_payload.x_flat[idx] = token_payload.token_vec[dim];
+    }
+  }
+
+  out_k_payload.header = in_payload.header;
+  out_v_payload.header = in_payload.header;
 
   const float s_x_in = static_cast<float>(l0_in_s_x);
   const float s_w_k = static_cast<float>(w_decoder_layers_0_self_attn_linears_1_s_w[0]);
@@ -98,14 +129,21 @@ bool RefV2AttenKvBlock::run(const RefV2AttentionInputPayload& in_payload,
       w_decoder_layers_0_self_attn_linears_1_bias,
       s_x_in,
       s_w_k,
-      &out_k_payload->k_flat[base]);
+      &out_k_payload.k_flat[base]);
     quant_linear_token_32_to32_native(
       &in_payload.x_flat[base],
       w_decoder_layers_0_self_attn_linears_2_weight,
       w_decoder_layers_0_self_attn_linears_2_bias,
       s_x_in,
       s_w_v,
-      &out_v_payload->v_flat[base]);
+      &out_v_payload.v_flat[base]);
+  }
+
+  if (!out_k_payload_ch.nb_write(out_k_payload)) {
+    return false;
+  }
+  if (!out_v_payload_ch.nb_write(out_v_payload)) {
+    return false;
   }
 
   return true;

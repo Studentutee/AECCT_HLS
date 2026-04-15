@@ -14,6 +14,14 @@ struct RefV2AttentionPayloadHeader {
   ac_int<16, false> dim_cols;
 };
 
+// Token is row, d is column. token_vec[d] keeps row-major inner-most contiguous d.
+struct RefV2AttentionTokenVectorPayload {
+  RefV2AttentionPayloadHeader header;
+  ac_int<16, false> token_row;
+  ref_fp32_t token_vec[REFV2_D_MODEL];
+};
+
+// Full-matrix payload: flatten index = token_row * D + dim_col (row-major).
 struct RefV2AttentionInputPayload {
   RefV2AttentionPayloadHeader header;
   ref_fp32_t x_flat[REFV2_ATTN_MATRIX_ELEMS];

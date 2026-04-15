@@ -92,25 +92,67 @@ static bool is_layer0_attn_masked_token_pair(int head_idx, int q_token, int k_to
 RefV2AttenQSoftResBlock::RefV2AttenQSoftResBlock() {}
 
 bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
-                                  const RefV2AttentionInputPayload& query_payload,
-                                  const RefV2AttentionKPayload& in_k_payload,
-                                  const RefV2AttentionVPayload& in_v_payload,
-                                  RefV2AttentionOutputPayload* out_payload) const {
-  if (out_payload == 0) {
+                                  ac_channel<RefV2AttentionTokenVectorPayload>& query_token_ch,
+                                  ac_channel<RefV2AttentionKPayload>& in_k_payload_ch,
+                                  ac_channel<RefV2AttentionVPayload>& in_v_payload_ch,
+                                  ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch) const {
+  RefV2AttentionInputPayload query_payload;
+  RefV2AttentionKPayload in_k_payload;
+  RefV2AttentionVPayload in_v_payload;
+  RefV2AttentionOutputPayload out_payload;
+
+  query_payload.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
+  query_payload.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
+  query_payload.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
+
+  if (!in_k_payload_ch.nb_read(in_k_payload)) {
     return false;
   }
-  if (!refv2_payload_header_matches_shape(query_payload.header) ||
-      !refv2_payload_header_matches_shape(in_k_payload.header) ||
+  if (!in_v_payload_ch.nb_read(in_v_payload)) {
+    return false;
+  }
+  if (!refv2_payload_header_matches_shape(in_k_payload.header) ||
       !refv2_payload_header_matches_shape(in_v_payload.header)) {
     return false;
   }
-  if (query_payload.header.layer_id.to_int() != REFV2_LAYER0_ID ||
-      in_k_payload.header.layer_id.to_int() != REFV2_LAYER0_ID ||
+  if (in_k_payload.header.layer_id.to_int() != REFV2_LAYER0_ID ||
       in_v_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
     return false;
   }
 
-  out_payload->header = query_payload.header;
+  bool query_token_seen[REFV2_TOKENS_T];
+  REFV2_QSOFTRES_QUERY_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+    query_token_seen[token] = false;
+  }
+
+  REFV2_QSOFTRES_QUERY_TOKEN_READ_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
+    RefV2AttentionTokenVectorPayload query_token_payload;
+    if (!query_token_ch.nb_read(query_token_payload)) {
+      return false;
+    }
+    if (!refv2_payload_header_matches_shape(query_token_payload.header)) {
+      return false;
+    }
+    if (query_token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+      return false;
+    }
+
+    const int token_row = query_token_payload.token_row.to_int();
+    if (token_row < 0 || token_row >= REFV2_TOKENS_T) {
+      return false;
+    }
+    if (query_token_seen[token_row]) {
+      return false;
+    }
+    query_token_seen[token_row] = true;
+
+    REFV2_QSOFTRES_QUERY_TOKEN_PACK_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
+      const int idx = refv2_flatten_row_major_index(token_row, dim);
+      query_payload.x_flat[idx] = query_token_payload.token_vec[dim];
+    }
+  }
+
+  out_payload.header = query_payload.header;
 
   ref_fp32_t q_vec[REFV2_D_MODEL];
   ref_fp32_t head_ctx_buf[REFV2_HEADS][REFV2_D_HEAD];
@@ -289,7 +331,22 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
       out_acc_tile);
 
     REFV2_QSOFTRES_WRITEBACK_LOOP: for (int d = 0; d < REFV2_D_MODEL; ++d) {
-      out_payload->out_flat[q_base + d] = out_acc_tile[d] + ln_token_buf[d];
+      out_payload.out_flat[q_base + d] = out_acc_tile[d] + ln_token_buf[d];
+    }
+  }
+
+  // Boundary ownership: Top owns X_WORK write-back, this block only streams token vectors out.
+  REFV2_QSOFTRES_OUT_TOKEN_STREAM_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+    RefV2AttentionTokenVectorPayload out_token_payload;
+    out_token_payload.header = out_payload.header;
+    out_token_payload.token_row = ac_int<16, false>(token);
+
+    REFV2_QSOFTRES_OUT_TOKEN_STREAM_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
+      const int idx = refv2_flatten_row_major_index(token, dim);
+      out_token_payload.token_vec[dim] = out_payload.out_flat[idx];
+    }
+    if (!out_token_ch.nb_write(out_token_payload)) {
+      return false;
     }
   }
 

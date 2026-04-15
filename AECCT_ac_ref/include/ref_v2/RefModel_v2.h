@@ -2,6 +2,7 @@
 
 #include "RefModel.h"
 #include "RefModelOptimized.h"
+#include "ac_channel.h"
 #include "ref_v2/RefV2AttenKvBlock.h"
 #include "ref_v2/RefV2AttenQSoftResBlock.h"
 
@@ -34,7 +35,7 @@ public:
   RefRunConfig get_run_config() const;
 
   bool stage_step0_phase_a_from_authoritative(const RefModelIO& io, int batch_index = 0);
-  bool run_layer0_attention_direct_call();
+  bool run_layer0_attention_channel_transport();
   bool run_step0_layer0_attention_compare(const RefModelIO& io, int batch_index = 0);
 
   bool phase_a_valid() const;
@@ -49,10 +50,14 @@ public:
 private:
   void clear_storage();
   void reset_compare_stats();
-  void pack_attention_input_payload_from_x_work(RefV2AttentionInputPayload* payload) const;
+  bool stream_x_work_to_attention_channels(
+    ac_channel<RefV2AttentionTokenVectorPayload>& kv_in_token_ch,
+    ac_channel<RefV2AttentionTokenVectorPayload>& query_token_ch);
   bool collect_kv_payload_to_scratch(const RefV2AttentionKPayload& k_payload,
                                      const RefV2AttentionVPayload& v_payload);
-  bool writeback_attention_output_to_x_work(const RefV2AttentionOutputPayload& out_payload);
+  bool writeback_attention_output_stream_to_x_work(
+    ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch);
+  bool stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
   bool compare_against_authoritative_layer0();
 
 private:
