@@ -197,8 +197,14 @@
     <ClInclude Include="data\weights\weights.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="AECCT_ac_ref\synth\RefStep0Synth.cpp" />
+    <ClCompile Include="AECCT_ac_ref\synth\RefStep0Synth.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="AECCT_ac_ref\src\RefModel.cpp" />
+    <ClCompile Include="AECCT_ac_ref\src\RefModelOptimized.cpp" />
     <ClCompile Include="AECCT_ac_ref\src\ref_main.cpp" />
     <ClCompile Include="tb\tb_attn_m9a_qkv.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
