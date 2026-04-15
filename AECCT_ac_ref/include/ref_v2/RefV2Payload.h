@@ -42,9 +42,35 @@ struct RefV2AttentionOutputPayload {
   ref_fp32_t out_flat[REFV2_ATTN_MATRIX_ELEMS];
 };
 
+struct RefV2PreprocInputPayload {
+  ac_int<16, false> var_count;
+  ref_fp32_t input_y[REFV2_VAR_N];
+};
+
+struct RefV2FinalScalarTokenPayload {
+  RefV2AttentionPayloadHeader header;
+  ac_int<16, false> token_row;
+  ref_fp32_t scalar;
+};
+
+struct RefV2FinalInputYPayload {
+  ac_int<16, false> var_count;
+  ref_fp32_t input_y[REFV2_VAR_N];
+};
+
+struct RefV2FinalOutputPayload {
+  ac_int<16, false> var_count;
+  ref_fp32_t logits[REFV2_VAR_N];
+  bit1_t x_pred[REFV2_VAR_N];
+};
+
 static inline bool refv2_payload_header_matches_shape(const RefV2AttentionPayloadHeader& header) {
   return (header.token_rows.to_int() == REFV2_TOKENS_T) &&
          (header.dim_cols.to_int() == REFV2_D_MODEL);
+}
+
+static inline bool refv2_var_count_matches_shape(ac_int<16, false> var_count) {
+  return (var_count.to_int() == REFV2_VAR_N);
 }
 
 } // namespace ref_v2

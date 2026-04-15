@@ -29,6 +29,10 @@ int main() {
 
   const aecct_ref::ref_v2::RefV2CompareStats stats = model_v2.last_compare_stats();
   std::printf(
+    "[tb_ref_v2] preproc_output mismatch=%d max_abs_diff=%.9e\n",
+    stats.preproc_output.mismatch_count,
+    stats.preproc_output.max_abs_diff);
+  std::printf(
     "[tb_ref_v2] attention_input mismatch=%d max_abs_diff=%.9e\n",
     stats.attention_input.mismatch_count,
     stats.attention_input.max_abs_diff);
@@ -55,6 +59,18 @@ int main() {
     stats.next_stage_header_error_count,
     stats.next_stage_invalid_token_count,
     stats.next_stage_handoff_pass ? 1 : 0);
+  std::printf(
+    "[tb_ref_v2] final_passA_output mismatch=%d max_abs_diff=%.9e\n",
+    stats.final_passA_output.mismatch_count,
+    stats.final_passA_output.max_abs_diff);
+  std::printf(
+    "[tb_ref_v2] final_logits mismatch=%d max_abs_diff=%.9e\n",
+    stats.final_logits.mismatch_count,
+    stats.final_logits.max_abs_diff);
+  std::printf(
+    "[tb_ref_v2] final_x_pred mismatch=%d max_abs_diff=%.9e\n",
+    stats.final_x_pred.mismatch_count,
+    stats.final_x_pred.max_abs_diff);
 
   if (!stats.all_match) {
     std::printf("FAIL: RefModel_v2 compare mismatch detected\n");
