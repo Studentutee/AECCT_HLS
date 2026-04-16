@@ -1,8 +1,8 @@
 #include "../../include/ref_v2/RefV2AttenQSoftResBlock.h"
+#include "../../include/ref_v2/RefV2MathApprox.h"
 
 #include <cmath>
 
-#include "../../include/SoftmaxApprox.h"
 #include "weights.h"
 
 namespace aecct_ref {
@@ -42,10 +42,9 @@ static void quant_linear_token_32_to32_native(
   const double w[REFV2_D_MODEL * REFV2_D_MODEL],
   const double b[REFV2_D_MODEL],
   float s_x,
-  float s_w,
+  float inv_sxsw_const,
   ref_fp32_t y[REFV2_D_MODEL]) {
-  const ref_fp32_t inv =
-    ref_fp32_t(1.0f) / (ref_fp32_t(s_x) * ref_fp32_t(s_w));
+  const ref_fp32_t inv(inv_sxsw_const);
 
   ac_int<8, true> qx_i8[REFV2_D_MODEL];
   QSOFT_QUANTIZE_I8_LOOP: for (int i = 0; i < REFV2_D_MODEL; ++i) {
@@ -153,10 +152,8 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
   ref_fp32_t softmax_acc_tile[REFV2_D_HEAD];
   ref_fp32_t ln_token_buf[REFV2_D_MODEL];
 
-  const float s_x_q = static_cast<float>(l0_in_s_x);
-  const float s_x_o = static_cast<float>(l0_o_s_x);
-  const float s_w_q = static_cast<float>(w_decoder_layers_0_self_attn_linears_0_s_w[0]);
-  const float s_w_o = static_cast<float>(w_decoder_layers_0_self_attn_linears_3_s_w[0]);
+  const float s_x_q = REFV2_SCALE_L0_IN_S_X;
+  const float s_x_o = REFV2_SCALE_L0_O_S_X;
   const bool use_softmax_exact =
     (run_cfg.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
@@ -175,7 +172,7 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
       w_decoder_layers_0_self_attn_linears_0_weight,
       w_decoder_layers_0_self_attn_linears_0_bias,
       s_x_q,
-      s_w_q,
+      REFV2_INV_L0_ATTN_Q,
       q_vec);
 
     REFV2_QSOFTRES_HEAD_LOOP: for (int h = 0; h < REFV2_HEADS; ++h) {
@@ -233,7 +230,7 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
 
         ref_fp32_t inv_sumexp = zero;
         if (sumexp > zero) {
-          inv_sumexp = ref_fp32_t(1.0f) / sumexp;
+          inv_sumexp = refv2_softmax_rcp_lut_safe(sumexp);
         }
         REFV2_QSOFTRES_EXACT_NORM_LOOP: for (int dh = 0; dh < REFV2_D_HEAD; ++dh) {
           head_ctx_buf[h][dh] = softmax_acc_tile[dh] * inv_sumexp;
@@ -301,7 +298,7 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
           continue;
         }
 
-        const ref_fp32_t inv_sumexp = ref_softmax_rcp_lut(online_sumexp);
+        const ref_fp32_t inv_sumexp = refv2_softmax_rcp_lut_safe(online_sumexp);
         REFV2_QSOFTRES_APPROX_NORM_LOOP: for (int dh = 0; dh < REFV2_D_HEAD; ++dh) {
           head_ctx_buf[h][dh] = softmax_acc_tile[dh] * inv_sumexp;
         }
@@ -320,7 +317,7 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
       w_decoder_layers_0_self_attn_linears_3_weight,
       w_decoder_layers_0_self_attn_linears_3_bias,
       s_x_o,
-      s_w_o,
+      REFV2_INV_L0_ATTN_O,
       out_acc_tile);
 
     REFV2_QSOFTRES_WRITEBACK_LOOP: for (int d = 0; d < REFV2_D_MODEL; ++d) {

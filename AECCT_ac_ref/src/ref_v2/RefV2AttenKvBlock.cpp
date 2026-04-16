@@ -1,4 +1,5 @@
 #include "../../include/ref_v2/RefV2AttenKvBlock.h"
+#include "../../include/ref_v2/RefV2MathApprox.h"
 
 #include <cmath>
 
@@ -41,10 +42,9 @@ static void quant_linear_token_32_to32_native(
   const double w[REFV2_D_MODEL * REFV2_D_MODEL],
   const double b[REFV2_D_MODEL],
   float s_x,
-  float s_w,
+  float inv_sxsw_const,
   ref_fp32_t y[REFV2_D_MODEL]) {
-  const ref_fp32_t inv =
-    ref_fp32_t(1.0f) / (ref_fp32_t(s_x) * ref_fp32_t(s_w));
+  const ref_fp32_t inv(inv_sxsw_const);
 
   ac_int<8, true> qx_i8[REFV2_D_MODEL];
   KV_QUANTIZE_I8_LOOP: for (int i = 0; i < REFV2_D_MODEL; ++i) {
@@ -114,9 +114,7 @@ bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_t
   out_k_payload.header = in_payload.header;
   out_v_payload.header = in_payload.header;
 
-  const float s_x_in = static_cast<float>(l0_in_s_x);
-  const float s_w_k = static_cast<float>(w_decoder_layers_0_self_attn_linears_1_s_w[0]);
-  const float s_w_v = static_cast<float>(w_decoder_layers_0_self_attn_linears_2_s_w[0]);
+  const float s_x_in = REFV2_SCALE_L0_IN_S_X;
 
   REFV2_KV_BLOCK_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     const int base = token * REFV2_D_MODEL;
@@ -125,14 +123,14 @@ bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_t
       w_decoder_layers_0_self_attn_linears_1_weight,
       w_decoder_layers_0_self_attn_linears_1_bias,
       s_x_in,
-      s_w_k,
+      REFV2_INV_L0_ATTN_K,
       &out_k_payload.k_flat[base]);
     quant_linear_token_32_to32_native(
       &in_payload.x_flat[base],
       w_decoder_layers_0_self_attn_linears_2_weight,
       w_decoder_layers_0_self_attn_linears_2_bias,
       s_x_in,
-      s_w_v,
+      REFV2_INV_L0_ATTN_V,
       &out_v_payload.v_flat[base]);
   }
 

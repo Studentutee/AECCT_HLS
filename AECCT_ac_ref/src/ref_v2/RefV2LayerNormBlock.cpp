@@ -1,8 +1,8 @@
 #include "../../include/ref_v2/RefV2LayerNormBlock.h"
+#include "../../include/ref_v2/RefV2MathApprox.h"
 
 #include <cmath>
 
-#include "../../include/InvSqrtApprox.h"
 #include "weights.h"
 
 namespace aecct_ref {
@@ -16,7 +16,7 @@ static void layernorm_token_32_local(
   const double b[REFV2_D_MODEL],
   ref_fp32_t y_token[REFV2_D_MODEL]) {
   const float eps = 1.0e-5f;
-  const float inv_d = 1.0f / static_cast<float>(REFV2_D_MODEL);
+  const float inv_d = REFV2_INV_D_MODEL;
 
   auto sanitize_input = [](float v) -> float {
     return std::isfinite(v) ? v : 0.0f;
@@ -71,10 +71,7 @@ static void layernorm_token_32_local(
       var_eps = eps;
     }
 
-    float inv_std = ref_inv_sqrt_nr1_approx(ref_fp32_t(var_eps)).to_float();
-    if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
-      inv_std = ref_inv_sqrt_approx(ref_fp32_t(var_eps)).to_float();
-    }
+    float inv_std = refv2_inv_sqrt_nr1_or_lut(var_eps);
     inv_std = sanitize_output(inv_std);
 
     REFV2_LN_SUMSQ_OUT_LOOP: for (int d = 0; d < REFV2_D_MODEL; ++d) {
@@ -109,17 +106,13 @@ static void layernorm_token_32_local(
     x_eps_safe = 1.0f;
   }
 
-  float inv_std = 1.0f / std::sqrt(x_eps_safe);
-  const float inv_std_nr1 =
-    inv_std * (1.5f - (0.5f * x_eps_safe * inv_std * inv_std));
-  if (std::isfinite(inv_std_nr1) && inv_std_nr1 > 0.0f) {
-    inv_std = inv_std_nr1;
-  }
-  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
-    inv_std = ref_inv_sqrt_nr1_approx(ref_fp32_t(x_eps_safe)).to_float();
-  }
-  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
-    inv_std = ref_inv_sqrt_approx(ref_fp32_t(x_eps_safe)).to_float();
+  float inv_std = refv2_inv_sqrt_nr1_or_lut(x_eps_safe);
+  REFV2_LN_BASE_NR_REFINE_LOOP: for (int nr_iter = 0; nr_iter < 6; ++nr_iter) {
+    const float inv_sq = inv_std * inv_std;
+    const float inv_nr = inv_std * (1.5f - (0.5f * x_eps_safe * inv_sq));
+    if (std::isfinite(inv_nr) && inv_nr > 0.0f) {
+      inv_std = inv_nr;
+    }
   }
   if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
     inv_std = 1.0f;

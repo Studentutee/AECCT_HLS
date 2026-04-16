@@ -1,4 +1,5 @@
 #include "../../include/ref_v2/RefV2FfnBlock.h"
+#include "../../include/ref_v2/RefV2MathApprox.h"
 
 #include <cmath>
 
@@ -41,10 +42,9 @@ static void quant_linear_token_32_to128_native(
   const double w[REFV2_FF_DIM * REFV2_D_MODEL],
   const double b[REFV2_FF_DIM],
   float s_x,
-  float s_w,
+  float inv_sxsw_const,
   ref_fp32_t y[REFV2_FF_DIM]) {
-  const ref_fp32_t inv =
-    ref_fp32_t(1.0f) / (ref_fp32_t(s_x) * ref_fp32_t(s_w));
+  const ref_fp32_t inv(inv_sxsw_const);
 
   ac_int<8, true> qx_i8[REFV2_D_MODEL];
   REFV2_FFN_W1_QUANT_LOOP: for (int i = 0; i < REFV2_D_MODEL; ++i) {
@@ -71,10 +71,9 @@ static void quant_linear_token_128_to32_native(
   const double w[REFV2_D_MODEL * REFV2_FF_DIM],
   const double b[REFV2_D_MODEL],
   float s_x,
-  float s_w,
+  float inv_sxsw_const,
   ref_fp32_t y[REFV2_D_MODEL]) {
-  const ref_fp32_t inv =
-    ref_fp32_t(1.0f) / (ref_fp32_t(s_x) * ref_fp32_t(s_w));
+  const ref_fp32_t inv(inv_sxsw_const);
 
   ac_int<8, true> qx_i8[REFV2_FF_DIM];
   REFV2_FFN_W2_QUANT_LOOP: for (int i = 0; i < REFV2_FF_DIM; ++i) {
@@ -151,10 +150,8 @@ bool RefV2FfnBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_token_c
     }
   }
 
-  const float s_x_ff1 = static_cast<float>(l0_ff1_s_x);
-  const float s_w_ff1 = static_cast<float>(w_decoder_layers_0_feed_forward_w_1_s_w[0]);
-  const float s_x_ff2 = static_cast<float>(l0_ff2_s_x);
-  const float s_w_ff2 = static_cast<float>(w_decoder_layers_0_feed_forward_w_2_s_w[0]);
+  const float s_x_ff1 = REFV2_SCALE_L0_FF1_S_X;
+  const float s_x_ff2 = REFV2_SCALE_L0_FF2_S_X;
 
   REFV2_FFN_TOKEN_OUT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     RefV2AttentionTokenVectorPayload token_payload;
@@ -166,7 +163,7 @@ bool RefV2FfnBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_token_c
       w_decoder_layers_0_feed_forward_w_1_weight,
       w_decoder_layers_0_feed_forward_w_1_bias,
       s_x_ff1,
-      s_w_ff1,
+      REFV2_INV_L0_FFN_W1,
       ffn1_token_buf);
 
     REFV2_FFN_RELU_LOOP: for (int i = 0; i < REFV2_FF_DIM; ++i) {
@@ -180,7 +177,7 @@ bool RefV2FfnBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_token_c
       w_decoder_layers_0_feed_forward_w_2_weight,
       w_decoder_layers_0_feed_forward_w_2_bias,
       s_x_ff2,
-      s_w_ff2,
+      REFV2_INV_L0_FFN_W2,
       ffn2_token_buf);
 
     REFV2_FFN_TOKEN_OUT_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
