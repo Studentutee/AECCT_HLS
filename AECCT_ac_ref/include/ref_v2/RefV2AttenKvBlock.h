@@ -10,7 +10,8 @@ class RefV2AttenKvBlock {
 public:
   RefV2AttenKvBlock();
 
-  bool run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_token_ch,
+  bool run(int lid,
+           ac_channel<RefV2AttentionTokenVectorPayload>& in_x_token_ch,
            ac_channel<RefV2AttentionKPayload>& out_k_payload_ch,
            ac_channel<RefV2AttentionVPayload>& out_v_payload_ch) const;
 };

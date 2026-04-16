@@ -142,6 +142,10 @@ bool RefModel_v2::stage_step0_phase_a_from_authoritative(const RefModelIO& io, i
 }
 
 bool RefModel_v2::run_layer0_attention_channel_transport() {
+  return run_attention_layer_shared(REFV2_LAYER0_ID);
+}
+
+bool RefModel_v2::run_attention_layer_shared(int lid) {
   if (!phase_a_valid_) {
     return false;
   }
@@ -154,66 +158,101 @@ bool RefModel_v2::run_layer0_attention_channel_transport() {
   ac_channel<RefV2AttentionVPayload> qsoftres_in_v_payload_ch;
   ac_channel<RefV2AttentionTokenVectorPayload> qsoftres_out_token_ch;
 
-  if (!stream_x_work_to_attention_channels(kv_in_token_ch, query_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!stream_x_work_to_attention_channels(lid, kv_in_token_ch, query_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  if (!kv_block_.run(kv_in_token_ch, kv_out_k_payload_ch, kv_out_v_payload_ch)) {
-    layer0_attention_valid_ = false;
+  if (!kv_block_.run(lid, kv_in_token_ch, kv_out_k_payload_ch, kv_out_v_payload_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  last_k_payload_ = kv_out_k_payload_ch.read();
-  last_v_payload_ = kv_out_v_payload_ch.read();
-  if (!collect_kv_payload_to_scratch(last_k_payload_, last_v_payload_)) {
-    layer0_attention_valid_ = false;
-    return false;
+  const RefV2AttentionKPayload k_payload = kv_out_k_payload_ch.read();
+  const RefV2AttentionVPayload v_payload = kv_out_v_payload_ch.read();
+  if (lid == REFV2_LAYER0_ID) {
+    last_k_payload_ = k_payload;
+    last_v_payload_ = v_payload;
+    if (!collect_kv_payload_to_scratch(last_k_payload_, last_v_payload_)) {
+      layer0_attention_valid_ = false;
+      return false;
+    }
   }
-  qsoftres_in_k_payload_ch.write(last_k_payload_);
-  qsoftres_in_v_payload_ch.write(last_v_payload_);
+  qsoftres_in_k_payload_ch.write(k_payload);
+  qsoftres_in_v_payload_ch.write(v_payload);
   if (!qsoftres_block_.run(
+        lid,
         run_cfg_,
         query_token_ch,
         qsoftres_in_k_payload_ch,
         qsoftres_in_v_payload_ch,
         qsoftres_out_token_ch)) {
-    layer0_attention_valid_ = false;
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  if (!writeback_attention_output_stream_to_x_work(qsoftres_out_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!writeback_attention_output_stream_to_x_work(lid, qsoftres_out_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
 
-  layer0_attention_valid_ = true;
+  if (lid == REFV2_LAYER0_ID) {
+    layer0_attention_valid_ = true;
+  }
   return true;
 }
 
 bool RefModel_v2::run_layer0_ln_channel_transport() {
-  if (!phase_a_valid_ || !layer0_attention_valid_) {
+  return run_ln_layer_shared(REFV2_LAYER0_ID);
+}
+
+bool RefModel_v2::run_layer0_ffn_channel_transport() {
+  return run_ffn_layer_shared(REFV2_LAYER0_ID);
+}
+
+bool RefModel_v2::run_ln_layer_shared(int lid) {
+  if (!phase_a_valid_) {
+    return false;
+  }
+  if (lid == REFV2_LAYER0_ID && !layer0_attention_valid_) {
     return false;
   }
 
   ac_channel<RefV2AttentionTokenVectorPayload> ln_in_token_ch;
   ac_channel<RefV2AttentionTokenVectorPayload> ln_out_token_ch;
 
-  if (!stream_x_work_to_layer0_ln_channel(ln_in_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!stream_x_work_to_ln_channel(lid, ln_in_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  if (!layer0_ln_block_.run(run_cfg_, ln_in_token_ch, ln_out_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!ln_block_.run(lid, run_cfg_, ln_in_token_ch, ln_out_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  if (!writeback_layer0_ln_output_stream_to_x_work(ln_out_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!writeback_ln_output_stream_to_x_work(lid, ln_out_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
 
   return true;
 }
 
-bool RefModel_v2::run_layer0_ffn_channel_transport() {
-  if (!phase_a_valid_ || !layer0_attention_valid_) {
+bool RefModel_v2::run_ffn_layer_shared(int lid) {
+  if (!phase_a_valid_) {
+    return false;
+  }
+  if (lid == REFV2_LAYER0_ID && !layer0_attention_valid_) {
     return false;
   }
 
@@ -222,23 +261,44 @@ bool RefModel_v2::run_layer0_ffn_channel_transport() {
   ac_channel<RefV2FfnHiddenTokenPayload> ffn_hidden_token_ch;
   ac_channel<RefV2AttentionTokenVectorPayload> ffn_out_token_ch;
 
-  if (!stream_x_work_to_layer0_ffn_channels(ffn_linear0_in_token_ch, ffn_residual_in_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!stream_x_work_to_ffn_channels(lid, ffn_linear0_in_token_ch, ffn_residual_in_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  if (!layer0_ffn_linear0_relu_block_.run(ffn_linear0_in_token_ch, ffn_hidden_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!ffn_linear0_relu_block_.run(lid, ffn_linear0_in_token_ch, ffn_hidden_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  if (!layer0_ffn_linear1_residual_block_.run(ffn_hidden_token_ch, ffn_residual_in_token_ch, ffn_out_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!ffn_linear1_residual_block_.run(lid, ffn_hidden_token_ch, ffn_residual_in_token_ch, ffn_out_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
-  if (!writeback_layer0_ffn_output_stream_to_x_work(ffn_out_token_ch)) {
-    layer0_attention_valid_ = false;
+  if (!writeback_ffn_output_stream_to_x_work(lid, ffn_out_token_ch)) {
+    if (lid == REFV2_LAYER0_ID) {
+      layer0_attention_valid_ = false;
+    }
     return false;
   }
 
+  return true;
+}
+
+bool RefModel_v2::run_transformer_layer_shared(int lid) {
+  if (!run_attention_layer_shared(lid)) {
+    return false;
+  }
+  if (!run_ln_layer_shared(lid)) {
+    return false;
+  }
+  if (!run_ffn_layer_shared(lid)) {
+    return false;
+  }
   return true;
 }
 
@@ -246,22 +306,21 @@ bool RefModel_v2::run_step0_layer0_attention_compare(const RefModelIO& io, int b
   if (!stage_step0_phase_a_from_authoritative(io, batch_index)) {
     return false;
   }
-  if (!run_layer0_attention_channel_transport()) {
-    return false;
-  }
-  if (!run_layer0_ln_channel_transport()) {
-    return false;
-  }
-  if (!run_layer0_ffn_channel_transport()) {
-    return false;
-  }
 
-  ac_channel<RefV2AttentionTokenVectorPayload> next_stage_token_ch;
-  if (!stream_x_work_to_next_stage(next_stage_token_ch)) {
-    return false;
-  }
-  if (!consume_and_check_next_stage_stream(next_stage_token_ch)) {
-    return false;
+  REFV2_TRANSFORMER_LAYER_LOOP: for (int lid = 0; lid < 2; ++lid) {
+    if (!run_transformer_layer_shared(lid)) {
+      return false;
+    }
+
+    if (lid == REFV2_LAYER0_ID) {
+      ac_channel<RefV2AttentionTokenVectorPayload> next_stage_token_ch;
+      if (!stream_x_work_to_next_stage(lid, next_stage_token_ch)) {
+        return false;
+      }
+      if (!consume_and_check_next_stage_stream(lid, next_stage_token_ch)) {
+        return false;
+      }
+    }
   }
 
   if (!compare_against_authoritative_layer0()) {
@@ -472,22 +531,33 @@ bool RefModel_v2::collect_preproc_output_stream_and_writeback(
 }
 
 bool RefModel_v2::stream_x_work_to_attention_channels(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& kv_in_token_ch,
   ac_channel<RefV2AttentionTokenVectorPayload>& query_token_ch) {
-  last_attention_input_payload_.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
-  last_attention_input_payload_.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
-  last_attention_input_payload_.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  RefV2AttentionPayloadHeader stream_header;
+  stream_header.layer_id = ac_int<8, false>(lid);
+  stream_header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
+  stream_header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
+  if (lid == REFV2_LAYER0_ID) {
+    last_attention_input_payload_.header = stream_header;
+  }
 
   // Top owns X_WORK. Token is row, d is column, row-major flatten keeps d as inner-most.
   REFV2_STREAM_XWORK_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     RefV2AttentionTokenVectorPayload token_payload;
-    token_payload.header = last_attention_input_payload_.header;
+    token_payload.header = stream_header;
     token_payload.token_row = ac_int<16, false>(token);
 
     REFV2_STREAM_XWORK_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
       const int idx = refv2_flatten_row_major_index(token, dim);
       token_payload.token_vec[dim] = x_work_[token][dim];
-      last_attention_input_payload_.x_flat[idx] = x_work_[token][dim];
+      if (lid == REFV2_LAYER0_ID) {
+        last_attention_input_payload_.x_flat[idx] = x_work_[token][dim];
+      }
     }
     kv_in_token_ch.write(token_payload);
     query_token_ch.write(token_payload);
@@ -513,10 +583,18 @@ bool RefModel_v2::collect_kv_payload_to_scratch(const RefV2AttentionKPayload& k_
 }
 
 bool RefModel_v2::writeback_attention_output_stream_to_x_work(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch) {
-  last_out_payload_.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
-  last_out_payload_.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
-  last_out_payload_.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
+  if (lid == REFV2_LAYER0_ID) {
+    last_out_payload_.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
+    last_out_payload_.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
+    last_out_payload_.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
+  }
 
   bool token_seen[REFV2_TOKENS_T];
   REFV2_WRITEBACK_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
@@ -529,7 +607,7 @@ bool RefModel_v2::writeback_attention_output_stream_to_x_work(
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
-    if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (token_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
 
@@ -544,20 +622,29 @@ bool RefModel_v2::writeback_attention_output_stream_to_x_work(
 
     REFV2_WRITEBACK_STREAM_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
       const int idx = refv2_flatten_row_major_index(token, dim);
-      last_out_payload_.out_flat[idx] = token_payload.token_vec[dim];
+      if (lid == REFV2_LAYER0_ID) {
+        last_out_payload_.out_flat[idx] = token_payload.token_vec[dim];
+      }
       x_work_[token][dim] = token_payload.token_vec[dim];
-      x_work_after_attention_[token][dim] = token_payload.token_vec[dim];
+      if (lid == REFV2_LAYER0_ID) {
+        x_work_after_attention_[token][dim] = token_payload.token_vec[dim];
+      }
     }
   }
 
   return true;
 }
 
-bool RefModel_v2::stream_x_work_to_layer0_ln_channel(
+bool RefModel_v2::stream_x_work_to_ln_channel(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& ln_in_token_ch) {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
   REFV2_STREAM_LN_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     RefV2AttentionTokenVectorPayload token_payload;
-    token_payload.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
+    token_payload.header.layer_id = ac_int<8, false>(lid);
     token_payload.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
     token_payload.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
     token_payload.token_row = ac_int<16, false>(token);
@@ -570,8 +657,14 @@ bool RefModel_v2::stream_x_work_to_layer0_ln_channel(
   return true;
 }
 
-bool RefModel_v2::writeback_layer0_ln_output_stream_to_x_work(
+bool RefModel_v2::writeback_ln_output_stream_to_x_work(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& ln_out_token_ch) {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
   bool token_seen[REFV2_TOKENS_T];
   REFV2_LN_WRITEBACK_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -582,7 +675,7 @@ bool RefModel_v2::writeback_layer0_ln_output_stream_to_x_work(
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
-    if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (token_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
 
@@ -597,21 +690,30 @@ bool RefModel_v2::writeback_layer0_ln_output_stream_to_x_work(
 
     REFV2_LN_WRITEBACK_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
       const ref_fp32_t value = token_payload.token_vec[dim];
-      layer0_ln_out_[token][dim] = value;
+      if (lid == REFV2_LAYER0_ID) {
+        layer0_ln_out_[token][dim] = value;
+      }
       x_work_[token][dim] = value;
-      x_work_after_layer0_ln_[token][dim] = value;
+      if (lid == REFV2_LAYER0_ID) {
+        x_work_after_layer0_ln_[token][dim] = value;
+      }
     }
   }
 
   return true;
 }
 
-bool RefModel_v2::stream_x_work_to_layer0_ffn_channels(
+bool RefModel_v2::stream_x_work_to_ffn_channels(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& ffn_linear0_in_token_ch,
   ac_channel<RefV2AttentionTokenVectorPayload>& ffn_residual_in_token_ch) {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
   REFV2_STREAM_FFN_DUAL_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     RefV2AttentionTokenVectorPayload token_payload;
-    token_payload.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
+    token_payload.header.layer_id = ac_int<8, false>(lid);
     token_payload.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
     token_payload.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
     token_payload.token_row = ac_int<16, false>(token);
@@ -625,8 +727,14 @@ bool RefModel_v2::stream_x_work_to_layer0_ffn_channels(
   return true;
 }
 
-bool RefModel_v2::writeback_layer0_ffn_output_stream_to_x_work(
+bool RefModel_v2::writeback_ffn_output_stream_to_x_work(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& ffn_out_token_ch) {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
   bool token_seen[REFV2_TOKENS_T];
   REFV2_FFN_WRITEBACK_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -637,7 +745,7 @@ bool RefModel_v2::writeback_layer0_ffn_output_stream_to_x_work(
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
-    if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (token_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
 
@@ -652,20 +760,30 @@ bool RefModel_v2::writeback_layer0_ffn_output_stream_to_x_work(
 
     REFV2_FFN_WRITEBACK_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
       const ref_fp32_t value = token_payload.token_vec[dim];
-      layer0_ffn_out_[token][dim] = value;
+      if (lid == REFV2_LAYER0_ID) {
+        layer0_ffn_out_[token][dim] = value;
+      }
       x_work_[token][dim] = value;
-      x_work_after_layer0_ffn_[token][dim] = value;
+      if (lid == REFV2_LAYER0_ID) {
+        x_work_after_layer0_ffn_[token][dim] = value;
+      }
     }
   }
 
   return true;
 }
 
-bool RefModel_v2::stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch) {
+bool RefModel_v2::stream_x_work_to_next_stage(
+  int lid,
+  ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch) {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
   // Local-only handoff channel: demonstrate stage-to-stage token-vector transport after X_WORK overwrite.
   REFV2_NEXT_STAGE_STREAM_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     RefV2AttentionTokenVectorPayload token_payload;
-    token_payload.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
+    token_payload.header.layer_id = ac_int<8, false>(lid);
     token_payload.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
     token_payload.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
     token_payload.token_row = ac_int<16, false>(token);
@@ -679,7 +797,13 @@ bool RefModel_v2::stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVect
 }
 
 bool RefModel_v2::consume_and_check_next_stage_stream(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch) {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
   const double tol = last_compare_stats_.tol;
 
   bool token_seen[REFV2_TOKENS_T];
@@ -692,7 +816,7 @@ bool RefModel_v2::consume_and_check_next_stage_stream(
     ++last_compare_stats_.next_stage_token_count;
 
     if (!refv2_payload_header_matches_shape(token_payload.header) ||
-        token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+        token_payload.header.layer_id.to_int() != expected_layer_id) {
       ++last_compare_stats_.next_stage_header_error_count;
     }
 

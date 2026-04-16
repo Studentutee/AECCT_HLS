@@ -90,11 +90,44 @@ static bool is_layer0_attn_masked_token_pair(int head_idx, int q_token, int k_to
 
 RefV2AttenQSoftResBlock::RefV2AttenQSoftResBlock() {}
 
-bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
+bool RefV2AttenQSoftResBlock::run(int lid,
+                                  const RefRunConfig& run_cfg,
                                   ac_channel<RefV2AttentionTokenVectorPayload>& query_token_ch,
                                   ac_channel<RefV2AttentionKPayload>& in_k_payload_ch,
                                   ac_channel<RefV2AttentionVPayload>& in_v_payload_ch,
                                   ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch) const {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
+  const float s_x_q = (lid == REFV2_LAYER0_ID)
+                        ? static_cast<float>(l0_in_s_x)
+                        : static_cast<float>(l1_in_s_x);
+  const float s_x_o = (lid == REFV2_LAYER0_ID)
+                        ? static_cast<float>(l0_o_s_x)
+                        : static_cast<float>(l1_o_s_x);
+  const double* const q_weight = (lid == REFV2_LAYER0_ID)
+                                   ? w_decoder_layers_0_self_attn_linears_0_weight
+                                   : w_decoder_layers_1_self_attn_linears_0_weight;
+  const double* const q_bias = (lid == REFV2_LAYER0_ID)
+                                 ? w_decoder_layers_0_self_attn_linears_0_bias
+                                 : w_decoder_layers_1_self_attn_linears_0_bias;
+  const double* const o_weight = (lid == REFV2_LAYER0_ID)
+                                   ? w_decoder_layers_0_self_attn_linears_3_weight
+                                   : w_decoder_layers_1_self_attn_linears_3_weight;
+  const double* const o_bias = (lid == REFV2_LAYER0_ID)
+                                 ? w_decoder_layers_0_self_attn_linears_3_bias
+                                 : w_decoder_layers_1_self_attn_linears_3_bias;
+  const float q_s_w = (lid == REFV2_LAYER0_ID)
+                        ? static_cast<float>(w_decoder_layers_0_self_attn_linears_0_s_w[0])
+                        : static_cast<float>(w_decoder_layers_1_self_attn_linears_0_s_w[0]);
+  const float o_s_w = (lid == REFV2_LAYER0_ID)
+                        ? static_cast<float>(w_decoder_layers_0_self_attn_linears_3_s_w[0])
+                        : static_cast<float>(w_decoder_layers_1_self_attn_linears_3_s_w[0]);
+  const float inv_attn_q = 1.0f / (s_x_q * q_s_w);
+  const float inv_attn_o = 1.0f / (s_x_o * o_s_w);
+
   RefV2AttentionKPayload in_k_payload;
   RefV2AttentionVPayload in_v_payload;
   RefV2AttentionPayloadHeader header_ref;
@@ -106,8 +139,8 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
       !refv2_payload_header_matches_shape(in_v_payload.header)) {
     return false;
   }
-  if (in_k_payload.header.layer_id.to_int() != REFV2_LAYER0_ID ||
-      in_v_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+  if (in_k_payload.header.layer_id.to_int() != expected_layer_id ||
+      in_v_payload.header.layer_id.to_int() != expected_layer_id) {
     return false;
   }
 
@@ -123,8 +156,6 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
   ref_fp32_t query_token_buf[REFV2_D_MODEL];
   ref_fp32_t ln_token_buf[REFV2_D_MODEL];
 
-  const float s_x_q = REFV2_SCALE_L0_IN_S_X;
-  const float s_x_o = REFV2_SCALE_L0_O_S_X;
   const bool use_softmax_exact =
     (run_cfg.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
 
@@ -136,7 +167,7 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
     if (!refv2_payload_header_matches_shape(query_token_payload.header)) {
       return false;
     }
-    if (query_token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (query_token_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
     if (!header_init) {
@@ -167,10 +198,10 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
 
     quant_linear_token_32_to32_native(
       query_token_buf,
-      w_decoder_layers_0_self_attn_linears_0_weight,
-      w_decoder_layers_0_self_attn_linears_0_bias,
+      q_weight,
+      q_bias,
       s_x_q,
-      REFV2_INV_L0_ATTN_Q,
+      inv_attn_q,
       q_vec);
 
     REFV2_QSOFTRES_HEAD_LOOP: for (int h = 0; h < REFV2_HEADS; ++h) {
@@ -312,10 +343,10 @@ bool RefV2AttenQSoftResBlock::run(const RefRunConfig& run_cfg,
 
     quant_linear_token_32_to32_native(
       q_vec,
-      w_decoder_layers_0_self_attn_linears_3_weight,
-      w_decoder_layers_0_self_attn_linears_3_bias,
+      o_weight,
+      o_bias,
       s_x_o,
-      REFV2_INV_L0_ATTN_O,
+      inv_attn_o,
       out_acc_tile);
 
     RefV2AttentionTokenVectorPayload out_token_payload;

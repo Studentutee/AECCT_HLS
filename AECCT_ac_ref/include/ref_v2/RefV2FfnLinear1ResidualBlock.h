@@ -11,7 +11,8 @@ class RefV2FfnLinear1ResidualBlock {
 public:
   RefV2FfnLinear1ResidualBlock();
 
-  bool run(ac_channel<RefV2FfnHiddenTokenPayload>& in_hidden_ch,
+  bool run(int lid,
+           ac_channel<RefV2FfnHiddenTokenPayload>& in_hidden_ch,
            ac_channel<RefV2AttentionTokenVectorPayload>& in_residual_token_ch,
            ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch) const;
 };

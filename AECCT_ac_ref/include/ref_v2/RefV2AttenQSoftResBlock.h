@@ -11,7 +11,8 @@ class RefV2AttenQSoftResBlock {
 public:
   RefV2AttenQSoftResBlock();
 
-  bool run(const RefRunConfig& run_cfg,
+  bool run(int lid,
+           const RefRunConfig& run_cfg,
            ac_channel<RefV2AttentionTokenVectorPayload>& query_token_ch,
            ac_channel<RefV2AttentionKPayload>& in_k_payload_ch,
            ac_channel<RefV2AttentionVPayload>& in_v_payload_ch,

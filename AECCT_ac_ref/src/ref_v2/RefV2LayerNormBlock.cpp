@@ -132,15 +132,25 @@ static void layernorm_token_32_local(
 
 RefV2LayerNormBlock::RefV2LayerNormBlock() {}
 
-bool RefV2LayerNormBlock::run(const RefRunConfig& run_cfg,
+bool RefV2LayerNormBlock::run(int lid,
+                              const RefRunConfig& run_cfg,
                               ac_channel<RefV2AttentionTokenVectorPayload>& in_token_ch,
                               ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch) const {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
   RefV2AttentionPayloadHeader header_ref;
   bool header_init = false;
   bool token_seen[REFV2_TOKENS_T];
   ref_fp32_t token_ln_out[REFV2_D_MODEL];
-  const double* const ln0_w = w_decoder_layers_0_sublayer_0_norm_weight;
-  const double* const ln0_b = w_decoder_layers_0_sublayer_0_norm_bias;
+  const double* const ln_weight = (lid == REFV2_LAYER0_ID)
+                                    ? w_decoder_layers_0_sublayer_0_norm_weight
+                                    : w_decoder_layers_1_sublayer_0_norm_weight;
+  const double* const ln_bias = (lid == REFV2_LAYER0_ID)
+                                  ? w_decoder_layers_0_sublayer_0_norm_bias
+                                  : w_decoder_layers_1_sublayer_0_norm_bias;
 
   REFV2_LN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -151,7 +161,7 @@ bool RefV2LayerNormBlock::run(const RefRunConfig& run_cfg,
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
-    if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (token_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
 
@@ -175,7 +185,7 @@ bool RefV2LayerNormBlock::run(const RefRunConfig& run_cfg,
     }
     token_seen[token] = true;
 
-    layernorm_token_32_local(run_cfg, token_payload.token_vec, ln0_w, ln0_b, token_ln_out);
+    layernorm_token_32_local(run_cfg, token_payload.token_vec, ln_weight, ln_bias, token_ln_out);
 
     RefV2AttentionTokenVectorPayload out_payload;
     out_payload.header = token_payload.header;

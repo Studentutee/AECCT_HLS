@@ -74,27 +74,39 @@ public:
 private:
   void clear_storage();
   void reset_compare_stats();
+  bool run_attention_layer_shared(int lid);
+  bool run_ln_layer_shared(int lid);
+  bool run_ffn_layer_shared(int lid);
+  bool run_transformer_layer_shared(int lid);
   bool stream_input_to_preproc_channel(const RefModelIO& io, int batch_index,
                                        ac_channel<RefV2PreprocInputPayload>& preproc_in_ch);
   bool collect_preproc_output_stream_and_writeback(
     ac_channel<RefV2AttentionTokenVectorPayload>& preproc_out_token_ch);
   bool stream_x_work_to_attention_channels(
+    int lid,
     ac_channel<RefV2AttentionTokenVectorPayload>& kv_in_token_ch,
     ac_channel<RefV2AttentionTokenVectorPayload>& query_token_ch);
   bool collect_kv_payload_to_scratch(const RefV2AttentionKPayload& k_payload,
                                      const RefV2AttentionVPayload& v_payload);
   bool writeback_attention_output_stream_to_x_work(
+    int lid,
     ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch);
-  bool stream_x_work_to_layer0_ln_channel(ac_channel<RefV2AttentionTokenVectorPayload>& ln_in_token_ch);
-  bool writeback_layer0_ln_output_stream_to_x_work(
+  bool stream_x_work_to_ln_channel(int lid,
+                                   ac_channel<RefV2AttentionTokenVectorPayload>& ln_in_token_ch);
+  bool writeback_ln_output_stream_to_x_work(
+    int lid,
     ac_channel<RefV2AttentionTokenVectorPayload>& ln_out_token_ch);
-  bool stream_x_work_to_layer0_ffn_channels(
+  bool stream_x_work_to_ffn_channels(
+    int lid,
     ac_channel<RefV2AttentionTokenVectorPayload>& ffn_linear0_in_token_ch,
     ac_channel<RefV2AttentionTokenVectorPayload>& ffn_residual_in_token_ch);
-  bool writeback_layer0_ffn_output_stream_to_x_work(
+  bool writeback_ffn_output_stream_to_x_work(
+    int lid,
     ac_channel<RefV2AttentionTokenVectorPayload>& ffn_out_token_ch);
-  bool stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
+  bool stream_x_work_to_next_stage(int lid,
+                                   ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
   bool consume_and_check_next_stage_stream(
+    int lid,
     ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
   bool load_authoritative_end_norm_to_x_work();
   bool stream_x_work_to_final_pass_a_channel(
@@ -115,9 +127,9 @@ private:
   RefV2PreprocBlock preproc_block_;
   RefV2AttenKvBlock kv_block_;
   RefV2AttenQSoftResBlock qsoftres_block_;
-  RefV2LayerNormBlock layer0_ln_block_;
-  RefV2FfnLinear0ReluBlock layer0_ffn_linear0_relu_block_;
-  RefV2FfnLinear1ResidualBlock layer0_ffn_linear1_residual_block_;
+  RefV2LayerNormBlock ln_block_;
+  RefV2FfnLinear0ReluBlock ffn_linear0_relu_block_;
+  RefV2FfnLinear1ResidualBlock ffn_linear1_residual_block_;
   RefV2FinalPassABlock final_pass_a_block_;
   RefV2FinalPassBBlock final_pass_b_block_;
 

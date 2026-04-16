@@ -16,7 +16,8 @@ class RefV2FfnLinear0ReluBlock {
 public:
   RefV2FfnLinear0ReluBlock();
 
-  bool run(ac_channel<RefV2AttentionTokenVectorPayload>& in_token_ch,
+  bool run(int lid,
+           ac_channel<RefV2AttentionTokenVectorPayload>& in_token_ch,
            ac_channel<RefV2FfnHiddenTokenPayload>& out_hidden_ch) const;
 };
 

@@ -70,9 +70,39 @@ static void quant_linear_token_32_to32_native(
 
 RefV2AttenKvBlock::RefV2AttenKvBlock() {}
 
-bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_token_ch,
+bool RefV2AttenKvBlock::run(int lid,
+                            ac_channel<RefV2AttentionTokenVectorPayload>& in_x_token_ch,
                             ac_channel<RefV2AttentionKPayload>& out_k_payload_ch,
                             ac_channel<RefV2AttentionVPayload>& out_v_payload_ch) const {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
+  const float s_x_in = (lid == REFV2_LAYER0_ID)
+                         ? static_cast<float>(l0_in_s_x)
+                         : static_cast<float>(l1_in_s_x);
+  const double* const k_weight = (lid == REFV2_LAYER0_ID)
+                                   ? w_decoder_layers_0_self_attn_linears_1_weight
+                                   : w_decoder_layers_1_self_attn_linears_1_weight;
+  const double* const k_bias = (lid == REFV2_LAYER0_ID)
+                                 ? w_decoder_layers_0_self_attn_linears_1_bias
+                                 : w_decoder_layers_1_self_attn_linears_1_bias;
+  const double* const v_weight = (lid == REFV2_LAYER0_ID)
+                                   ? w_decoder_layers_0_self_attn_linears_2_weight
+                                   : w_decoder_layers_1_self_attn_linears_2_weight;
+  const double* const v_bias = (lid == REFV2_LAYER0_ID)
+                                 ? w_decoder_layers_0_self_attn_linears_2_bias
+                                 : w_decoder_layers_1_self_attn_linears_2_bias;
+  const float k_s_w = (lid == REFV2_LAYER0_ID)
+                        ? static_cast<float>(w_decoder_layers_0_self_attn_linears_1_s_w[0])
+                        : static_cast<float>(w_decoder_layers_1_self_attn_linears_1_s_w[0]);
+  const float v_s_w = (lid == REFV2_LAYER0_ID)
+                        ? static_cast<float>(w_decoder_layers_0_self_attn_linears_2_s_w[0])
+                        : static_cast<float>(w_decoder_layers_1_self_attn_linears_2_s_w[0]);
+  const float inv_attn_k = 1.0f / (s_x_in * k_s_w);
+  const float inv_attn_v = 1.0f / (s_x_in * v_s_w);
+
   RefV2AttentionKPayload out_k_payload;
   RefV2AttentionVPayload out_v_payload;
   RefV2AttentionPayloadHeader header_ref;
@@ -84,14 +114,12 @@ bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_t
     token_seen[token] = false;
   }
 
-  const float s_x_in = REFV2_SCALE_L0_IN_S_X;
-
   REFV2_KV_TOKEN_STREAM_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
     const RefV2AttentionTokenVectorPayload token_payload = in_x_token_ch.read();
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
-    if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (token_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
     if (!header_init) {
@@ -123,17 +151,17 @@ bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_t
     const int base = token_row * REFV2_D_MODEL;
     quant_linear_token_32_to32_native(
       in_token_buf,
-      w_decoder_layers_0_self_attn_linears_1_weight,
-      w_decoder_layers_0_self_attn_linears_1_bias,
+      k_weight,
+      k_bias,
       s_x_in,
-      REFV2_INV_L0_ATTN_K,
+      inv_attn_k,
       &out_k_payload.k_flat[base]);
     quant_linear_token_32_to32_native(
       in_token_buf,
-      w_decoder_layers_0_self_attn_linears_2_weight,
-      w_decoder_layers_0_self_attn_linears_2_bias,
+      v_weight,
+      v_bias,
       s_x_in,
-      REFV2_INV_L0_ATTN_V,
+      inv_attn_v,
       &out_v_payload.v_flat[base]);
   }
 

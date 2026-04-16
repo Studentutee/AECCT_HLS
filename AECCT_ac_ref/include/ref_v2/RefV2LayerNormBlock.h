@@ -11,7 +11,8 @@ class RefV2LayerNormBlock {
 public:
   RefV2LayerNormBlock();
 
-  bool run(const RefRunConfig& run_cfg,
+  bool run(int lid,
+           const RefRunConfig& run_cfg,
            ac_channel<RefV2AttentionTokenVectorPayload>& in_token_ch,
            ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch) const;
 };

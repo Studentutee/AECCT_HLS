@@ -71,8 +71,28 @@ static void quant_linear_token_32_to128_native(
 RefV2FfnLinear0ReluBlock::RefV2FfnLinear0ReluBlock() {}
 
 bool RefV2FfnLinear0ReluBlock::run(
+  int lid,
   ac_channel<RefV2AttentionTokenVectorPayload>& in_token_ch,
   ac_channel<RefV2FfnHiddenTokenPayload>& out_hidden_ch) const {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
+  const double* const ff1_weight = (lid == REFV2_LAYER0_ID)
+                                     ? w_decoder_layers_0_feed_forward_w_1_weight
+                                     : w_decoder_layers_1_feed_forward_w_1_weight;
+  const double* const ff1_bias = (lid == REFV2_LAYER0_ID)
+                                   ? w_decoder_layers_0_feed_forward_w_1_bias
+                                   : w_decoder_layers_1_feed_forward_w_1_bias;
+  const float ff1_s_x = (lid == REFV2_LAYER0_ID)
+                          ? static_cast<float>(l0_ff1_s_x)
+                          : static_cast<float>(l1_ff1_s_x);
+  const float ff1_s_w = (lid == REFV2_LAYER0_ID)
+                          ? static_cast<float>(w_decoder_layers_0_feed_forward_w_1_s_w[0])
+                          : static_cast<float>(w_decoder_layers_1_feed_forward_w_1_s_w[0]);
+  const float inv_ffn_w1 = 1.0f / (ff1_s_x * ff1_s_w);
+
   RefV2AttentionPayloadHeader header_ref;
   bool header_init = false;
   bool token_seen[REFV2_TOKENS_T];
@@ -88,7 +108,7 @@ bool RefV2FfnLinear0ReluBlock::run(
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
-    if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (token_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
 
@@ -114,10 +134,10 @@ bool RefV2FfnLinear0ReluBlock::run(
 
     quant_linear_token_32_to128_native(
       token_payload.token_vec,
-      w_decoder_layers_0_feed_forward_w_1_weight,
-      w_decoder_layers_0_feed_forward_w_1_bias,
-      REFV2_SCALE_L0_FF1_S_X,
-      REFV2_INV_L0_FFN_W1,
+      ff1_weight,
+      ff1_bias,
+      ff1_s_x,
+      inv_ffn_w1,
       linear0_out_buf);
 
     RefV2FfnHiddenTokenPayload hidden_payload;

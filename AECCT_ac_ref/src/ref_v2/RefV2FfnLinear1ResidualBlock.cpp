@@ -71,9 +71,29 @@ static void quant_linear_token_128_to32_native(
 RefV2FfnLinear1ResidualBlock::RefV2FfnLinear1ResidualBlock() {}
 
 bool RefV2FfnLinear1ResidualBlock::run(
+  int lid,
   ac_channel<RefV2FfnHiddenTokenPayload>& in_hidden_ch,
   ac_channel<RefV2AttentionTokenVectorPayload>& in_residual_token_ch,
   ac_channel<RefV2AttentionTokenVectorPayload>& out_token_ch) const {
+  if (lid != REFV2_LAYER0_ID && lid != REFV2_LAYER1_ID) {
+    return false;
+  }
+
+  const int expected_layer_id = lid;
+  const double* const ff2_weight = (lid == REFV2_LAYER0_ID)
+                                     ? w_decoder_layers_0_feed_forward_w_2_weight
+                                     : w_decoder_layers_1_feed_forward_w_2_weight;
+  const double* const ff2_bias = (lid == REFV2_LAYER0_ID)
+                                   ? w_decoder_layers_0_feed_forward_w_2_bias
+                                   : w_decoder_layers_1_feed_forward_w_2_bias;
+  const float ff2_s_x = (lid == REFV2_LAYER0_ID)
+                          ? static_cast<float>(l0_ff2_s_x)
+                          : static_cast<float>(l1_ff2_s_x);
+  const float ff2_s_w = (lid == REFV2_LAYER0_ID)
+                          ? static_cast<float>(w_decoder_layers_0_feed_forward_w_2_s_w[0])
+                          : static_cast<float>(w_decoder_layers_1_feed_forward_w_2_s_w[0]);
+  const float inv_ffn_w2 = 1.0f / (ff2_s_x * ff2_s_w);
+
   bool token_seen[REFV2_TOKENS_T];
   ref_fp32_t linear1_out_buf[REFV2_D_MODEL];
 
@@ -89,8 +109,8 @@ bool RefV2FfnLinear1ResidualBlock::run(
         !refv2_payload_header_matches_shape(residual_payload.header)) {
       return false;
     }
-    if (hidden_payload.header.layer_id.to_int() != REFV2_LAYER0_ID ||
-        residual_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
+    if (hidden_payload.header.layer_id.to_int() != expected_layer_id ||
+        residual_payload.header.layer_id.to_int() != expected_layer_id) {
       return false;
     }
     if (hidden_payload.header.layer_id != residual_payload.header.layer_id ||
@@ -113,10 +133,10 @@ bool RefV2FfnLinear1ResidualBlock::run(
 
     quant_linear_token_128_to32_native(
       hidden_payload.hidden_vec,
-      w_decoder_layers_0_feed_forward_w_2_weight,
-      w_decoder_layers_0_feed_forward_w_2_bias,
-      REFV2_SCALE_L0_FF2_S_X,
-      REFV2_INV_L0_FFN_W2,
+      ff2_weight,
+      ff2_bias,
+      ff2_s_x,
+      inv_ffn_w2,
       linear1_out_buf);
 
     RefV2AttentionTokenVectorPayload out_payload;
