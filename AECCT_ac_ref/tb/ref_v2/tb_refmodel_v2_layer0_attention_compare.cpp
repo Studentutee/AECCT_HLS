@@ -6,6 +6,7 @@
 #include "AECCT_ac_ref/include/RefModel.h"
 #include "AECCT_ac_ref/include/RefModelOptimized.h"
 #include "AECCT_ac_ref/include/ref_v2/RefModel_v2.h"
+#include "AECCT_ac_ref/include/ref_v2/RefV2Config.h"
 #include "input_y_step0.h"
 #include "output_logits_step0.h"
 #include "output_x_pred_step0.h"
@@ -14,6 +15,7 @@ namespace {
 static constexpr int VAR_N = 63;
 static constexpr double LOGIT_TOL = 1.0e-6;
 static constexpr int kPatternCount = 8;
+static constexpr int kZeroHeadCount = 8;
 static constexpr std::array<int, kPatternCount> kPatternIndices = {906, 723, 849, 587, 217, 562, 222, 77};
 static constexpr std::array<aecct_ref::RefLayerNormMode, 3> kLnModes = {
   aecct_ref::RefLayerNormMode::LN_BASELINE,
@@ -31,6 +33,24 @@ struct TraceCompareResult {
   int xpred_first_mismatch_dim = -1;
   int xpred_first_model = 0;
   int xpred_first_trace = 0;
+  bool pass = false;
+};
+
+struct ZeroCodewordResult {
+  bool synthetic = true;
+  bool run_ok = false;
+  int final_logits_mismatch_count = 0;
+  double final_logits_max_abs_diff = 0.0;
+  int final_logits_first_mismatch_idx = -1;
+  double final_logits_first_v2 = 0.0;
+  double final_logits_first_ref = 0.0;
+  int final_xpred_mismatch_count = 0;
+  int final_xpred_first_mismatch_idx = -1;
+  int final_xpred_first_v2 = 0;
+  int final_xpred_first_ref = 0;
+  int model_xpred_ones_count = 0;
+  std::array<double, kZeroHeadCount> model_logits_head{};
+  std::array<int, kZeroHeadCount> model_xpred_head{};
   bool pass = false;
 };
 
@@ -113,9 +133,71 @@ static bool run_trace_golden_check(int pattern_idx, TraceCompareResult* out) {
   out->pass = (out->logits_mismatch_count == 0) && (out->xpred_mismatch_count == 0);
   return true;
 }
+
+static bool run_zero_codeword_synthetic_check(ZeroCodewordResult* out) {
+  if (out == nullptr) {
+    return false;
+  }
+
+  aecct_ref::ref_v2::RefModel_v2 model_v2;
+  aecct_ref::RefRunConfig v2_cfg = aecct_ref::make_fp32_baseline_run_config();
+  v2_cfg.legacy.ln_mode = aecct_ref::RefLayerNormMode::LN_BASELINE;
+  model_v2.set_run_config(v2_cfg);
+
+  std::vector<double> input_y_zero(static_cast<std::size_t>(VAR_N), 0.0);
+  aecct_ref::RefModelIO io{};
+  io.input_y_fp32 = input_y_zero.data();
+  io.B = 1;
+  io.N = VAR_N;
+
+  out->run_ok = model_v2.run_step0_layer0_attention_compare(io, 0);
+  if (!out->run_ok) {
+    out->pass = false;
+    return true;
+  }
+
+  const aecct_ref::ref_v2::RefV2CompareStats stats = model_v2.last_compare_stats();
+  out->final_logits_mismatch_count = stats.final_logits.mismatch_count;
+  out->final_logits_max_abs_diff = stats.final_logits.max_abs_diff;
+  out->final_logits_first_mismatch_idx = stats.final_logits.first_mismatch_token;
+  out->final_logits_first_v2 = stats.final_logits.first_v2_value;
+  out->final_logits_first_ref = stats.final_logits.first_ref_value;
+  out->final_xpred_mismatch_count = stats.final_x_pred.mismatch_count;
+  out->final_xpred_first_mismatch_idx = stats.final_x_pred.first_mismatch_token;
+  out->final_xpred_first_v2 = static_cast<int>(stats.final_x_pred.first_v2_value);
+  out->final_xpred_first_ref = static_cast<int>(stats.final_x_pred.first_ref_value);
+
+  aecct_ref::RefModelOptimized model_ref;
+  model_ref.set_run_config(v2_cfg);
+  std::vector<double> logits(static_cast<std::size_t>(VAR_N), 0.0);
+  std::vector<aecct_ref::bit1_t> xpred(static_cast<std::size_t>(VAR_N), aecct_ref::bit1_t(0));
+  aecct_ref::RefModelIO io_ref{};
+  io_ref.input_y_fp32 = input_y_zero.data();
+  io_ref.out_logits = logits.data();
+  io_ref.out_x_pred = xpred.data();
+  io_ref.B = 1;
+  io_ref.N = VAR_N;
+  model_ref.infer_step0(io_ref);
+
+  out->model_xpred_ones_count = 0;
+  for (int n = 0; n < VAR_N; ++n) {
+    const int bit = xpred[static_cast<std::size_t>(n)].to_int();
+    out->model_xpred_ones_count += (bit != 0) ? 1 : 0;
+    if (n < kZeroHeadCount) {
+      out->model_logits_head[static_cast<std::size_t>(n)] = logits[static_cast<std::size_t>(n)];
+      out->model_xpred_head[static_cast<std::size_t>(n)] = bit;
+    }
+  }
+
+  out->pass = out->run_ok && (out->final_logits_mismatch_count == 0) &&
+              (out->final_xpred_mismatch_count == 0);
+  return true;
+}
 } // namespace
 
 int main() {
+  std::printf("[tb_ref_v2_cfg] ln_baseline_extra_nr_iters=%d\n", REFV2_LN_BASELINE_EXTRA_NR_ITERS);
+
   if (trace_input_y_step0_tensor_ndim != 2 || trace_output_logits_step0_tensor_ndim != 2 ||
       trace_output_x_pred_step0_tensor_ndim != 2) {
     std::printf("FAIL: unexpected trace ndim\n");
@@ -197,7 +279,8 @@ int main() {
       if (!run_ok) {
         ++failed_cases;
         std::printf(
-          "[tb_ref_v2_case_summary] ln_mode=%s pattern_idx=%d run_ok=0 case_pass=FAIL\n",
+          "[tb_ref_v2_case_summary] extra_nr_iters=%d ln_mode=%s pattern_idx=%d run_ok=0 case_pass=FAIL\n",
+          REFV2_LN_BASELINE_EXTRA_NR_ITERS,
           ln_mode_name,
           pattern_idx);
         continue;
@@ -257,9 +340,10 @@ int main() {
       }
 
       std::printf(
-        "[tb_ref_v2_case_summary] ln_mode=%s pattern_idx=%d preproc_output=%s attention_input=%s SCR_K=%s SCR_V=%s "
+        "[tb_ref_v2_case_summary] extra_nr_iters=%d ln_mode=%s pattern_idx=%d preproc_output=%s attention_input=%s SCR_K=%s SCR_V=%s "
         "x_work_writeback=%s next_stage_handoff=%s layer0_ln_output=%s x_work_after_layer0_ln=%s layer0_ffn_output=%s "
         "x_work_after_layer0_ffn=%s final_passA_output=%s final_logits=%s final_x_pred=%s case_pass=%s\n",
+        REFV2_LN_BASELINE_EXTRA_NR_ITERS,
         ln_mode_name,
         pattern_idx,
         preproc_pass ? "PASS" : "FAIL",
@@ -279,18 +363,67 @@ int main() {
     }
   }
 
+  ZeroCodewordResult zero_result;
+  if (!run_zero_codeword_synthetic_check(&zero_result)) {
+    std::printf("FAIL: zero-codeword synthetic check execution failed\n");
+    return 1;
+  }
+  std::printf(
+    "[tb_ref_v2_zero_codeword] synthetic=1 extra_nr_iters=%d run_ok=%d final_logits={mismatch_count=%d,max_abs_diff=%.9e,first_mismatch={idx=%d,v2=%.9e,ref=%.9e}} "
+    "final_x_pred={mismatch_count=%d,first_mismatch={idx=%d,v2=%d,ref=%d}} model_xpred_ones_count=%d pass=%d\n",
+    REFV2_LN_BASELINE_EXTRA_NR_ITERS,
+    zero_result.run_ok ? 1 : 0,
+    zero_result.final_logits_mismatch_count,
+    zero_result.final_logits_max_abs_diff,
+    zero_result.final_logits_first_mismatch_idx,
+    zero_result.final_logits_first_v2,
+    zero_result.final_logits_first_ref,
+    zero_result.final_xpred_mismatch_count,
+    zero_result.final_xpred_first_mismatch_idx,
+    zero_result.final_xpred_first_v2,
+    zero_result.final_xpred_first_ref,
+    zero_result.model_xpred_ones_count,
+    zero_result.pass ? 1 : 0);
+  std::printf(
+    "[tb_ref_v2_zero_codeword_head] synthetic=1 extra_nr_iters=%d "
+    "final_logits_head={%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e} "
+    "final_x_pred_head={%d,%d,%d,%d,%d,%d,%d,%d}\n",
+    REFV2_LN_BASELINE_EXTRA_NR_ITERS,
+    zero_result.model_logits_head[0],
+    zero_result.model_logits_head[1],
+    zero_result.model_logits_head[2],
+    zero_result.model_logits_head[3],
+    zero_result.model_logits_head[4],
+    zero_result.model_logits_head[5],
+    zero_result.model_logits_head[6],
+    zero_result.model_logits_head[7],
+    zero_result.model_xpred_head[0],
+    zero_result.model_xpred_head[1],
+    zero_result.model_xpred_head[2],
+    zero_result.model_xpred_head[3],
+    zero_result.model_xpred_head[4],
+    zero_result.model_xpred_head[5],
+    zero_result.model_xpred_head[6],
+    zero_result.model_xpred_head[7]);
+
   const bool all_cases_pass = (failed_cases == 0);
   const bool trace_mapping_pass = (trace_map_failed == 0);
   std::printf(
-    "[tb_ref_v2_summary] total_cases=%d passed_cases=%d failed_cases=%d trace_mapping_passed=%d trace_mapping_failed=%d\n",
+    "[tb_ref_v2_summary] extra_nr_iters=%d total_cases=%d passed_cases=%d failed_cases=%d trace_mapping_passed=%d trace_mapping_failed=%d zero_codeword_run_ok=%d zero_codeword_pass=%d\n",
+    REFV2_LN_BASELINE_EXTRA_NR_ITERS,
     total_cases,
     passed_cases,
     failed_cases,
     trace_map_passed,
-    trace_map_failed);
+    trace_map_failed,
+    zero_result.run_ok ? 1 : 0,
+    zero_result.pass ? 1 : 0);
 
   if (!trace_mapping_pass) {
     std::printf("WARN: trace pattern mapping compare has mismatches (non-gating)\n");
+  }
+  if (!zero_result.pass) {
+    std::printf("WARN: zero-codeword synthetic check has mismatches (non-gating)\n");
   }
   if (!all_cases_pass) {
     std::printf("FAIL: RefModel_v2 compare mismatch detected\n");

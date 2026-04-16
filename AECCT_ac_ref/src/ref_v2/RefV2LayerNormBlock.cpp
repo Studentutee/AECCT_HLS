@@ -107,7 +107,8 @@ static void layernorm_token_32_local(
   }
 
   float inv_std = refv2_inv_sqrt_nr1_or_lut(x_eps_safe);
-  REFV2_LN_BASE_NR_REFINE_LOOP: for (int nr_iter = 0; nr_iter < 6; ++nr_iter) {
+  REFV2_LN_BASE_NR_REFINE_LOOP:
+  for (int nr_iter = 0; nr_iter < REFV2_LN_BASELINE_EXTRA_NR_ITERS; ++nr_iter) {
     const float inv_sq = inv_std * inv_std;
     const float inv_nr = inv_std * (1.5f - (0.5f * x_eps_safe * inv_sq));
     if (std::isfinite(inv_nr) && inv_nr > 0.0f) {

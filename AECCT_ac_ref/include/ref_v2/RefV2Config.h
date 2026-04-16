@@ -16,6 +16,12 @@ static const int REFV2_FF_DIM = ModelShapes::D_FFN;
 static const int REFV2_VAR_N = ModelShapes::N_VARS;
 static const int REFV2_ATTN_MATRIX_ELEMS = REFV2_TOKENS_T * REFV2_D_MODEL;
 
+#ifndef REFV2_LN_BASELINE_EXTRA_NR_ITERS
+#define REFV2_LN_BASELINE_EXTRA_NR_ITERS 6
+#endif
+static_assert(REFV2_LN_BASELINE_EXTRA_NR_ITERS >= 0,
+              "REFV2_LN_BASELINE_EXTRA_NR_ITERS must be non-negative");
+
 static_assert(REFV2_TOKENS_T > 0, "REFV2_TOKENS_T must be positive");
 static_assert(REFV2_D_MODEL > 0, "REFV2_D_MODEL must be positive");
 static_assert(REFV2_HEADS > 0, "REFV2_HEADS must be positive");
