@@ -64,6 +64,7 @@ try {
         "AECCT_ac_ref\\src\\RefModel.cpp",
         "AECCT_ac_ref\\src\\RefModelOptimized.cpp",
         "AECCT_ac_ref\\src\\ref_v3\\RefModel_v3.cpp",
+        "AECCT_ac_ref\\src\\ref_v3\\RefV3WeightsFp16LocalOnly.cpp",
         "AECCT_ac_ref\\src\\ref_v3\\RefV3PreprocBlock.cpp",
         "AECCT_ac_ref\\src\\ref_v3\\RefV3AttenKvBlock.cpp",
         "AECCT_ac_ref\\src\\ref_v3\\RefV3AttenQSoftResBlock.cpp",

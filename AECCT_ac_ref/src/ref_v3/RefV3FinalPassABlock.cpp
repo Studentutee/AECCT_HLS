@@ -1,6 +1,5 @@
 #include "../../include/ref_v3/RefV3FinalPassABlock.h"
-
-#include "weights.h"
+#include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 namespace aecct_ref {
 namespace ref_v3 {
@@ -12,8 +11,9 @@ bool RefV3FinalPassABlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_
   RefV3AttentionPayloadHeader header_ref;
   bool header_init = false;
   bool token_seen[REFV3_TOKENS_T];
+  const refv3_fp_t* final_embed_w = refv3_final_embed_weight_fp_local_only();
 
-  const refv3_fp_t bias = refv3_fp_from_double(w_oned_final_embed_0_bias[0]);
+  const refv3_fp_t bias = refv3_final_embed_bias_fp_local_only();
 
   REFV3_FINALA_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -51,7 +51,7 @@ bool RefV3FinalPassABlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_
     scalar_payload.scalar = bias;
 
     REFV3_FINALA_DIM_MAC_LOOP: for (int dim = 0; dim < REFV3_D_MODEL; ++dim) {
-      const refv3_fp_t w_d = refv3_fp_from_double(w_oned_final_embed_0_weight[dim]);
+      const refv3_fp_t w_d = final_embed_w[dim];
       scalar_payload.scalar += token_payload.token_vec[dim] * w_d;
     }
     out_scalar_ch.write(scalar_payload);

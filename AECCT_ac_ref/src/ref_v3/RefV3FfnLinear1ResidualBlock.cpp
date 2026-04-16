@@ -1,7 +1,6 @@
 #include "../../include/ref_v3/RefV3FfnLinear1ResidualBlock.h"
 #include "../../include/ref_v3/RefV3MathApprox.h"
-
-#include "weights.h"
+#include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 namespace aecct_ref {
 namespace ref_v3 {
@@ -57,19 +56,9 @@ bool RefV3FfnLinear1ResidualBlock::run(
   }
 
   const int expected_layer_id = lid;
-  const RefV3TernaryLinearParams ff2_params = (lid == REFV3_LAYER0_ID)
-                                                ? refv3_make_ternary_linear_params(
-                                                    w_decoder_layers_0_feed_forward_w_2_weight,
-                                                    w_decoder_layers_0_feed_forward_w_2_bias)
-                                                : refv3_make_ternary_linear_params(
-                                                    w_decoder_layers_1_feed_forward_w_2_weight,
-                                                    w_decoder_layers_1_feed_forward_w_2_bias);
-  const refv3_fp_t ff2_s_x = (lid == REFV3_LAYER0_ID)
-                               ? refv3_fp_from_double(l0_ff2_s_x)
-                               : refv3_fp_from_double(l1_ff2_s_x);
-  const refv3_fp_t ff2_s_w = (lid == REFV3_LAYER0_ID)
-                               ? refv3_fp_from_double(w_decoder_layers_0_feed_forward_w_2_s_w[0])
-                               : refv3_fp_from_double(w_decoder_layers_1_feed_forward_w_2_s_w[0]);
+  const RefV3TernaryLinearParams ff2_params = refv3_ffn_w2_params_fp_local_only(lid);
+  const refv3_fp_t ff2_s_x = refv3_ffn_w2_s_x_fp_local_only(lid);
+  const refv3_fp_t ff2_s_w = refv3_ffn_w2_s_w_fp_local_only(lid);
   const refv3_fp_t inv_ffn_w2 = refv3_fp_t(1.0f) / (ff2_s_x * ff2_s_w);
 
   bool token_seen[REFV3_TOKENS_T];

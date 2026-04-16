@@ -1,7 +1,6 @@
 #include "../../include/ref_v3/RefV3FfnBlock.h"
 #include "../../include/ref_v3/RefV3MathApprox.h"
-
-#include "weights.h"
+#include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 namespace aecct_ref {
 namespace ref_v3 {
@@ -82,12 +81,8 @@ bool RefV3FfnBlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_c
   bool token_seen[REFV3_TOKENS_T];
   refv3_fp_t ffn1_token_buf[REFV3_FF_DIM];
   refv3_fp_t ffn2_token_buf[REFV3_D_MODEL];
-  const RefV3TernaryLinearParams ff1_params = refv3_make_ternary_linear_params(
-    w_decoder_layers_0_feed_forward_w_1_weight,
-    w_decoder_layers_0_feed_forward_w_1_bias);
-  const RefV3TernaryLinearParams ff2_params = refv3_make_ternary_linear_params(
-    w_decoder_layers_0_feed_forward_w_2_weight,
-    w_decoder_layers_0_feed_forward_w_2_bias);
+  const RefV3TernaryLinearParams ff1_params = refv3_ffn_w1_params_fp_local_only(REFV3_LAYER0_ID);
+  const RefV3TernaryLinearParams ff2_params = refv3_ffn_w2_params_fp_local_only(REFV3_LAYER0_ID);
   const refv3_fp_t zero(0.0f);
 
   REFV3_FFN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {

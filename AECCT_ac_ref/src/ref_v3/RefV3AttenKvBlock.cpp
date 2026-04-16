@@ -1,7 +1,6 @@
 #include "../../include/ref_v3/RefV3AttenKvBlock.h"
 #include "../../include/ref_v3/RefV3MathApprox.h"
-
-#include "weights.h"
+#include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 namespace aecct_ref {
 namespace ref_v3 {
@@ -56,29 +55,11 @@ bool RefV3AttenKvBlock::run(int lid,
   }
 
   const int expected_layer_id = lid;
-  const refv3_fp_t s_x_in = (lid == REFV3_LAYER0_ID)
-                              ? refv3_fp_from_double(l0_in_s_x)
-                              : refv3_fp_from_double(l1_in_s_x);
-  const RefV3TernaryLinearParams k_params = (lid == REFV3_LAYER0_ID)
-                                              ? refv3_make_ternary_linear_params(
-                                                  w_decoder_layers_0_self_attn_linears_1_weight,
-                                                  w_decoder_layers_0_self_attn_linears_1_bias)
-                                              : refv3_make_ternary_linear_params(
-                                                  w_decoder_layers_1_self_attn_linears_1_weight,
-                                                  w_decoder_layers_1_self_attn_linears_1_bias);
-  const RefV3TernaryLinearParams v_params = (lid == REFV3_LAYER0_ID)
-                                              ? refv3_make_ternary_linear_params(
-                                                  w_decoder_layers_0_self_attn_linears_2_weight,
-                                                  w_decoder_layers_0_self_attn_linears_2_bias)
-                                              : refv3_make_ternary_linear_params(
-                                                  w_decoder_layers_1_self_attn_linears_2_weight,
-                                                  w_decoder_layers_1_self_attn_linears_2_bias);
-  const refv3_fp_t k_s_w = (lid == REFV3_LAYER0_ID)
-                             ? refv3_fp_from_double(w_decoder_layers_0_self_attn_linears_1_s_w[0])
-                             : refv3_fp_from_double(w_decoder_layers_1_self_attn_linears_1_s_w[0]);
-  const refv3_fp_t v_s_w = (lid == REFV3_LAYER0_ID)
-                             ? refv3_fp_from_double(w_decoder_layers_0_self_attn_linears_2_s_w[0])
-                             : refv3_fp_from_double(w_decoder_layers_1_self_attn_linears_2_s_w[0]);
+  const refv3_fp_t s_x_in = refv3_attn_input_s_x_fp_local_only(lid);
+  const RefV3TernaryLinearParams k_params = refv3_attn_linear_params_fp_local_only(lid, 1);
+  const RefV3TernaryLinearParams v_params = refv3_attn_linear_params_fp_local_only(lid, 2);
+  const refv3_fp_t k_s_w = refv3_attn_linear_s_w_fp_local_only(lid, 1);
+  const refv3_fp_t v_s_w = refv3_attn_linear_s_w_fp_local_only(lid, 2);
   const refv3_fp_t inv_attn_k = refv3_fp_t(1.0f) / (s_x_in * k_s_w);
   const refv3_fp_t inv_attn_v = refv3_fp_t(1.0f) / (s_x_in * v_s_w);
 

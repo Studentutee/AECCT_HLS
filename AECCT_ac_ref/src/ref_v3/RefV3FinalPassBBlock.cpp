@@ -1,6 +1,5 @@
 #include "../../include/ref_v3/RefV3FinalPassBBlock.h"
-
-#include "weights.h"
+#include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 namespace aecct_ref {
 namespace ref_v3 {
@@ -19,9 +18,11 @@ bool RefV3FinalPassBBlock::run(ac_channel<RefV3FinalScalarTokenPayload>& in_scal
   bool token_seen[REFV3_TOKENS_T];
   bool header_init = false;
   RefV3AttentionPayloadHeader header_ref;
+  const refv3_fp_t* out_fc_w = refv3_out_fc_weight_fp_local_only();
+  const refv3_fp_t* out_fc_b = refv3_out_fc_bias_fp_local_only();
 
   REFV3_FINALB_ACC_INIT_LOOP: for (int n = 0; n < REFV3_VAR_N; ++n) {
-    logits_acc[n] = refv3_fp_from_double(w_out_fc_bias[n]);
+    logits_acc[n] = out_fc_b[n];
   }
 
   REFV3_FINALB_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
@@ -55,7 +56,7 @@ bool RefV3FinalPassBBlock::run(ac_channel<RefV3FinalScalarTokenPayload>& in_scal
     token_seen[token] = true;
 
     REFV3_FINALB_LOGITS_ACCUM_LOOP: for (int n = 0; n < REFV3_VAR_N; ++n) {
-      const refv3_fp_t w_nt = refv3_fp_from_double(w_out_fc_weight[n * REFV3_TOKENS_T + token]);
+      const refv3_fp_t w_nt = out_fc_w[n * REFV3_TOKENS_T + token];
       logits_acc[n] += (w_nt * scalar_payload.scalar);
     }
   }

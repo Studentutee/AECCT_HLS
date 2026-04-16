@@ -10,24 +10,23 @@ namespace ref_v3 {
 typedef ac_ieee_float<binary16> refv3_fp_t;
 typedef ac_int<1, false> refv3_bit1_t;
 typedef refv3_bit1_t bit1_t;
-typedef decltype(0.0) refv3_boundary_fp_t;
 
-// Boundary-only linear parameter view. Design data path should consume refv3_fp_t values.
 struct RefV3TernaryLinearParams {
-  const refv3_boundary_fp_t* weight_f64;
-  const refv3_boundary_fp_t* bias_f64;
+  const refv3_fp_t* weight_fp;
+  const refv3_fp_t* bias_fp;
 };
 
-static inline refv3_fp_t refv3_fp_from_double(refv3_boundary_fp_t v) {
+template <typename ScalarT>
+static inline refv3_fp_t refv3_fp_from_scalar(ScalarT v) {
   return refv3_fp_t(v);
 }
 
 static inline RefV3TernaryLinearParams refv3_make_ternary_linear_params(
-  const refv3_boundary_fp_t* weight,
-  const refv3_boundary_fp_t* bias) {
+  const refv3_fp_t* weight,
+  const refv3_fp_t* bias) {
   RefV3TernaryLinearParams params;
-  params.weight_f64 = weight;
-  params.bias_f64 = bias;
+  params.weight_fp = weight;
+  params.bias_fp = bias;
   return params;
 }
 
@@ -56,12 +55,18 @@ static inline ac_int<8, true> refv3_quantize_int8_local(refv3_fp_t x, refv3_fp_t
 
 namespace refv3_boundary_detail {
 
-static inline ac_int<2, true> decode_ternary_weight_sign_i2(refv3_boundary_fp_t w) {
-  if (w == 1.0) return ac_int<2, true>(1);
-  if (w == -1.0) return ac_int<2, true>(-1);
-  if (w == 0.0) return ac_int<2, true>(0);
-  if (w >= 0.5) return ac_int<2, true>(1);
-  if (w <= -0.5) return ac_int<2, true>(-1);
+static inline ac_int<2, true> decode_ternary_weight_sign_i2(refv3_fp_t w) {
+  const refv3_fp_t one(1.0f);
+  const refv3_fp_t neg_one(-1.0f);
+  const refv3_fp_t zero(0.0f);
+  const refv3_fp_t pos_half(0.5f);
+  const refv3_fp_t neg_half(-0.5f);
+
+  if (w == one) return ac_int<2, true>(1);
+  if (w == neg_one) return ac_int<2, true>(-1);
+  if (w == zero) return ac_int<2, true>(0);
+  if (w >= pos_half) return ac_int<2, true>(1);
+  if (w <= neg_half) return ac_int<2, true>(-1);
   return ac_int<2, true>(0);
 }
 
@@ -70,34 +75,20 @@ static inline ac_int<2, true> decode_ternary_weight_sign_i2(refv3_boundary_fp_t 
 static inline ac_int<2, true> refv3_ternary_weight_sign_at(
   const RefV3TernaryLinearParams& params,
   int idx) {
-  return refv3_boundary_detail::decode_ternary_weight_sign_i2(params.weight_f64[idx]);
+  return refv3_boundary_detail::decode_ternary_weight_sign_i2(params.weight_fp[idx]);
 }
 
 static inline refv3_fp_t refv3_linear_weight_fp_at(
   const RefV3TernaryLinearParams& params,
   int idx) {
-  return refv3_fp_from_double(params.weight_f64[idx]);
+  return params.weight_fp[idx];
 }
 
 static inline refv3_fp_t refv3_linear_bias_fp_at(
   const RefV3TernaryLinearParams& params,
   int idx) {
-  return refv3_fp_from_double(params.bias_f64[idx]);
+  return params.bias_fp[idx];
 }
-
-#if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
-static inline refv3_boundary_fp_t refv3_boundary_linear_weight_f64_at(
-  const RefV3TernaryLinearParams& params,
-  int idx) {
-  return params.weight_f64[idx];
-}
-
-static inline refv3_boundary_fp_t refv3_boundary_linear_bias_f64_at(
-  const RefV3TernaryLinearParams& params,
-  int idx) {
-  return params.bias_f64[idx];
-}
-#endif
 
 } // namespace ref_v3
 } // namespace aecct_ref

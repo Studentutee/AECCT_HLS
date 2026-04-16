@@ -1,4 +1,5 @@
 #include "../../include/ref_v3/RefV3PreprocBlock.h"
+#include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 #include "weights.h"
 
@@ -24,6 +25,8 @@ bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
   static const int REFV3_CHECK_N = REFV3_TOKENS_T - REFV3_VAR_N;
   static const int REFV3_EMBED_D = 24;
   static const int REFV3_LPE_D = REFV3_D_MODEL - REFV3_EMBED_D;
+  const refv3_fp_t* src_embed = refv3_preproc_src_embed_fp_local_only();
+  const refv3_fp_t* lpe_token = refv3_preproc_lpe_token_fp_local_only();
 
   refv3_fp_t node_feature[REFV3_TOKENS_T];
   ac_int<1, false> y_hard[REFV3_VAR_N];
@@ -52,11 +55,11 @@ bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
     token_payload.token_row = ac_int<16, false>(token);
 
     REFV3_PREPROC_EMBED_DIM_LOOP: for (int dim = 0; dim < REFV3_EMBED_D; ++dim) {
-      const refv3_fp_t w = refv3_fp_from_double(w_src_embed[token * REFV3_EMBED_D + dim]);
+      const refv3_fp_t w = src_embed[token * REFV3_EMBED_D + dim];
       token_payload.token_vec[dim] = node_feature[token] * w;
     }
     REFV3_PREPROC_LPE_DIM_LOOP: for (int dim = 0; dim < REFV3_LPE_D; ++dim) {
-      const refv3_fp_t lpe = refv3_fp_from_double(w_lpe_token[token * REFV3_LPE_D + dim]);
+      const refv3_fp_t lpe = lpe_token[token * REFV3_LPE_D + dim];
       token_payload.token_vec[REFV3_EMBED_D + dim] = lpe;
     }
 

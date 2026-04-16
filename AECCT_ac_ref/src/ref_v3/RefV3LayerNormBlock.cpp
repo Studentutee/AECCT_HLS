@@ -1,9 +1,8 @@
 #include "../../include/ref_v3/RefV3LayerNormBlock.h"
 #include "../../include/ref_v3/RefV3MathApprox.h"
+#include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 #include <cmath>
-
-#include "weights.h"
 
 namespace aecct_ref {
 namespace ref_v3 {
@@ -47,9 +46,11 @@ static void layernorm_token_32_local(
     REFV3_LN_EXACT_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
       const double xv = static_cast<double>(x_token[d].to_float());
       const double xn = (xv - mean) * inv_std;
+      const double wv = static_cast<double>(refv3_linear_weight_fp_at(params, d).to_float());
+      const double bv = static_cast<double>(refv3_linear_bias_fp_at(params, d).to_float());
       const double yi =
-        (xn * refv3_boundary_linear_weight_f64_at(params, d)) +
-        refv3_boundary_linear_bias_f64_at(params, d);
+        (xn * wv) +
+        bv;
       y_token[d] = refv3_fp_t(static_cast<float>(yi));
     }
     return;
@@ -148,13 +149,7 @@ bool RefV3LayerNormBlock::run(int lid,
   bool header_init = false;
   bool token_seen[REFV3_TOKENS_T];
   refv3_fp_t token_ln_out[REFV3_D_MODEL];
-  const RefV3TernaryLinearParams ln_params = (lid == REFV3_LAYER0_ID)
-                                               ? refv3_make_ternary_linear_params(
-                                                   w_decoder_layers_0_sublayer_0_norm_weight,
-                                                   w_decoder_layers_0_sublayer_0_norm_bias)
-                                               : refv3_make_ternary_linear_params(
-                                                   w_decoder_layers_1_sublayer_0_norm_weight,
-                                                   w_decoder_layers_1_sublayer_0_norm_bias);
+  const RefV3TernaryLinearParams ln_params = refv3_layernorm0_params_fp_local_only(lid);
 
   REFV3_LN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
     token_seen[token] = false;
