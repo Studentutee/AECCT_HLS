@@ -9,26 +9,6 @@ namespace aecct_ref {
 namespace ref_v3 {
 namespace {
 
-static inline ac_int<8, true> quantize_int8_to_i8_local(refv3_fp_t x, float s_x) {
-  const double scaled = static_cast<double>(x.to_float()) * static_cast<double>(s_x);
-  if (scaled >= 127.0) {
-    return ac_int<8, true>(127);
-  }
-  if (scaled <= -127.0) {
-    return ac_int<8, true>(-127);
-  }
-  return ac_int<8, true>(static_cast<signed char>(std::lround(scaled)));
-}
-
-static inline ac_int<2, true> decode_ternary_weight_sign_i2_local(double w) {
-  if (w == 1.0 || w == 1.0f) return ac_int<2, true>(1);
-  if (w == -1.0 || w == -1.0f) return ac_int<2, true>(-1);
-  if (w == 0.0 || w == -0.0 || w == 0.0f || w == -0.0f) return ac_int<2, true>(0);
-  if (w >= 0.5) return ac_int<2, true>(1);
-  if (w <= -0.5) return ac_int<2, true>(-1);
-  return ac_int<2, true>(0);
-}
-
 static inline ac_int<16, true> accumulate_ternary_mac_i16_local(
   ac_int<16, true> acc_i16,
   ac_int<8, true> qx_i8,
@@ -41,14 +21,14 @@ static void quant_linear_token_32_to32_native(
   const refv3_fp_t x[REFV3_D_MODEL],
   const double w[REFV3_D_MODEL * REFV3_D_MODEL],
   const double b[REFV3_D_MODEL],
-  float s_x,
-  float inv_sxsw_const,
+  refv3_fp_t s_x,
+  refv3_fp_t inv_sxsw_const,
   refv3_fp_t y[REFV3_D_MODEL]) {
-  const refv3_fp_t inv(inv_sxsw_const);
+  const refv3_fp_t inv = inv_sxsw_const;
 
   ac_int<8, true> qx_i8[REFV3_D_MODEL];
   QSOFT_QUANTIZE_I8_LOOP: for (int i = 0; i < REFV3_D_MODEL; ++i) {
-    qx_i8[i] = quantize_int8_to_i8_local(x[i], s_x);
+    qx_i8[i] = refv3_quantize_int8_local(x[i], s_x);
   }
 
   QSOFT_LINEAR_OUTER_LOOP: for (int o = 0; o < REFV3_D_MODEL; ++o) {
@@ -58,9 +38,9 @@ static void quant_linear_token_32_to32_native(
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
         qx_i8[i],
-        decode_ternary_weight_sign_i2_local(w[base + i]));
+        refv3_decode_ternary_weight_sign_i2_local(w[base + i]));
     }
-    const refv3_fp_t bias_island(static_cast<float>(b[o]));
+    const refv3_fp_t bias_island = refv3_fp_from_double(b[o]);
     const refv3_fp_t acc_island(acc_i16.to_int());
     y[o] = bias_island + (acc_island * inv);
   }
@@ -101,12 +81,12 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   }
 
   const int expected_layer_id = lid;
-  const float s_x_q = (lid == REFV3_LAYER0_ID)
-                        ? static_cast<float>(l0_in_s_x)
-                        : static_cast<float>(l1_in_s_x);
-  const float s_x_o = (lid == REFV3_LAYER0_ID)
-                        ? static_cast<float>(l0_o_s_x)
-                        : static_cast<float>(l1_o_s_x);
+  const refv3_fp_t s_x_q = (lid == REFV3_LAYER0_ID)
+                             ? refv3_fp_from_double(l0_in_s_x)
+                             : refv3_fp_from_double(l1_in_s_x);
+  const refv3_fp_t s_x_o = (lid == REFV3_LAYER0_ID)
+                             ? refv3_fp_from_double(l0_o_s_x)
+                             : refv3_fp_from_double(l1_o_s_x);
   const double* const q_weight = (lid == REFV3_LAYER0_ID)
                                    ? w_decoder_layers_0_self_attn_linears_0_weight
                                    : w_decoder_layers_1_self_attn_linears_0_weight;
@@ -119,14 +99,14 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   const double* const o_bias = (lid == REFV3_LAYER0_ID)
                                  ? w_decoder_layers_0_self_attn_linears_3_bias
                                  : w_decoder_layers_1_self_attn_linears_3_bias;
-  const float q_s_w = (lid == REFV3_LAYER0_ID)
-                        ? static_cast<float>(w_decoder_layers_0_self_attn_linears_0_s_w[0])
-                        : static_cast<float>(w_decoder_layers_1_self_attn_linears_0_s_w[0]);
-  const float o_s_w = (lid == REFV3_LAYER0_ID)
-                        ? static_cast<float>(w_decoder_layers_0_self_attn_linears_3_s_w[0])
-                        : static_cast<float>(w_decoder_layers_1_self_attn_linears_3_s_w[0]);
-  const float inv_attn_q = 1.0f / (s_x_q * q_s_w);
-  const float inv_attn_o = 1.0f / (s_x_o * o_s_w);
+  const refv3_fp_t q_s_w = (lid == REFV3_LAYER0_ID)
+                             ? refv3_fp_from_double(w_decoder_layers_0_self_attn_linears_0_s_w[0])
+                             : refv3_fp_from_double(w_decoder_layers_1_self_attn_linears_0_s_w[0]);
+  const refv3_fp_t o_s_w = (lid == REFV3_LAYER0_ID)
+                             ? refv3_fp_from_double(w_decoder_layers_0_self_attn_linears_3_s_w[0])
+                             : refv3_fp_from_double(w_decoder_layers_1_self_attn_linears_3_s_w[0]);
+  const refv3_fp_t inv_attn_q = refv3_fp_t(1.0f) / (s_x_q * q_s_w);
+  const refv3_fp_t inv_attn_o = refv3_fp_t(1.0f) / (s_x_o * o_s_w);
 
   RefV3AttentionKPayload in_k_payload;
   RefV3AttentionVPayload in_v_payload;

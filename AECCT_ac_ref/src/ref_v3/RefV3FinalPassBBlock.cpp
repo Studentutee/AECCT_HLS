@@ -1,7 +1,5 @@
 #include "../../include/ref_v3/RefV3FinalPassBBlock.h"
 
-#include <cmath>
-
 #include "weights.h"
 
 namespace aecct_ref {
@@ -23,7 +21,7 @@ bool RefV3FinalPassBBlock::run(ac_channel<RefV3FinalScalarTokenPayload>& in_scal
   RefV3AttentionPayloadHeader header_ref;
 
   REFV3_FINALB_ACC_INIT_LOOP: for (int n = 0; n < REFV3_VAR_N; ++n) {
-    logits_acc[n] = refv3_fp_t(static_cast<float>(w_out_fc_bias[n]));
+    logits_acc[n] = refv3_fp_from_double(w_out_fc_bias[n]);
   }
 
   REFV3_FINALB_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
@@ -57,7 +55,7 @@ bool RefV3FinalPassBBlock::run(ac_channel<RefV3FinalScalarTokenPayload>& in_scal
     token_seen[token] = true;
 
     REFV3_FINALB_LOGITS_ACCUM_LOOP: for (int n = 0; n < REFV3_VAR_N; ++n) {
-      const refv3_fp_t w_nt(static_cast<float>(w_out_fc_weight[n * REFV3_TOKENS_T + token]));
+      const refv3_fp_t w_nt = refv3_fp_from_double(w_out_fc_weight[n * REFV3_TOKENS_T + token]);
       logits_acc[n] += (w_nt * scalar_payload.scalar);
     }
   }
@@ -70,9 +68,9 @@ bool RefV3FinalPassBBlock::run(ac_channel<RefV3FinalScalarTokenPayload>& in_scal
     const refv3_fp_t acc = logits_acc[n];
     out_payload.logits[n] = acc;
 
-    const float y_n = input_y_payload.input_y[n].to_float();
-    const bool y_is_zero = (y_n == 0.0f);
-    const bool y_is_negative = (!y_is_zero) && std::signbit(y_n);
+    const refv3_fp_t y_n = input_y_payload.input_y[n];
+    const bool y_is_zero = (y_n == zero);
+    const bool y_is_negative = (!y_is_zero) && (y_n < zero);
     const bool acc_is_negative = (acc < zero);
     const bool pred_bit = y_is_zero ? false : (acc_is_negative ^ y_is_negative);
     out_payload.x_pred[n] = bit1_t(pred_bit ? 1 : 0);

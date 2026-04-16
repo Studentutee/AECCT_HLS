@@ -15,19 +15,22 @@ static void layernorm_token_32_local(
   const double w[REFV3_D_MODEL],
   const double b[REFV3_D_MODEL],
   refv3_fp_t y_token[REFV3_D_MODEL]) {
-  const float eps = 1.0e-5f;
-  const float inv_d = REFV3_INV_D_MODEL;
+  const refv3_fp_t eps(1.0e-5f);
+  const refv3_fp_t inv_d = REFV3_INV_D_MODEL;
+  const refv3_fp_t zero(0.0f);
+  const refv3_fp_t one(1.0f);
 
-  auto sanitize_input = [](float v) -> float {
-    return std::isfinite(v) ? v : 0.0f;
+  auto sanitize_input = [](refv3_fp_t v) -> refv3_fp_t {
+    return (v == v) ? v : refv3_fp_t(0.0f);
   };
-  auto sanitize_output = [](float v) -> float {
-    return std::isfinite(v) ? v : 0.0f;
+  auto sanitize_output = [](refv3_fp_t v) -> refv3_fp_t {
+    return (v == v) ? v : refv3_fp_t(0.0f);
   };
 
   // Host-only exact reference path; synthesis surface must stay on LUT-based approximation.
 #if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
   if (run_cfg.legacy.ln_mode == RefLayerNormMode::LN_EXACT_REFERENCE) {
+    const double eps_host = 1.0e-5;
     double sum = 0.0;
     REFV3_LN_EXACT_SUM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
       sum += static_cast<double>(x_token[d].to_float());
@@ -40,7 +43,7 @@ static void layernorm_token_32_local(
       var_acc += (dv * dv);
     }
     const double var = var_acc / static_cast<double>(REFV3_D_MODEL);
-    const double inv_std = 1.0 / std::sqrt(var + static_cast<double>(eps));
+    const double inv_std = 1.0 / std::sqrt(var + eps_host);
 
     REFV3_LN_EXACT_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
       const double xv = static_cast<double>(x_token[d].to_float());
@@ -53,81 +56,82 @@ static void layernorm_token_32_local(
 #endif
 
   if (run_cfg.legacy.ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
-    float sum = 0.0f;
-    float sumsq = 0.0f;
+    refv3_fp_t sum = zero;
+    refv3_fp_t sumsq = zero;
     REFV3_LN_SUMSQ_ACC_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
-      const float xv = sanitize_input(x_token[d].to_float());
+      const refv3_fp_t xv = sanitize_input(x_token[d]);
       sum += xv;
       sumsq += xv * xv;
     }
-    const float mean = sum * inv_d;
-    const float ex2 = sumsq * inv_d;
-    const float mean_sq = mean * mean;
-    const float var_raw = ex2 - mean_sq;
+    const refv3_fp_t mean = sum * inv_d;
+    const refv3_fp_t ex2 = sumsq * inv_d;
+    const refv3_fp_t mean_sq = mean * mean;
+    const refv3_fp_t var_raw = ex2 - mean_sq;
 
-    float var_final = var_raw;
-    if (!std::isfinite(var_final) || var_final < 0.0f) {
-      var_final = 0.0f;
+    refv3_fp_t var_final = var_raw;
+    if (var_final != var_final || var_final < zero) {
+      var_final = zero;
     }
-    float var_eps = var_final + eps;
-    if (!std::isfinite(var_eps) || var_eps < eps) {
+    refv3_fp_t var_eps = var_final + eps;
+    if (var_eps != var_eps || var_eps < eps) {
       var_eps = eps;
     }
 
-    float inv_std = REFV3_inv_sqrt_nr1_or_lut(var_eps);
+    refv3_fp_t inv_std = REFV3_inv_sqrt_nr1_or_lut(var_eps);
     inv_std = sanitize_output(inv_std);
 
     REFV3_LN_SUMSQ_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
-      const float xv = sanitize_input(x_token[d].to_float());
-      const float xn = (xv - mean) * inv_std;
-      const float yi = (xn * static_cast<float>(w[d])) + static_cast<float>(b[d]);
-      y_token[d] = refv3_fp_t(sanitize_output(yi));
+      const refv3_fp_t xv = sanitize_input(x_token[d]);
+      const refv3_fp_t xn = (xv - mean) * inv_std;
+      const refv3_fp_t yi = (xn * refv3_fp_from_double(w[d])) + refv3_fp_from_double(b[d]);
+      y_token[d] = sanitize_output(yi);
     }
     return;
   }
 
-  float sum = 0.0f;
+  refv3_fp_t sum = zero;
   REFV3_LN_BASE_SUM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
-    const float xv = sanitize_input(x_token[d].to_float());
+    const refv3_fp_t xv = sanitize_input(x_token[d]);
     sum += xv;
   }
 
-  const float mean = sum * inv_d;
-  float var_acc = 0.0f;
+  const refv3_fp_t mean = sum * inv_d;
+  refv3_fp_t var_acc = zero;
   REFV3_LN_BASE_VAR_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
-    const float xv = sanitize_input(x_token[d].to_float());
-    const float delta = xv - mean;
+    const refv3_fp_t xv = sanitize_input(x_token[d]);
+    const refv3_fp_t delta = xv - mean;
     var_acc += delta * delta;
   }
-  const float var_raw = var_acc * inv_d;
+  const refv3_fp_t var_raw = var_acc * inv_d;
 
-  float x_eps_safe = var_raw + eps;
-  if (!std::isfinite(x_eps_safe) || x_eps_safe <= 0.0f) {
+  refv3_fp_t x_eps_safe = var_raw + eps;
+  if (x_eps_safe != x_eps_safe || x_eps_safe <= zero) {
     x_eps_safe = eps;
   }
-  if (!std::isfinite(x_eps_safe) || x_eps_safe <= 0.0f) {
-    x_eps_safe = 1.0f;
+  if (x_eps_safe != x_eps_safe || x_eps_safe <= zero) {
+    x_eps_safe = one;
   }
 
-  float inv_std = REFV3_inv_sqrt_nr1_or_lut(x_eps_safe);
+  refv3_fp_t inv_std = REFV3_inv_sqrt_nr1_or_lut(x_eps_safe);
   REFV3_LN_BASE_NR_REFINE_LOOP:
   for (int nr_iter = 0; nr_iter < REFV3_LN_BASELINE_EXTRA_NR_ITERS; ++nr_iter) {
-    const float inv_sq = inv_std * inv_std;
-    const float inv_nr = inv_std * (1.5f - (0.5f * x_eps_safe * inv_sq));
-    if (std::isfinite(inv_nr) && inv_nr > 0.0f) {
+    const refv3_fp_t inv_sq = inv_std * inv_std;
+    const refv3_fp_t inv_nr =
+      inv_std * (refv3_fp_t(1.5f) - (refv3_fp_t(0.5f) * x_eps_safe * inv_sq));
+    if (inv_nr == inv_nr && inv_nr > zero) {
       inv_std = inv_nr;
     }
   }
-  if (!std::isfinite(inv_std) || inv_std <= 0.0f) {
-    inv_std = 1.0f;
+  if (inv_std != inv_std || inv_std <= zero) {
+    inv_std = one;
   }
 
   REFV3_LN_BASE_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
-    const float xv = sanitize_input(x_token[d].to_float());
-    const float xn = (xv - mean) * inv_std;
-    float yi = (xn * static_cast<float>(w[d])) + static_cast<float>(b[d]);
+    const refv3_fp_t xv = sanitize_input(x_token[d]);
+    const refv3_fp_t xn = (xv - mean) * inv_std;
+    refv3_fp_t yi = (xn * refv3_fp_from_double(w[d])) + refv3_fp_from_double(b[d]);
     yi = sanitize_output(yi);
-    y_token[d] = refv3_fp_t(yi);
+    y_token[d] = yi;
   }
 }
 

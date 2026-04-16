@@ -1,7 +1,5 @@
 #include "../../include/ref_v3/RefV3PreprocBlock.h"
 
-#include <cmath>
-
 #include "weights.h"
 
 namespace aecct_ref {
@@ -9,7 +7,7 @@ namespace ref_v3 {
 namespace {
 
 static inline refv3_fp_t abs_ref_fp32(refv3_fp_t x) {
-  return refv3_fp_t(std::fabs(x.to_float()));
+  return refv3_abs_fp(x);
 }
 
 } // namespace
@@ -54,12 +52,12 @@ bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
     token_payload.token_row = ac_int<16, false>(token);
 
     REFV3_PREPROC_EMBED_DIM_LOOP: for (int dim = 0; dim < REFV3_EMBED_D; ++dim) {
-      const float w = static_cast<float>(w_src_embed[token * REFV3_EMBED_D + dim]);
-      token_payload.token_vec[dim] = node_feature[token] * refv3_fp_t(w);
+      const refv3_fp_t w = refv3_fp_from_double(w_src_embed[token * REFV3_EMBED_D + dim]);
+      token_payload.token_vec[dim] = node_feature[token] * w;
     }
     REFV3_PREPROC_LPE_DIM_LOOP: for (int dim = 0; dim < REFV3_LPE_D; ++dim) {
-      const float lpe = static_cast<float>(w_lpe_token[token * REFV3_LPE_D + dim]);
-      token_payload.token_vec[REFV3_EMBED_D + dim] = refv3_fp_t(lpe);
+      const refv3_fp_t lpe = refv3_fp_from_double(w_lpe_token[token * REFV3_LPE_D + dim]);
+      token_payload.token_vec[REFV3_EMBED_D + dim] = lpe;
     }
 
     out_token_ch.write(token_payload);
