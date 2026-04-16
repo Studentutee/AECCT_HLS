@@ -5,8 +5,8 @@
 
 #include "weights.h"
 
-#if !REFV3_ENABLE_COMPARE
-#error "RefModel_v3 compare path disabled. Exclude this TU in REFV3_SYNTH_ONLY builds."
+#if !REFV3_ENABLE_COMPARE_HOST
+#error "RefModel_v3 is host-only compare code. Exclude this TU in __SYNTHESIS__/REFV3_SYNTH_ONLY builds."
 #endif
 
 namespace aecct_ref {

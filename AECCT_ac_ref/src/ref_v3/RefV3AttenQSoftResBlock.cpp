@@ -207,6 +207,8 @@ bool RefV3AttenQSoftResBlock::run(int lid,
     REFV3_QSOFTRES_HEAD_LOOP: for (int h = 0; h < REFV3_HEADS; ++h) {
       const int head_base = h * REFV3_D_HEAD;
 
+// Host-only exact reference path; synthesis surface must stay on LUT-based softmax approximation.
+#if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
       if (use_softmax_exact) {
         bool has_valid = false;
         refv3_fp_t max_score = zero;
@@ -264,7 +266,9 @@ bool RefV3AttenQSoftResBlock::run(int lid,
         REFV3_QSOFTRES_EXACT_NORM_LOOP: for (int dh = 0; dh < REFV3_D_HEAD; ++dh) {
           head_ctx_buf[h][dh] = softmax_acc_tile[dh] * inv_sumexp;
         }
-      } else {
+      } else
+#endif
+      {
         bool online_init = false;
         refv3_fp_t online_max = zero;
         refv3_fp_t online_sumexp = zero;

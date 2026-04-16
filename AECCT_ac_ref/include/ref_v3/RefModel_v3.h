@@ -4,8 +4,14 @@
 #define REFV3_ENABLE_COMPARE 1
 #endif
 
+#if REFV3_ENABLE_COMPARE && !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
+#define REFV3_ENABLE_COMPARE_HOST 1
+#else
+#define REFV3_ENABLE_COMPARE_HOST 0
+#endif
+
 #include "RefModel.h"
-#if REFV3_ENABLE_COMPARE
+#if REFV3_ENABLE_COMPARE_HOST
 #include "RefModelOptimized.h"
 #endif
 #include "ac_channel.h"
@@ -21,6 +27,7 @@
 namespace aecct_ref {
 namespace ref_v3 {
 
+#if REFV3_ENABLE_COMPARE_HOST
 struct RefV3ComparePoint {
   int mismatch_count;
   double max_abs_diff;
@@ -54,6 +61,7 @@ struct RefV3CompareStats {
   double tol;
   bool all_match;
 };
+#endif
 
 class RefModel_v3 {
 public:
@@ -66,7 +74,7 @@ public:
   bool run_layer0_attention_channel_transport();
   bool run_layer0_ln_channel_transport();
   bool run_layer0_ffn_channel_transport();
-#if REFV3_ENABLE_COMPARE
+#if REFV3_ENABLE_COMPARE_HOST
   bool run_step0_layer0_attention_compare(const RefModelIO& io, int batch_index = 0);
 #endif
 
@@ -77,13 +85,13 @@ public:
   refv3_fp_t scr_k(int token, int dim) const;
   refv3_fp_t scr_v(int token, int dim) const;
 
-#if REFV3_ENABLE_COMPARE
+#if REFV3_ENABLE_COMPARE_HOST
   RefV3CompareStats last_compare_stats() const;
 #endif
 
 private:
   void clear_storage();
-#if REFV3_ENABLE_COMPARE
+#if REFV3_ENABLE_COMPARE_HOST
   void reset_compare_stats();
 #endif
   bool run_attention_layer_shared(int lid);
@@ -129,7 +137,7 @@ private:
   bool stream_input_to_final_pass_b_channel(const RefModelIO& io, int batch_index,
                                             ac_channel<RefV3FinalInputYPayload>& finalb_in_input_y_ch);
   bool collect_final_output_payload(ac_channel<RefV3FinalOutputPayload>& finalb_out_payload_ch);
-#if REFV3_ENABLE_COMPARE
+#if REFV3_ENABLE_COMPARE_HOST
   bool compare_against_authoritative_layer0();
   bool compare_final_against_authoritative(const RefModelIO& io, int batch_index);
   bool update_overall_match_status();
@@ -137,7 +145,7 @@ private:
 
 private:
   RefRunConfig run_cfg_;
-#if REFV3_ENABLE_COMPARE
+#if REFV3_ENABLE_COMPARE_HOST
   RefModelOptimized authoritative_model_;
 #endif
   RefV3PreprocBlock preproc_block_;
@@ -170,7 +178,7 @@ private:
   RefV3AttentionOutputPayload last_out_payload_;
   RefV3FinalOutputPayload last_final_output_payload_;
 
-#if REFV3_ENABLE_COMPARE
+#if REFV3_ENABLE_COMPARE_HOST
   RefV3CompareStats last_compare_stats_;
 #endif
   bool phase_a_valid_;

@@ -25,6 +25,8 @@ static void layernorm_token_32_local(
     return std::isfinite(v) ? v : 0.0f;
   };
 
+  // Host-only exact reference path; synthesis surface must stay on LUT-based approximation.
+#if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
   if (run_cfg.legacy.ln_mode == RefLayerNormMode::LN_EXACT_REFERENCE) {
     double sum = 0.0;
     REFV3_LN_EXACT_SUM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
@@ -48,6 +50,7 @@ static void layernorm_token_32_local(
     }
     return;
   }
+#endif
 
   if (run_cfg.legacy.ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
     float sum = 0.0f;
