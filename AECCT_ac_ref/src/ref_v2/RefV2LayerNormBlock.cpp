@@ -138,17 +138,15 @@ bool RefV2LayerNormBlock::run(const RefRunConfig& run_cfg,
   RefV2AttentionPayloadHeader header_ref;
   bool header_init = false;
   bool token_seen[REFV2_TOKENS_T];
-  ref_fp32_t token_matrix[REFV2_TOKENS_T][REFV2_D_MODEL];
   ref_fp32_t token_ln_out[REFV2_D_MODEL];
+  const double* const ln0_w = w_decoder_layers_0_sublayer_0_norm_weight;
+  const double* const ln0_b = w_decoder_layers_0_sublayer_0_norm_bias;
 
-  REFV2_LN_TOKEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+  REFV2_LN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     token_seen[token] = false;
-    REFV2_LN_TOKEN_INIT_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
-      token_matrix[token][dim] = ref_fp32_t(0.0f);
-    }
   }
 
-  REFV2_LN_TOKEN_READ_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
+  REFV2_LN_TOKEN_STREAM_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
     const RefV2AttentionTokenVectorPayload token_payload = in_token_ch.read();
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
@@ -177,24 +175,15 @@ bool RefV2LayerNormBlock::run(const RefRunConfig& run_cfg,
     }
     token_seen[token] = true;
 
-    REFV2_LN_TOKEN_PACK_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
-      token_matrix[token][dim] = token_payload.token_vec[dim];
-    }
-  }
+    layernorm_token_32_local(run_cfg, token_payload.token_vec, ln0_w, ln0_b, token_ln_out);
 
-  const double* const ln0_w = w_decoder_layers_0_sublayer_0_norm_weight;
-  const double* const ln0_b = w_decoder_layers_0_sublayer_0_norm_bias;
-
-  REFV2_LN_TOKEN_OUT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
-    RefV2AttentionTokenVectorPayload token_payload;
-    token_payload.header = header_ref;
-    token_payload.token_row = ac_int<16, false>(token);
-
-    layernorm_token_32_local(run_cfg, token_matrix[token], ln0_w, ln0_b, token_ln_out);
+    RefV2AttentionTokenVectorPayload out_payload;
+    out_payload.header = token_payload.header;
+    out_payload.token_row = token_payload.token_row;
     REFV2_LN_TOKEN_OUT_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
-      token_payload.token_vec[dim] = token_ln_out[dim];
+      out_payload.token_vec[dim] = token_ln_out[dim];
     }
-    out_token_ch.write(token_payload);
+    out_token_ch.write(out_payload);
   }
 
   return true;
