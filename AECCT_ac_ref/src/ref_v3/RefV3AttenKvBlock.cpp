@@ -17,8 +17,7 @@ static inline ac_int<16, true> accumulate_ternary_mac_i16_local(
 
 static void quant_linear_token_32_to32_native(
   const refv3_fp_t x[REFV3_D_MODEL],
-  const double w[REFV3_D_MODEL * REFV3_D_MODEL],
-  const double b[REFV3_D_MODEL],
+  const RefV3TernaryLinearParams& params,
   refv3_fp_t s_x,
   refv3_fp_t inv_sxsw_const,
   refv3_fp_t y[REFV3_D_MODEL]) {
@@ -36,9 +35,9 @@ static void quant_linear_token_32_to32_native(
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
         qx_i8[i],
-        refv3_decode_ternary_weight_sign_i2_local(w[base + i]));
+        refv3_ternary_weight_sign_at(params, base + i));
     }
-    const refv3_fp_t bias_island = refv3_fp_from_double(b[o]);
+    const refv3_fp_t bias_island = refv3_linear_bias_fp_at(params, o);
     const refv3_fp_t acc_island(acc_i16.to_int());
     y[o] = bias_island + (acc_island * inv);
   }
@@ -60,18 +59,20 @@ bool RefV3AttenKvBlock::run(int lid,
   const refv3_fp_t s_x_in = (lid == REFV3_LAYER0_ID)
                               ? refv3_fp_from_double(l0_in_s_x)
                               : refv3_fp_from_double(l1_in_s_x);
-  const double* const k_weight = (lid == REFV3_LAYER0_ID)
-                                   ? w_decoder_layers_0_self_attn_linears_1_weight
-                                   : w_decoder_layers_1_self_attn_linears_1_weight;
-  const double* const k_bias = (lid == REFV3_LAYER0_ID)
-                                 ? w_decoder_layers_0_self_attn_linears_1_bias
-                                 : w_decoder_layers_1_self_attn_linears_1_bias;
-  const double* const v_weight = (lid == REFV3_LAYER0_ID)
-                                   ? w_decoder_layers_0_self_attn_linears_2_weight
-                                   : w_decoder_layers_1_self_attn_linears_2_weight;
-  const double* const v_bias = (lid == REFV3_LAYER0_ID)
-                                 ? w_decoder_layers_0_self_attn_linears_2_bias
-                                 : w_decoder_layers_1_self_attn_linears_2_bias;
+  const RefV3TernaryLinearParams k_params = (lid == REFV3_LAYER0_ID)
+                                              ? refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_0_self_attn_linears_1_weight,
+                                                  w_decoder_layers_0_self_attn_linears_1_bias)
+                                              : refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_1_self_attn_linears_1_weight,
+                                                  w_decoder_layers_1_self_attn_linears_1_bias);
+  const RefV3TernaryLinearParams v_params = (lid == REFV3_LAYER0_ID)
+                                              ? refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_0_self_attn_linears_2_weight,
+                                                  w_decoder_layers_0_self_attn_linears_2_bias)
+                                              : refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_1_self_attn_linears_2_weight,
+                                                  w_decoder_layers_1_self_attn_linears_2_bias);
   const refv3_fp_t k_s_w = (lid == REFV3_LAYER0_ID)
                              ? refv3_fp_from_double(w_decoder_layers_0_self_attn_linears_1_s_w[0])
                              : refv3_fp_from_double(w_decoder_layers_1_self_attn_linears_1_s_w[0]);
@@ -129,15 +130,13 @@ bool RefV3AttenKvBlock::run(int lid,
     const int base = token_row * REFV3_D_MODEL;
     quant_linear_token_32_to32_native(
       in_token_buf,
-      k_weight,
-      k_bias,
+      k_params,
       s_x_in,
       inv_attn_k,
       &out_k_payload.k_flat[base]);
     quant_linear_token_32_to32_native(
       in_token_buf,
-      v_weight,
-      v_bias,
+      v_params,
       s_x_in,
       inv_attn_v,
       &out_v_payload.v_flat[base]);

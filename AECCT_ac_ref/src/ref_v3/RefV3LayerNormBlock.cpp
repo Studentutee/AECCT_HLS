@@ -12,8 +12,7 @@ namespace {
 static void layernorm_token_32_local(
   const RefRunConfig& run_cfg,
   const refv3_fp_t x_token[REFV3_D_MODEL],
-  const double w[REFV3_D_MODEL],
-  const double b[REFV3_D_MODEL],
+  const RefV3TernaryLinearParams& params,
   refv3_fp_t y_token[REFV3_D_MODEL]) {
   const refv3_fp_t eps(1.0e-5f);
   const refv3_fp_t inv_d = REFV3_INV_D_MODEL;
@@ -48,7 +47,8 @@ static void layernorm_token_32_local(
     REFV3_LN_EXACT_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
       const double xv = static_cast<double>(x_token[d].to_float());
       const double xn = (xv - mean) * inv_std;
-      const double yi = (xn * w[d]) + b[d];
+      const double yi =
+        (xn * refv3_linear_weight_f64_at(params, d)) + refv3_linear_bias_f64_at(params, d);
       y_token[d] = refv3_fp_t(static_cast<float>(yi));
     }
     return;
@@ -83,7 +83,9 @@ static void layernorm_token_32_local(
     REFV3_LN_SUMSQ_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
       const refv3_fp_t xv = sanitize_input(x_token[d]);
       const refv3_fp_t xn = (xv - mean) * inv_std;
-      const refv3_fp_t yi = (xn * refv3_fp_from_double(w[d])) + refv3_fp_from_double(b[d]);
+      const refv3_fp_t yi =
+        (xn * refv3_fp_from_double(refv3_linear_weight_f64_at(params, d))) +
+        refv3_linear_bias_fp_at(params, d);
       y_token[d] = sanitize_output(yi);
     }
     return;
@@ -129,7 +131,9 @@ static void layernorm_token_32_local(
   REFV3_LN_BASE_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
     const refv3_fp_t xv = sanitize_input(x_token[d]);
     const refv3_fp_t xn = (xv - mean) * inv_std;
-    refv3_fp_t yi = (xn * refv3_fp_from_double(w[d])) + refv3_fp_from_double(b[d]);
+    refv3_fp_t yi =
+      (xn * refv3_fp_from_double(refv3_linear_weight_f64_at(params, d))) +
+      refv3_linear_bias_fp_at(params, d);
     yi = sanitize_output(yi);
     y_token[d] = yi;
   }
@@ -152,12 +156,13 @@ bool RefV3LayerNormBlock::run(int lid,
   bool header_init = false;
   bool token_seen[REFV3_TOKENS_T];
   refv3_fp_t token_ln_out[REFV3_D_MODEL];
-  const double* const ln_weight = (lid == REFV3_LAYER0_ID)
-                                    ? w_decoder_layers_0_sublayer_0_norm_weight
-                                    : w_decoder_layers_1_sublayer_0_norm_weight;
-  const double* const ln_bias = (lid == REFV3_LAYER0_ID)
-                                  ? w_decoder_layers_0_sublayer_0_norm_bias
-                                  : w_decoder_layers_1_sublayer_0_norm_bias;
+  const RefV3TernaryLinearParams ln_params = (lid == REFV3_LAYER0_ID)
+                                               ? refv3_make_ternary_linear_params(
+                                                   w_decoder_layers_0_sublayer_0_norm_weight,
+                                                   w_decoder_layers_0_sublayer_0_norm_bias)
+                                               : refv3_make_ternary_linear_params(
+                                                   w_decoder_layers_1_sublayer_0_norm_weight,
+                                                   w_decoder_layers_1_sublayer_0_norm_bias);
 
   REFV3_LN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -192,7 +197,7 @@ bool RefV3LayerNormBlock::run(int lid,
     }
     token_seen[token] = true;
 
-    layernorm_token_32_local(run_cfg, token_payload.token_vec, ln_weight, ln_bias, token_ln_out);
+    layernorm_token_32_local(run_cfg, token_payload.token_vec, ln_params, token_ln_out);
 
     RefV3AttentionTokenVectorPayload out_payload;
     out_payload.header = token_payload.header;

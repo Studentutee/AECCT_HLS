@@ -17,8 +17,7 @@ static inline ac_int<16, true> accumulate_ternary_mac_i16_local(
 
 static void quant_linear_token_32_to128_native(
   const refv3_fp_t x[REFV3_D_MODEL],
-  const double w[REFV3_FF_DIM * REFV3_D_MODEL],
-  const double b[REFV3_FF_DIM],
+  const RefV3TernaryLinearParams& params,
   refv3_fp_t s_x,
   refv3_fp_t inv_sxsw_const,
   refv3_fp_t y[REFV3_FF_DIM]) {
@@ -36,9 +35,9 @@ static void quant_linear_token_32_to128_native(
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
         qx_i8[i],
-        refv3_decode_ternary_weight_sign_i2_local(w[base + i]));
+        refv3_ternary_weight_sign_at(params, base + i));
     }
-    const refv3_fp_t bias_island = refv3_fp_from_double(b[o]);
+    const refv3_fp_t bias_island = refv3_linear_bias_fp_at(params, o);
     const refv3_fp_t acc_island(acc_i16.to_int());
     y[o] = bias_island + (acc_island * inv);
   }
@@ -46,8 +45,7 @@ static void quant_linear_token_32_to128_native(
 
 static void quant_linear_token_128_to32_native(
   const refv3_fp_t x[REFV3_FF_DIM],
-  const double w[REFV3_D_MODEL * REFV3_FF_DIM],
-  const double b[REFV3_D_MODEL],
+  const RefV3TernaryLinearParams& params,
   refv3_fp_t s_x,
   refv3_fp_t inv_sxsw_const,
   refv3_fp_t y[REFV3_D_MODEL]) {
@@ -65,9 +63,9 @@ static void quant_linear_token_128_to32_native(
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
         qx_i8[i],
-        refv3_decode_ternary_weight_sign_i2_local(w[base + i]));
+        refv3_ternary_weight_sign_at(params, base + i));
     }
-    const refv3_fp_t bias_island = refv3_fp_from_double(b[o]);
+    const refv3_fp_t bias_island = refv3_linear_bias_fp_at(params, o);
     const refv3_fp_t acc_island(acc_i16.to_int());
     y[o] = bias_island + (acc_island * inv);
   }
@@ -84,6 +82,12 @@ bool RefV3FfnBlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_c
   bool token_seen[REFV3_TOKENS_T];
   refv3_fp_t ffn1_token_buf[REFV3_FF_DIM];
   refv3_fp_t ffn2_token_buf[REFV3_D_MODEL];
+  const RefV3TernaryLinearParams ff1_params = refv3_make_ternary_linear_params(
+    w_decoder_layers_0_feed_forward_w_1_weight,
+    w_decoder_layers_0_feed_forward_w_1_bias);
+  const RefV3TernaryLinearParams ff2_params = refv3_make_ternary_linear_params(
+    w_decoder_layers_0_feed_forward_w_2_weight,
+    w_decoder_layers_0_feed_forward_w_2_bias);
   const refv3_fp_t zero(0.0f);
 
   REFV3_FFN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
@@ -121,8 +125,7 @@ bool RefV3FfnBlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_c
 
     quant_linear_token_32_to128_native(
       token_payload.token_vec,
-      w_decoder_layers_0_feed_forward_w_1_weight,
-      w_decoder_layers_0_feed_forward_w_1_bias,
+      ff1_params,
       REFV3_SCALE_L0_FF1_S_X,
       REFV3_INV_L0_FFN_W1,
       ffn1_token_buf);
@@ -135,8 +138,7 @@ bool RefV3FfnBlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_c
 
     quant_linear_token_128_to32_native(
       ffn1_token_buf,
-      w_decoder_layers_0_feed_forward_w_2_weight,
-      w_decoder_layers_0_feed_forward_w_2_bias,
+      ff2_params,
       REFV3_SCALE_L0_FF2_S_X,
       REFV3_INV_L0_FFN_W2,
       ffn2_token_buf);

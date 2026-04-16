@@ -872,7 +872,8 @@ bool RefModel_v3::consume_and_check_next_stage_stream(
 bool RefModel_v3::load_authoritative_end_norm_to_x_work() {
   REFV3_LOAD_END_NORM_TOKEN_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
     REFV3_LOAD_END_NORM_DIM_LOOP: for (int dim = 0; dim < REFV3_D_MODEL; ++dim) {
-      x_work_[token][dim] = authoritative_model_.x_work(token, dim);
+      x_work_[token][dim] =
+        refv3_fp_t(static_cast<float>(authoritative_model_.x_work(token, dim).to_float()));
     }
   }
   return true;
@@ -1069,7 +1070,9 @@ bool RefModel_v3::compare_final_against_authoritative(const RefModelIO& io, int 
     refv3_fp_t ref_acc(static_cast<float>(w_out_fc_bias[n]));
     REFV3_COMPARE_FINALB_TOKEN_REDUCE_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
       const refv3_fp_t w_nt(static_cast<float>(w_out_fc_weight[n * REFV3_TOKENS_T + token]));
-      ref_acc += (w_nt * authoritative_model_.final_scalar_buf(token));
+      const refv3_fp_t ref_scalar(
+        static_cast<float>(authoritative_model_.final_scalar_buf(token).to_float()));
+      ref_acc += (w_nt * ref_scalar);
     }
 
     const double v2_logit = static_cast<double>(final_logits_[n].to_float());

@@ -17,8 +17,7 @@ static inline ac_int<16, true> accumulate_ternary_mac_i16_local(
 
 static void quant_linear_token_32_to128_native(
   const refv3_fp_t x[REFV3_D_MODEL],
-  const double w[REFV3_FF_DIM * REFV3_D_MODEL],
-  const double b[REFV3_FF_DIM],
+  const RefV3TernaryLinearParams& params,
   refv3_fp_t s_x,
   refv3_fp_t inv_sxsw_const,
   refv3_fp_t y[REFV3_FF_DIM]) {
@@ -36,9 +35,9 @@ static void quant_linear_token_32_to128_native(
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
         qx_i8[i],
-        refv3_decode_ternary_weight_sign_i2_local(w[base + i]));
+        refv3_ternary_weight_sign_at(params, base + i));
     }
-    const refv3_fp_t bias_island = refv3_fp_from_double(b[o]);
+    const refv3_fp_t bias_island = refv3_linear_bias_fp_at(params, o);
     const refv3_fp_t acc_island(acc_i16.to_int());
     y[o] = bias_island + (acc_island * inv);
   }
@@ -57,12 +56,13 @@ bool RefV3FfnLinear0ReluBlock::run(
   }
 
   const int expected_layer_id = lid;
-  const double* const ff1_weight = (lid == REFV3_LAYER0_ID)
-                                     ? w_decoder_layers_0_feed_forward_w_1_weight
-                                     : w_decoder_layers_1_feed_forward_w_1_weight;
-  const double* const ff1_bias = (lid == REFV3_LAYER0_ID)
-                                   ? w_decoder_layers_0_feed_forward_w_1_bias
-                                   : w_decoder_layers_1_feed_forward_w_1_bias;
+  const RefV3TernaryLinearParams ff1_params = (lid == REFV3_LAYER0_ID)
+                                                ? refv3_make_ternary_linear_params(
+                                                    w_decoder_layers_0_feed_forward_w_1_weight,
+                                                    w_decoder_layers_0_feed_forward_w_1_bias)
+                                                : refv3_make_ternary_linear_params(
+                                                    w_decoder_layers_1_feed_forward_w_1_weight,
+                                                    w_decoder_layers_1_feed_forward_w_1_bias);
   const refv3_fp_t ff1_s_x = (lid == REFV3_LAYER0_ID)
                                ? refv3_fp_from_double(l0_ff1_s_x)
                                : refv3_fp_from_double(l1_ff1_s_x);
@@ -112,8 +112,7 @@ bool RefV3FfnLinear0ReluBlock::run(
 
     quant_linear_token_32_to128_native(
       token_payload.token_vec,
-      ff1_weight,
-      ff1_bias,
+      ff1_params,
       ff1_s_x,
       inv_ffn_w1,
       linear0_out_buf);

@@ -19,8 +19,7 @@ static inline ac_int<16, true> accumulate_ternary_mac_i16_local(
 
 static void quant_linear_token_32_to32_native(
   const refv3_fp_t x[REFV3_D_MODEL],
-  const double w[REFV3_D_MODEL * REFV3_D_MODEL],
-  const double b[REFV3_D_MODEL],
+  const RefV3TernaryLinearParams& params,
   refv3_fp_t s_x,
   refv3_fp_t inv_sxsw_const,
   refv3_fp_t y[REFV3_D_MODEL]) {
@@ -38,9 +37,9 @@ static void quant_linear_token_32_to32_native(
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
         qx_i8[i],
-        refv3_decode_ternary_weight_sign_i2_local(w[base + i]));
+        refv3_ternary_weight_sign_at(params, base + i));
     }
-    const refv3_fp_t bias_island = refv3_fp_from_double(b[o]);
+    const refv3_fp_t bias_island = refv3_linear_bias_fp_at(params, o);
     const refv3_fp_t acc_island(acc_i16.to_int());
     y[o] = bias_island + (acc_island * inv);
   }
@@ -87,18 +86,20 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   const refv3_fp_t s_x_o = (lid == REFV3_LAYER0_ID)
                              ? refv3_fp_from_double(l0_o_s_x)
                              : refv3_fp_from_double(l1_o_s_x);
-  const double* const q_weight = (lid == REFV3_LAYER0_ID)
-                                   ? w_decoder_layers_0_self_attn_linears_0_weight
-                                   : w_decoder_layers_1_self_attn_linears_0_weight;
-  const double* const q_bias = (lid == REFV3_LAYER0_ID)
-                                 ? w_decoder_layers_0_self_attn_linears_0_bias
-                                 : w_decoder_layers_1_self_attn_linears_0_bias;
-  const double* const o_weight = (lid == REFV3_LAYER0_ID)
-                                   ? w_decoder_layers_0_self_attn_linears_3_weight
-                                   : w_decoder_layers_1_self_attn_linears_3_weight;
-  const double* const o_bias = (lid == REFV3_LAYER0_ID)
-                                 ? w_decoder_layers_0_self_attn_linears_3_bias
-                                 : w_decoder_layers_1_self_attn_linears_3_bias;
+  const RefV3TernaryLinearParams q_params = (lid == REFV3_LAYER0_ID)
+                                              ? refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_0_self_attn_linears_0_weight,
+                                                  w_decoder_layers_0_self_attn_linears_0_bias)
+                                              : refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_1_self_attn_linears_0_weight,
+                                                  w_decoder_layers_1_self_attn_linears_0_bias);
+  const RefV3TernaryLinearParams o_params = (lid == REFV3_LAYER0_ID)
+                                              ? refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_0_self_attn_linears_3_weight,
+                                                  w_decoder_layers_0_self_attn_linears_3_bias)
+                                              : refv3_make_ternary_linear_params(
+                                                  w_decoder_layers_1_self_attn_linears_3_weight,
+                                                  w_decoder_layers_1_self_attn_linears_3_bias);
   const refv3_fp_t q_s_w = (lid == REFV3_LAYER0_ID)
                              ? refv3_fp_from_double(w_decoder_layers_0_self_attn_linears_0_s_w[0])
                              : refv3_fp_from_double(w_decoder_layers_1_self_attn_linears_0_s_w[0]);
@@ -178,8 +179,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
 
     quant_linear_token_32_to32_native(
       query_token_buf,
-      q_weight,
-      q_bias,
+      q_params,
       s_x_q,
       inv_attn_q,
       q_vec);
@@ -327,8 +327,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
 
     quant_linear_token_32_to32_native(
       q_vec,
-      o_weight,
-      o_bias,
+      o_params,
       s_x_o,
       inv_attn_o,
       out_acc_tile);
