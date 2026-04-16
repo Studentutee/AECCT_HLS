@@ -217,14 +217,20 @@ bool RefModel_v2::run_layer0_ffn_channel_transport() {
     return false;
   }
 
-  ac_channel<RefV2AttentionTokenVectorPayload> ffn_in_token_ch;
+  ac_channel<RefV2AttentionTokenVectorPayload> ffn_linear0_in_token_ch;
+  ac_channel<RefV2AttentionTokenVectorPayload> ffn_residual_in_token_ch;
+  ac_channel<RefV2FfnHiddenTokenPayload> ffn_hidden_token_ch;
   ac_channel<RefV2AttentionTokenVectorPayload> ffn_out_token_ch;
 
-  if (!stream_x_work_to_layer0_ffn_channel(ffn_in_token_ch)) {
+  if (!stream_x_work_to_layer0_ffn_channels(ffn_linear0_in_token_ch, ffn_residual_in_token_ch)) {
     layer0_attention_valid_ = false;
     return false;
   }
-  if (!layer0_ffn_block_.run(ffn_in_token_ch, ffn_out_token_ch)) {
+  if (!layer0_ffn_linear0_relu_block_.run(ffn_linear0_in_token_ch, ffn_hidden_token_ch)) {
+    layer0_attention_valid_ = false;
+    return false;
+  }
+  if (!layer0_ffn_linear1_residual_block_.run(ffn_hidden_token_ch, ffn_residual_in_token_ch, ffn_out_token_ch)) {
     layer0_attention_valid_ = false;
     return false;
   }
@@ -353,7 +359,7 @@ void RefModel_v2::clear_storage() {
       layer0_ffn_out_[token][dim] = zero;
       x_work_after_layer0_ffn_[token][dim] = zero;
     }
-    final_scalar_buf_[token] = zero;
+    final_pass_a_observe_scalar_[token] = zero;
   }
 
   REFV2_CLEAR_PREPROC_INPUT_LOOP: for (int n = 0; n < REFV2_VAR_N; ++n) {
@@ -600,19 +606,21 @@ bool RefModel_v2::writeback_layer0_ln_output_stream_to_x_work(
   return true;
 }
 
-bool RefModel_v2::stream_x_work_to_layer0_ffn_channel(
-  ac_channel<RefV2AttentionTokenVectorPayload>& ffn_in_token_ch) {
-  REFV2_STREAM_FFN_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+bool RefModel_v2::stream_x_work_to_layer0_ffn_channels(
+  ac_channel<RefV2AttentionTokenVectorPayload>& ffn_linear0_in_token_ch,
+  ac_channel<RefV2AttentionTokenVectorPayload>& ffn_residual_in_token_ch) {
+  REFV2_STREAM_FFN_DUAL_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     RefV2AttentionTokenVectorPayload token_payload;
     token_payload.header.layer_id = ac_int<8, false>(REFV2_LAYER0_ID);
     token_payload.header.token_rows = ac_int<16, false>(REFV2_TOKENS_T);
     token_payload.header.dim_cols = ac_int<16, false>(REFV2_D_MODEL);
     token_payload.token_row = ac_int<16, false>(token);
 
-    REFV2_STREAM_FFN_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
+    REFV2_STREAM_FFN_DUAL_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
       token_payload.token_vec[dim] = x_work_[token][dim];
     }
-    ffn_in_token_ch.write(token_payload);
+    ffn_linear0_in_token_ch.write(token_payload);
+    ffn_residual_in_token_ch.write(token_payload);
   }
   return true;
 }
@@ -782,7 +790,8 @@ bool RefModel_v2::collect_final_pass_a_stream_and_forward(
     }
     token_seen[token] = true;
 
-    final_scalar_buf_[token] = scalar_payload.scalar;
+    // Local-only observe buffer for compare/debug; functional path is direct stream forwarding.
+    final_pass_a_observe_scalar_[token] = scalar_payload.scalar;
     finalb_in_scalar_ch.write(scalar_payload);
   }
 
@@ -923,7 +932,7 @@ bool RefModel_v2::compare_final_against_authoritative(const RefModelIO& io, int 
   const ref_fp32_t zero(0.0f);
 
   REFV2_COMPARE_FINALA_TOKEN_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
-    const double v2_v = static_cast<double>(final_scalar_buf_[token].to_float());
+    const double v2_v = static_cast<double>(final_pass_a_observe_scalar_[token].to_float());
     const double ref_v = static_cast<double>(authoritative_model_.final_scalar_buf(token).to_float());
     update_compare_point(&last_compare_stats_.final_passA_output, token, 0, v2_v, ref_v, tol);
   }

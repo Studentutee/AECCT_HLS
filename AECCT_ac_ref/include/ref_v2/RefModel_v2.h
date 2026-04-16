@@ -5,7 +5,8 @@
 #include "ac_channel.h"
 #include "ref_v2/RefV2AttenKvBlock.h"
 #include "ref_v2/RefV2AttenQSoftResBlock.h"
-#include "ref_v2/RefV2FfnBlock.h"
+#include "ref_v2/RefV2FfnLinear0ReluBlock.h"
+#include "ref_v2/RefV2FfnLinear1ResidualBlock.h"
 #include "ref_v2/RefV2FinalPassABlock.h"
 #include "ref_v2/RefV2FinalPassBBlock.h"
 #include "ref_v2/RefV2LayerNormBlock.h"
@@ -87,7 +88,9 @@ private:
   bool stream_x_work_to_layer0_ln_channel(ac_channel<RefV2AttentionTokenVectorPayload>& ln_in_token_ch);
   bool writeback_layer0_ln_output_stream_to_x_work(
     ac_channel<RefV2AttentionTokenVectorPayload>& ln_out_token_ch);
-  bool stream_x_work_to_layer0_ffn_channel(ac_channel<RefV2AttentionTokenVectorPayload>& ffn_in_token_ch);
+  bool stream_x_work_to_layer0_ffn_channels(
+    ac_channel<RefV2AttentionTokenVectorPayload>& ffn_linear0_in_token_ch,
+    ac_channel<RefV2AttentionTokenVectorPayload>& ffn_residual_in_token_ch);
   bool writeback_layer0_ffn_output_stream_to_x_work(
     ac_channel<RefV2AttentionTokenVectorPayload>& ffn_out_token_ch);
   bool stream_x_work_to_next_stage(ac_channel<RefV2AttentionTokenVectorPayload>& next_stage_token_ch);
@@ -113,7 +116,8 @@ private:
   RefV2AttenKvBlock kv_block_;
   RefV2AttenQSoftResBlock qsoftres_block_;
   RefV2LayerNormBlock layer0_ln_block_;
-  RefV2FfnBlock layer0_ffn_block_;
+  RefV2FfnLinear0ReluBlock layer0_ffn_linear0_relu_block_;
+  RefV2FfnLinear1ResidualBlock layer0_ffn_linear1_residual_block_;
   RefV2FinalPassABlock final_pass_a_block_;
   RefV2FinalPassBBlock final_pass_b_block_;
 
@@ -126,7 +130,8 @@ private:
   ref_fp32_t x_work_after_layer0_ln_[REFV2_TOKENS_T][REFV2_D_MODEL];
   ref_fp32_t layer0_ffn_out_[REFV2_TOKENS_T][REFV2_D_MODEL];
   ref_fp32_t x_work_after_layer0_ffn_[REFV2_TOKENS_T][REFV2_D_MODEL];
-  ref_fp32_t final_scalar_buf_[REFV2_TOKENS_T];
+  // Local-only compare evidence; not part of production dataflow state.
+  ref_fp32_t final_pass_a_observe_scalar_[REFV2_TOKENS_T];
   ref_fp32_t final_logits_[REFV2_VAR_N];
   bit1_t final_x_pred_[REFV2_VAR_N];
 

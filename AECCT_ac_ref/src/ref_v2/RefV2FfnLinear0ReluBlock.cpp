@@ -1,4 +1,4 @@
-#include "../../include/ref_v2/RefV2AttenKvBlock.h"
+#include "../../include/ref_v2/RefV2FfnLinear0ReluBlock.h"
 #include "../../include/ref_v2/RefV2MathApprox.h"
 
 #include <cmath>
@@ -37,24 +37,24 @@ static inline ac_int<16, true> accumulate_ternary_mac_i16_local(
   return acc_i16 + mac_i16;
 }
 
-static void quant_linear_token_32_to32_native(
+static void quant_linear_token_32_to128_native(
   const ref_fp32_t x[REFV2_D_MODEL],
-  const double w[REFV2_D_MODEL * REFV2_D_MODEL],
-  const double b[REFV2_D_MODEL],
+  const double w[REFV2_FF_DIM * REFV2_D_MODEL],
+  const double b[REFV2_FF_DIM],
   float s_x,
   float inv_sxsw_const,
-  ref_fp32_t y[REFV2_D_MODEL]) {
+  ref_fp32_t y[REFV2_FF_DIM]) {
   const ref_fp32_t inv(inv_sxsw_const);
 
   ac_int<8, true> qx_i8[REFV2_D_MODEL];
-  KV_QUANTIZE_I8_LOOP: for (int i = 0; i < REFV2_D_MODEL; ++i) {
+  REFV2_FFN_L0_QUANT_LOOP: for (int i = 0; i < REFV2_D_MODEL; ++i) {
     qx_i8[i] = quantize_int8_to_i8_local(x[i], s_x);
   }
 
-  KV_LINEAR_OUTER_LOOP: for (int o = 0; o < REFV2_D_MODEL; ++o) {
+  REFV2_FFN_L0_OUT_LOOP: for (int o = 0; o < REFV2_FF_DIM; ++o) {
     ac_int<16, true> acc_i16 = 0;
     const int base = o * REFV2_D_MODEL;
-    KV_LINEAR_INNER_LOOP: for (int i = 0; i < REFV2_D_MODEL; ++i) {
+    REFV2_FFN_L0_INNER_LOOP: for (int i = 0; i < REFV2_D_MODEL; ++i) {
       acc_i16 = accumulate_ternary_mac_i16_local(
         acc_i16,
         qx_i8[i],
@@ -68,36 +68,32 @@ static void quant_linear_token_32_to32_native(
 
 } // namespace
 
-RefV2AttenKvBlock::RefV2AttenKvBlock() {}
+RefV2FfnLinear0ReluBlock::RefV2FfnLinear0ReluBlock() {}
 
-bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_token_ch,
-                            ac_channel<RefV2AttentionKPayload>& out_k_payload_ch,
-                            ac_channel<RefV2AttentionVPayload>& out_v_payload_ch) const {
-  RefV2AttentionKPayload out_k_payload;
-  RefV2AttentionVPayload out_v_payload;
+bool RefV2FfnLinear0ReluBlock::run(
+  ac_channel<RefV2AttentionTokenVectorPayload>& in_token_ch,
+  ac_channel<RefV2FfnHiddenTokenPayload>& out_hidden_ch) const {
   RefV2AttentionPayloadHeader header_ref;
   bool header_init = false;
-  ref_fp32_t in_token_buf[REFV2_D_MODEL];
-
   bool token_seen[REFV2_TOKENS_T];
-  REFV2_KV_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
+  ref_fp32_t linear0_out_buf[REFV2_FF_DIM];
+  const ref_fp32_t zero(0.0f);
+
+  REFV2_FFN_L0_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV2_TOKENS_T; ++token) {
     token_seen[token] = false;
   }
 
-  const float s_x_in = REFV2_SCALE_L0_IN_S_X;
-
-  REFV2_KV_TOKEN_STREAM_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
-    const RefV2AttentionTokenVectorPayload token_payload = in_x_token_ch.read();
+  REFV2_FFN_L0_TOKEN_STREAM_LOOP: for (int token_rx = 0; token_rx < REFV2_TOKENS_T; ++token_rx) {
+    const RefV2AttentionTokenVectorPayload token_payload = in_token_ch.read();
     if (!refv2_payload_header_matches_shape(token_payload.header)) {
       return false;
     }
     if (token_payload.header.layer_id.to_int() != REFV2_LAYER0_ID) {
       return false;
     }
+
     if (!header_init) {
       header_ref = token_payload.header;
-      out_k_payload.header = header_ref;
-      out_v_payload.header = header_ref;
       header_init = true;
     } else {
       if (token_payload.header.layer_id != header_ref.layer_id ||
@@ -107,38 +103,31 @@ bool RefV2AttenKvBlock::run(ac_channel<RefV2AttentionTokenVectorPayload>& in_x_t
       }
     }
 
-    const int token_row = token_payload.token_row.to_int();
-    if (token_row < 0 || token_row >= REFV2_TOKENS_T) {
+    const int token = token_payload.token_row.to_int();
+    if (token < 0 || token >= REFV2_TOKENS_T) {
       return false;
     }
-    if (token_seen[token_row]) {
+    if (token_seen[token]) {
       return false;
     }
-    token_seen[token_row] = true;
+    token_seen[token] = true;
 
-    REFV2_KV_TOKEN_COPY_DIM_LOOP: for (int dim = 0; dim < REFV2_D_MODEL; ++dim) {
-      in_token_buf[dim] = token_payload.token_vec[dim];
+    quant_linear_token_32_to128_native(
+      token_payload.token_vec,
+      w_decoder_layers_0_feed_forward_w_1_weight,
+      w_decoder_layers_0_feed_forward_w_1_bias,
+      REFV2_SCALE_L0_FF1_S_X,
+      REFV2_INV_L0_FFN_W1,
+      linear0_out_buf);
+
+    RefV2FfnHiddenTokenPayload hidden_payload;
+    hidden_payload.header = token_payload.header;
+    hidden_payload.token_row = token_payload.token_row;
+    REFV2_FFN_L0_RELU_LOOP: for (int i = 0; i < REFV2_FF_DIM; ++i) {
+      hidden_payload.hidden_vec[i] = (linear0_out_buf[i] < zero) ? zero : linear0_out_buf[i];
     }
-
-    const int base = token_row * REFV2_D_MODEL;
-    quant_linear_token_32_to32_native(
-      in_token_buf,
-      w_decoder_layers_0_self_attn_linears_1_weight,
-      w_decoder_layers_0_self_attn_linears_1_bias,
-      s_x_in,
-      REFV2_INV_L0_ATTN_K,
-      &out_k_payload.k_flat[base]);
-    quant_linear_token_32_to32_native(
-      in_token_buf,
-      w_decoder_layers_0_self_attn_linears_2_weight,
-      w_decoder_layers_0_self_attn_linears_2_bias,
-      s_x_in,
-      REFV2_INV_L0_ATTN_V,
-      &out_v_payload.v_flat[base]);
+    out_hidden_ch.write(hidden_payload);
   }
-
-  out_k_payload_ch.write(out_k_payload);
-  out_v_payload_ch.write(out_v_payload);
 
   return true;
 }
