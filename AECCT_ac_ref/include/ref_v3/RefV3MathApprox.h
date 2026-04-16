@@ -37,15 +37,7 @@ static const refv3_fp_t REFV3_INV_L0_FFN_W2 =
 static const refv3_fp_t REFV3_INV_D_MODEL =
   refv3_fp_t(1.0f) / refv3_fp_t(REFV3_D_MODEL);
 
-static inline refv3_fp_t REFV3_softmax_rcp_lut_safe(refv3_fp_t sumexp) {
-  const refv3_fp_t zero(0.0f);
-  if (sumexp <= zero) {
-    return zero;
-  }
-  return ref_softmax_rcp_lut(sumexp);
-}
-
-static inline refv3_fp_t REFV3_inv_sqrt_nr1_or_lut(refv3_fp_t x) {
+static inline refv3_fp_t REFV3_ln_inv_sqrt_synth(refv3_fp_t x) {
   const refv3_fp_t zero(0.0f);
   const refv3_fp_t one(1.0f);
   refv3_fp_t x_safe = x;
@@ -53,11 +45,36 @@ static inline refv3_fp_t REFV3_inv_sqrt_nr1_or_lut(refv3_fp_t x) {
     x_safe = one;
   }
 
-  refv3_fp_t inv_std = ref_inv_sqrt_nr1_approx(x_safe);
+#if REFV3_LN_INV_SQRT_SYNTH_POLICY == REFV3_LN_INV_SQRT_SYNTH_LUT_PLUS_NR1
+  refv3_fp_t inv_std = ref_inv_sqrt_lut_plus_nr1(x_safe);
+#else
+  refv3_fp_t inv_std = ref_inv_sqrt_lut_only(x_safe);
+#endif
   if (inv_std != inv_std || inv_std <= zero) {
-    inv_std = ref_inv_sqrt_approx(x_safe);
+    inv_std = ref_inv_sqrt_lut_only(x_safe);
   }
   return inv_std;
+}
+
+static inline refv3_fp_t REFV3_softmax_exp_synth(refv3_fp_t x) {
+#if REFV3_SOFTMAX_EXP_SYNTH_POLICY == REFV3_SOFTMAX_EXP_SYNTH_LERP_LUT
+  return ref_softmax_exp_lerp_lut(x);
+#else
+  return ref_softmax_exp_lut_only(x);
+#endif
+}
+
+static inline refv3_fp_t REFV3_softmax_rcp_synth(refv3_fp_t sumexp) {
+  const refv3_fp_t zero(0.0f);
+  if (sumexp <= zero) {
+    return zero;
+  }
+
+#if REFV3_SOFTMAX_RCP_SYNTH_POLICY == REFV3_SOFTMAX_RCP_SYNTH_LUT_PLUS_NR1
+  return ref_softmax_rcp_lut_plus_nr1(sumexp);
+#else
+  return ref_softmax_rcp_lut_only(sumexp);
+#endif
 }
 
 } // namespace ref_v3

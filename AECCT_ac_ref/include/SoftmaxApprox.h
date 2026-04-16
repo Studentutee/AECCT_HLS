@@ -43,6 +43,11 @@ static inline FloatT ref_softmax_exp_lut(FloatT x) {
 }
 
 template <typename FloatT>
+static inline FloatT ref_softmax_exp_lut_only(FloatT x) {
+  return ref_softmax_exp_lut(x);
+}
+
+template <typename FloatT>
 static inline FloatT ref_softmax_exp_lerp_lut(FloatT x) {
   const int last_idx = REF_SOFTMAX_EXP_LUT_SIZE - 1;
   float xc = ref_softmax_clamp_x(x).to_float();
@@ -92,13 +97,28 @@ static inline int ref_softmax_rcp_idx(FloatT s) {
 }
 
 template <typename FloatT>
-static inline FloatT ref_softmax_rcp_lut(FloatT sumexp) {
+static inline FloatT ref_softmax_rcp_lut_only(FloatT sumexp) {
+  float s = sumexp.to_float();
+  if (s < REF_SOFTMAX_EPS) s = REF_SOFTMAX_EPS;
+  const int idx = ref_softmax_rcp_idx(FloatT(s));
+  const float inv0 = g_ref_softmax_rcp_lut[idx];
+  return FloatT(inv0);
+}
+
+template <typename FloatT>
+static inline FloatT ref_softmax_rcp_lut_plus_nr1(FloatT sumexp) {
   float s = sumexp.to_float();
   if (s < REF_SOFTMAX_EPS) s = REF_SOFTMAX_EPS;
   const int idx = ref_softmax_rcp_idx(FloatT(s));
   const float inv0 = g_ref_softmax_rcp_lut[idx];
   const float inv1 = inv0 * (2.0f - s * inv0);
   return FloatT(inv1);
+}
+
+// Legacy compatibility: historical helper keeps NR1 behavior.
+template <typename FloatT>
+static inline FloatT ref_softmax_rcp_lut(FloatT sumexp) {
+  return ref_softmax_rcp_lut_plus_nr1(sumexp);
 }
 
 } // namespace aecct_ref

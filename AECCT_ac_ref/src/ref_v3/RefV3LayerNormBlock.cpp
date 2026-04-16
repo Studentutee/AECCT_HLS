@@ -48,7 +48,8 @@ static void layernorm_token_32_local(
       const double xv = static_cast<double>(x_token[d].to_float());
       const double xn = (xv - mean) * inv_std;
       const double yi =
-        (xn * refv3_linear_weight_f64_at(params, d)) + refv3_linear_bias_f64_at(params, d);
+        (xn * refv3_boundary_linear_weight_f64_at(params, d)) +
+        refv3_boundary_linear_bias_f64_at(params, d);
       y_token[d] = refv3_fp_t(static_cast<float>(yi));
     }
     return;
@@ -77,14 +78,14 @@ static void layernorm_token_32_local(
       var_eps = eps;
     }
 
-    refv3_fp_t inv_std = REFV3_inv_sqrt_nr1_or_lut(var_eps);
+    refv3_fp_t inv_std = REFV3_ln_inv_sqrt_synth(var_eps);
     inv_std = sanitize_output(inv_std);
 
     REFV3_LN_SUMSQ_OUT_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
       const refv3_fp_t xv = sanitize_input(x_token[d]);
       const refv3_fp_t xn = (xv - mean) * inv_std;
       const refv3_fp_t yi =
-        (xn * refv3_fp_from_double(refv3_linear_weight_f64_at(params, d))) +
+        (xn * refv3_linear_weight_fp_at(params, d)) +
         refv3_linear_bias_fp_at(params, d);
       y_token[d] = sanitize_output(yi);
     }
@@ -114,16 +115,7 @@ static void layernorm_token_32_local(
     x_eps_safe = one;
   }
 
-  refv3_fp_t inv_std = REFV3_inv_sqrt_nr1_or_lut(x_eps_safe);
-  REFV3_LN_BASE_NR_REFINE_LOOP:
-  for (int nr_iter = 0; nr_iter < REFV3_LN_BASELINE_EXTRA_NR_ITERS; ++nr_iter) {
-    const refv3_fp_t inv_sq = inv_std * inv_std;
-    const refv3_fp_t inv_nr =
-      inv_std * (refv3_fp_t(1.5f) - (refv3_fp_t(0.5f) * x_eps_safe * inv_sq));
-    if (inv_nr == inv_nr && inv_nr > zero) {
-      inv_std = inv_nr;
-    }
-  }
+  refv3_fp_t inv_std = REFV3_ln_inv_sqrt_synth(x_eps_safe);
   if (inv_std != inv_std || inv_std <= zero) {
     inv_std = one;
   }
@@ -132,7 +124,7 @@ static void layernorm_token_32_local(
     const refv3_fp_t xv = sanitize_input(x_token[d]);
     const refv3_fp_t xn = (xv - mean) * inv_std;
     refv3_fp_t yi =
-      (xn * refv3_fp_from_double(refv3_linear_weight_f64_at(params, d))) +
+      (xn * refv3_linear_weight_fp_at(params, d)) +
       refv3_linear_bias_fp_at(params, d);
     yi = sanitize_output(yi);
     y_token[d] = yi;

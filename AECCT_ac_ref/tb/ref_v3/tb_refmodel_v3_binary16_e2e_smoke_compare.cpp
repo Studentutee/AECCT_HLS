@@ -58,10 +58,12 @@ int main() {
     }
 
     const aecct_ref::ref_v3::RefV3CompareStats stats = model_v3.last_compare_stats();
+    const aecct_ref::ref_v3::RefV3ComparePoint& final_pass_a = stats.final_passA_output;
     const aecct_ref::ref_v3::RefV3ComparePoint& logits = stats.final_logits;
     const aecct_ref::ref_v3::RefV3ComparePoint& xpred = stats.final_x_pred;
 
-    const bool pass = (logits.mismatch_count == 0) && (xpred.mismatch_count == 0);
+    const bool pass =
+      (final_pass_a.mismatch_count == 0) && (logits.mismatch_count == 0) && (xpred.mismatch_count == 0);
     if (pass) {
       ++pass_count;
     } else {
@@ -69,9 +71,15 @@ int main() {
     }
 
     std::printf(
-      "[ref_v3_binary16_smoke] pattern_idx=%d final_logits={mismatch_count=%d,max_abs_diff=%.9e,first_mismatch={idx=%d,v2=%.9e,ref=%.9e}} "
+      "[ref_v3_binary16_smoke] pattern_idx=%d final_passA_output={mismatch_count=%d,max_abs_diff=%.9e,first_mismatch={idx=%d,v2=%.9e,ref=%.9e}} "
+      "final_logits={mismatch_count=%d,max_abs_diff=%.9e,first_mismatch={idx=%d,v2=%.9e,ref=%.9e}} "
       "final_x_pred={mismatch_count=%d,first_mismatch={idx=%d,v2=%d,ref=%d}} result=%s run_ok=1\n",
       pattern_idx,
+      final_pass_a.mismatch_count,
+      final_pass_a.max_abs_diff,
+      final_pass_a.first_mismatch_token,
+      final_pass_a.first_v2_value,
+      final_pass_a.first_ref_value,
       logits.mismatch_count,
       logits.max_abs_diff,
       logits.first_mismatch_token,

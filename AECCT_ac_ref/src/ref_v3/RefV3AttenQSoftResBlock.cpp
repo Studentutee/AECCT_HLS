@@ -241,7 +241,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
 
         refv3_fp_t inv_sumexp = zero;
         if (sumexp > zero) {
-          inv_sumexp = REFV3_softmax_rcp_lut_safe(sumexp);
+          inv_sumexp = REFV3_softmax_rcp_synth(sumexp);
         }
         REFV3_QSOFTRES_EXACT_NORM_LOOP: for (int dh = 0; dh < REFV3_D_HEAD; ++dh) {
           head_ctx_buf[h][dh] = softmax_acc_tile[dh] * inv_sumexp;
@@ -281,9 +281,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
           }
 
           if (score > online_max) {
-            const refv3_fp_t rescale = ref_softmax_exp_dispatch(
-              online_max - score,
-              run_cfg.legacy.softmax_exp_mode);
+            const refv3_fp_t rescale = REFV3_softmax_exp_synth(online_max - score);
             online_sumexp = (online_sumexp * rescale) + refv3_fp_t(1.0f);
             REFV3_QSOFTRES_APPROX_RESCALE_LOOP: for (int dh = 0; dh < REFV3_D_HEAD; ++dh) {
               const int idx = (k_token * REFV3_D_MODEL) + head_base + dh;
@@ -294,9 +292,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
             continue;
           }
 
-          const refv3_fp_t w = ref_softmax_exp_dispatch(
-            score - online_max,
-            run_cfg.legacy.softmax_exp_mode);
+          const refv3_fp_t w = REFV3_softmax_exp_synth(score - online_max);
           online_sumexp += w;
           REFV3_QSOFTRES_APPROX_ACC_LOOP: for (int dh = 0; dh < REFV3_D_HEAD; ++dh) {
             const int idx = (k_token * REFV3_D_MODEL) + head_base + dh;
@@ -311,7 +307,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
           continue;
         }
 
-        const refv3_fp_t inv_sumexp = REFV3_softmax_rcp_lut_safe(online_sumexp);
+        const refv3_fp_t inv_sumexp = REFV3_softmax_rcp_synth(online_sumexp);
         REFV3_QSOFTRES_APPROX_NORM_LOOP: for (int dh = 0; dh < REFV3_D_HEAD; ++dh) {
           head_ctx_buf[h][dh] = softmax_acc_tile[dh] * inv_sumexp;
         }

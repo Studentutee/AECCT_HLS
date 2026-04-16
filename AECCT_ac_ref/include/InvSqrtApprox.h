@@ -557,6 +557,16 @@ static inline FloatT ref_inv_sqrt_nr1_approx(FloatT x) {
   return FloatT(y1);
 }
 
+template <typename FloatT>
+static inline FloatT ref_inv_sqrt_lut_only(FloatT x) {
+  return ref_inv_sqrt_approx(x);
+}
+
+template <typename FloatT>
+static inline FloatT ref_inv_sqrt_lut_plus_nr1(FloatT x) {
+  return ref_inv_sqrt_nr1_approx(x);
+}
+
 } // namespace aecct_ref
 
 #endif
