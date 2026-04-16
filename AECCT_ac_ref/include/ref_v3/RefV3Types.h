@@ -10,20 +10,21 @@ namespace ref_v3 {
 typedef ac_ieee_float<binary16> refv3_fp_t;
 typedef ac_int<1, false> refv3_bit1_t;
 typedef refv3_bit1_t bit1_t;
+typedef decltype(0.0) refv3_boundary_fp_t;
 
 // Boundary-only linear parameter view. Design data path should consume refv3_fp_t values.
 struct RefV3TernaryLinearParams {
-  const double* weight_f64;
-  const double* bias_f64;
+  const refv3_boundary_fp_t* weight_f64;
+  const refv3_boundary_fp_t* bias_f64;
 };
 
-static inline refv3_fp_t refv3_fp_from_double(double v) {
+static inline refv3_fp_t refv3_fp_from_double(refv3_boundary_fp_t v) {
   return refv3_fp_t(v);
 }
 
 static inline RefV3TernaryLinearParams refv3_make_ternary_linear_params(
-  const double* weight,
-  const double* bias) {
+  const refv3_boundary_fp_t* weight,
+  const refv3_boundary_fp_t* bias) {
   RefV3TernaryLinearParams params;
   params.weight_f64 = weight;
   params.bias_f64 = bias;
@@ -55,7 +56,7 @@ static inline ac_int<8, true> refv3_quantize_int8_local(refv3_fp_t x, refv3_fp_t
 
 namespace refv3_boundary_detail {
 
-static inline ac_int<2, true> decode_ternary_weight_sign_i2(double w) {
+static inline ac_int<2, true> decode_ternary_weight_sign_i2(refv3_boundary_fp_t w) {
   if (w == 1.0) return ac_int<2, true>(1);
   if (w == -1.0) return ac_int<2, true>(-1);
   if (w == 0.0) return ac_int<2, true>(0);
@@ -85,13 +86,13 @@ static inline refv3_fp_t refv3_linear_bias_fp_at(
 }
 
 #if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
-static inline double refv3_boundary_linear_weight_f64_at(
+static inline refv3_boundary_fp_t refv3_boundary_linear_weight_f64_at(
   const RefV3TernaryLinearParams& params,
   int idx) {
   return params.weight_f64[idx];
 }
 
-static inline double refv3_boundary_linear_bias_f64_at(
+static inline refv3_boundary_fp_t refv3_boundary_linear_bias_f64_at(
   const RefV3TernaryLinearParams& params,
   int idx) {
   return params.bias_f64[idx];
