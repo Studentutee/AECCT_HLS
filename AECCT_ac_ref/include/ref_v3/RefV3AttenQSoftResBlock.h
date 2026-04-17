@@ -13,6 +13,14 @@ public:
 
   bool run(int lid,
            const RefRunConfig& run_cfg,
+           ac_channel<RefV3AttentionInputPayload>& in_xwork_ch,
+           ac_channel<RefV3AttentionKPayload>& in_k_payload_ch,
+           ac_channel<RefV3AttentionVPayload>& in_v_payload_ch,
+           ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const;
+
+  // Compatibility wrapper for token-stream callers; mainline should pass X_WORK payload.
+  bool run(int lid,
+           const RefRunConfig& run_cfg,
            ac_channel<RefV3AttentionTokenVectorPayload>& query_token_ch,
            ac_channel<RefV3AttentionKPayload>& in_k_payload_ch,
            ac_channel<RefV3AttentionVPayload>& in_v_payload_ch,

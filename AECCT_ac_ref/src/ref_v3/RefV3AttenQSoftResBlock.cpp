@@ -72,7 +72,7 @@ RefV3AttenQSoftResBlock::RefV3AttenQSoftResBlock() {}
 
 bool RefV3AttenQSoftResBlock::run(int lid,
                                   const RefRunConfig& run_cfg,
-                                  ac_channel<RefV3AttentionTokenVectorPayload>& query_token_ch,
+                                  ac_channel<RefV3AttentionInputPayload>& in_xwork_ch,
                                   ac_channel<RefV3AttentionKPayload>& in_k_payload_ch,
                                   ac_channel<RefV3AttentionVPayload>& in_v_payload_ch,
                                   ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const {
@@ -81,6 +81,14 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   }
 
   const int expected_layer_id = lid;
+  const RefV3AttentionInputPayload xwork_payload = in_xwork_ch.read();
+  if (!REFV3_payload_header_matches_shape(xwork_payload.header)) {
+    return false;
+  }
+  if (xwork_payload.header.layer_id.to_int() != expected_layer_id) {
+    return false;
+  }
+
   const refv3_fp_t s_x_q = refv3_attn_input_s_x_fp_local_only(lid);
   const refv3_fp_t s_x_o = refv3_attn_output_s_x_fp_local_only(lid);
   const RefV3TernaryLinearParams q_params = refv3_attn_linear_params_fp_local_only(lid, 0);
@@ -92,8 +100,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
 
   RefV3AttentionKPayload in_k_payload;
   RefV3AttentionVPayload in_v_payload;
-  RefV3AttentionPayloadHeader header_ref;
-  bool header_init = false;
+  const RefV3AttentionPayloadHeader header_ref = xwork_payload.header;
 
   in_k_payload = in_k_payload_ch.read();
   in_v_payload = in_v_payload_ch.read();
@@ -105,10 +112,15 @@ bool RefV3AttenQSoftResBlock::run(int lid,
       in_v_payload.header.layer_id.to_int() != expected_layer_id) {
     return false;
   }
-
-  bool query_token_seen[REFV3_TOKENS_T];
-  REFV3_QSOFTRES_QUERY_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
-    query_token_seen[token] = false;
+  if (in_k_payload.header.layer_id != xwork_payload.header.layer_id ||
+      in_k_payload.header.token_rows != xwork_payload.header.token_rows ||
+      in_k_payload.header.dim_cols != xwork_payload.header.dim_cols ||
+      in_v_payload.header.layer_id != xwork_payload.header.layer_id) {
+    return false;
+  }
+  if (in_v_payload.header.token_rows != xwork_payload.header.token_rows ||
+      in_v_payload.header.dim_cols != xwork_payload.header.dim_cols) {
+    return false;
   }
 
   refv3_fp_t q_vec[REFV3_D_MODEL];
@@ -128,37 +140,13 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   const refv3_fp_t inv_sqrt_dh(0.5f);
   const refv3_fp_t zero(0.0f);
 
-  REFV3_QSOFTRES_TOKEN_STREAM_LOOP: for (int token_rx = 0; token_rx < REFV3_TOKENS_T; ++token_rx) {
-    const RefV3AttentionTokenVectorPayload query_token_payload = query_token_ch.read();
-    if (!REFV3_payload_header_matches_shape(query_token_payload.header)) {
-      return false;
-    }
-    if (query_token_payload.header.layer_id.to_int() != expected_layer_id) {
-      return false;
-    }
-    if (!header_init) {
-      header_ref = query_token_payload.header;
-      header_init = true;
-    } else {
-      if (query_token_payload.header.layer_id != header_ref.layer_id ||
-          query_token_payload.header.token_rows != header_ref.token_rows ||
-          query_token_payload.header.dim_cols != header_ref.dim_cols) {
-        return false;
-      }
-    }
-
-    const int q_token = query_token_payload.token_row.to_int();
-    if (q_token < 0 || q_token >= REFV3_TOKENS_T) {
-      return false;
-    }
-    if (query_token_seen[q_token]) {
-      return false;
-    }
-    query_token_seen[q_token] = true;
-
+  // Attention residual base is sourced from full-matrix X_WORK, not query token FIFO.
+  REFV3_QSOFTRES_TOKEN_LOOP: for (int q_token = 0; q_token < REFV3_TOKENS_T; ++q_token) {
     REFV3_QSOFTRES_PREP_DIM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
-      query_token_buf[d] = query_token_payload.token_vec[d];
-      ln_token_buf[d] = query_token_payload.token_vec[d];
+      const int x_idx = REFV3_flatten_row_major_index(q_token, d);
+      const refv3_fp_t x_token_value = xwork_payload.x_flat[x_idx];
+      query_token_buf[d] = x_token_value;
+      ln_token_buf[d] = x_token_value;
       out_acc_tile[d] = zero;
     }
 
@@ -315,7 +303,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
 
     RefV3AttentionTokenVectorPayload out_token_payload;
     out_token_payload.header = header_ref;
-    out_token_payload.token_row = query_token_payload.token_row;
+    out_token_payload.token_row = ac_int<16, false>(q_token);
     REFV3_QSOFTRES_TOKEN_OUT_DIM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
       out_token_payload.token_vec[d] = out_acc_tile[d] + ln_token_buf[d];
     }
@@ -323,6 +311,62 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   }
 
   return true;
+}
+
+bool RefV3AttenQSoftResBlock::run(int lid,
+                                  const RefRunConfig& run_cfg,
+                                  ac_channel<RefV3AttentionTokenVectorPayload>& query_token_ch,
+                                  ac_channel<RefV3AttentionKPayload>& in_k_payload_ch,
+                                  ac_channel<RefV3AttentionVPayload>& in_v_payload_ch,
+                                  ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const {
+  RefV3AttentionInputPayload xwork_payload;
+  bool header_init = false;
+  bool query_token_seen[REFV3_TOKENS_T];
+  REFV3_QSOFTRES_COMPAT_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
+    query_token_seen[token] = false;
+  }
+
+  REFV3_QSOFTRES_COMPAT_READ_QUERY_LOOP: for (int token_rx = 0; token_rx < REFV3_TOKENS_T; ++token_rx) {
+    const RefV3AttentionTokenVectorPayload query_token_payload = query_token_ch.read();
+    if (!REFV3_payload_header_matches_shape(query_token_payload.header)) {
+      return false;
+    }
+    if (query_token_payload.header.layer_id.to_int() != lid) {
+      return false;
+    }
+    if (!header_init) {
+      xwork_payload.header = query_token_payload.header;
+      header_init = true;
+    } else {
+      if (query_token_payload.header.layer_id != xwork_payload.header.layer_id ||
+          query_token_payload.header.token_rows != xwork_payload.header.token_rows ||
+          query_token_payload.header.dim_cols != xwork_payload.header.dim_cols) {
+        return false;
+      }
+    }
+
+    const int q_token = query_token_payload.token_row.to_int();
+    if (q_token < 0 || q_token >= REFV3_TOKENS_T) {
+      return false;
+    }
+    if (query_token_seen[q_token]) {
+      return false;
+    }
+    query_token_seen[q_token] = true;
+
+    REFV3_QSOFTRES_COMPAT_COPY_DIM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
+      const int x_idx = REFV3_flatten_row_major_index(q_token, d);
+      xwork_payload.x_flat[x_idx] = query_token_payload.token_vec[d];
+    }
+  }
+
+  if (!header_init) {
+    return false;
+  }
+
+  ac_channel<RefV3AttentionInputPayload> in_xwork_ch;
+  in_xwork_ch.write(xwork_payload);
+  return run(lid, run_cfg, in_xwork_ch, in_k_payload_ch, in_v_payload_ch, out_token_ch);
 }
 
 } // namespace ref_v3
