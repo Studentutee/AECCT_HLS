@@ -80,6 +80,8 @@ try {
         "AECCT_ac_ref\src\ref_v3\RefV3AttenKvBlock.cpp",
         "AECCT_ac_ref\src\ref_v3\RefV3AttenQSoftResBlock.cpp",
         "AECCT_ac_ref\src\ref_v3\RefV3LayerNormBlock.cpp",
+        "AECCT_ac_ref\src\ref_v3\RefV3FfnLinear0ReluBlock.cpp",
+        "AECCT_ac_ref\src\ref_v3\RefV3FfnLinear1ResidualBlock.cpp",
         "AECCT_ac_ref\src\ref_v3\RefV3FinalPassABlock.cpp",
         "AECCT_ac_ref\src\ref_v3\RefV3FinalPassBBlock.cpp"
     )

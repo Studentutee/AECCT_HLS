@@ -32,18 +32,15 @@ static int fail(const char* msg) {
   return 1;
 }
 
-static aecct_ref::ref_v3::RefV3AttentionTokenVectorPayload make_input_token_payload(int token) {
+static aecct_ref::ref_v3::RefV3PreprocInputPayload make_preproc_input_payload() {
   using namespace aecct_ref::ref_v3;
 
-  RefV3AttentionTokenVectorPayload payload;
-  payload.header.layer_id = ac_int<8, false>(REFV3_LAYER0_ID);
-  payload.header.token_rows = ac_int<16, false>(REFV3_TOKENS_T);
-  payload.header.dim_cols = ac_int<16, false>(REFV3_D_MODEL);
-  payload.token_row = ac_int<16, false>(token);
+  RefV3PreprocInputPayload payload;
+  payload.var_count = ac_int<16, false>(REFV3_VAR_N);
 
-  REFV3_TB_INPUT_DIM_INIT_LOOP: for (int dim = 0; dim < REFV3_D_MODEL; ++dim) {
-    const float seed = static_cast<float>((token * REFV3_D_MODEL) + dim);
-    payload.token_vec[dim] = refv3_fp_t(seed * 0.001953125f);
+  REFV3_TB_INPUT_VAR_INIT_LOOP: for (int n = 0; n < REFV3_VAR_N; ++n) {
+    const float seed = static_cast<float>((n % 9) - 4);
+    payload.input_y[n] = refv3_fp_t(seed * 0.125f);
   }
   return payload;
 }
@@ -56,15 +53,13 @@ CCS_MAIN(int argc, char** argv) {
 
   using namespace aecct_ref::ref_v3;
 
-  ac_channel<RefV3AttentionTokenVectorPayload> in_token_ch;
+  ac_channel<RefV3PreprocInputPayload> in_preproc_ch;
   ac_channel<RefV3AttentionTokenVectorPayload> out_token_ch;
 
-  REFV3_TB_WRITE_INPUT_TOKEN_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
-    in_token_ch.write(make_input_token_payload(token));
-  }
+  in_preproc_ch.write(make_preproc_input_payload());
 
   RefV3CatapultTop dut;
-  if (!dut.run(in_token_ch, out_token_ch)) {
+  if (!dut.run(in_preproc_ch, out_token_ch)) {
     CCS_RETURN(fail("dut.run returned false"));
   }
 
@@ -78,8 +73,8 @@ CCS_MAIN(int argc, char** argv) {
     if (!REFV3_payload_header_matches_shape(out_payload.header)) {
       CCS_RETURN(fail("output header shape mismatch"));
     }
-    if (out_payload.header.layer_id.to_int() != REFV3_LAYER0_ID) {
-      CCS_RETURN(fail("output layer_id mismatch"));
+    if (out_payload.header.layer_id.to_int() != REFV3_LAYER1_ID) {
+      CCS_RETURN(fail("output layer_id mismatch (expected layer1)"));
     }
 
     const int token = out_payload.token_row.to_int();
