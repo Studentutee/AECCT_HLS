@@ -12,9 +12,10 @@ class RefV3MidNormPath {
 public:
   RefV3MidNormPath() {}
 
-  // Mid-stage bridge: layer0 token stream in -> mid norm token stream -> layer1 full-matrix payload out.
+  // Main path: preserve token stream while emitting a side full-matrix snapshot for layer1 ownership boundary.
   bool run(const RefRunConfig& run_cfg,
            ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+           ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch,
            ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) {
     ac_channel<RefV3AttentionTokenVectorPayload> ch_midnorm_in;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_midnorm_out;
@@ -66,6 +67,8 @@ public:
       }
       token_seen[token] = true;
 
+      out_token_ch.write(out_payload);
+
       REFV3_MIDNORM_PACK_XWORK_DIM_LOOP: for (int dim = 0; dim < REFV3_D_MODEL; ++dim) {
         const int idx = REFV3_flatten_row_major_index(token, dim);
         xwork_payload.x_flat[idx] = out_payload.token_vec[dim];
@@ -76,10 +79,35 @@ public:
     return true;
   }
 
+  // Compatibility wrapper: keep xwork-only callers available.
+  bool run(const RefRunConfig& run_cfg,
+           ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+           ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) {
+    ac_channel<RefV3AttentionTokenVectorPayload> ch_token_local_only;
+    if (!run(run_cfg, in_token_ch, ch_token_local_only, out_xwork_ch)) {
+      return false;
+    }
+    REFV3_MIDNORM_SIDE_TOKEN_DRAIN_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
+      (void)ch_token_local_only.read();
+    }
+    return true;
+  }
+
+  // Compatibility wrapper: keep token-only callers available.
+  bool run(const RefRunConfig& run_cfg,
+           ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+           ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
+    ac_channel<RefV3AttentionInputPayload> ch_xwork_local_only;
+    if (!run(run_cfg, in_token_ch, out_token_ch, ch_xwork_local_only)) {
+      return false;
+    }
+    (void)ch_xwork_local_only.read();
+    return true;
+  }
+
 private:
   RefV3LayerNormBlock mid_norm_block_;
 };
 
 } // namespace ref_v3
 } // namespace aecct_ref
-

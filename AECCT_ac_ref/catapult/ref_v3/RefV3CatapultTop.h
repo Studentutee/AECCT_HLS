@@ -32,26 +32,34 @@ public:
     ac_channel<RefV3PreprocInputPayload>& in_preproc_ch,
     ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
     RefRunConfig run_cfg{};
-    ac_channel<RefV3AttentionInputPayload> ch_xwork0;
+    ac_channel<RefV3AttentionTokenVectorPayload> ch_preproc_to_l0_attn;
+    ac_channel<RefV3AttentionInputPayload> ch_xwork0_side;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_l0_attn_to_ffn;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_l0_ffn_to_midnorm;
-    ac_channel<RefV3AttentionInputPayload> ch_xwork1;
+    ac_channel<RefV3AttentionTokenVectorPayload> ch_midnorm_to_l1_attn;
+    ac_channel<RefV3AttentionInputPayload> ch_xwork1_side;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_l1_attn_to_ffn;
 
-    // Physical two-layer bring-up datapath with explicit stage boundaries and channel ownership.
-    if (!preproc_block_.run(in_preproc_ch, ch_xwork0)) {
+    // Main transport path is token stream; xwork payloads are kept as local-only side snapshots.
+    if (!preproc_block_.run(in_preproc_ch, ch_preproc_to_l0_attn, ch_xwork0_side)) {
       return false;
     }
-    if (!layer0_attn_ln_path_.run(run_cfg, ch_xwork0, ch_l0_attn_to_ffn)) {
+    const RefV3AttentionInputPayload xwork0_side_snapshot_local_only = ch_xwork0_side.read();
+    (void)xwork0_side_snapshot_local_only;
+
+    if (!layer0_attn_ln_path_.run(run_cfg, ch_preproc_to_l0_attn, ch_l0_attn_to_ffn)) {
       return false;
     }
     if (!layer0_ffn_path_.run(ch_l0_attn_to_ffn, ch_l0_ffn_to_midnorm)) {
       return false;
     }
-    if (!mid_norm_path_.run(run_cfg, ch_l0_ffn_to_midnorm, ch_xwork1)) {
+    if (!mid_norm_path_.run(run_cfg, ch_l0_ffn_to_midnorm, ch_midnorm_to_l1_attn, ch_xwork1_side)) {
       return false;
     }
-    if (!layer1_attn_ln_path_.run(run_cfg, ch_xwork1, ch_l1_attn_to_ffn)) {
+    const RefV3AttentionInputPayload xwork1_side_snapshot_local_only = ch_xwork1_side.read();
+    (void)xwork1_side_snapshot_local_only;
+
+    if (!layer1_attn_ln_path_.run(run_cfg, ch_midnorm_to_l1_attn, ch_l1_attn_to_ffn)) {
       return false;
     }
     if (!layer1_ffn_path_.run(ch_l1_attn_to_ffn, out_token_ch)) {
