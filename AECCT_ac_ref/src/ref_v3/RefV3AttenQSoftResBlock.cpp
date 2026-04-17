@@ -118,8 +118,12 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   refv3_fp_t query_token_buf[REFV3_D_MODEL];
   refv3_fp_t ln_token_buf[REFV3_D_MODEL];
 
+#if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
   const bool use_softmax_exact =
     (run_cfg.legacy.algo_variant == RefAlgoVariant::RESERVED_SOFTMAX_ALT);
+#else
+  (void)run_cfg;
+#endif
 
   const refv3_fp_t inv_sqrt_dh(0.5f);
   const refv3_fp_t zero(0.0f);

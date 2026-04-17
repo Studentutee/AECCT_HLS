@@ -45,7 +45,7 @@ static inline refv3_fp_t REFV3_ln_inv_sqrt_synth(refv3_fp_t x) {
     x_safe = one;
   }
 
-#if REFV3_LN_INV_SQRT_SYNTH_POLICY == REFV3_LN_INV_SQRT_SYNTH_LUT_PLUS_NR1
+#if REFV3_LN_INV_MODE == REFV3_LN_INV_MODE_LUT_NR1
   refv3_fp_t inv_std = ref_inv_sqrt_lut_plus_nr1(x_safe);
 #else
   refv3_fp_t inv_std = ref_inv_sqrt_lut_only(x_safe);
@@ -70,7 +70,7 @@ static inline refv3_fp_t REFV3_softmax_rcp_synth(refv3_fp_t sumexp) {
     return zero;
   }
 
-#if REFV3_SOFTMAX_RCP_SYNTH_POLICY == REFV3_SOFTMAX_RCP_SYNTH_LUT_PLUS_NR1
+#if REFV3_SOFTMAX_RCP_MODE == REFV3_SOFTMAX_RCP_MODE_LUT_NR1
   return ref_softmax_rcp_lut_plus_nr1(sumexp);
 #else
   return ref_softmax_rcp_lut_only(sumexp);

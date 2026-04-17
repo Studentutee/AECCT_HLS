@@ -57,6 +57,8 @@ static void layernorm_token_32_local(
   }
 #endif
 
+// Host-only legacy compare path; synthesis surface must keep a single baseline path.
+#if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
   if (run_cfg.legacy.ln_mode == RefLayerNormMode::LN_SUM_SUMSQ_APPROX) {
     refv3_fp_t sum = zero;
     refv3_fp_t sumsq = zero;
@@ -92,6 +94,9 @@ static void layernorm_token_32_local(
     }
     return;
   }
+#else
+  (void)run_cfg;
+#endif
 
   refv3_fp_t sum = zero;
   REFV3_LN_BASE_SUM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
