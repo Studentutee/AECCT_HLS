@@ -145,6 +145,74 @@ echo "CDS_LIC_FILE=${CDS_LIC_FILE:-}"
 
 若上述 license 變數都為空，且本輪不是互動 login shell，應先改用互動 login 模式重跑，再做 blocker 結論。
 
+### 已驗證的成功 recipe（ref_v3 / 2026-04）
+
+目前已知可重現成功 license checkout 的方法，不是 alias `hls-server`，而是：
+
+- 直接 SSH 到 `peter@140.124.41.193`
+- port 使用 `2190`
+- 強制分配 TTY：`ssh -tt`
+- 使用 repo 內已驗證的 key / known_hosts
+- 遠端預設 shell 是 `tcsh`
+- 先看到 login banner / tool initialization，再做 Catapult probe
+
+成功環境的最小特徵：
+
+```bash
+SHELL=/bin/tcsh
+TERM=xterm-256color
+LM_LICENSE_FILE=5280@lshc:26585@lshc:1717@lshc
+MGLS_LICENSE_FILE=
+CDS_LIC_FILE=
+```
+
+成功 license probe 的最小命令：
+
+```bash
+printf "exit\n" | /cad/mentor/Catapult/2025.3/Mgc_home/bin/catapult -shell
+```
+
+成功時至少要看到：
+- `Connected to license server ... (LIC-13)`
+- `Catapult product license successfully checked out ... (LIC-14)`
+
+### 已驗證的 SSH 入口（Windows/PowerShell 外層）
+
+```powershell
+ssh -tt -i .codex_ssh/id_codex `
+  -o UserKnownHostsFile=.codex_ssh/known_hosts `
+  -o StrictHostKeyChecking=yes `
+  -p 2190 peter@140.124.41.193
+```
+
+### tcsh 相容的遠端執行範例
+
+```tcsh
+set REPO_ROOT=/home/peter/AECCT/AECCT_HLS-master
+set TS=`date +%Y%m%d_%H%M%S`
+set OUTDIR=$REPO_ROOT/build/ref_v3/catapult_compile_check_tty_$TS
+set CATAPULT_BIN=/cad/mentor/Catapult/2025.3/Mgc_home/bin/catapult
+set PROJECT_TCL=$REPO_ROOT/scripts/catapult/ref_v3/project.tcl
+
+mkdir -p $OUTDIR/project
+cd $REPO_ROOT
+setenv AECCT_REFV3_REPO_ROOT $REPO_ROOT
+setenv AECCT_REFV3_CATAPULT_OUTDIR $OUTDIR/project
+
+echo "exit" | $CATAPULT_BIN -shell |& tee $OUTDIR/license_probe.log
+$CATAPULT_BIN -shell -file $PROJECT_TCL -logfile $OUTDIR/catapult_internal.log |& tee $OUTDIR/catapult_console.log
+```
+
+### Runbook 判讀規則更新
+
+- 若 `ssh -tt` + 直接 IP/port + login banner + `LM_LICENSE_FILE` 都已存在，則**不可**再把 blocker 寫成 `TTY_REQUIRED_INTERACTIVE_LOGIN_UNAVAILABLE`。
+- 一旦 transcript 已出現 `go compile`，第一個真 blocker 必須往後推到：
+  - Tcl / project setup
+  - include / search path
+  - source compile
+  - wrapper / entry / SCVerify-related compile
+- `messages.txt` 搜尋時，除了專案 outdir，也要檢查 Catapult 產生的 solution 目錄（例如 `Catapult_15/SIF/messages.txt`）。
+
 ---
 
 ## 官方依據（Catapult 2025.3）
