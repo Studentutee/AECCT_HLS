@@ -54,49 +54,29 @@ CCS_MAIN(int argc, char** argv) {
   using namespace aecct_ref::ref_v3;
 
   ac_channel<RefV3PreprocInputPayload> in_preproc_ch;
-  ac_channel<RefV3AttentionTokenVectorPayload> out_token_ch;
+  ac_channel<RefV3FinalOutputPayload> out_payload_ch;
 
   in_preproc_ch.write(make_preproc_input_payload());
 
   RefV3CatapultTop dut;
-  if (!dut.run(in_preproc_ch, out_token_ch)) {
+  if (!dut.run(in_preproc_ch, out_payload_ch)) {
     CCS_RETURN(fail("dut.run returned false"));
   }
 
-  bool token_seen[REFV3_TOKENS_T];
-  REFV3_TB_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
-    token_seen[token] = false;
+  const RefV3FinalOutputPayload out_payload = out_payload_ch.read();
+  if (!REFV3_var_count_matches_shape(out_payload.var_count)) {
+    CCS_RETURN(fail("output var_count mismatch"));
   }
 
-  REFV3_TB_READ_OUTPUT_TOKEN_LOOP: for (int token_rx = 0; token_rx < REFV3_TOKENS_T; ++token_rx) {
-    const RefV3AttentionTokenVectorPayload out_payload = out_token_ch.read();
-    if (!REFV3_payload_header_matches_shape(out_payload.header)) {
-      CCS_RETURN(fail("output header shape mismatch"));
-    }
-    if (out_payload.header.layer_id.to_int() != REFV3_LAYER1_ID) {
-      CCS_RETURN(fail("output layer_id mismatch (expected layer1)"));
+  REFV3_TB_VALIDATE_LOGITS_LOOP: for (int n = 0; n < REFV3_VAR_N; ++n) {
+    const refv3_fp_t logit = out_payload.logits[n];
+    if (logit != logit) {
+      CCS_RETURN(fail("output logits contains NaN"));
     }
 
-    const int token = out_payload.token_row.to_int();
-    if (token < 0 || token >= REFV3_TOKENS_T) {
-      CCS_RETURN(fail("output token index out of range"));
-    }
-    if (token_seen[token]) {
-      CCS_RETURN(fail("duplicate output token"));
-    }
-    token_seen[token] = true;
-
-    REFV3_TB_VALIDATE_VALUE_LOOP: for (int dim = 0; dim < REFV3_D_MODEL; ++dim) {
-      const refv3_fp_t v = out_payload.token_vec[dim];
-      if (v != v) {
-        CCS_RETURN(fail("output token contains NaN"));
-      }
-    }
-  }
-
-  REFV3_TB_VALIDATE_TOKEN_SEEN_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
-    if (!token_seen[token]) {
-      CCS_RETURN(fail("missing output token"));
+    const int pred_bit = out_payload.x_pred[n].to_int();
+    if (pred_bit != 0 && pred_bit != 1) {
+      CCS_RETURN(fail("output x_pred out of range"));
     }
   }
 
@@ -107,3 +87,4 @@ CCS_MAIN(int argc, char** argv) {
   std::printf("PASS: tb_ref_v3_catapult_scverify\n");
   CCS_RETURN(0);
 }
+
