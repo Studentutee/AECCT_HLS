@@ -118,6 +118,35 @@ REMOTE_REPO_ROOT="/abs/path/on/server/to/repo"
 
 ---
 
+## 互動模式與 License 環境守則（2026-04 經驗）
+
+在同一台主機上，`catapult -shell` 的 license 結果可能因為「執行模式」不同而不同：
+
+- 非互動、非 login shell（例如單純 `ssh ... "bash -s"`）常見現象：
+  - `TERM=dumb`
+  - `LM_LICENSE_FILE` / `MGLS_LICENSE_FILE` / `CDS_LIC_FILE` 為空
+  - 出現 `mgls_errno = 515`、`License server machine is down or not responding`
+- 互動 login shell（例如 `ssh -tt` + 站點預設 shell 初始化）常見現象：
+  - `TERM=xterm-256color`（或其他互動終端值）
+  - `LM_LICENSE_FILE` 被站點初始化腳本正確設置
+  - 可看到 `LIC-13` / `LIC-14` 成功訊息
+
+因此遇到 license 失敗時，先判定是否為**環境模式不一致**，不要直接定性為 license server 故障。
+
+最低限度必記錄：
+
+```bash
+echo "SHELL=$SHELL"
+echo "TERM=${TERM:-}"
+echo "LM_LICENSE_FILE=${LM_LICENSE_FILE:-}"
+echo "MGLS_LICENSE_FILE=${MGLS_LICENSE_FILE:-}"
+echo "CDS_LIC_FILE=${CDS_LIC_FILE:-}"
+```
+
+若上述 license 變數都為空，且本輪不是互動 login shell，應先改用互動 login 模式重跑，再做 blocker 結論。
+
+---
+
 ## 官方依據（Catapult 2025.3）
 
 以下是這份 Runbook 採用 shell flow 的依據：
@@ -304,9 +333,15 @@ test -d "$REPO_ROOT"
 test -f "$PROJECT_TCL"
 mkdir -p "$CATAPULT_OUTDIR"
 "$CATAPULT_BIN" -version | tee "$CATAPULT_OUTDIR/catapult_version.txt"
+echo "SHELL=$SHELL" | tee -a "$CATAPULT_OUTDIR/catapult_version.txt"
+echo "TERM=${TERM:-}" | tee -a "$CATAPULT_OUTDIR/catapult_version.txt"
+echo "LM_LICENSE_FILE=${LM_LICENSE_FILE:-}" | tee -a "$CATAPULT_OUTDIR/catapult_version.txt"
+echo "MGLS_LICENSE_FILE=${MGLS_LICENSE_FILE:-}" | tee -a "$CATAPULT_OUTDIR/catapult_version.txt"
+echo "CDS_LIC_FILE=${CDS_LIC_FILE:-}" | tee -a "$CATAPULT_OUTDIR/catapult_version.txt"
 ```
 
 若任何一步失敗，停止並回報，不可進入 PASS。
+若 license 變數全空且執行模式為非互動 shell，先改用互動 login shell 重跑，再決定是否屬於真正 license blocker。
 
 ### Step 3：保存 exact command
 把實際要執行的命令完整寫入：

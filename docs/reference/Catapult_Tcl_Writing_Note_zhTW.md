@@ -23,6 +23,19 @@
   - **Runbook 管怎麼跑**
   - **本 note 管 AECCT 的 Tcl 要跑什麼**
 
+## 2026-04 執行模式差異經驗（cross-reference）
+- 這次實機經驗確認：同一台主機、同一個 binary，`catapult -shell` 是否能 checkout license，會受到 shell 啟動模式影響。
+- 非互動/非 login shell 可能出現：
+  - `TERM=dumb`
+  - `LM_LICENSE_FILE` 空值
+  - `mgls_errno=515`
+- 互動 login shell（例如 `ssh -tt`）可能出現：
+  - 站點初始化完成
+  - `LM_LICENSE_FILE` 正常
+  - `LIC-13` / `LIC-14` 成功
+- 這是**執行環境與 runbook 問題**，不是 Tcl 語法本身的設計規則。
+- 因此本 note 只保留 cross-reference；具體檢查與處置流程請以 `skills/catapult_shell_runbook/SKILL.md` 為準。
+
 ## 目前專案的 canonical synth entry
 - Canonical synth entry（經真機 transcript 修正後）：`aecct::TopManagedAttentionChainCatapultTop`
 - `run` 仍是實際被 synthesize 的 interface method，但 `solution design set ... -top` 應以 class-level target 為主，而不是 `TopManagedAttentionChainCatapultTop::run`。
