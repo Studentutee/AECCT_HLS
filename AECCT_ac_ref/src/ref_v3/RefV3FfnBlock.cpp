@@ -121,8 +121,8 @@ bool RefV3FfnBlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_c
     quant_linear_token_32_to128_native(
       token_payload.token_vec,
       ff1_params,
-      REFV3_SCALE_L0_FF1_S_X,
-      REFV3_INV_L0_FFN_W1,
+      refv3_fp_t(REFV3_SCALE_L0_FF1_S_X),
+      refv3_fp_t(REFV3_INV_L0_FFN_W1),
       ffn1_token_buf);
 
     REFV3_FFN_RELU_LOOP: for (int i = 0; i < REFV3_FF_DIM; ++i) {
@@ -134,8 +134,8 @@ bool RefV3FfnBlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_c
     quant_linear_token_128_to32_native(
       ffn1_token_buf,
       ff2_params,
-      REFV3_SCALE_L0_FF2_S_X,
-      REFV3_INV_L0_FFN_W2,
+      refv3_fp_t(REFV3_SCALE_L0_FF2_S_X),
+      refv3_fp_t(REFV3_INV_L0_FFN_W2),
       ffn2_token_buf);
 
     RefV3AttentionTokenVectorPayload out_payload;

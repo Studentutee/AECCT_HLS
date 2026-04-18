@@ -57,8 +57,7 @@ bool RefV3FfnLinear0ReluBlock::run(
   const int expected_layer_id = lid;
   const RefV3TernaryLinearParams ff1_params = refv3_ffn_w1_params_fp_local_only(lid);
   const refv3_fp_t ff1_s_x = refv3_ffn_w1_s_x_fp_local_only(lid);
-  const refv3_fp_t ff1_s_w = refv3_ffn_w1_s_w_fp_local_only(lid);
-  const refv3_fp_t inv_ffn_w1 = refv3_fp_t(1.0f) / (ff1_s_x * ff1_s_w);
+  const refv3_fp_t inv_ffn_w1 = REFV3_ffn_w1_inv_sxsw_const(lid);
 
   RefV3AttentionPayloadHeader header_ref;
   bool header_init = false;

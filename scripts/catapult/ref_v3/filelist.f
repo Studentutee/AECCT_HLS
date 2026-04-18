@@ -10,4 +10,3 @@ AECCT_ac_ref/src/ref_v3/RefV3FfnLinear1ResidualBlock.cpp
 AECCT_ac_ref/src/ref_v3/RefV3FinalPassABlock.cpp
 AECCT_ac_ref/src/ref_v3/RefV3FinalPassBBlock.cpp
 AECCT_ac_ref/src/ref_v3/RefV3WeightsFp16LocalOnly.cpp
-AECCT_ac_ref/tb_catapult/ref_v3/tb_ref_v3_catapult_scverify.cpp

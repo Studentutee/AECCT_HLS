@@ -52,7 +52,7 @@ struct RefV3WeightsFp16CacheLocalOnly {
   refv3_fp_t endnorm_bias[w_decoder_norm_bias_numel];
 
   refv3_fp_t final_embed_weight[w_oned_final_embed_0_weight_numel];
-  refv3_fp_t final_embed_bias;
+  refv3_fp_t final_embed_bias = refv3_fp_t(0.0f);
 
   refv3_fp_t out_fc_weight[w_out_fc_weight_numel];
   refv3_fp_t out_fc_bias[w_out_fc_bias_numel];

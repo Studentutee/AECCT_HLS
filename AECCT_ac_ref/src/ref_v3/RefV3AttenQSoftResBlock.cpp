@@ -93,10 +93,8 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   const refv3_fp_t s_x_o = refv3_attn_output_s_x_fp_local_only(lid);
   const RefV3TernaryLinearParams q_params = refv3_attn_linear_params_fp_local_only(lid, 0);
   const RefV3TernaryLinearParams o_params = refv3_attn_linear_params_fp_local_only(lid, 3);
-  const refv3_fp_t q_s_w = refv3_attn_linear_s_w_fp_local_only(lid, 0);
-  const refv3_fp_t o_s_w = refv3_attn_linear_s_w_fp_local_only(lid, 3);
-  const refv3_fp_t inv_attn_q = refv3_fp_t(1.0f) / (s_x_q * q_s_w);
-  const refv3_fp_t inv_attn_o = refv3_fp_t(1.0f) / (s_x_o * o_s_w);
+  const refv3_fp_t inv_attn_q = REFV3_attn_inv_sxsw_const(lid, 0);
+  const refv3_fp_t inv_attn_o = REFV3_attn_inv_sxsw_const(lid, 3);
 
   RefV3AttentionKPayload in_k_payload;
   RefV3AttentionVPayload in_v_payload;

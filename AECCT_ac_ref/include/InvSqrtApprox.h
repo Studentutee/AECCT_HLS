@@ -8,12 +8,12 @@ namespace aecct_ref {
 
 typedef ac_ieee_float<binary32> ref_invsqrt_fp32_t;
 
-static const int REF_INV_SQRT_LUT_SIZE = 512;
-static const float REF_INV_SQRT_X_MIN = 1.000000000e-02f;
-static const float REF_INV_SQRT_X_MAX = 8.000000000e+00f;
-static const float REF_INV_SQRT_IDX_SCALE = 6.395494368e+01f;
+static constexpr int REF_INV_SQRT_LUT_SIZE = 512;
+static constexpr float REF_INV_SQRT_X_MIN = 1.000000000e-02f;
+static constexpr float REF_INV_SQRT_X_MAX = 8.000000000e+00f;
+static constexpr float REF_INV_SQRT_IDX_SCALE = 6.395494368e+01f;
 
-static const float g_ref_inv_sqrt_lut[512] = {
+static constexpr float g_ref_inv_sqrt_lut[512] = {
   1.000000000e+01f,
   6.245609145e+00f,
   4.922346255e+00f,

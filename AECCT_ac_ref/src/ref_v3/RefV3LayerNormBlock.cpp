@@ -14,7 +14,7 @@ static void layernorm_token_32_local(
   const RefV3TernaryLinearParams& params,
   refv3_fp_t y_token[REFV3_D_MODEL]) {
   const refv3_fp_t eps(1.0e-5f);
-  const refv3_fp_t inv_d = REFV3_INV_D_MODEL;
+  const refv3_fp_t inv_d(REFV3_INV_D_MODEL);
   const refv3_fp_t zero(0.0f);
   const refv3_fp_t one(1.0f);
 

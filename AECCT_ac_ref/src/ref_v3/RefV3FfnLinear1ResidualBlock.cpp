@@ -58,8 +58,7 @@ bool RefV3FfnLinear1ResidualBlock::run(
   const int expected_layer_id = lid;
   const RefV3TernaryLinearParams ff2_params = refv3_ffn_w2_params_fp_local_only(lid);
   const refv3_fp_t ff2_s_x = refv3_ffn_w2_s_x_fp_local_only(lid);
-  const refv3_fp_t ff2_s_w = refv3_ffn_w2_s_w_fp_local_only(lid);
-  const refv3_fp_t inv_ffn_w2 = refv3_fp_t(1.0f) / (ff2_s_x * ff2_s_w);
+  const refv3_fp_t inv_ffn_w2 = REFV3_ffn_w2_inv_sxsw_const(lid);
 
   bool token_seen[REFV3_TOKENS_T];
   refv3_fp_t linear1_out_buf[REFV3_D_MODEL];

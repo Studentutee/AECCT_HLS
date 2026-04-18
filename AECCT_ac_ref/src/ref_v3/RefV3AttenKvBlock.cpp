@@ -58,10 +58,8 @@ bool RefV3AttenKvBlock::run(int lid,
   const refv3_fp_t s_x_in = refv3_attn_input_s_x_fp_local_only(lid);
   const RefV3TernaryLinearParams k_params = refv3_attn_linear_params_fp_local_only(lid, 1);
   const RefV3TernaryLinearParams v_params = refv3_attn_linear_params_fp_local_only(lid, 2);
-  const refv3_fp_t k_s_w = refv3_attn_linear_s_w_fp_local_only(lid, 1);
-  const refv3_fp_t v_s_w = refv3_attn_linear_s_w_fp_local_only(lid, 2);
-  const refv3_fp_t inv_attn_k = refv3_fp_t(1.0f) / (s_x_in * k_s_w);
-  const refv3_fp_t inv_attn_v = refv3_fp_t(1.0f) / (s_x_in * v_s_w);
+  const refv3_fp_t inv_attn_k = REFV3_attn_inv_sxsw_const(lid, 1);
+  const refv3_fp_t inv_attn_v = REFV3_attn_inv_sxsw_const(lid, 2);
 
   RefV3AttentionKPayload out_k_payload;
   RefV3AttentionVPayload out_v_payload;
