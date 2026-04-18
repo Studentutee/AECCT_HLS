@@ -44,6 +44,8 @@ struct RefV3WeightsFp16CacheLocalOnly {
 
   refv3_fp_t ln0_weight[2][w_decoder_layers_0_sublayer_0_norm_weight_numel];
   refv3_fp_t ln0_bias[2][w_decoder_layers_0_sublayer_0_norm_bias_numel];
+  refv3_fp_t ln1_weight[2][w_decoder_layers_0_sublayer_1_norm_weight_numel];
+  refv3_fp_t ln1_bias[2][w_decoder_layers_0_sublayer_1_norm_bias_numel];
   refv3_fp_t midnorm_weight[w_decoder_norm2_weight_numel];
   refv3_fp_t midnorm_bias[w_decoder_norm2_bias_numel];
   refv3_fp_t endnorm_weight[w_decoder_norm_weight_numel];
@@ -113,6 +115,10 @@ struct RefV3WeightsFp16CacheLocalOnly {
     copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_0_norm_weight, ln0_weight[1]);
     copy_array_to_fp_local_only(w_decoder_layers_0_sublayer_0_norm_bias, ln0_bias[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_0_norm_bias, ln0_bias[1]);
+    copy_array_to_fp_local_only(w_decoder_layers_0_sublayer_1_norm_weight, ln1_weight[0]);
+    copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_1_norm_weight, ln1_weight[1]);
+    copy_array_to_fp_local_only(w_decoder_layers_0_sublayer_1_norm_bias, ln1_bias[0]);
+    copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_1_norm_bias, ln1_bias[1]);
     copy_array_to_fp_local_only(w_decoder_norm2_weight, midnorm_weight);
     copy_array_to_fp_local_only(w_decoder_norm2_bias, midnorm_bias);
     copy_array_to_fp_local_only(w_decoder_norm_weight, endnorm_weight);
@@ -197,6 +203,12 @@ RefV3TernaryLinearParams refv3_layernorm0_params_fp_local_only(int lid) {
   const RefV3WeightsFp16CacheLocalOnly& cache = refv3_weight_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
   return refv3_make_ternary_linear_params(cache.ln0_weight[layer_idx], cache.ln0_bias[layer_idx]);
+}
+
+RefV3TernaryLinearParams refv3_layernorm1_params_fp_local_only(int lid) {
+  const RefV3WeightsFp16CacheLocalOnly& cache = refv3_weight_cache_fp_local_only();
+  const int layer_idx = refv3_layer_idx_local_only(lid);
+  return refv3_make_ternary_linear_params(cache.ln1_weight[layer_idx], cache.ln1_bias[layer_idx]);
 }
 
 RefV3TernaryLinearParams refv3_midnorm_params_fp_local_only() {

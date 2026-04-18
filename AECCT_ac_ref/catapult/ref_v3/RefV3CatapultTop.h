@@ -5,8 +5,10 @@
 #include "ref_v3/RefV3FinalPassABlock.h"
 #include "ref_v3/RefV3FinalPassBBlock.h"
 #include "ref_v3/RefV3Layer0AttnLnPath.h"
+#include "ref_v3/RefV3Layer0FfnLnPath.h"
 #include "ref_v3/RefV3Layer0FfnPath.h"
 #include "ref_v3/RefV3Layer1AttnLnPath.h"
+#include "ref_v3/RefV3Layer1FfnLnPath.h"
 #include "ref_v3/RefV3Layer1FfnPath.h"
 #include "ref_v3/RefV3LayerNormBlock.h"
 #include "ref_v3/RefV3MidNormPath.h"
@@ -40,11 +42,13 @@ public:
     ac_channel<RefV3AttentionTokenVectorPayload> ch_preproc_to_l0_attn;
     ac_channel<RefV3AttentionInputPayload> ch_xwork0_side;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_l0_attn_to_ffn;
-    ac_channel<RefV3AttentionTokenVectorPayload> ch_l0_ffn_to_midnorm;
+    ac_channel<RefV3AttentionTokenVectorPayload> ch_l0_ffn_to_ffnln;
+    ac_channel<RefV3AttentionTokenVectorPayload> ch_l0_ffnln_to_midnorm;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_midnorm_to_l1_attn;
     ac_channel<RefV3AttentionInputPayload> ch_xwork1_side;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_l1_attn_to_ffn;
-    ac_channel<RefV3AttentionTokenVectorPayload> ch_l1_ffn_to_endnorm;
+    ac_channel<RefV3AttentionTokenVectorPayload> ch_l1_ffn_to_ffnln;
+    ac_channel<RefV3AttentionTokenVectorPayload> ch_l1_ffnln_to_endnorm;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_endnorm_to_finala;
     ac_channel<RefV3FinalScalarTokenPayload> ch_finala_to_finalb;
     ac_channel<RefV3FinalInputYPayload> ch_finalb_input_y;
@@ -67,17 +71,23 @@ public:
     if (!layer0_attn_ln_path_.run(run_cfg, ch_preproc_to_l0_attn, ch_xwork0_side, ch_l0_attn_to_ffn)) {
       return false;
     }
-    if (!layer0_ffn_path_.run(ch_l0_attn_to_ffn, ch_l0_ffn_to_midnorm)) {
+    if (!layer0_ffn_path_.run(ch_l0_attn_to_ffn, ch_l0_ffn_to_ffnln)) {
       return false;
     }
-    if (!mid_norm_path_.run(run_cfg, ch_l0_ffn_to_midnorm, ch_midnorm_to_l1_attn, ch_xwork1_side)) {
+    if (!layer0_ffn_ln_path_.run(run_cfg, ch_l0_ffn_to_ffnln, ch_l0_ffnln_to_midnorm)) {
+      return false;
+    }
+    if (!mid_norm_path_.run(run_cfg, ch_l0_ffnln_to_midnorm, ch_midnorm_to_l1_attn, ch_xwork1_side)) {
       return false;
     }
 
     if (!layer1_attn_ln_path_.run(run_cfg, ch_midnorm_to_l1_attn, ch_xwork1_side, ch_l1_attn_to_ffn)) {
       return false;
     }
-    if (!layer1_ffn_path_.run(ch_l1_attn_to_ffn, ch_l1_ffn_to_endnorm)) {
+    if (!layer1_ffn_path_.run(ch_l1_attn_to_ffn, ch_l1_ffn_to_ffnln)) {
+      return false;
+    }
+    if (!layer1_ffn_ln_path_.run(run_cfg, ch_l1_ffn_to_ffnln, ch_l1_ffnln_to_endnorm)) {
       return false;
     }
     // End norm is decoder.norm; keep layer_id metadata for downstream header continuity only.
@@ -86,7 +96,7 @@ public:
           REFV3_LAYER1_ID,
           endnorm_params,
           run_cfg,
-          ch_l1_ffn_to_endnorm,
+          ch_l1_ffnln_to_endnorm,
           ch_endnorm_to_finala)) {
       return false;
     }
@@ -103,9 +113,11 @@ private:
   RefV3PreprocBlock preproc_block_;
   RefV3Layer0AttnLnPath layer0_attn_ln_path_;
   RefV3Layer0FfnPath layer0_ffn_path_;
+  RefV3Layer0FfnLnPath layer0_ffn_ln_path_;
   RefV3MidNormPath mid_norm_path_;
   RefV3Layer1AttnLnPath layer1_attn_ln_path_;
   RefV3Layer1FfnPath layer1_ffn_path_;
+  RefV3Layer1FfnLnPath layer1_ffn_ln_path_;
   RefV3LayerNormBlock end_norm_block_;
   RefV3FinalPassABlock final_pass_a_block_;
   RefV3FinalPassBBlock final_pass_b_block_;
