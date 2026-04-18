@@ -20,6 +20,7 @@ RefV3TernaryLinearParams refv3_attn_linear_params_fp_local_only(int lid, int lin
 refv3_fp_t refv3_attn_linear_s_w_fp_local_only(int lid, int linear_id);
 
 RefV3TernaryLinearParams refv3_layernorm0_params_fp_local_only(int lid);
+RefV3TernaryLinearParams refv3_midnorm_params_fp_local_only();
 RefV3TernaryLinearParams refv3_ffn_w1_params_fp_local_only(int lid);
 RefV3TernaryLinearParams refv3_ffn_w2_params_fp_local_only(int lid);
 

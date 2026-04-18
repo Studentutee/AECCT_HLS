@@ -4,6 +4,7 @@
 #include "ref_v3/RefV3Config.h"
 #include "ref_v3/RefV3LayerNormBlock.h"
 #include "ref_v3/RefV3Payload.h"
+#include "ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 namespace aecct_ref {
 namespace ref_v3 {
@@ -35,7 +36,14 @@ public:
       ch_midnorm_in.write(retag_payload);
     }
 
-    if (!mid_norm_block_.run(REFV3_LAYER1_ID, run_cfg, ch_midnorm_in, ch_midnorm_out)) {
+    // Mid norm must use decoder.norm2 parameters, not layer1 sublayer norm parameters.
+    const RefV3TernaryLinearParams midnorm_params = refv3_midnorm_params_fp_local_only();
+    if (!mid_norm_block_.run_with_params(
+          REFV3_LAYER1_ID,
+          midnorm_params,
+          run_cfg,
+          ch_midnorm_in,
+          ch_midnorm_out)) {
       return false;
     }
 

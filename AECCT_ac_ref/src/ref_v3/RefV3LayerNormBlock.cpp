@@ -141,20 +141,18 @@ static void layernorm_token_32_local(
 
 RefV3LayerNormBlock::RefV3LayerNormBlock() {}
 
-bool RefV3LayerNormBlock::run(int lid,
-                              const RefRunConfig& run_cfg,
-                              ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
-                              ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const {
-  if (lid != REFV3_LAYER0_ID && lid != REFV3_LAYER1_ID) {
-    return false;
-  }
+namespace {
 
-  const int expected_layer_id = lid;
+static bool refv3_layernorm_run_with_explicit_params(
+  int expected_layer_id,
+  const RefV3TernaryLinearParams& ln_params,
+  const RefRunConfig& run_cfg,
+  ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+  ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
   RefV3AttentionPayloadHeader header_ref;
   bool header_init = false;
   bool token_seen[REFV3_TOKENS_T];
   refv3_fp_t token_ln_out[REFV3_D_MODEL];
-  const RefV3TernaryLinearParams ln_params = refv3_layernorm0_params_fp_local_only(lid);
 
   REFV3_LN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -201,6 +199,37 @@ bool RefV3LayerNormBlock::run(int lid,
   }
 
   return true;
+}
+
+} // namespace
+
+bool RefV3LayerNormBlock::run(int lid,
+                              const RefRunConfig& run_cfg,
+                              ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+                              ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const {
+  if (lid != REFV3_LAYER0_ID && lid != REFV3_LAYER1_ID) {
+    return false;
+  }
+
+  const RefV3TernaryLinearParams ln_params = refv3_layernorm0_params_fp_local_only(lid);
+  return run_with_params(lid, ln_params, run_cfg, in_token_ch, out_token_ch);
+}
+
+bool RefV3LayerNormBlock::run_with_params(
+  int expected_layer_id,
+  const RefV3TernaryLinearParams& ln_params,
+  const RefRunConfig& run_cfg,
+  ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+  ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const {
+  if (expected_layer_id != REFV3_LAYER0_ID && expected_layer_id != REFV3_LAYER1_ID) {
+    return false;
+  }
+  return refv3_layernorm_run_with_explicit_params(
+    expected_layer_id,
+    ln_params,
+    run_cfg,
+    in_token_ch,
+    out_token_ch);
 }
 
 } // namespace ref_v3
