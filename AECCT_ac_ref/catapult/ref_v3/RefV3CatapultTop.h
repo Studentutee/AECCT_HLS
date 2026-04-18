@@ -11,6 +11,7 @@
 #include "ref_v3/RefV3LayerNormBlock.h"
 #include "ref_v3/RefV3MidNormPath.h"
 #include "ref_v3/RefV3PreprocBlock.h"
+#include "ref_v3/RefV3WeightsFp16LocalOnly.h"
 
 #if defined(__has_include)
 #if __has_include(<mc_scverify.h>)
@@ -79,7 +80,14 @@ public:
     if (!layer1_ffn_path_.run(ch_l1_attn_to_ffn, ch_l1_ffn_to_endnorm)) {
       return false;
     }
-    if (!end_norm_block_.run(REFV3_LAYER1_ID, run_cfg, ch_l1_ffn_to_endnorm, ch_endnorm_to_finala)) {
+    // End norm is decoder.norm; keep layer_id metadata for downstream header continuity only.
+    const RefV3TernaryLinearParams endnorm_params = refv3_endnorm_params_fp_local_only();
+    if (!end_norm_block_.run_with_params(
+          REFV3_LAYER1_ID,
+          endnorm_params,
+          run_cfg,
+          ch_l1_ffn_to_endnorm,
+          ch_endnorm_to_finala)) {
       return false;
     }
     if (!final_pass_a_block_.run(ch_endnorm_to_finala, ch_finala_to_finalb)) {
