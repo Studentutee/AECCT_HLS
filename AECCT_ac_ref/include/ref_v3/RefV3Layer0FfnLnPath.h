@@ -5,6 +5,16 @@
 #include "ref_v3/RefV3LayerNormBlock.h"
 #include "ref_v3/RefV3WeightsFp16LocalOnly.h"
 
+#if defined(__has_include)
+#if __has_include(<mc_scverify.h>)
+#include <mc_scverify.h>
+#endif
+#endif
+
+#ifndef CCS_BLOCK
+#define CCS_BLOCK(name) name
+#endif
+
 namespace aecct_ref {
 namespace ref_v3 {
 
@@ -13,9 +23,12 @@ public:
   RefV3Layer0FfnLnPath() {}
 
   // Layer0 post-FFN LN stage uses layer0 sublayer_1_norm parameters.
-  bool run(const RefRunConfig& run_cfg,
-           ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
-           ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
+  // Catapult class-based interface entry for hierarchical block.
+  // CCS_BLOCK added for SCVerify/Catapult hierarchy friendliness.
+#pragma hls_design interface
+  bool CCS_BLOCK(run)(const RefRunConfig& run_cfg,
+                      ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+                      ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
     const RefV3TernaryLinearParams layer0_ffnln_params =
       refv3_layernorm1_params_fp_local_only(REFV3_LAYER0_ID);
     return ln_block_.run_with_params(

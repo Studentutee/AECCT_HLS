@@ -5,6 +5,16 @@
 #include "ref_v3/RefV3FfnLinear0ReluBlock.h"
 #include "ref_v3/RefV3FfnLinear1ResidualBlock.h"
 
+#if defined(__has_include)
+#if __has_include(<mc_scverify.h>)
+#include <mc_scverify.h>
+#endif
+#endif
+
+#ifndef CCS_BLOCK
+#define CCS_BLOCK(name) name
+#endif
+
 namespace aecct_ref {
 namespace ref_v3 {
 
@@ -13,8 +23,11 @@ public:
   RefV3Layer0FfnPath() {}
 
   // Layer0 FFN path: token stream in -> split -> linear0/relu + residual FIFO -> linear1+residual out.
-  bool run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
-           ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
+  // Catapult class-based interface entry for hierarchical block.
+  // CCS_BLOCK added for SCVerify/Catapult hierarchy friendliness.
+#pragma hls_design interface
+  bool CCS_BLOCK(run)(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+                      ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
     ac_channel<RefV3AttentionTokenVectorPayload> ch_l0_ffn_linear0_in;
     ac_channel<RefV3AttentionTokenVectorPayload> residual_fifo_l0;
     ac_channel<RefV3FfnHiddenTokenPayload> ch_l0_ffn_linear0_to_linear1;
@@ -57,4 +70,3 @@ private:
 
 } // namespace ref_v3
 } // namespace aecct_ref
-

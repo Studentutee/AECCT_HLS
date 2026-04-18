@@ -6,6 +6,16 @@
 #include "ref_v3/RefV3Payload.h"
 #include "ref_v3/RefV3WeightsFp16LocalOnly.h"
 
+#if defined(__has_include)
+#if __has_include(<mc_scverify.h>)
+#include <mc_scverify.h>
+#endif
+#endif
+
+#ifndef CCS_BLOCK
+#define CCS_BLOCK(name) name
+#endif
+
 namespace aecct_ref {
 namespace ref_v3 {
 
@@ -14,10 +24,13 @@ public:
   RefV3MidNormPath() {}
 
   // Main path: preserve token stream while emitting a side full-matrix snapshot for layer1 ownership boundary.
-  bool run(const RefRunConfig& run_cfg,
-           ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
-           ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch,
-           ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) {
+  // Catapult class-based interface entry for hierarchical block.
+  // CCS_BLOCK added for SCVerify/Catapult hierarchy friendliness.
+#pragma hls_design interface
+  bool CCS_BLOCK(run)(const RefRunConfig& run_cfg,
+                      ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
+                      ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch,
+                      ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) {
     ac_channel<RefV3AttentionTokenVectorPayload> ch_midnorm_in;
     ac_channel<RefV3AttentionTokenVectorPayload> ch_midnorm_out;
 
