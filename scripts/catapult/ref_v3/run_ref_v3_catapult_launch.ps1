@@ -143,7 +143,17 @@ echo $LICENSE_PROBE_RC >! $OUTDIR/license_probe_exit_code.txt
 set MSG=""
 if (-f $REPO_ROOT/Catapult_15/SIF/messages.txt) then
   set MSG=$REPO_ROOT/Catapult_15/SIF/messages.txt
-else if (-f $OUTDIR/project/messages.txt) then
+endif
+if ("$MSG" == "" && -f $REPO_ROOT/Catapult/SIF/messages.txt) then
+  set MSG=$REPO_ROOT/Catapult/SIF/messages.txt
+endif
+if ("$MSG" == "") then
+  set MSG_CAND=`ls -t $REPO_ROOT/Catapult/*/messages.txt | head -n 1`
+  if ("$MSG_CAND" != "") then
+    set MSG=$MSG_CAND
+  endif
+endif
+if ("$MSG" == "" && -f $OUTDIR/project/messages.txt) then
   set MSG=$OUTDIR/project/messages.txt
 endif
 if ("$MSG" != "") then
