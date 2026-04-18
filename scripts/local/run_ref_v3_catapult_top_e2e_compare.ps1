@@ -91,9 +91,8 @@ try {
     $runExit = Invoke-ExeRun -ExePath (Resolve-Path $exePath).Path -RunLog $runLog
 
     $summaryLines = @()
-    $summaryLines += Get-MatchedLines -Path $runLog -Pattern '^\[ref_v3_catapult_top_e2e_compare\]'
-    $summaryLines += Get-MatchedLines -Path $runLog -Pattern '^\[ref_v3_catapult_top_e2e_compare_summary\]'
-    $summaryLines += Get-MatchedLines -Path $runLog -Pattern '^\[ref_v3_catapult_top_e2e_compare_first_mismatch\]'
+    $summaryLines += Get-MatchedLines -Path $runLog -Pattern '^\[ref_v3_top_tail_xpred_onecount_compare\]'
+    $summaryLines += Get-MatchedLines -Path $runLog -Pattern '^\[ref_v3_top_tail_xpred_onecount_compare_summary\]'
     $summaryLines += Get-MatchedLines -Path $runLog -Pattern '^(PASS|FAIL): tb_ref_v3_catapult_top_e2e_compare'
     if ($runExit -eq 0) {
         $summaryLines += "RUN_OK: tb_ref_v3_catapult_top_e2e_compare"

@@ -23,10 +23,11 @@ struct CaseResult {
   int dut_one_count = 0;
   int trace_zero_count = 0;
   int trace_one_count = 0;
-  int dut_vs_trace_match_count = 0;
-  int dut_vs_trace_mismatch_count = 0;
+  int match_trace_count = 0;
+  int mismatch_trace_count = 0;
   int trace_non_binary_anomaly_count = 0;
-  const char* winner_by_zero_count = "TIE";
+  const char* winner_by_one_count = "TIE";
+  int one_count_delta = 0;
   int dut_all_zero = 0;
   int trace_all_zero = 0;
 };
@@ -93,25 +94,27 @@ static bool run_case(int pattern_idx, CaseResult* out) {
     } else {
       trace_is_binary = false;
       ++out->trace_non_binary_anomaly_count;
-      ++out->dut_vs_trace_mismatch_count;
+      ++out->mismatch_trace_count;
     }
 
     if (trace_is_binary) {
       if (dut_bit == trace_bit) {
-        ++out->dut_vs_trace_match_count;
+        ++out->match_trace_count;
       } else {
-        ++out->dut_vs_trace_mismatch_count;
+        ++out->mismatch_trace_count;
       }
     }
   }
 
-  if (out->dut_zero_count > out->trace_zero_count) {
-    out->winner_by_zero_count = "DUT";
-  } else if (out->dut_zero_count < out->trace_zero_count) {
-    out->winner_by_zero_count = "TRACE";
+  // one_count is the primary quality metric for all-zero codeword patterns.
+  if (out->dut_one_count < out->trace_one_count) {
+    out->winner_by_one_count = "DUT";
+  } else if (out->dut_one_count > out->trace_one_count) {
+    out->winner_by_one_count = "TRACE";
   } else {
-    out->winner_by_zero_count = "TIE";
+    out->winner_by_one_count = "TIE";
   }
+  out->one_count_delta = out->trace_one_count - out->dut_one_count;
 
   out->dut_all_zero = (out->dut_one_count == 0) ? 1 : 0;
   out->trace_all_zero =
@@ -152,6 +155,10 @@ int main() {
   int tie_count = 0;
   int dut_all_zero_count = 0;
   int trace_all_zero_count = 0;
+  int dut_total_one_count = 0;
+  int trace_total_one_count = 0;
+  int total_match_trace_count = 0;
+  int total_mismatch_trace_count = 0;
   int trace_non_binary_anomaly_pattern_count = 0;
   int trace_non_binary_anomaly_total = 0;
 
@@ -162,14 +169,19 @@ int main() {
     if (!case_exec_ok || !result.run_ok) {
       ++run_fail_count;
       std::printf(
-        "[ref_v3_top_tail_xpred_compare] pattern_idx=%d dut_zero_count=-1 dut_one_count=-1 "
-        "trace_zero_count=-1 trace_one_count=-1 dut_vs_trace_match_count=-1 dut_vs_trace_mismatch_count=-1 "
-        "winner_by_zero_count=NA dut_all_zero=0 trace_all_zero=0 trace_non_binary_anomaly_count=-1 result=RUN_FAIL\n",
+        "[ref_v3_top_tail_xpred_onecount_compare] pattern_idx=%d dut_one_count=-1 dut_zero_count=-1 "
+        "trace_one_count=-1 trace_zero_count=-1 winner_by_one_count=NA one_count_delta=0 "
+        "dut_all_zero=0 trace_all_zero=0 match_trace_count=-1 mismatch_trace_count=-1 "
+        "trace_non_binary_anomaly_count=-1 result=RUN_FAIL\n",
         pattern_idx);
       continue;
     }
 
     ++run_ok_count;
+    dut_total_one_count += result.dut_one_count;
+    trace_total_one_count += result.trace_one_count;
+    total_match_trace_count += result.match_trace_count;
+    total_mismatch_trace_count += result.mismatch_trace_count;
     if (result.trace_non_binary_anomaly_count > 0) {
       ++trace_non_binary_anomaly_pattern_count;
       trace_non_binary_anomaly_total += result.trace_non_binary_anomaly_count;
@@ -181,34 +193,51 @@ int main() {
       ++trace_all_zero_count;
     }
 
-    if (result.winner_by_zero_count[0] == 'D') {
+    if (result.winner_by_one_count[0] == 'D') {
       ++dut_better_count;
-    } else if (result.winner_by_zero_count[0] == 'T' && result.winner_by_zero_count[1] == 'R') {
+    } else if (result.winner_by_one_count[0] == 'T' && result.winner_by_one_count[1] == 'R') {
       ++trace_better_count;
     } else {
       ++tie_count;
     }
 
     std::printf(
-      "[ref_v3_top_tail_xpred_compare] pattern_idx=%d dut_zero_count=%d dut_one_count=%d "
-      "trace_zero_count=%d trace_one_count=%d dut_vs_trace_match_count=%d dut_vs_trace_mismatch_count=%d "
-      "winner_by_zero_count=%s dut_all_zero=%d trace_all_zero=%d trace_non_binary_anomaly_count=%d result=RUN_OK\n",
+      "[ref_v3_top_tail_xpred_onecount_compare] pattern_idx=%d dut_one_count=%d dut_zero_count=%d "
+      "trace_one_count=%d trace_zero_count=%d winner_by_one_count=%s one_count_delta=%d "
+      "dut_all_zero=%d trace_all_zero=%d match_trace_count=%d mismatch_trace_count=%d "
+      "trace_non_binary_anomaly_count=%d result=RUN_OK\n",
       result.pattern_idx,
-      result.dut_zero_count,
       result.dut_one_count,
-      result.trace_zero_count,
+      result.dut_zero_count,
       result.trace_one_count,
-      result.dut_vs_trace_match_count,
-      result.dut_vs_trace_mismatch_count,
-      result.winner_by_zero_count,
+      result.trace_zero_count,
+      result.winner_by_one_count,
+      result.one_count_delta,
       result.dut_all_zero,
       result.trace_all_zero,
+      result.match_trace_count,
+      result.mismatch_trace_count,
       result.trace_non_binary_anomaly_count);
   }
 
+  const double dut_avg_one_count = (run_ok_count > 0)
+    ? static_cast<double>(dut_total_one_count) / static_cast<double>(run_ok_count)
+    : 0.0;
+  const double trace_avg_one_count = (run_ok_count > 0)
+    ? static_cast<double>(trace_total_one_count) / static_cast<double>(run_ok_count)
+    : 0.0;
+  const double avg_match_trace_count = (run_ok_count > 0)
+    ? static_cast<double>(total_match_trace_count) / static_cast<double>(run_ok_count)
+    : 0.0;
+  const double avg_mismatch_trace_count = (run_ok_count > 0)
+    ? static_cast<double>(total_mismatch_trace_count) / static_cast<double>(run_ok_count)
+    : 0.0;
+
   std::printf(
-    "[ref_v3_top_tail_xpred_compare_summary] total_patterns=%d run_ok=%d run_fail=%d "
-    "dut_better_count=%d trace_better_count=%d tie_count=%d dut_all_zero_count=%d trace_all_zero_count=%d "
+    "[ref_v3_top_tail_xpred_onecount_compare_summary] total_patterns=%d run_ok=%d run_fail=%d "
+    "dut_better_count_by_onecount=%d trace_better_count_by_onecount=%d tie_count=%d "
+    "dut_all_zero_count=%d trace_all_zero_count=%d dut_avg_one_count=%.3f trace_avg_one_count=%.3f "
+    "avg_match_trace_count=%.3f avg_mismatch_trace_count=%.3f "
     "trace_non_binary_anomaly_patterns=%d trace_non_binary_anomaly_total=%d\n",
     static_cast<int>(kPatternIndices.size()),
     run_ok_count,
@@ -218,6 +247,10 @@ int main() {
     tie_count,
     dut_all_zero_count,
     trace_all_zero_count,
+    dut_avg_one_count,
+    trace_avg_one_count,
+    avg_match_trace_count,
+    avg_mismatch_trace_count,
     trace_non_binary_anomaly_pattern_count,
     trace_non_binary_anomaly_total);
 
