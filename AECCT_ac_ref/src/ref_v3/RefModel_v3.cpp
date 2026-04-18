@@ -129,7 +129,7 @@ bool RefModel_v3::stage_step0_phase_a_from_authoritative(const RefModelIO& io, i
     layer0_attention_valid_ = false;
     return false;
   }
-  if (!preproc_block_.run(preproc_in_ch, preproc_out_token_ch)) {
+  if (!refv3_preproc_run_token_only(preproc_block_, preproc_in_ch, preproc_out_token_ch)) {
     phase_a_valid_ = false;
     layer0_attention_valid_ = false;
     return false;

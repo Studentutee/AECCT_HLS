@@ -90,6 +90,14 @@ while {[gets $fd line] >= 0} {
 }
 close $fd
 
+set refv3_e2e_tb [file normalize [file join $repo_root "AECCT_ac_ref" "tb_catapult" "ref_v3" "tb_ref_v3_catapult_e2e_4pattern.cpp"]]
+if {[file exists $refv3_e2e_tb]} {
+    solution file add $refv3_e2e_tb -type C++ -exclude true -description {C Testbench}
+    puts "REFV3_EXCLUDED_TB $refv3_e2e_tb"
+} else {
+    puts "REFV3_EXCLUDED_TB_MISSING $refv3_e2e_tb"
+}
+
 solution design set $refv3_top_entry -top
 
 puts "REFV3_STAGE compile START"

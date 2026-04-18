@@ -81,20 +81,24 @@ bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
   return true;
 }
 
-bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
-                            ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const {
+bool refv3_preproc_run_token_only(
+  const RefV3PreprocBlock& block,
+  ac_channel<RefV3PreprocInputPayload>& in_input_ch,
+  ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
   ac_channel<RefV3AttentionInputPayload> ch_xwork_local_only;
-  if (!run(in_input_ch, out_token_ch, ch_xwork_local_only)) {
+  if (!block.run(in_input_ch, out_token_ch, ch_xwork_local_only)) {
     return false;
   }
   (void)ch_xwork_local_only.read();
   return true;
 }
 
-bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
-                            ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) const {
+bool refv3_preproc_run_xwork_only(
+  const RefV3PreprocBlock& block,
+  ac_channel<RefV3PreprocInputPayload>& in_input_ch,
+  ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) {
   ac_channel<RefV3AttentionTokenVectorPayload> ch_token_local_only;
-  if (!run(in_input_ch, ch_token_local_only, out_xwork_ch)) {
+  if (!block.run(in_input_ch, ch_token_local_only, out_xwork_ch)) {
     return false;
   }
   REFV3_PREPROC_SIDE_TOKEN_DRAIN_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {

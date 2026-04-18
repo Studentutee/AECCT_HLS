@@ -27,15 +27,19 @@ public:
   bool CCS_BLOCK(run)(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
                       ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch,
                       ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) const;
-
-  // Compatibility wrapper: keep token-only callers available.
-  bool run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
-           ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const;
-
-  // Compatibility wrapper: keep xwork-only callers available.
-  bool run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
-           ac_channel<RefV3AttentionInputPayload>& out_xwork_ch) const;
 };
+
+// Compatibility wrappers are kept as namespace-level helpers to avoid adding
+// extra public hierarchy methods on RefV3PreprocBlock.
+bool refv3_preproc_run_token_only(
+  const RefV3PreprocBlock& block,
+  ac_channel<RefV3PreprocInputPayload>& in_input_ch,
+  ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch);
+
+bool refv3_preproc_run_xwork_only(
+  const RefV3PreprocBlock& block,
+  ac_channel<RefV3PreprocInputPayload>& in_input_ch,
+  ac_channel<RefV3AttentionInputPayload>& out_xwork_ch);
 
 } // namespace ref_v3
 } // namespace aecct_ref
