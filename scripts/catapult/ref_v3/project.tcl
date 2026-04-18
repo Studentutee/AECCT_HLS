@@ -13,6 +13,19 @@ cd $work_dir
 
 set refv3_top_entry "aecct_ref::ref_v3::RefV3CatapultTop"
 set refv3_filelist [file normalize [file join $sfd "filelist.f"]]
+set refv3_include_dirs [list \
+    "." \
+    "gen" \
+    "src" \
+    "AECCT_ac_ref" \
+    "AECCT_ac_ref/include" \
+    "AECCT_ac_ref/src" \
+    "AECCT_ac_ref/catapult" \
+    "AECCT_ac_ref/tb_catapult" \
+    "data/weights" \
+    "third_party/ac_types" \
+]
+set refv3_define_macros [list "REFV3_CATAPULT_MODE=1"]
 
 proc refv3_set_option_path_list {option_key paths} {
     set first 1
@@ -26,6 +39,18 @@ proc refv3_set_option_path_list {option_key paths} {
     }
 }
 
+proc refv3_resolve_repo_paths {repo_root rel_paths} {
+    set out {}
+    foreach rel $rel_paths {
+        if {$rel eq "."} {
+            lappend out [file normalize $repo_root]
+        } else {
+            lappend out [file normalize [file join $repo_root $rel]]
+        }
+    }
+    return $out
+}
+
 if {![file exists $refv3_filelist]} {
     error "REFV3 filelist missing: $refv3_filelist"
 }
@@ -36,27 +61,19 @@ flush stdout
 
 options defaults
 project new
-if {[catch {solution new ref_v3_compile} sol_new_err]} {
-    puts "REFV3_INFO solution_new_fallback $sol_new_err"
-    flush stdout
-}
-
 options set Input/CppStandard c++20
 
-set refv3_search_paths [list \
-    [file normalize $repo_root] \
-    [file normalize [file join $repo_root "gen"]] \
-    [file normalize [file join $repo_root "src"]] \
-    [file normalize [file join $repo_root "AECCT_ac_ref"]] \
-    [file normalize [file join $repo_root "AECCT_ac_ref" "include"]] \
-    [file normalize [file join $repo_root "AECCT_ac_ref" "src"]] \
-    [file normalize [file join $repo_root "AECCT_ac_ref" "catapult"]] \
-    [file normalize [file join $repo_root "AECCT_ac_ref" "tb_catapult"]] \
-    [file normalize [file join $repo_root "data" "weights"]] \
-    [file normalize [file join $repo_root "third_party" "ac_types"]] \
-]
+set refv3_search_paths [refv3_resolve_repo_paths $repo_root $refv3_include_dirs]
 refv3_set_option_path_list "Input/SearchPath" $refv3_search_paths
-options set Input/CompilerFlags "-DREFV3_CATAPULT_MODE=1"
+
+set refv3_compiler_flags ""
+foreach d $refv3_define_macros {
+    append refv3_compiler_flags " -D" $d
+}
+set refv3_compiler_flags [string trim $refv3_compiler_flags]
+if {$refv3_compiler_flags ne ""} {
+    options set Input/CompilerFlags $refv3_compiler_flags
+}
 
 set fd [open $refv3_filelist r]
 while {[gets $fd line] >= 0} {
