@@ -1,3 +1,5 @@
+// Deprecated block-level Catapult free-function entry.
+// Kept for rollback/reference only; removed from ref_v3 block project filelists.
 #include "catapult/ref_v3/blocks/RefV3BlockTops.h"
 #include "ref_v3/RefV3FinalPassABlock.h"
 
@@ -13,3 +15,4 @@ bool ref_v3_final_pass_a_block_top(ac_channel<RefV3AttentionTokenVectorPayload>&
 
 } // namespace ref_v3
 } // namespace aecct_ref
+

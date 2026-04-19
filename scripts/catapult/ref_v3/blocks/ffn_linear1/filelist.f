@@ -1,5 +1,6 @@
 # REF_V3 block filelist for RefV3FfnLinear1ResidualBlock
-AECCT_ac_ref/catapult/ref_v3/blocks/ref_v3_ffn_linear1_residual_block_top_entry.cpp
+AECCT_ac_ref/catapult/ref_v3/blocks/ref_v3_ffn_linear1_residual_block_class_top.cpp
 AECCT_ac_ref/src/ref_v3/RefV3FfnLinear1ResidualBlock.cpp
 AECCT_ac_ref/src/ref_v3/RefV3WeightsFp16LocalOnly.cpp
+
 

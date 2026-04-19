@@ -1,3 +1,5 @@
+// Deprecated block-level Catapult free-function entry.
+// Kept for rollback/reference only; removed from ref_v3 block project filelists.
 #include "catapult/ref_v3/blocks/RefV3BlockTops.h"
 #include "ref_v3/RefV3AttenKvBlock.h"
 
@@ -15,3 +17,4 @@ bool ref_v3_atten_kv_block_top(int lid,
 
 } // namespace ref_v3
 } // namespace aecct_ref
+

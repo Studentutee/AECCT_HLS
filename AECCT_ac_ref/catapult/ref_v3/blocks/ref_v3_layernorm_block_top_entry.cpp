@@ -1,3 +1,5 @@
+// Deprecated block-level Catapult free-function entry.
+// Kept for rollback/reference only; removed from ref_v3 block project filelists.
 #include "catapult/ref_v3/blocks/RefV3BlockTops.h"
 #include "RefModel.h"
 #include "ref_v3/RefV3LayerNormBlock.h"
@@ -16,3 +18,4 @@ bool ref_v3_layernorm_block_top(int lid,
 
 } // namespace ref_v3
 } // namespace aecct_ref
+

@@ -1,3 +1,5 @@
+// Deprecated block-level Catapult free-function entry.
+// Kept for rollback/reference only; removed from ref_v3 block project filelists.
 #include "catapult/ref_v3/blocks/RefV3BlockTops.h"
 #include "ref_v3/RefV3FfnLinear1ResidualBlock.h"
 
@@ -16,3 +18,4 @@ bool ref_v3_ffn_linear1_residual_block_top(
 
 } // namespace ref_v3
 } // namespace aecct_ref
+
