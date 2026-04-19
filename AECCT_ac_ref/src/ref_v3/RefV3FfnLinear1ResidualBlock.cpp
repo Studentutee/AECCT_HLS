@@ -61,7 +61,7 @@ bool RefV3FfnLinear1ResidualBlock::run(
   const refv3_fp_t inv_ffn_w2 = REFV3_ffn_w2_inv_sxsw_const(lid);
 
   bool token_seen[REFV3_TOKENS_T];
-  refv3_fp_t linear1_out_buf[REFV3_D_MODEL];
+  refv3_fp_t linear1_out_buf[REFV3_D_MODEL] = {};
 
   REFV3_FFN_L1_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -104,7 +104,7 @@ bool RefV3FfnLinear1ResidualBlock::run(
       inv_ffn_w2,
       linear1_out_buf);
 
-    RefV3AttentionTokenVectorPayload out_payload;
+    RefV3AttentionTokenVectorPayload out_payload = {};
     out_payload.header = residual_payload.header;
     out_payload.token_row = residual_payload.token_row;
     REFV3_FFN_L1_TOKEN_OUT_DIM_LOOP: for (int dim = 0; dim < REFV3_D_MODEL; ++dim) {

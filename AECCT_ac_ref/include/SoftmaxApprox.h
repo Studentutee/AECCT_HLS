@@ -10,13 +10,13 @@ namespace aecct_ref {
 
 typedef ref_fp32_t ref_softmax_fp32_t;
 
-static const int REF_SOFTMAX_NEG_T = 12;
-static const int REF_SOFTMAX_EXP_LUT_SIZE = 256;
-static const int REF_SOFTMAX_RCP_LUT_SIZE = 256;
-static const float REF_SOFTMAX_SUMEXP_MAX = 256.0f;
-static const float REF_SOFTMAX_EXP_IDX_SCALE = 21.25f;
-static const float REF_SOFTMAX_RCP_IDX_SCALE = 1.0f;
-static const float REF_SOFTMAX_EPS = 1.0e-6f;
+constexpr int REF_SOFTMAX_NEG_T = 12;
+constexpr int REF_SOFTMAX_EXP_LUT_SIZE = 256;
+constexpr int REF_SOFTMAX_RCP_LUT_SIZE = 256;
+constexpr float REF_SOFTMAX_SUMEXP_MAX = 256.0f;
+constexpr float REF_SOFTMAX_EXP_IDX_SCALE = 21.25f;
+constexpr float REF_SOFTMAX_RCP_IDX_SCALE = 1.0f;
+constexpr float REF_SOFTMAX_EPS = 1.0e-6f;
 
 template <typename FloatT>
 static inline FloatT ref_softmax_clamp_x(FloatT x) {

@@ -5,16 +5,17 @@
 namespace aecct_ref {
 namespace ref_v3 {
 
-static const int REFV3_LAYER0_ID = 0;
-static const int REFV3_LAYER1_ID = 1;
-
-static const int REFV3_TOKENS_T = ModelShapes::T_TOKENS;
-static const int REFV3_D_MODEL = ModelShapes::D_MODEL;
-static const int REFV3_HEADS = ModelShapes::N_HEADS;
-static const int REFV3_D_HEAD = ModelShapes::D_HEAD;
-static const int REFV3_FF_DIM = ModelShapes::D_FFN;
-static const int REFV3_VAR_N = ModelShapes::N_VARS;
-static const int REFV3_ATTN_MATRIX_ELEMS = REFV3_TOKENS_T * REFV3_D_MODEL;
+enum : int {
+  REFV3_LAYER0_ID = 0,
+  REFV3_LAYER1_ID = 1,
+  REFV3_TOKENS_T = ModelShapes::T_TOKENS,
+  REFV3_D_MODEL = ModelShapes::D_MODEL,
+  REFV3_HEADS = ModelShapes::N_HEADS,
+  REFV3_D_HEAD = ModelShapes::D_HEAD,
+  REFV3_FF_DIM = ModelShapes::D_FFN,
+  REFV3_VAR_N = ModelShapes::N_VARS,
+  REFV3_ATTN_MATRIX_ELEMS = ModelShapes::T_TOKENS * ModelShapes::D_MODEL
+};
 
 #ifndef REFV3_CATAPULT_MODE
 #define REFV3_CATAPULT_MODE 0

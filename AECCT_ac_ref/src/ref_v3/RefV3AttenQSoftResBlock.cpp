@@ -96,8 +96,8 @@ bool RefV3AttenQSoftResBlock::run(int lid,
   const refv3_fp_t inv_attn_q = REFV3_attn_inv_sxsw_const(lid, 0);
   const refv3_fp_t inv_attn_o = REFV3_attn_inv_sxsw_const(lid, 3);
 
-  RefV3AttentionKPayload in_k_payload;
-  RefV3AttentionVPayload in_v_payload;
+  RefV3AttentionKPayload in_k_payload = {};
+  RefV3AttentionVPayload in_v_payload = {};
   const RefV3AttentionPayloadHeader header_ref = xwork_payload.header;
 
   in_k_payload = in_k_payload_ch.read();
@@ -121,12 +121,12 @@ bool RefV3AttenQSoftResBlock::run(int lid,
     return false;
   }
 
-  refv3_fp_t q_vec[REFV3_D_MODEL];
-  refv3_fp_t head_ctx_buf[REFV3_HEADS][REFV3_D_HEAD];
-  refv3_fp_t out_acc_tile[REFV3_D_MODEL];
-  refv3_fp_t softmax_acc_tile[REFV3_D_HEAD];
-  refv3_fp_t query_token_buf[REFV3_D_MODEL];
-  refv3_fp_t ln_token_buf[REFV3_D_MODEL];
+  refv3_fp_t q_vec[REFV3_D_MODEL] = {};
+  refv3_fp_t head_ctx_buf[REFV3_HEADS][REFV3_D_HEAD] = {};
+  refv3_fp_t out_acc_tile[REFV3_D_MODEL] = {};
+  refv3_fp_t softmax_acc_tile[REFV3_D_HEAD] = {};
+  refv3_fp_t query_token_buf[REFV3_D_MODEL] = {};
+  refv3_fp_t ln_token_buf[REFV3_D_MODEL] = {};
 
 #if !defined(__SYNTHESIS__) && !defined(REFV3_SYNTH_ONLY)
   const bool use_softmax_exact =
@@ -299,7 +299,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
       inv_attn_o,
       out_acc_tile);
 
-    RefV3AttentionTokenVectorPayload out_token_payload;
+    RefV3AttentionTokenVectorPayload out_token_payload = {};
     out_token_payload.header = header_ref;
     out_token_payload.token_row = ac_int<16, false>(q_token);
     REFV3_QSOFTRES_TOKEN_OUT_DIM_LOOP: for (int d = 0; d < REFV3_D_MODEL; ++d) {
@@ -317,7 +317,7 @@ bool RefV3AttenQSoftResBlock::run(int lid,
                                   ac_channel<RefV3AttentionKPayload>& in_k_payload_ch,
                                   ac_channel<RefV3AttentionVPayload>& in_v_payload_ch,
                                   ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) const {
-  RefV3AttentionInputPayload xwork_payload;
+  RefV3AttentionInputPayload xwork_payload = {};
   bool header_init = false;
   bool query_token_seen[REFV3_TOKENS_T];
   REFV3_QSOFTRES_COMPAT_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {

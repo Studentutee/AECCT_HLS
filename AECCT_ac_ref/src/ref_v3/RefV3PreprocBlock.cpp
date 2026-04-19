@@ -29,9 +29,9 @@ bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
   const refv3_fp_t* src_embed = refv3_preproc_src_embed_fp_local_only();
   const refv3_fp_t* lpe_token = refv3_preproc_lpe_token_fp_local_only();
 
-  refv3_fp_t node_feature[REFV3_TOKENS_T];
-  ac_int<1, false> y_hard[REFV3_VAR_N];
-  RefV3AttentionInputPayload xwork_payload;
+  refv3_fp_t node_feature[REFV3_TOKENS_T] = {};
+  ac_int<1, false> y_hard[REFV3_VAR_N] = {};
+  RefV3AttentionInputPayload xwork_payload = {};
   xwork_payload.header.layer_id = ac_int<8, false>(REFV3_LAYER0_ID);
   xwork_payload.header.token_rows = ac_int<16, false>(REFV3_TOKENS_T);
   xwork_payload.header.dim_cols = ac_int<16, false>(REFV3_D_MODEL);
@@ -53,7 +53,7 @@ bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
   }
 
   REFV3_PREPROC_OUT_TOKEN_AND_XWORK_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
-    RefV3AttentionTokenVectorPayload token_payload;
+    RefV3AttentionTokenVectorPayload token_payload = {};
     token_payload.header.layer_id = ac_int<8, false>(REFV3_LAYER0_ID);
     token_payload.header.token_rows = ac_int<16, false>(REFV3_TOKENS_T);
     token_payload.header.dim_cols = ac_int<16, false>(REFV3_D_MODEL);

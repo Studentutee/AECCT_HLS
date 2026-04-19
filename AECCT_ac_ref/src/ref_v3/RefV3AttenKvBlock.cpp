@@ -61,11 +61,11 @@ bool RefV3AttenKvBlock::run(int lid,
   const refv3_fp_t inv_attn_k = REFV3_attn_inv_sxsw_const(lid, 1);
   const refv3_fp_t inv_attn_v = REFV3_attn_inv_sxsw_const(lid, 2);
 
-  RefV3AttentionKPayload out_k_payload;
-  RefV3AttentionVPayload out_v_payload;
-  RefV3AttentionPayloadHeader header_ref;
+  RefV3AttentionKPayload out_k_payload = {};
+  RefV3AttentionVPayload out_v_payload = {};
+  RefV3AttentionPayloadHeader header_ref = {};
   bool header_init = false;
-  refv3_fp_t in_token_buf[REFV3_D_MODEL];
+  refv3_fp_t in_token_buf[REFV3_D_MODEL] = {};
 
   bool token_seen[REFV3_TOKENS_T];
   REFV3_KV_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {

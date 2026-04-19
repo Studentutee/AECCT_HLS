@@ -149,10 +149,10 @@ static bool refv3_layernorm_run_with_explicit_params(
   const RefRunConfig& run_cfg,
   ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
   ac_channel<RefV3AttentionTokenVectorPayload>& out_token_ch) {
-  RefV3AttentionPayloadHeader header_ref;
+  RefV3AttentionPayloadHeader header_ref = {};
   bool header_init = false;
   bool token_seen[REFV3_TOKENS_T];
-  refv3_fp_t token_ln_out[REFV3_D_MODEL];
+  refv3_fp_t token_ln_out[REFV3_D_MODEL] = {};
 
   REFV3_LN_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
     token_seen[token] = false;
@@ -189,7 +189,7 @@ static bool refv3_layernorm_run_with_explicit_params(
 
     layernorm_token_32_local(run_cfg, token_payload.token_vec, ln_params, token_ln_out);
 
-    RefV3AttentionTokenVectorPayload out_payload;
+    RefV3AttentionTokenVectorPayload out_payload = {};
     out_payload.header = token_payload.header;
     out_payload.token_row = token_payload.token_row;
     REFV3_LN_TOKEN_OUT_DIM_LOOP: for (int dim = 0; dim < REFV3_D_MODEL; ++dim) {

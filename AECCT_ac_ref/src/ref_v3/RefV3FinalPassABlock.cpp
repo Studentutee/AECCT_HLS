@@ -8,7 +8,7 @@ RefV3FinalPassABlock::RefV3FinalPassABlock() {}
 
 bool RefV3FinalPassABlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_token_ch,
                                ac_channel<RefV3FinalScalarTokenPayload>& out_scalar_ch) const {
-  RefV3AttentionPayloadHeader header_ref;
+  RefV3AttentionPayloadHeader header_ref = {};
   bool header_init = false;
   bool token_seen[REFV3_TOKENS_T];
   const refv3_fp_t* final_embed_w = refv3_final_embed_weight_fp_local_only();
@@ -45,7 +45,7 @@ bool RefV3FinalPassABlock::run(ac_channel<RefV3AttentionTokenVectorPayload>& in_
     }
     token_seen[token] = true;
 
-    RefV3FinalScalarTokenPayload scalar_payload;
+    RefV3FinalScalarTokenPayload scalar_payload = {};
     scalar_payload.header = token_payload.header;
     scalar_payload.token_row = token_payload.token_row;
     scalar_payload.scalar = bias;

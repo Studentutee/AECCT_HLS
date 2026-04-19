@@ -59,10 +59,10 @@ bool RefV3FfnLinear0ReluBlock::run(
   const refv3_fp_t ff1_s_x = refv3_ffn_w1_s_x_fp_local_only(lid);
   const refv3_fp_t inv_ffn_w1 = REFV3_ffn_w1_inv_sxsw_const(lid);
 
-  RefV3AttentionPayloadHeader header_ref;
+  RefV3AttentionPayloadHeader header_ref = {};
   bool header_init = false;
   bool token_seen[REFV3_TOKENS_T];
-  refv3_fp_t linear0_out_buf[REFV3_FF_DIM];
+  refv3_fp_t linear0_out_buf[REFV3_FF_DIM] = {};
   const refv3_fp_t zero(0.0f);
 
   REFV3_FFN_L0_TOKEN_SEEN_INIT_LOOP: for (int token = 0; token < REFV3_TOKENS_T; ++token) {
@@ -105,7 +105,7 @@ bool RefV3FfnLinear0ReluBlock::run(
       inv_ffn_w1,
       linear0_out_buf);
 
-    RefV3FfnHiddenTokenPayload hidden_payload;
+    RefV3FfnHiddenTokenPayload hidden_payload = {};
     hidden_payload.header = token_payload.header;
     hidden_payload.token_row = token_payload.token_row;
     REFV3_FFN_L0_RELU_LOOP: for (int i = 0; i < REFV3_FF_DIM; ++i) {

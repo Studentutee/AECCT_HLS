@@ -17,7 +17,7 @@ bool RefV3FinalPassBBlock::run(ac_channel<RefV3FinalScalarTokenPayload>& in_scal
   refv3_fp_t logits_acc[REFV3_VAR_N];
   bool token_seen[REFV3_TOKENS_T];
   bool header_init = false;
-  RefV3AttentionPayloadHeader header_ref;
+  RefV3AttentionPayloadHeader header_ref = {};
   const refv3_fp_t* out_fc_w = refv3_out_fc_weight_fp_local_only();
   const refv3_fp_t* out_fc_b = refv3_out_fc_bias_fp_local_only();
 
@@ -61,7 +61,7 @@ bool RefV3FinalPassBBlock::run(ac_channel<RefV3FinalScalarTokenPayload>& in_scal
     }
   }
 
-  RefV3FinalOutputPayload out_payload;
+  RefV3FinalOutputPayload out_payload = {};
   out_payload.var_count = ac_int<16, false>(REFV3_VAR_N);
   const refv3_fp_t zero(0.0f);
 
