@@ -25,7 +25,10 @@ set refv3_include_dirs [list \
     "data/weights" \
     "third_party/ac_types" \
 ]
-set refv3_define_macros [list "REFV3_CATAPULT_MODE=1"]
+set refv3_define_macros [list \
+    "REFV3_CATAPULT_MODE=1" \
+    "AECCT_REFV3_CATAPULT_COMPILE_STUB=1" \
+]
 
 proc refv3_set_option_path_list {option_key paths} {
     set first 1
