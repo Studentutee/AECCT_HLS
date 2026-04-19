@@ -90,23 +90,13 @@ struct RefV3FfnSubsetCacheLocalOnly {
   }
 };
 
-struct RefV3NormFinalSubsetCacheLocalOnly {
+struct RefV3LayerNormAffineFamilyCacheLocalOnly {
   refv3_fp_t ln0_weight[2][w_decoder_layers_0_sublayer_0_norm_weight_numel];
   refv3_fp_t ln0_bias[2][w_decoder_layers_0_sublayer_0_norm_bias_numel];
   refv3_fp_t ln1_weight[2][w_decoder_layers_0_sublayer_1_norm_weight_numel];
   refv3_fp_t ln1_bias[2][w_decoder_layers_0_sublayer_1_norm_bias_numel];
-  refv3_fp_t midnorm_weight[w_decoder_norm2_weight_numel];
-  refv3_fp_t midnorm_bias[w_decoder_norm2_bias_numel];
-  refv3_fp_t endnorm_weight[w_decoder_norm_weight_numel];
-  refv3_fp_t endnorm_bias[w_decoder_norm_bias_numel];
 
-  refv3_fp_t final_embed_weight[w_oned_final_embed_0_weight_numel];
-  refv3_fp_t final_embed_bias = refv3_fp_t(0.0f);
-
-  refv3_fp_t out_fc_weight[w_out_fc_weight_numel];
-  refv3_fp_t out_fc_bias[w_out_fc_bias_numel];
-
-  RefV3NormFinalSubsetCacheLocalOnly() {
+  RefV3LayerNormAffineFamilyCacheLocalOnly() {
     copy_array_to_fp_local_only(w_decoder_layers_0_sublayer_0_norm_weight, ln0_weight[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_0_norm_weight, ln0_weight[1]);
     copy_array_to_fp_local_only(w_decoder_layers_0_sublayer_0_norm_bias, ln0_bias[0]);
@@ -115,14 +105,38 @@ struct RefV3NormFinalSubsetCacheLocalOnly {
     copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_1_norm_weight, ln1_weight[1]);
     copy_array_to_fp_local_only(w_decoder_layers_0_sublayer_1_norm_bias, ln1_bias[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_1_norm_bias, ln1_bias[1]);
+  }
+};
+
+struct RefV3MidEndNormFamilyCacheLocalOnly {
+  refv3_fp_t midnorm_weight[w_decoder_norm2_weight_numel];
+  refv3_fp_t midnorm_bias[w_decoder_norm2_bias_numel];
+  refv3_fp_t endnorm_weight[w_decoder_norm_weight_numel];
+  refv3_fp_t endnorm_bias[w_decoder_norm_bias_numel];
+
+  RefV3MidEndNormFamilyCacheLocalOnly() {
     copy_array_to_fp_local_only(w_decoder_norm2_weight, midnorm_weight);
     copy_array_to_fp_local_only(w_decoder_norm2_bias, midnorm_bias);
     copy_array_to_fp_local_only(w_decoder_norm_weight, endnorm_weight);
     copy_array_to_fp_local_only(w_decoder_norm_bias, endnorm_bias);
+  }
+};
 
+struct RefV3FinalEmbedFamilyCacheLocalOnly {
+  refv3_fp_t final_embed_weight[w_oned_final_embed_0_weight_numel];
+  refv3_fp_t final_embed_bias = refv3_fp_t(0.0f);
+
+  RefV3FinalEmbedFamilyCacheLocalOnly() {
     copy_array_to_fp_local_only(w_oned_final_embed_0_weight, final_embed_weight);
     final_embed_bias = copy_scalar_to_fp_local_only(w_oned_final_embed_0_bias[0]);
+  }
+};
 
+struct RefV3OutFcFamilyCacheLocalOnly {
+  refv3_fp_t out_fc_weight[w_out_fc_weight_numel];
+  refv3_fp_t out_fc_bias[w_out_fc_bias_numel];
+
+  RefV3OutFcFamilyCacheLocalOnly() {
     copy_array_to_fp_local_only(w_out_fc_weight, out_fc_weight);
     copy_array_to_fp_local_only(w_out_fc_bias, out_fc_bias);
   }
@@ -143,8 +157,23 @@ static inline const RefV3FfnSubsetCacheLocalOnly& refv3_ffn_subset_cache_fp_loca
   return cache;
 }
 
-static inline const RefV3NormFinalSubsetCacheLocalOnly& refv3_norm_final_subset_cache_fp_local_only() {
-  static const RefV3NormFinalSubsetCacheLocalOnly cache;
+static inline const RefV3LayerNormAffineFamilyCacheLocalOnly& refv3_layernorm_affine_family_cache_fp_local_only() {
+  static const RefV3LayerNormAffineFamilyCacheLocalOnly cache;
+  return cache;
+}
+
+static inline const RefV3MidEndNormFamilyCacheLocalOnly& refv3_mid_end_norm_family_cache_fp_local_only() {
+  static const RefV3MidEndNormFamilyCacheLocalOnly cache;
+  return cache;
+}
+
+static inline const RefV3FinalEmbedFamilyCacheLocalOnly& refv3_final_embed_family_cache_fp_local_only() {
+  static const RefV3FinalEmbedFamilyCacheLocalOnly cache;
+  return cache;
+}
+
+static inline const RefV3OutFcFamilyCacheLocalOnly& refv3_out_fc_family_cache_fp_local_only() {
+  static const RefV3OutFcFamilyCacheLocalOnly cache;
   return cache;
 }
 
@@ -204,24 +233,24 @@ RefV3TernaryLinearParams refv3_attn_linear_params_fp_local_only(int lid, int lin
 }
 
 RefV3TernaryLinearParams refv3_layernorm0_params_fp_local_only(int lid) {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3LayerNormAffineFamilyCacheLocalOnly& cache = refv3_layernorm_affine_family_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
   return refv3_make_ternary_linear_params(cache.ln0_weight[layer_idx], cache.ln0_bias[layer_idx]);
 }
 
 RefV3TernaryLinearParams refv3_layernorm1_params_fp_local_only(int lid) {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3LayerNormAffineFamilyCacheLocalOnly& cache = refv3_layernorm_affine_family_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
   return refv3_make_ternary_linear_params(cache.ln1_weight[layer_idx], cache.ln1_bias[layer_idx]);
 }
 
 RefV3TernaryLinearParams refv3_midnorm_params_fp_local_only() {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3MidEndNormFamilyCacheLocalOnly& cache = refv3_mid_end_norm_family_cache_fp_local_only();
   return refv3_make_ternary_linear_params(cache.midnorm_weight, cache.midnorm_bias);
 }
 
 RefV3TernaryLinearParams refv3_endnorm_params_fp_local_only() {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3MidEndNormFamilyCacheLocalOnly& cache = refv3_mid_end_norm_family_cache_fp_local_only();
   return refv3_make_ternary_linear_params(cache.endnorm_weight, cache.endnorm_bias);
 }
 
@@ -242,22 +271,22 @@ RefV3TernaryLinearParams refv3_ffn_w2_params_fp_local_only(int lid) {
 }
 
 const refv3_fp_t* refv3_final_embed_weight_fp_local_only() {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3FinalEmbedFamilyCacheLocalOnly& cache = refv3_final_embed_family_cache_fp_local_only();
   return cache.final_embed_weight;
 }
 
 refv3_fp_t refv3_final_embed_bias_fp_local_only() {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3FinalEmbedFamilyCacheLocalOnly& cache = refv3_final_embed_family_cache_fp_local_only();
   return cache.final_embed_bias;
 }
 
 const refv3_fp_t* refv3_out_fc_weight_fp_local_only() {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3OutFcFamilyCacheLocalOnly& cache = refv3_out_fc_family_cache_fp_local_only();
   return cache.out_fc_weight;
 }
 
 const refv3_fp_t* refv3_out_fc_bias_fp_local_only() {
-  const RefV3NormFinalSubsetCacheLocalOnly& cache = refv3_norm_final_subset_cache_fp_local_only();
+  const RefV3OutFcFamilyCacheLocalOnly& cache = refv3_out_fc_family_cache_fp_local_only();
   return cache.out_fc_bias;
 }
 
