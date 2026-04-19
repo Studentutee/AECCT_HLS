@@ -32,15 +32,12 @@ struct RefV3WeightsFp16CacheLocalOnly {
 
   refv3_fp_t attn_weight[2][4][w_decoder_layers_0_self_attn_linears_0_weight_numel];
   refv3_fp_t attn_bias[2][4][w_decoder_layers_0_self_attn_linears_0_bias_numel];
-  refv3_fp_t attn_s_w[2][4];
 
   refv3_fp_t ffn_w1_weight[2][w_decoder_layers_0_feed_forward_w_1_weight_numel];
   refv3_fp_t ffn_w1_bias[2][w_decoder_layers_0_feed_forward_w_1_bias_numel];
-  refv3_fp_t ffn_w1_s_w[2];
 
   refv3_fp_t ffn_w2_weight[2][w_decoder_layers_0_feed_forward_w_2_weight_numel];
   refv3_fp_t ffn_w2_bias[2][w_decoder_layers_0_feed_forward_w_2_bias_numel];
-  refv3_fp_t ffn_w2_s_w[2];
 
   refv3_fp_t ln0_weight[2][w_decoder_layers_0_sublayer_0_norm_weight_numel];
   refv3_fp_t ln0_bias[2][w_decoder_layers_0_sublayer_0_norm_bias_numel];
@@ -88,28 +85,15 @@ struct RefV3WeightsFp16CacheLocalOnly {
     copy_array_to_fp_local_only(w_decoder_layers_1_self_attn_linears_2_bias, attn_bias[1][2]);
     copy_array_to_fp_local_only(w_decoder_layers_1_self_attn_linears_3_bias, attn_bias[1][3]);
 
-    attn_s_w[0][0] = copy_scalar_to_fp_local_only(w_decoder_layers_0_self_attn_linears_0_s_w[0]);
-    attn_s_w[0][1] = copy_scalar_to_fp_local_only(w_decoder_layers_0_self_attn_linears_1_s_w[0]);
-    attn_s_w[0][2] = copy_scalar_to_fp_local_only(w_decoder_layers_0_self_attn_linears_2_s_w[0]);
-    attn_s_w[0][3] = copy_scalar_to_fp_local_only(w_decoder_layers_0_self_attn_linears_3_s_w[0]);
-    attn_s_w[1][0] = copy_scalar_to_fp_local_only(w_decoder_layers_1_self_attn_linears_0_s_w[0]);
-    attn_s_w[1][1] = copy_scalar_to_fp_local_only(w_decoder_layers_1_self_attn_linears_1_s_w[0]);
-    attn_s_w[1][2] = copy_scalar_to_fp_local_only(w_decoder_layers_1_self_attn_linears_2_s_w[0]);
-    attn_s_w[1][3] = copy_scalar_to_fp_local_only(w_decoder_layers_1_self_attn_linears_3_s_w[0]);
-
     copy_array_to_fp_local_only(w_decoder_layers_0_feed_forward_w_1_weight, ffn_w1_weight[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_feed_forward_w_1_weight, ffn_w1_weight[1]);
     copy_array_to_fp_local_only(w_decoder_layers_0_feed_forward_w_1_bias, ffn_w1_bias[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_feed_forward_w_1_bias, ffn_w1_bias[1]);
-    ffn_w1_s_w[0] = copy_scalar_to_fp_local_only(w_decoder_layers_0_feed_forward_w_1_s_w[0]);
-    ffn_w1_s_w[1] = copy_scalar_to_fp_local_only(w_decoder_layers_1_feed_forward_w_1_s_w[0]);
 
     copy_array_to_fp_local_only(w_decoder_layers_0_feed_forward_w_2_weight, ffn_w2_weight[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_feed_forward_w_2_weight, ffn_w2_weight[1]);
     copy_array_to_fp_local_only(w_decoder_layers_0_feed_forward_w_2_bias, ffn_w2_bias[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_feed_forward_w_2_bias, ffn_w2_bias[1]);
-    ffn_w2_s_w[0] = copy_scalar_to_fp_local_only(w_decoder_layers_0_feed_forward_w_2_s_w[0]);
-    ffn_w2_s_w[1] = copy_scalar_to_fp_local_only(w_decoder_layers_1_feed_forward_w_2_s_w[0]);
 
     copy_array_to_fp_local_only(w_decoder_layers_0_sublayer_0_norm_weight, ln0_weight[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_sublayer_0_norm_weight, ln0_weight[1]);
@@ -192,13 +176,6 @@ RefV3TernaryLinearParams refv3_attn_linear_params_fp_local_only(int lid, int lin
     cache.attn_bias[layer_idx][linear_idx]);
 }
 
-refv3_fp_t refv3_attn_linear_s_w_fp_local_only(int lid, int linear_id) {
-  const RefV3WeightsFp16CacheLocalOnly& cache = refv3_weight_cache_fp_local_only();
-  const int layer_idx = refv3_layer_idx_local_only(lid);
-  const int linear_idx = refv3_attn_linear_idx_local_only(linear_id);
-  return cache.attn_s_w[layer_idx][linear_idx];
-}
-
 RefV3TernaryLinearParams refv3_layernorm0_params_fp_local_only(int lid) {
   const RefV3WeightsFp16CacheLocalOnly& cache = refv3_weight_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
@@ -270,18 +247,6 @@ bool refv3_h_parity_edge_local_only(int check_idx, int var_idx) {
     return false;
   }
   return (h_H[(check_idx * REFV3_VAR_N) + var_idx].to_int() != 0);
-}
-
-refv3_fp_t refv3_ffn_w1_s_w_fp_local_only(int lid) {
-  const RefV3WeightsFp16CacheLocalOnly& cache = refv3_weight_cache_fp_local_only();
-  const int layer_idx = refv3_layer_idx_local_only(lid);
-  return cache.ffn_w1_s_w[layer_idx];
-}
-
-refv3_fp_t refv3_ffn_w2_s_w_fp_local_only(int lid) {
-  const RefV3WeightsFp16CacheLocalOnly& cache = refv3_weight_cache_fp_local_only();
-  const int layer_idx = refv3_layer_idx_local_only(lid);
-  return cache.ffn_w2_s_w[layer_idx];
 }
 
 } // namespace ref_v3
