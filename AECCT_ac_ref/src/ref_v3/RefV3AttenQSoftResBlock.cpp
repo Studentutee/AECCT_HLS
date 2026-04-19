@@ -4,8 +4,6 @@
 
 #include <cmath>
 
-#include "weights.h"
-
 namespace aecct_ref {
 namespace ref_v3 {
 namespace {
@@ -47,7 +45,7 @@ static void quant_linear_token_32_to32_native(
 }
 
 static bool is_layer0_attn_masked_token_pair(int head_idx, int q_token, int k_token) {
-  const bool src_masked = (w_src_mask[q_token * REFV3_TOKENS_T + k_token].to_int() != 0);
+  const bool src_masked = refv3_src_mask_bit_local_only(q_token, k_token);
   const bool q_is_var = (q_token < REFV3_VAR_N);
   const bool k_is_var = (k_token < REFV3_VAR_N);
 

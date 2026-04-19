@@ -257,6 +257,21 @@ const refv3_fp_t* refv3_out_fc_bias_fp_local_only() {
   return cache.out_fc_bias;
 }
 
+bool refv3_src_mask_bit_local_only(int q_token, int k_token) {
+  if (q_token < 0 || q_token >= REFV3_TOKENS_T || k_token < 0 || k_token >= REFV3_TOKENS_T) {
+    return false;
+  }
+  return (w_src_mask[(q_token * REFV3_TOKENS_T) + k_token].to_int() != 0);
+}
+
+bool refv3_h_parity_edge_local_only(int check_idx, int var_idx) {
+  const int check_n = REFV3_TOKENS_T - REFV3_VAR_N;
+  if (check_idx < 0 || check_idx >= check_n || var_idx < 0 || var_idx >= REFV3_VAR_N) {
+    return false;
+  }
+  return (h_H[(check_idx * REFV3_VAR_N) + var_idx].to_int() != 0);
+}
+
 refv3_fp_t refv3_ffn_w1_s_w_fp_local_only(int lid) {
   const RefV3WeightsFp16CacheLocalOnly& cache = refv3_weight_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);

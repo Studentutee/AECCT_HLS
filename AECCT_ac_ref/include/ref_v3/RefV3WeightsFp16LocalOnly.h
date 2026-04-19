@@ -32,5 +32,8 @@ refv3_fp_t refv3_final_embed_bias_fp_local_only();
 const refv3_fp_t* refv3_out_fc_weight_fp_local_only();
 const refv3_fp_t* refv3_out_fc_bias_fp_local_only();
 
+bool refv3_src_mask_bit_local_only(int q_token, int k_token);
+bool refv3_h_parity_edge_local_only(int check_idx, int var_idx);
+
 } // namespace ref_v3
 } // namespace aecct_ref

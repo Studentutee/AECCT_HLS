@@ -1,8 +1,6 @@
 #include "../../include/ref_v3/RefV3PreprocBlock.h"
 #include "../../include/ref_v3/RefV3WeightsFp16LocalOnly.h"
 
-#include "weights.h"
-
 namespace aecct_ref {
 namespace ref_v3 {
 namespace {
@@ -45,7 +43,7 @@ bool RefV3PreprocBlock::run(ac_channel<RefV3PreprocInputPayload>& in_input_ch,
   REFV3_PREPROC_CHECK_FEATURE_LOOP: for (int c = 0; c < REFV3_CHECK_N; ++c) {
     ac_int<1, false> parity = 0;
     REFV3_PREPROC_CHECK_PARITY_LOOP: for (int v = 0; v < REFV3_VAR_N; ++v) {
-      if (h_H[c * REFV3_VAR_N + v].to_int() != 0) {
+      if (refv3_h_parity_edge_local_only(c, v)) {
         parity = ac_int<1, false>(parity ^ y_hard[v]);
       }
     }
