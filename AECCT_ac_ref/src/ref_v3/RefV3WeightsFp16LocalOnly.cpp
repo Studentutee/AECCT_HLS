@@ -63,25 +63,30 @@ struct RefV3AttnSubsetCacheLocalOnly {
   }
 };
 
-struct RefV3FfnSubsetCacheLocalOnly {
+struct RefV3FfnW1FamilyCacheLocalOnly {
   refv3_fp_t ffn_w1_s_x[2];
-  refv3_fp_t ffn_w2_s_x[2];
   refv3_fp_t ffn_w1_weight[2][w_decoder_layers_0_feed_forward_w_1_weight_numel];
   refv3_fp_t ffn_w1_bias[2][w_decoder_layers_0_feed_forward_w_1_bias_numel];
 
-  refv3_fp_t ffn_w2_weight[2][w_decoder_layers_0_feed_forward_w_2_weight_numel];
-  refv3_fp_t ffn_w2_bias[2][w_decoder_layers_0_feed_forward_w_2_bias_numel];
-
-  RefV3FfnSubsetCacheLocalOnly() {
+  RefV3FfnW1FamilyCacheLocalOnly() {
     ffn_w1_s_x[0] = copy_scalar_to_fp_local_only(l0_ff1_s_x);
     ffn_w1_s_x[1] = copy_scalar_to_fp_local_only(l1_ff1_s_x);
-    ffn_w2_s_x[0] = copy_scalar_to_fp_local_only(l0_ff2_s_x);
-    ffn_w2_s_x[1] = copy_scalar_to_fp_local_only(l1_ff2_s_x);
 
     copy_array_to_fp_local_only(w_decoder_layers_0_feed_forward_w_1_weight, ffn_w1_weight[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_feed_forward_w_1_weight, ffn_w1_weight[1]);
     copy_array_to_fp_local_only(w_decoder_layers_0_feed_forward_w_1_bias, ffn_w1_bias[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_feed_forward_w_1_bias, ffn_w1_bias[1]);
+  }
+};
+
+struct RefV3FfnW2FamilyCacheLocalOnly {
+  refv3_fp_t ffn_w2_s_x[2];
+  refv3_fp_t ffn_w2_weight[2][w_decoder_layers_0_feed_forward_w_2_weight_numel];
+  refv3_fp_t ffn_w2_bias[2][w_decoder_layers_0_feed_forward_w_2_bias_numel];
+
+  RefV3FfnW2FamilyCacheLocalOnly() {
+    ffn_w2_s_x[0] = copy_scalar_to_fp_local_only(l0_ff2_s_x);
+    ffn_w2_s_x[1] = copy_scalar_to_fp_local_only(l1_ff2_s_x);
 
     copy_array_to_fp_local_only(w_decoder_layers_0_feed_forward_w_2_weight, ffn_w2_weight[0]);
     copy_array_to_fp_local_only(w_decoder_layers_1_feed_forward_w_2_weight, ffn_w2_weight[1]);
@@ -152,8 +157,13 @@ static inline const RefV3AttnSubsetCacheLocalOnly& refv3_attn_subset_cache_fp_lo
   return cache;
 }
 
-static inline const RefV3FfnSubsetCacheLocalOnly& refv3_ffn_subset_cache_fp_local_only() {
-  static const RefV3FfnSubsetCacheLocalOnly cache;
+static inline const RefV3FfnW1FamilyCacheLocalOnly& refv3_ffn_w1_family_cache_fp_local_only() {
+  static const RefV3FfnW1FamilyCacheLocalOnly cache;
+  return cache;
+}
+
+static inline const RefV3FfnW2FamilyCacheLocalOnly& refv3_ffn_w2_family_cache_fp_local_only() {
+  static const RefV3FfnW2FamilyCacheLocalOnly cache;
   return cache;
 }
 
@@ -212,13 +222,13 @@ refv3_fp_t refv3_attn_output_s_x_fp_local_only(int lid) {
 }
 
 refv3_fp_t refv3_ffn_w1_s_x_fp_local_only(int lid) {
-  const RefV3FfnSubsetCacheLocalOnly& cache = refv3_ffn_subset_cache_fp_local_only();
+  const RefV3FfnW1FamilyCacheLocalOnly& cache = refv3_ffn_w1_family_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
   return cache.ffn_w1_s_x[layer_idx];
 }
 
 refv3_fp_t refv3_ffn_w2_s_x_fp_local_only(int lid) {
-  const RefV3FfnSubsetCacheLocalOnly& cache = refv3_ffn_subset_cache_fp_local_only();
+  const RefV3FfnW2FamilyCacheLocalOnly& cache = refv3_ffn_w2_family_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
   return cache.ffn_w2_s_x[layer_idx];
 }
@@ -255,7 +265,7 @@ RefV3TernaryLinearParams refv3_endnorm_params_fp_local_only() {
 }
 
 RefV3TernaryLinearParams refv3_ffn_w1_params_fp_local_only(int lid) {
-  const RefV3FfnSubsetCacheLocalOnly& cache = refv3_ffn_subset_cache_fp_local_only();
+  const RefV3FfnW1FamilyCacheLocalOnly& cache = refv3_ffn_w1_family_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
   return refv3_make_ternary_linear_params(
     cache.ffn_w1_weight[layer_idx],
@@ -263,7 +273,7 @@ RefV3TernaryLinearParams refv3_ffn_w1_params_fp_local_only(int lid) {
 }
 
 RefV3TernaryLinearParams refv3_ffn_w2_params_fp_local_only(int lid) {
-  const RefV3FfnSubsetCacheLocalOnly& cache = refv3_ffn_subset_cache_fp_local_only();
+  const RefV3FfnW2FamilyCacheLocalOnly& cache = refv3_ffn_w2_family_cache_fp_local_only();
   const int layer_idx = refv3_layer_idx_local_only(lid);
   return refv3_make_ternary_linear_params(
     cache.ffn_w2_weight[layer_idx],
